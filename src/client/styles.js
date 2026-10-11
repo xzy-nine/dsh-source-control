@@ -34,11 +34,23 @@ export const STYLES = `
 .ggg-repo-kind{flex:none;padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px}
 .ggg-repo-sync{flex:none;display:inline-flex;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ggg-sec-note{color:var(--dsw-alias-state-warn-primary);cursor:default}
-.ggg-changes{display:flex;flex-direction:column;padding:0 6px 6px;max-height:38%;overflow-y:auto}
+.ggg-workspace-body{display:flex;flex-direction:column}
+.ggg-workspace-body .ggg-commit-box{border-top:none}
+.ggg-change-group{margin-top:2px;padding-top:2px}
+.ggg-change-group + .ggg-change-group{border-top:1px solid var(--dsw-alias-border-l1)}
+.ggg-group-root{cursor:pointer}
+.ggg-group-root .ggg-group-title{flex:1;min-width:0;color:var(--dsw-alias-label-secondary);font-weight:600}
+.ggg-group-root .ggg-count{margin-left:auto}
+.ggg-change-group .ggg-changes{max-height:none}
+.ggg-changes{display:flex;flex-direction:column;padding:0 6px 6px}
 .ggg-change{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;min-width:0}
 .ggg-change:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ggg-change.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-change-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .ggg-change-dir{color:var(--dsw-alias-label-tertiary)}
+.ggg-folder{cursor:pointer}
+.ggg-folder .ggg-change-name{flex:1 1 auto;direction:ltr;text-align:left;color:var(--dsw-alias-label-secondary)}
+.ggg-folder .ggg-count{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;margin-left:auto}
 .ggg-change-stat{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ggg-change-btn{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-change:hover .ggg-change-btn{display:inline-flex}

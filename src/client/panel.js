@@ -10,8 +10,8 @@ import {
 	Button, Checkbox, FileTypeIcon, Input,
 	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCheckOutlineRegular,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
-	IconDownloadOutlineRegular, IconEnhanceOutlineRegular, IconPlusOutlineRegular,
-	IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
+	IconDownloadOutlineRegular, IconEnhanceOutlineRegular, IconFolderOpenOutlineRegular,
+	IconPlusOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
 	IconWorkspaceTreeOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
@@ -50,6 +50,55 @@ function splitPath(path) {
 	return at === -1 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) };
 }
 
+/** 空树节点：文件夹挂在 folders，文件挂在 files。 */
+function emptyTree() {
+	return { folders: new Map(), files: [] };
+}
+
+/** 把变更条目按「目录/文件」拆成可折叠的文件夹树。 */
+function buildChangeTree(entries) {
+	const root = emptyTree();
+	for (const entry of entries) {
+		const parts = entry.path.split('/');
+		let node = root;
+		for (let i = 0; i < parts.length - 1; i++) {
+			const part = parts[i];
+			if (!node.folders.has(part)) node.folders.set(part, emptyTree());
+			node = node.folders.get(part);
+		}
+		node.files.push(entry);
+	}
+	return root;
+}
+
+/** 统计一个子树（含子文件夹）下的文件总数。 */
+function countLeaves(node) {
+	let total = node.files.length;
+	for (const child of node.folders.values()) total += countLeaves(child);
+	return total;
+}
+
+/** 把文件夹树拍平成可见行；出现在 collapsed 里的文件夹不展开其子节点。 */
+function flattenChangeTree(node, prefix, depth, collapsed, out) {
+	const folderNames = [...node.folders.keys()].sort();
+	for (const name of folderNames) {
+		const child = node.folders.get(name);
+		const path = prefix === '' ? name : `${prefix}/${name}`;
+		const open = !collapsed.has(path);
+		out.push({ kind: 'folder', name, path, depth, open, count: countLeaves(child) });
+		if (open) flattenChangeTree(child, path, depth + 1, collapsed, out);
+	}
+	const files = node.files.slice().sort((a, b) => a.path.localeCompare(b.path));
+	for (const entry of files) out.push({ kind: 'file', entry, depth });
+}
+
+/** 按 depth 生成的竖线层级占位。 */
+function guidesOf(depth) {
+	const guides = [];
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
+	return guides;
+}
+
 /**
  * 把错误文本显示在面板上。
  *
@@ -67,46 +116,68 @@ function issueLinkingConfigOf(settings) {
 	return settings.issueLinkingConfig ?? null;
 }
 
-/**
- * 一条变更行。
- *
- * @param props.entry - 工作区条目。
- * @param props.busy - 是否正在执行操作。
- * @param props.onStage - 暂存。
- * @param props.onUnstage - 取消暂存。
- * @param props.onDiscard - 丢弃。
- * @param props.onOpen - 打开该文件的差异。
- * @returns 行元素。
- */
-function ChangeRow({ entry, busy, onStage, onUnstage, onDiscard, onOpen }) {
-	const { staged, type, untracked } = changeOf(entry);
-	const { dir, name } = splitPath(entry.path);
+/** 文件夹行或文件行（变更树内）。 */
+function ChangeNodeRow({ row, busy, open, staged, onToggle, onStage, onUnstage, onDiscard, onOpen, descendantsOf }) {
+	if (row.kind === 'folder') {
+		const handleContextMenu = (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const target = event.currentTarget;
+			target.classList.add('ggg-menu-target');
+			const paths = descendantsOf(row.path);
+			const items = [];
+			if (staged) {
+				items.push({ title: `取消暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onUnstage(paths) });
+			} else {
+				items.push({ title: `暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onStage(paths) });
+			}
+			items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(row.path); } });
+			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
+		};
+		return React.createElement(
+			'div',
+			{
+				className: 'ggg-change ggg-folder', title: row.path,
+				onClick: () => onToggle(row.path), onContextMenu: handleContextMenu,
+			},
+			...guidesOf(row.depth),
+			React.createElement('span', {
+				className: `ggg-repo-chevron${open ? '' : ' is-collapsed'}`,
+			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
+			React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
+			React.createElement('span', { className: 'ggg-change-name' }, row.name),
+			React.createElement('span', { className: 'ggg-count' }, String(row.count)),
+		);
+	}
+	const entry = row.entry;
+	const { staged: fileStaged, type, untracked } = changeOf(entry);
+	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event) => {
 		event.preventDefault();
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
 		const items = [{ title: '打开差异', onClick: () => onOpen(entry) }, { type: 'divider' }];
-		if (staged) {
+		if (fileStaged) {
 			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
 		} else {
 			items.push({ title: '暂存改动', disabled: busy, onClick: () => onStage([entry.path]) });
 			items.push({ title: '丢弃改动', danger: true, disabled: busy, onClick: () => onDiscard([entry.path], untracked) });
 		}
 		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
-		showContextMenu({ x: event.clientX, y: event.clientY, items });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
 	};
 	return React.createElement(
 		'div',
 		{ className: 'ggg-change', title: entry.path, onContextMenu: handleContextMenu },
+		...guidesOf(row.depth),
 		React.createElement(FileTypeIcon, { path: name, size: 14 }),
 		React.createElement('span', { className: 'ggg-status', 'data-type': type }, type),
-		React.createElement('span', { className: 'ggg-change-name' },
-			React.createElement('span', { className: 'ggg-change-dir' }, dir),
-			name,
-		),
+		React.createElement('span', { className: 'ggg-change-name' }, name),
 		React.createElement('button', {
 			type: 'button', className: 'ggg-change-btn', title: '打开差异', disabled: busy,
 			onClick: () => onOpen(entry),
 		}, React.createElement(IconCompareSplitOutlineRegular, { size: 14 })),
-		staged
+		fileStaged
 			? React.createElement('button', {
 				type: 'button', className: 'ggg-change-btn', title: '取消暂存', disabled: busy,
 				onClick: () => onUnstage([entry.path]),
@@ -123,6 +194,89 @@ function ChangeRow({ entry, busy, onStage, onUnstage, onDiscard, onOpen }) {
 					onClick: () => onStage([entry.path]),
 				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
 			),
+	);
+}
+
+/**
+ * 一个变更分组：暂存的更改 / 更改。
+ *
+ * @param props.staged - 是否处理已暂存条目。
+ * @param props.entries - 全部工作区条目。
+ * @param props.busy - 是否正在执行操作。
+ * @param props.workingTreePath - 当前工作树路径。
+ * @param props.collapsed - 本分组内已折叠的文件夹路径集合（默认空＝全部展开）。
+ * @param props.toggleChange - 切换本分组内文件夹的折叠状态。
+ * @param props.open - 分组是否展开。
+ * @param props.onToggleGroup - 切换分组展开。
+ * @param props.run - 执行异步动作的包装器。
+ * @param props.stagePaths - 暂存。
+ * @param props.unstagePaths - 取消暂存。
+ * @param props.discardPaths - 丢弃。
+ * @param props.openDiff - 打开差异。
+ * @returns 分组元素；无对应条目时返回空数组。
+ */
+function ChangeGroup({
+	staged, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
+	stagePaths, unstagePaths, discardPaths, openDiff,
+}) {
+	const visible = entries.filter((entry) => changeOf(entry).staged === staged);
+	if (visible.length === 0) return [];
+	const tree = buildChangeTree(visible);
+	const rows = [];
+	flattenChangeTree(tree, '', 1, collapsed, rows);
+	const title = staged ? '暂存的更改' : '更改';
+	const allPaths = visible.map((entry) => entry.path);
+	const onStage = (paths) => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
+	const onUnstage = (paths) => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
+	const onDiscard = (paths, untracked) => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); };
+	const onOpen = (item) => { void openDiff('*', item.path, changeOf(item).staged); };
+	const descendantsOf = (folderPath) => {
+		const prefix = `${folderPath}/`;
+		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
+	};
+	const handleHeadContextMenu = (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
+		const items = staged
+			? [{ title: `取消暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onUnstage(allPaths) }]
+			: [
+				{ title: `暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onStage(allPaths) },
+				{ type: 'divider' },
+				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: () => onDiscard(allPaths, false) },
+			];
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
+	};
+	return React.createElement(
+		'div',
+		{ className: 'ggg-change-group' },
+		React.createElement(
+			'div',
+			{
+				className: 'ggg-change ggg-group-root',
+				onClick: () => onToggleGroup(),
+				onContextMenu: handleHeadContextMenu,
+			},
+			React.createElement('span', {
+				className: `ggg-repo-chevron${open ? '' : ' is-collapsed'}`,
+			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+			React.createElement('span', { className: 'ggg-group-title' }, title),
+			React.createElement('span', { className: 'ggg-count' }, String(visible.length)),
+		),
+		open && React.createElement(
+			'div',
+			{ className: 'ggg-changes' },
+			...rows.map((row) => React.createElement(ChangeNodeRow, {
+				key: row.kind === 'folder' ? `f:${row.path}` : `e:${row.entry.path}`,
+				row, busy,
+				open: row.kind === 'folder' && !collapsed.has(row.path),
+				staged,
+				onToggle: (path) => toggleChange(groupKey, path),
+				onStage, onUnstage, onDiscard, onOpen,
+				descendantsOf,
+			})),
+		),
 	);
 }
 
@@ -196,6 +350,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [treeNote, setTreeNote] = React.useState(null);
 	const [selectedId, setSelectedId] = React.useState(null);
 	const [expandedIds, setExpandedIds] = React.useState(() => loadExpanded(sessionId));
+	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；会话级、不持久化。
+	const [collapsedByGroup, setCollapsedByGroup] = React.useState(() => ({ staged: new Set(), unstaged: new Set() }));
+	const [groupExpanded, setGroupExpanded] = React.useState(() => ({ staged: true, unstaged: true }));
 	const [syncById, setSyncById] = React.useState(() => new Map());
 
 	const selectedNode = React.useMemo(() => findNode(repoNodes, selectedId), [repoNodes, selectedId]);
@@ -261,6 +418,20 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			return next;
 		});
 	}, [sessionId]);
+
+	const toggleChange = React.useCallback((key, path) => {
+		setCollapsedByGroup((previous) => {
+			const current = previous[key];
+			const next = new Set(current);
+			if (next.has(path)) next.delete(path);
+			else next.add(path);
+			return { ...previous, [key]: next };
+		});
+	}, []);
+
+	const toggleGroup = React.useCallback((key) => {
+		setGroupExpanded((previous) => ({ ...previous, [key]: !previous[key] }));
+	}, []);
 
 	const visibleRows = React.useMemo(() => flattenVisible(repoNodes, expandedIds), [repoNodes, expandedIds]);
 
@@ -664,60 +835,48 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			),
 		),
 
-		// ── 变更 ────────────────────────────────────────────────
+		// ── 工作区 ──────────────────────────────────────────────
 		React.createElement(
 			'div',
-			{ className: 'ggg-sec' },
+			{ className: 'ggg-sec ggg-workspace' },
 			React.createElement(
 				'div',
 				{ className: 'ggg-sec-head' },
 				React.createElement(IconChevronDownOutlineRegular, { size: 14 }),
-				'更改',
-				React.createElement('span', { className: 'ggg-count' }, String(state.entries.length)),
-				React.createElement(
-					'span',
-					{ className: 'ggg-head-actions' },
-					state.entries.length > 0 && React.createElement(Button, {
-						variant: 'toolbar', size: 'sm', title: '全部丢弃', disabled: state.busy,
-						onClick: () => { void run(async () => { await discardPaths(workingTreePath, state.entries.map((entry) => entry.path), false); }); },
-					}, React.createElement(IconTrashOutlineRegular, { size: 14 })),
-					React.createElement(Button, {
-						variant: 'toolbar', size: 'sm', title: '全部暂存', disabled: state.busy || state.entries.length === 0,
-						onClick: () => { void run(async () => { await stagePaths(workingTreePath, []); }); },
-					}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
-				),
+				'工作区',
 			),
-			state.entries.length === 0
-				? React.createElement('div', { className: 'ggg-empty' }, '工作区没有未提交的变更')
-				: React.createElement(
-					'div',
-					{ className: 'ggg-changes' },
-					...state.entries.map((entry) => React.createElement(ChangeRow, {
-						key: entry.path, entry, busy: state.busy,
-						onStage: (paths) => { void run(async () => { await stagePaths(workingTreePath, paths); }); },
-						onUnstage: (paths) => { void run(async () => { await unstagePaths(workingTreePath, paths); }); },
-						onDiscard: (paths, untracked) => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); },
-						onOpen: (item) => { void openDiff('*', item.path, changeOf(item).staged); },
-					})),
-				),
-			// ── 提交框 ────────────────────────────────────────────
 			React.createElement(
 				'div',
-				{ className: 'ggg-commit-box' },
-				React.createElement(Input, {
-					value: message,
-					placeholder: state.head === null ? '提交信息（Ctrl+Enter 提交）' : `提交信息（Ctrl+Enter 在“${state.head}”上提交）`,
-					disabled: state.busy,
-					onChange: (event) => setMessage(event.target.value),
-					onKeyDown: (event) => {
-						if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); }
-					},
+				{ className: 'ggg-workspace-body' },
+				// ── 提交框 ────────────────────────────────────────
+				React.createElement(
+					'div',
+					{ className: 'ggg-commit-box' },
+					React.createElement(Input, {
+						value: message,
+						placeholder: state.head === null ? '提交信息（Ctrl+Enter 提交）' : `提交信息（Ctrl+Enter 在“${state.head}”上提交）`,
+						disabled: state.busy,
+						onChange: (event) => setMessage(event.target.value),
+						onKeyDown: (event) => {
+							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); }
+						},
+					}),
+					React.createElement(Checkbox, { checked: amend, onChange: setAmend, label: '修补上一次提交' }),
+					React.createElement(Button, {
+						variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,
+						onClick: submit,
+					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), `提交（${stagedPaths.length}）`),
+				),
+				ChangeGroup({
+					staged: true, entries: state.entries, busy: state.busy, workingTreePath,
+					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
+					run, stagePaths, unstagePaths, discardPaths, openDiff,
 				}),
-				React.createElement(Checkbox, { checked: amend, onChange: setAmend, label: '修补上一次提交' }),
-				React.createElement(Button, {
-					variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,
-					onClick: submit,
-				}, React.createElement(IconCheckOutlineRegular, { size: 15 }), `提交（${stagedPaths.length}）`),
+				ChangeGroup({
+					staged: false, entries: state.entries, busy: state.busy, workingTreePath,
+					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
+					run, stagePaths, unstagePaths, discardPaths, openDiff,
+				}),
 			),
 		),
 

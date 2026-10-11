@@ -47,9 +47,10 @@ export async function copyText(text) {
  * @param {Array<object>} options.items - 菜单项：{ type?:'divider', title, visible?, checked?, disabled?, danger?, onClick }。
  * @param {number} options.x - 触发点横坐标。
  * @param {number} options.y - 触发点纵坐标。
+ * @param {function} [options.onClose] - 菜单关闭（选中或点击外部）后的回调。
  * @returns 无。
  */
-export function showContextMenu({ items, x, y }) {
+export function showContextMenu({ items, x, y, onClose }) {
 	const visibleItems = items.filter((item) => item.visible !== false);
 	if (visibleItems.length === 0) return;
 	const mount = document.createElement('div');
@@ -58,6 +59,7 @@ export function showContextMenu({ items, x, y }) {
 	const close = () => {
 		root.unmount();
 		mount.remove();
+		onClose?.();
 	};
 	function MenuContent() {
 		const anchor = React.useRef(mount);
