@@ -55,6 +55,18 @@ flowchart LR
 - Static file serving sanitizes filenames against a whitelist.
 - The API only acts on the repo path supplied by the host's own boot payload (the session cwd).
 
+## Localization
+
+```sh
+pnpm --filter dsh-dev-git-graph i18n:check  # validate keys, HTML tags/attribute names, entities only
+```
+
+- `scripts/i18n/zh.json` is the single translation source, keyed by the English literal (HTML fragments included).
+- `literals.mjs` scans by JS lexical rules (comments and regex literals skipped), `extract.mjs` selects candidates, `wrap.mjs` wraps by position; re-running is idempotent.
+- Literals compared against external data (`bad revision 'HEAD'`, `git branch -D`) are blocklisted and never translated.
+- HTML fragments translate only text nodes and `title`/`placeholder`/`aria-label`/`alt` values; tags, attribute names, and id/class/data-* values are frozen by the validator.
+- Dates and relative times are generated directly in Chinese format rather than through the table.
+
 ## Development
 
 ```sh

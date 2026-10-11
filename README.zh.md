@@ -37,6 +37,22 @@ host 路由 (src/git-graph/routes.ts)
 | 状态持久化 | 前端 localStorage（原扩展用 workspaceState），`setGlobalViewState` 等直接 ACK |
 | 仓库来源 | 自动绑定当前会话工作区（无工作区时页内显示提示） |
 
+## 汉化
+
+```bash
+pnpm --filter dsh-dev-git-graph i18n
+
+# 只校验（键完整性、HTML 标签与属性名、HTML 实体），不写文件
+pnpm --filter dsh-dev-git-graph i18n:check
+```
+
+- `scripts/i18n/zh.json` 是唯一译文来源（键为源码英文原文，含 HTML 片段原文）。
+- `scripts/i18n/literals.mjs` 按 JS 词法扫描字面量（跳过注释与正则字面量）；`extract.mjs` 判定候选；`wrap.mjs` 按位置包裹。
+- `generate.mjs` 重跑幂等：已知 519 条候选、518 条译文，已包裹的位置不会重复包裹。
+- 与外部数据比较的字面量（`bad revision 'HEAD'`、`git branch -D`）在 BLOCKLIST 中，永不翻译。
+- HTML 片段只翻译标签外文本与 `title`/`placeholder`/`aria-label`/`alt` 的值；标签、属性名、id/class/data-* 一律不动，校验会拒绝结构变化的译文。
+- 日期与相对时间（`utils.ts`）不用查表：月份、星期与「N 分钟前」按中文格式直接生成。
+
 ## 构建与安装
 
 ```bash
