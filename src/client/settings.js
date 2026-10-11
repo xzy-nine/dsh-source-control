@@ -164,7 +164,7 @@ function ToggleRow({ label, checked, onChange }) {
 	return React.createElement(
 		'label',
 		{ className: 'ggg-set-row ggg-set-row-inline' },
-		React.createElement(Checkbox, { checked, onChange: (event) => onChange(event.target.checked) }),
+		React.createElement(Checkbox, { checked, onChange: (next) => onChange(next) }),
 		React.createElement('span', { className: 'ggg-set-row-text' }, label),
 	);
 }

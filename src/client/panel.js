@@ -8,9 +8,11 @@
 import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, Input,
-	IconBranchOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconCloseOutlineRegular, IconCompareSplitOutlineRegular, IconDownloadOutlineRegular,
-	IconPlusOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
+	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCheckOutlineRegular,
+	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
+	IconDownloadOutlineRegular, IconEnhanceOutlineRegular, IconPlusOutlineRegular,
+	IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
+	IconWorkspaceTreeOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	defaultSettings, formatDate, loadSettings, saveSettings, SettingsPanel,
@@ -18,12 +20,15 @@ import {
 import {
 	addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
 	commitStaged, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
-	discardPaths, dropStash, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
-	loadGraph, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
+	discardPaths, discoverRepositories, dropStash, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
+	loadGraph, loadRepoSync, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
 	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, unstagePaths,
 } from './api.js';
 import { CommitGraph } from './graph.js';
 import { copyText, showContextMenu } from './context-menu.js';
+import {
+	ancestryOf, findNode, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
+} from './repo-tree.js';
 import {
 	showCheckbox, showConfirmation, showSelect, showText,
 } from './dialog.js';
@@ -76,9 +81,21 @@ function issueLinkingConfigOf(settings) {
 function ChangeRow({ entry, busy, onStage, onUnstage, onDiscard, onOpen }) {
 	const { staged, type, untracked } = changeOf(entry);
 	const { dir, name } = splitPath(entry.path);
+	const handleContextMenu = (event) => {
+		event.preventDefault();
+		const items = [{ title: '打开差异', onClick: () => onOpen(entry) }, { type: 'divider' }];
+		if (staged) {
+			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
+		} else {
+			items.push({ title: '暂存改动', disabled: busy, onClick: () => onStage([entry.path]) });
+			items.push({ title: '丢弃改动', danger: true, disabled: busy, onClick: () => onDiscard([entry.path], untracked) });
+		}
+		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
+		showContextMenu({ x: event.clientX, y: event.clientY, items });
+	};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-change', title: entry.path },
+		{ className: 'ggg-change', title: entry.path, onContextMenu: handleContextMenu },
 		React.createElement(FileTypeIcon, { path: name, size: 14 }),
 		React.createElement('span', { className: 'ggg-status', 'data-type': type }, type),
 		React.createElement('span', { className: 'ggg-change-name' },
@@ -110,13 +127,61 @@ function ChangeRow({ entry, busy, onStage, onUnstage, onDiscard, onOpen }) {
 }
 
 /**
+ * 存储库树的一行。
+ *
+ * @param props.node - 仓库、工作树或子模块节点。
+ * @param props.depth - 缩进层级。
+ * @param props.active - 是否选中。
+ * @param props.expanded - 是否有子节点且已展开。
+ * @param props.sync - 领先/落后信息；尚未取到时为 undefined。
+ * @param props.onSelect - 选中回调。
+ * @param props.onToggle - 展开/收起回调。
+ * @returns 行元素。
+ */
+function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
+	const hasChildren = (node.children ?? []).length > 0;
+	const kindLabel = node.kind === 'worktree' ? '工作树' : node.kind === 'submodule' ? '子模块' : '';
+	const KindIcon = node.kind === 'worktree'
+		? IconEnhanceOutlineRegular
+		: node.kind === 'submodule'
+			? IconArchiveOutlineRegular
+			: IconWorkspaceTreeOutlineRegular;
+	const guides = [];
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
+	return React.createElement(
+		'div',
+		{
+			className: `ggg-repo${active ? ' is-active' : ''}${node.available === false ? ' is-missing' : ''}`,
+			title: node.path,
+			onClick: () => onSelect(node),
+		},
+		...guides,
+		React.createElement('span', {
+			className: `ggg-repo-chevron${expanded ? '' : ' is-collapsed'}${hasChildren ? '' : ' is-empty'}`,
+			onClick: (event) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
+		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
+		React.createElement(KindIcon, { size: 14 }),
+		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
+		kindLabel !== '' && React.createElement('span', { className: 'ggg-repo-kind' }, kindLabel),
+		React.createElement('span', { className: 'ggg-repo-branch' }, (sync?.branch ?? node.branch) ?? ''),
+		sync !== undefined && (sync.ahead > 0 || sync.behind > 0) && React.createElement(
+			'span',
+			{ className: 'ggg-repo-sync', title: `领先 ${sync.ahead}、落后 ${sync.behind}` },
+			sync.behind > 0 && React.createElement('span', null, `↓${sync.behind}`),
+			sync.ahead > 0 && React.createElement('span', null, `↑${sync.ahead}`),
+		),
+	);
+}
+
+/**
  * Git Graph 面板。
  *
  * @param props.cwd - 会话工作区路径；没有工作区时为 undefined。
+ * @param props.sessionId - 会话 id，用于持久化存储库选中与展开状态。
  * @param props.onOpenDiff - 打开文件差异（打开右侧栏 Diff 页）。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, onOpenDiff }) {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [state, setState] = React.useState({
 		phase: 'loading', error: null, commits: [], head: null, more: false,
 		entries: [], selectedHash: null, detail: null, busy: false, remotes: [],
@@ -126,15 +191,124 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 	const [maxCommits, setMaxCommits] = React.useState(200);
 	const [settings, setSettings] = React.useState(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
+	const [repoNodes, setRepoNodes] = React.useState([]);
+	const [treeStatus, setTreeStatus] = React.useState('loading');
+	const [treeNote, setTreeNote] = React.useState(null);
+	const [selectedId, setSelectedId] = React.useState(null);
+	const [expandedIds, setExpandedIds] = React.useState(() => loadExpanded(sessionId));
+	const [syncById, setSyncById] = React.useState(() => new Map());
 
-	const workingTreePath = cwd ?? null;
+	const selectedNode = React.useMemo(() => findNode(repoNodes, selectedId), [repoNodes, selectedId]);
+	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
+	const workingTreePath = selectedNode !== null
+		? selectedNode.path
+		: (treeStatus === 'loading' ? null : (cwd ?? null));
+	const hasWorkspace = cwd !== undefined && cwd !== null;
 
-	/** 重新加载提交图与工作区。 */
+	const generationRef = React.useRef(0);
+	const controllerRef = React.useRef(null);
+
+	/* ── 仓库发现 ─────────────────────────────────────────── */
+
+	React.useEffect(() => {
+		if (!hasWorkspace) {
+			setRepoNodes([]);
+			setTreeStatus('empty');
+			return undefined;
+		}
+		const controller = new AbortController();
+		setTreeStatus('loading');
+		setTreeNote(null);
+		discoverRepositories(cwd, {}, controller.signal).then((result) => {
+			if (controller.signal.aborted) return;
+			const initial = selectInitial(result.nodes, cwd, loadSelection(sessionId));
+			setRepoNodes(result.nodes);
+			setSelectedId(initial === null ? null : initial.id);
+			setExpandedIds((previous) => {
+				const next = new Set(previous);
+				if (initial !== null) for (const id of ancestryOf(result.nodes, initial.id)) next.add(id);
+				return next;
+			});
+			setTreeStatus('ready');
+			if (result.truncated) setTreeNote('已达到扫描上限，仅显示部分仓库');
+		}).catch((error) => {
+			if (controller.signal.aborted) return;
+			setRepoNodes([]);
+			setTreeStatus('error');
+			setTreeNote(error instanceof Error ? error.message : String(error));
+		});
+		return () => { controller.abort(); };
+	}, [cwd, sessionId, hasWorkspace]);
+
+	/** 选中一个仓库节点并持久化。 */
+	const selectNode = React.useCallback((node) => {
+		if (node.id === selectedId) return;
+		setSelectedId(node.id);
+		saveSelection(sessionId, node.id);
+		setState((previous) => ({
+			...previous, phase: 'loading', commits: [], entries: [],
+			detail: null, selectedHash: null, error: null,
+		}));
+	}, [sessionId, selectedId]);
+
+	/** 展开或收起一个仓库节点。 */
+	const toggleNode = React.useCallback((node) => {
+		setExpandedIds((previous) => {
+			const next = new Set(previous);
+			if (next.has(node.id)) next.delete(node.id);
+			else next.add(node.id);
+			saveExpanded(sessionId, next);
+			return next;
+		});
+	}, [sessionId]);
+
+	const visibleRows = React.useMemo(() => flattenVisible(repoNodes, expandedIds), [repoNodes, expandedIds]);
+
+	/* ── 后台预取可见节点的领先/落后 ─────────────────────── */
+
+	React.useEffect(() => {
+		const pending = visibleRows.filter(({ node }) => !syncById.has(node.id));
+		if (pending.length === 0) return undefined;
+		let cancelled = false;
+		const idle = typeof window.requestIdleCallback === 'function'
+			? (fn) => window.requestIdleCallback(fn, { timeout: 1200 })
+			: (fn) => window.setTimeout(fn, 80);
+		const cancelIdle = typeof window.cancelIdleCallback === 'function'
+			? (handle) => window.cancelIdleCallback(handle)
+			: (handle) => window.clearTimeout(handle);
+		const handle = idle(() => {
+			void (async () => {
+				for (const { node } of pending.slice(0, 3)) {
+					if (cancelled) return;
+					let sync = { branch: null, upstream: null, ahead: 0, behind: 0 };
+					try {
+						sync = await loadRepoSync(node.path);
+					} catch {
+						/* 无上游或非仓库时保留空徽标 */
+					}
+					if (cancelled) return;
+					setSyncById((previous) => new Map(previous).set(node.id, sync));
+				}
+			})();
+		});
+		return () => { cancelled = true; cancelIdle(handle); };
+	}, [visibleRows, syncById]);
+
+	/* ── 选中仓库的按需加载 ───────────────────────────────── */
+
+	/** 重新加载选中仓库的提交图与工作区。 */
 	const refresh = React.useCallback(async () => {
 		if (workingTreePath === null) {
-			setState((previous) => ({ ...previous, phase: 'no-workspace', error: null }));
+			setState((previous) => ({
+				...previous, phase: hasWorkspace ? 'loading' : 'no-workspace', error: null,
+			}));
 			return;
 		}
+		const generation = generationRef.current + 1;
+		generationRef.current = generation;
+		controllerRef.current?.abort();
+		const controller = new AbortController();
+		controllerRef.current = controller;
 		setState((previous) => ({ ...previous, phase: 'loading', error: null }));
 		try {
 			const graph = await loadGraph(workingTreePath, {
@@ -145,17 +319,20 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 				showRemoteBranches: settings.showRemoteBranches,
 				onlyFollowFirstParent: settings.onlyFollowFirstParent,
 				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+				signal: controller.signal,
 			});
-			const entries = await loadWorkingTree(workingTreePath);
+			const entries = await loadWorkingTree(workingTreePath, controller.signal);
+			if (generation !== generationRef.current) return;
 			setState((previous) => ({
 				...previous, phase: 'ready', error: null,
 				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
 				remotes: graph.remotes, entries,
 			}));
 		} catch (error) {
+			if (generation !== generationRef.current || controller.signal.aborted) return;
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, maxCommits, settings]);
+	}, [workingTreePath, maxCommits, settings, hasWorkspace]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -208,7 +385,6 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 	}, [workingTreePath, state.commits, state.entries]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
-	const repoName = workingTreePath === null ? '' : (workingTreePath.split(/[\\/]/).filter(Boolean).pop() ?? workingTreePath);
 
 	/** 提交暂存区。 */
 	const submit = () => {
@@ -468,17 +644,23 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 			React.createElement('div', { className: 'ggg-sec-head' },
 				React.createElement(IconChevronDownOutlineRegular, { size: 14 }),
 				'存储库',
+				React.createElement('span', { className: 'ggg-count' }, String(repoNodes.length)),
+				treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
 			),
 			React.createElement(
 				'div',
 				{ className: 'ggg-repos' },
-				React.createElement(
-					'div',
-					{ className: 'ggg-repo is-active' },
-					React.createElement(FileTypeIcon, { path: repoName, size: 14 }),
-					React.createElement('span', { className: 'ggg-repo-name' }, repoName),
-					React.createElement('span', { className: 'ggg-repo-branch' }, state.head ?? ''),
-				),
+				treeStatus === 'loading' && React.createElement('div', { className: 'ggg-hint' }, '正在发现仓库…'),
+				treeStatus !== 'loading' && visibleRows.length === 0
+					&& React.createElement('div', { className: 'ggg-hint' }, '没有发现 git 仓库'),
+				...visibleRows.map(({ node, depth }) => React.createElement(RepoRow, {
+					key: node.id, node, depth,
+					active: node.id === selectedId,
+					expanded: expandedIds.has(node.id),
+					sync: syncById.get(node.id),
+					onSelect: selectNode,
+					onToggle: toggleNode,
+				})),
 			),
 		),
 

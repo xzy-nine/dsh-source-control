@@ -7,6 +7,7 @@ import type http from 'node:http';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
 import { commitStaged, discardPaths, loadWorkingTree, stagePaths, unstagePaths } from './working-tree.js';
+import { discoverRepositories, loadRepoSync } from './repo-discovery.js';
 
 let dataSourcePromise: Promise<DataSource> | null = null;
 
@@ -99,6 +100,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
+			break;
+
+		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
+		case 'discoverRepositories':
+			await respondResult('discoverRepositories', async () => {
+				const result = await discoverRepositories(repo, { maxDepth: num('maxDepth', 3) });
+				return { root: repo, nodes: result.nodes, truncated: result.truncated };
+			});
+			break;
+		case 'loadRepoSync':
+			await respondResult('loadRepoSync', async () => {
+				const sync = await loadRepoSync(repo);
+				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
+			});
 			break;
 
 		/* --- 数据查询 --- */

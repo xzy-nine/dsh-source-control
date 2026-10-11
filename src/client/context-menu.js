@@ -1,5 +1,5 @@
 /**
- * 自建右键浮层：基于 DSH 的 MenuSurface 定位与点击外部关闭。
+ * 自建右键浮层：MenuSurface 挂到 document.body，按指针坐标固定定位。
  *
  * 承载提交、分支、远程、标签、贮藏等目标的右键菜单项。
  * 不依赖浏览器原生 contextmenu 的默认外观，统一走 DSH 的浮层外观。
@@ -7,7 +7,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-	MenuSurface, useAnchoredPosition, useDismissOnOutsidePointer,
+	MenuSurface, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /**
@@ -63,7 +63,6 @@ export function showContextMenu({ items, x, y }) {
 		const anchor = React.useRef(mount);
 		const panel = React.useRef(null);
 		const [open, setOpen] = React.useState(true);
-		useAnchoredPosition({ open, anchorRef: anchor, panelRef: panel, side: 'bottom', align: 'start', gap: 0, margin: 8 });
 		useDismissOnOutsidePointer(anchor, open, setOpen);
 		React.useEffect(() => {
 			if (open === false) close();
@@ -73,7 +72,7 @@ export function showContextMenu({ items, x, y }) {
 		const top = Math.min(y, window.innerHeight - 8);
 		return React.createElement(
 			MenuSurface,
-			{ ref: panel, style: { position: 'fixed', left, top, width } },
+			{ ref: panel, style: { position: 'fixed', left, top, width, zIndex: 1100 } },
 			visibleItems.map((item, index) => {
 				if (item.type === 'divider') {
 					return React.createElement('div', { key: `divider-${index}`, className: 'ggg-menu-divider' });

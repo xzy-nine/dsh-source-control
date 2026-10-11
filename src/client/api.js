@@ -13,19 +13,55 @@ const API_PATH = '/dsh-dev-git-graph/gg/api';
  *
  * @param {string} cwd - 会话工作区路径，作为 repo 传给宿主。
  * @param {object} message - 命令载荷，`command` 由调用方给出。
+ * @param {AbortSignal} [signal] - 取消信号；中止时 fetch 抛 AbortError。
  * @returns {Promise<object>} 宿主响应。
  */
-export async function callApi(cwd, message) {
+export async function callApi(cwd, message, signal) {
 	const response = await fetch(API_PATH, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ repo: cwd, ...message }),
+		signal,
 	});
 	if (!response.ok) throw new Error(`宿主返回 ${response.status}`);
 	const payload = await response.json();
 	const { error } = payload;
 	if (typeof error === 'string' && error !== '') throw new Error(error);
 	return payload;
+}
+
+/**
+ * 发现工作区根下的仓库及其工作树与子模块。
+ *
+ * @param {string} cwd - 工作区根路径。
+ * @param {object} [options] - 发现选项。
+ * @param {number} [options.maxDepth] - 仓库发现的最大递归层数。
+ * @param {AbortSignal} [signal] - 取消信号。
+ * @returns {Promise<object>} { nodes, truncated }。
+ */
+export async function discoverRepositories(cwd, { maxDepth } = {}, signal) {
+	const payload = await callApi(cwd, { command: 'discoverRepositories', maxDepth }, signal);
+	return {
+		nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
+		truncated: payload.truncated === true,
+	};
+}
+
+/**
+ * 读取一个仓库相对其上游的领先/落后提交数。
+ *
+ * @param {string} cwd - 仓库路径。
+ * @param {AbortSignal} [signal] - 取消信号。
+ * @returns {Promise<object>} { branch, upstream, ahead, behind }。
+ */
+export async function loadRepoSync(cwd, signal) {
+	const payload = await callApi(cwd, { command: 'loadRepoSync' }, signal);
+	return {
+		branch: typeof payload.branch === 'string' ? payload.branch : null,
+		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
+		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
+		behind: typeof payload.behind === 'number' ? payload.behind : 0,
+	};
 }
 
 /**
@@ -42,22 +78,23 @@ export async function callApi(cwd, message) {
  * @param {boolean} [options.showRemoteBranches] - 是否参与远程分支标注。
  * @param {boolean} [options.onlyFollowFirstParent] - 是否只跟随第一个父提交。
  * @param {boolean} [options.includeCommitsMentionedByReflogs] - 是否包含 reflog 提到的提交。
+ * @param {AbortSignal} [options.signal] - 取消信号。
  * @returns {Promise<object>} 提交、HEAD、当前分支、远程与是否还有更多提交。
  */
 export async function loadGraph(cwd, {
 	maxCommits = 200, commitOrdering = 'topo',
 	showStashes = true, showTags = true, showRemoteBranches = true,
-	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false,
+	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false, signal,
 } = {}) {
 	const repoInfo = await callApi(cwd, {
 		command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [],
-	});
+	}, signal);
 	const remotes = Array.isArray(repoInfo.remotes) ? repoInfo.remotes : [];
 	const commitsPayload = await callApi(cwd, {
 		command: 'loadCommits', branches: null, maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering,
 		remotes, hideRemotes: [], stashes: Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [],
-	});
+	}, signal);
 	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;
 	return {
 		commits: Array.isArray(commitsPayload.commits) ? commitsPayload.commits : [],
@@ -71,10 +108,11 @@ export async function loadGraph(cwd, {
  * 读取工作区变更。
  *
  * @param {string} cwd - 会话工作区路径。
+ * @param {AbortSignal} [signal] - 取消信号。
  * @returns {Promise<object[]>} 变更列表。
  */
-export async function loadWorkingTree(cwd) {
-	const payload = await callApi(cwd, { command: 'loadWorkingTree' });
+export async function loadWorkingTree(cwd, signal) {
+	const payload = await callApi(cwd, { command: 'loadWorkingTree' }, signal);
 	return Array.isArray(payload.entries) ? payload.entries : [];
 }
 
