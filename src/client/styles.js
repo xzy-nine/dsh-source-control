@@ -61,4 +61,40 @@ export const STYLES = `
 .ggg-detail-title{font-weight:600}
 .ggg-detail-meta{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1.6}
 .ggg-detail-body{white-space:pre-wrap;color:var(--dsw-alias-label-secondary);line-height:1.6;max-height:120px;overflow:auto}
+.ggg-issue-link{color:var(--dsw-alias-brand-primary);text-decoration:none}
+.ggg-issue-link:hover{text-decoration:underline}
+.ggg-row-uncommitted{font-style:italic}
+
+/* ── 右键浮层 ───────────────────────────────────────────── */
+.ggg-menu-divider{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
+.ggg-menu-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:6px 10px;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.ggg-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ggg-menu-item:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}
+.ggg-menu-item-danger{color:var(--dsw-alias-state-error-primary)}
+.ggg-menu-item-danger:hover{background:var(--dsw-alias-state-error-bg-secondary,rgba(255,0,0,0.08))}
+.ggg-menu-item-checked{font-weight:600}
+
+/* ── 设置分区 ───────────────────────────────────────────── */
+.ggg-settings{top:8%;left:8%;right:8%;bottom:8%;transform:none;width:auto;max-width:560px;margin:auto;max-height:84vh}
+.ggg-settings-body{overflow:auto;display:flex;flex-direction:column;gap:14px;padding:2px}
+.ggg-set-section{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.ggg-set-section-title{font-weight:600;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.ggg-set-row{display:flex;align-items:center;gap:10px;font-size:12px}
+.ggg-set-row-inline{cursor:pointer}
+.ggg-set-row-text{flex:none;color:var(--dsw-alias-label-primary)}
+.ggg-set-row-block{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.ggg-set-note{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}
+.ggg-set-remotes{display:flex;flex-direction:column;gap:4px}
+.ggg-set-remote{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-1)}
+.ggg-set-remote-name{flex:none;font-weight:600;font-size:12px}
+.ggg-set-remote-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}
+.ggg-set-remote-del{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.ggg-set-remote-del:hover{background:var(--dsw-alias-state-error-bg-secondary,rgba(255,0,0,0.08));color:var(--dsw-alias-state-error-primary)}
+.ggg-set-form{display:flex;flex-direction:column;gap:8px}
+
+/* ── 自建弹窗（Modal 内表单） ───────────────────────────── */
+.ggg-field{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.ggg-field-inline{flex-direction:row;align-items:center;gap:8px;cursor:pointer}
+.ggg-field-label{color:var(--dsw-alias-label-secondary)}
+.ggg-field-text{flex:1}
 `;

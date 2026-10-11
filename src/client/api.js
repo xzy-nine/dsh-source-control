@@ -35,18 +35,27 @@ export async function callApi(cwd, message) {
  *
  * @param {string} cwd - 会话工作区路径。
  * @param {object} options - 读取选项。
- * @param {number} options.maxCommits - 最多加载的提交数。
- * @param {string} options.commitOrdering - 排序方式：topo（拓扑，默认）/ date（提交时间）/ author-date（作者时间）。
+ * @param {number} [options.maxCommits] - 最多加载的提交数。
+ * @param {string} [options.commitOrdering] - 排序方式：topo（拓扑，默认）/ date（提交时间）/ author-date（作者时间）。
+ * @param {boolean} [options.showStashes] - 是否参与贮藏标注与图绘制。
+ * @param {boolean} [options.showTags] - 是否参与标签标注。
+ * @param {boolean} [options.showRemoteBranches] - 是否参与远程分支标注。
+ * @param {boolean} [options.onlyFollowFirstParent] - 是否只跟随第一个父提交。
+ * @param {boolean} [options.includeCommitsMentionedByReflogs] - 是否包含 reflog 提到的提交。
  * @returns {Promise<object>} 提交、HEAD、当前分支、远程与是否还有更多提交。
  */
-export async function loadGraph(cwd, { maxCommits = 200, commitOrdering = 'topo' } = {}) {
+export async function loadGraph(cwd, {
+	maxCommits = 200, commitOrdering = 'topo',
+	showStashes = true, showTags = true, showRemoteBranches = true,
+	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false,
+} = {}) {
 	const repoInfo = await callApi(cwd, {
-		command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [],
+		command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [],
 	});
 	const remotes = Array.isArray(repoInfo.remotes) ? repoInfo.remotes : [];
 	const commitsPayload = await callApi(cwd, {
-		command: 'loadCommits', branches: null, maxCommits, showTags: true, showRemoteBranches: true,
-		includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering,
+		command: 'loadCommits', branches: null, maxCommits, showTags, showRemoteBranches,
+		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering,
 		remotes, hideRemotes: [], stashes: Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [],
 	});
 	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;
@@ -157,4 +166,335 @@ export async function fetchRepo(cwd, name) {
 export async function pushBranch(cwd, branchName, remotes) {
 	const payload = await callApi(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '' });
 	return Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+}
+
+/**
+ * 读取仓库配置（远程、issue 链接等）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string[]} remotes - 远程名列表。
+ * @returns {Promise<object>} 配置数据。
+ */
+export async function loadConfig(cwd, remotes) {
+	const payload = await callApi(cwd, { command: 'loadConfig', remotes });
+	return payload;
+}
+
+/**
+ * 检出指定分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} branchName - 分支名。
+ * @param {string|null} remoteBranch - 新建并跟踪的远程分支；本地已有时传 null。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function checkoutBranch(cwd, branchName, remoteBranch = null) {
+	const payload = await callApi(cwd, { command: 'checkoutBranch', branchName, remoteBranch });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 从某提交创建分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} branchName - 新分支名。
+ * @param {string} commitHash - 起点提交哈希。
+ * @param {boolean} checkout - 创建后是否检出。
+ * @param {boolean} force - 是否强制覆盖同名分支。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function createBranch(cwd, branchName, commitHash, checkout = true, force = false) {
+	const payload = await callApi(cwd, { command: 'createBranch', branchName, commitHash, checkout, force });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 删除本地分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} branchName - 分支名。
+ * @param {boolean} forceDelete - 是否强制删除未合并分支。
+ * @param {string[]} deleteOnRemotes - 同时删除的远程分支名。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function deleteBranch(cwd, branchName, forceDelete = false, deleteOnRemotes = []) {
+	const payload = await callApi(cwd, { command: 'deleteBranch', branchName, forceDelete, deleteOnRemotes });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 重命名分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} oldName - 原分支名。
+ * @param {string} newName - 新分支名。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function renameBranch(cwd, oldName, newName) {
+	const payload = await callApi(cwd, { command: 'renameBranch', oldName, newName });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 删除远程分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} branchName - 远程分支短名（含远程前缀由 remote 拼接）。
+ * @param {string} remote - 远程名。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function deleteRemoteBranch(cwd, branchName, remote) {
+	const payload = await callApi(cwd, { command: 'deleteRemoteBranch', branchName, remote });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 把远程分支取到同名本地分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} remote - 远程名。
+ * @param {string} remoteBranch - 远程分支名。
+ * @param {string} localBranch - 本地分支名。
+ * @param {boolean} force - 是否强制覆盖本地分支。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function fetchIntoLocalBranch(cwd, remote, remoteBranch, localBranch, force = false) {
+	const payload = await callApi(cwd, { command: 'fetchIntoLocalBranch', remote, remoteBranch, localBranch, force });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 把远程分支拉入当前分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} branchName - 远程分支名。
+ * @param {string} remote - 远程名。
+ * @param {boolean} createNewCommit - 是否生成合并提交。
+ * @param {boolean} squash - 是否压缩合并。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function pullBranch(cwd, branchName, remote, createNewCommit = false, squash = false) {
+	const payload = await callApi(cwd, { command: 'pullBranch', branchName, remote, createNewCommit, squash });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 检出指定提交（分离 HEAD）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} commitHash - 提交哈希。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function checkoutCommit(cwd, commitHash) {
+	const payload = await callApi(cwd, { command: 'checkoutCommit', commitHash });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 把提交拣选到当前分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} commitHash - 提交哈希。
+ * @param {number} parentIndex - 合并提交要拣选的父提交序号；非合并提交传 -1。
+ * @param {boolean} recordOrigin - 是否在提交信息记录来源。
+ * @param {boolean} noCommit - 是否只应用改动不提交。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function cherrypickCommit(cwd, commitHash, parentIndex = -1, recordOrigin = false, noCommit = false) {
+	const payload = await callApi(cwd, { command: 'cherrypickCommit', commitHash, parentIndex, recordOrigin, noCommit });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 把当前分支重置到指定提交。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} commitHash - 目标提交哈希。
+ * @param {('soft'|'mixed'|'hard')} resetMode - 重置模式。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function resetToCommit(cwd, commitHash, resetMode = 'mixed') {
+	const payload = await callApi(cwd, { command: 'resetToCommit', commit: commitHash, resetMode });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 在指定提交上生成还原提交。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} commitHash - 要还原的提交哈希。
+ * @param {number} parentIndex - 合并提交要还原的父提交序号；非合并提交传 -1。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function revertCommit(cwd, commitHash, parentIndex = -1) {
+	const payload = await callApi(cwd, { command: 'revertCommit', commitHash, parentIndex });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 把目标合并进当前分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} obj - 目标分支名或提交哈希。
+ * @param {boolean} createNewCommit - 是否生成合并提交。
+ * @param {boolean} squash - 是否压缩合并。
+ * @param {boolean} noCommit - 是否只应用改动不提交。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function merge(cwd, obj, createNewCommit = false, squash = false, noCommit = false) {
+	const payload = await callApi(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 把当前分支变基到目标。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} obj - 目标分支名或提交哈希。
+ * @param {boolean} ignoreDate - 是否保留原提交时间。
+ * @param {boolean} interactive - 是否交互式变基。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function rebase(cwd, obj, ignoreDate = true, interactive = false) {
+	const payload = await callApi(cwd, { command: 'rebase', obj, actionOn: 'Branch', ignoreDate, interactive });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 在当前分支添加标签。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} tagName - 标签名。
+ * @param {string} commitHash - 目标提交哈希。
+ * @param {number} type - 标签类型：0 轻量、1 附注。
+ * @param {string} message - 附注标签信息。
+ * @param {boolean} force - 是否强制覆盖同名标签。
+ * @param {string|null} pushToRemote - 创建后推送到的远程名；不推送传 null。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function addTag(cwd, tagName, commitHash, type = 0, message = '', force = false, pushToRemote = null) {
+	const payload = await callApi(cwd, { command: 'addTag', tagName, commitHash, type, message, force, pushToRemote });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 删除标签。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} tagName - 标签名。
+ * @param {string|null} deleteOnRemote - 同时删除的远程名；不删远程传 null。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function deleteTag(cwd, tagName, deleteOnRemote = null) {
+	const payload = await callApi(cwd, { command: 'deleteTag', tagName, deleteOnRemote });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 推送标签到远程。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} tagName - 标签名。
+ * @param {string[]} remotes - 目标远程名列表。
+ * @param {string} commitHash - 标签指向的提交哈希。
+ * @param {boolean} skipRemoteCheck - 是否跳过远程存在性检查。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function pushTag(cwd, tagName, remotes, commitHash, skipRemoteCheck = false) {
+	const payload = await callApi(cwd, { command: 'pushTag', tagName, remotes, commitHash, skipRemoteCheck });
+	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+	return errors.length > 0 ? errors[0] : null;
+}
+
+/**
+ * 删除远程。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} name - 远程名。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function deleteRemote(cwd, name) {
+	const payload = await callApi(cwd, { command: 'deleteRemote', name });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 应用贮藏。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} selector - 贮藏选择器（如 stash@{0}）。
+ * @param {boolean} reinstateIndex - 是否恢复暂存区。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function applyStash(cwd, selector, reinstateIndex = false) {
+	const payload = await callApi(cwd, { command: 'applyStash', selector, reinstateIndex });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 从贮藏创建分支。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} selector - 贮藏选择器。
+ * @param {string} branchName - 新分支名。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function branchFromStash(cwd, selector, branchName) {
+	const payload = await callApi(cwd, { command: 'branchFromStash', selector, branchName });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 丢弃贮藏。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} selector - 贮藏选择器。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function dropStash(cwd, selector) {
+	const payload = await callApi(cwd, { command: 'dropStash', selector });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 弹出贮藏。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} selector - 贮藏选择器。
+ * @param {boolean} reinstateIndex - 是否恢复暂存区。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function popStash(cwd, selector, reinstateIndex = false) {
+	const payload = await callApi(cwd, { command: 'popStash', selector, reinstateIndex });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 新建贮藏。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} message - 贮藏说明。
+ * @param {boolean} includeUntracked - 是否一并贮藏未跟踪文件。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function pushStash(cwd, message, includeUntracked = true) {
+	const payload = await callApi(cwd, { command: 'pushStash', message, includeUntracked });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 清理未跟踪文件。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {boolean} directories - 是否连未跟踪目录一并删除。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function cleanUntrackedFiles(cwd, directories = false) {
+	const payload = await callApi(cwd, { command: 'cleanUntrackedFiles', directories });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
