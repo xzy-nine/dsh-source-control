@@ -1,0 +1,5 @@
+# dsh-dev-git-graph：把本插件插进 profile 的层栈（host 路由 + client 面板同包）。
+- insert:
+    - id: dev-git-graph
+      name: dsh-dev-git-graph
+      config: {}

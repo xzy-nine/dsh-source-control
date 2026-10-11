@@ -1,0 +1,79 @@
+{
+  "name": "dsh-dev-git-graph",
+  "version": "0.2.0",
+  "description": "DSH 插件：内置右侧栏 Git Graph 提交图页——移植 vscode-git-graph 1.30.0，host 直跑 git 命令 + 同源静态服务，按会话工作区自动绑定仓库，经引导页入口或会话 header 按钮打开。",
+  "license": "MIT",
+  "author": "xzy-nine",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "git",
+    "git-graph",
+    "commit-graph",
+    "vscode-git-graph",
+    "sidebar",
+    "visualization"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xzy-nine/dsh-dev-git-graph.git"
+  },
+  "homepage": "https://github.com/xzy-nine/dsh-dev-git-graph#readme",
+  "type": "module",
+  "main": "./lib/src/index.js",
+  "types": "./lib/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/src/index.d.ts",
+      "default": "./lib/src/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "media",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE",
+    "vendor/git-graph/LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm run build:host && cp src/client.js lib/client.js",
+    "build:host": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "sessions",
+        "slots",
+        "sidebarRight",
+        "sidebarRightTabs"
+      ]
+    }
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}
