@@ -17,9 +17,13 @@ export const NODE_RADIUS = 3.5;
 /**
  * 计算提交序列的泳道布局。
  *
- * 算法为自顶向下的「活动泳道」扫描：每个提交占用一条当前空闲的泳道，
- * 其第一个父提交继承该泳道继续向下，其余父提交各自汇入对应泳道，
- * 由此得到与 Git Graph 一致的分支走向。
+ * 每条泳道持有一个「正在等待的提交」与它所属分支的颜色。扫描分四步：
+ *
+ * 1. 收集所有正在等待本行提交的泳道；最左的一条是它的落点，其余是本行汇入的
+ *    分支（画曲线并入后立即释放，否则会永久占用一条泳道）。
+ * 2. 仍在等待其它提交的泳道，整行画贯穿线——漏掉这一步分支线会在行间断开。
+ * 3. 本行提交若来自上方（被某条泳道等待），画入线；否则它是分支的头。
+ * 4. 第一个父提交继承本泳道与颜色；其余父提交是在本行分出的分支，各占一条泳道。
  *
  * @param commits - 提交序列，按图上的从上到下顺序。
  * @returns 每行布局与泳道总数。
@@ -29,12 +33,8 @@ export function layoutCommits(commits) {
 	const rowOf = new Map();
 	commits.forEach((commit, index) => rowOf.set(commit.hash, index));
 
-	/** 当前每条泳道等待的提交哈希；null 表示空闲。 */
+	/** 泳道 -> 正在等待的提交及颜色；null 表示空闲。 */
 	const lanes = [];
-	/** 提交哈希 -> 分配到的泳道。 */
-	const laneOf = new Map();
-	/** 提交哈希 -> 颜色下标（继承自父提交，使一条分支同色）。 */
-	const colourOf = new Map();
 	const rows = [];
 	let nextColour = 0;
 	let laneCount = 0;
@@ -50,62 +50,77 @@ export function layoutCommits(commits) {
 
 	for (let row = 0; row < commits.length; row++) {
 		const commit = commits[row];
-		// 该提交可能已被某个父提交「预约」了泳道（它作为父出现在上面）。
-		let lane = laneOf.get(commit.hash);
-		if (lane === undefined) {
-			lane = takeLane();
-			laneOf.set(commit.hash, lane);
+		/** 进入本行时各泳道在等谁：贯穿线按这份快照画。 */
+		const awaited = lanes.slice();
+
+		/** 正在等待本行提交的泳道，从左到右。 */
+		const waiting = [];
+		for (let index = 0; index < lanes.length; index++) {
+			if (lanes[index] !== null && lanes[index].hash === commit.hash) waiting.push(index);
 		}
-		let colour = colourOf.get(commit.hash);
-		if (colour === undefined) {
-			colour = nextColour++;
-			colourOf.set(commit.hash, colour);
-		}
+
+		// 落点：最左的等待泳道，或新开一条（本行是分支的头）。
+		const lane = waiting.length > 0 ? waiting[0] : takeLane();
+		const colour = waiting.length > 0 ? lanes[lane].colour : nextColour++;
 
 		const segments = [];
-		// 本行结束时，该泳道交给第一个父提交；没有父提交则释放。
-		const [firstParent, ...otherParents] = commit.parents;
 
-		if (firstParent !== undefined && rowOf.has(firstParent)) {
-			laneOf.set(firstParent, lane);
-			colourOf.set(firstParent, colour);
-			lanes[lane] = firstParent;
-			segments.push({
-				from: { row, lane },
-				to: { row: row + 1, lane },
-				straight: true,
-				colour,
-			});
+		// 1) 其它泳道：仍在等别的提交的整行贯穿；也在等本提交的弯入节点后释放。
+		for (let index = 0; index < awaited.length; index++) {
+			const entry = awaited[index];
+			if (entry === null || index === lane) continue;
+			if (entry.hash === commit.hash) {
+				// 汇入本行提交：上半行曲线落到节点，该泳道随即空闲。
+				segments.push({ lane: index, toLane: lane, fromTop: true, toBottom: false, colour: entry.colour, curved: true });
+				lanes[index] = null;
+			} else {
+				segments.push({ lane: index, toLane: index, fromTop: true, toBottom: true, colour: entry.colour, curved: false });
+			}
+		}
+
+		// 2) 本行提交的入线：被上方等待时从行顶画到节点。
+		const awaitedAtLane = awaited[lane] ?? null;
+		const inbound = awaitedAtLane !== null && awaitedAtLane.hash === commit.hash;
+
+		const [firstParent, ...otherParents] = commit.parents ?? [];
+		const hasFirstParent = firstParent !== undefined && rowOf.has(firstParent);
+
+		if (inbound) {
+			segments.push({ lane, toLane: lane, fromTop: true, toBottom: hasFirstParent, colour, curved: false });
+		}
+
+		// 3) 第一个父提交：继承本泳道与颜色。
+		if (hasFirstParent) {
+			lanes[lane] = { hash: firstParent, colour };
+			if (!inbound) {
+				// 分支的头：从节点画到行底。
+				segments.push({ lane, toLane: lane, fromTop: false, toBottom: true, colour, curved: false });
+			}
 		} else {
 			lanes[lane] = null;
 		}
 
+		// 4) 其余父提交：本行分出的分支，各占一条泳道（已在等待则并入）。
 		for (const parent of otherParents) {
 			if (!rowOf.has(parent)) continue;
-			let parentLane = laneOf.get(parent);
-			if (parentLane === undefined) {
+			let parentLane = -1;
+			for (let index = 0; index < lanes.length; index++) {
+				if (lanes[index] !== null && lanes[index].hash === parent) { parentLane = index; break; }
+			}
+			if (parentLane === -1) {
 				parentLane = takeLane();
-				laneOf.set(parent, parentLane);
+				lanes[parentLane] = { hash: parent, colour: nextColour++ };
 			}
-			let parentColour = colourOf.get(parent);
-			if (parentColour === undefined) {
-				parentColour = nextColour++;
-				colourOf.set(parent, parentColour);
-			}
-			// 从本行汇入父提交所在泳道：先横移，再向下。
 			segments.push({
-				from: { row, lane },
-				to: { row: row + 1, lane: parentLane },
-				straight: false,
-				colour: parentColour,
+				lane, toLane: parentLane, fromTop: false, toBottom: true,
+				colour: lanes[parentLane].colour, curved: true,
 			});
-			lanes[parentLane] = parent;
 		}
 
-		// 本行需要的宽度：本行泳道、所有连线端点、以及仍被占用的最右泳道。
+		// 本行需要的宽度：线段端点与仍被占用的最右泳道。
 		let width = lane + 1;
 		for (const segment of segments) {
-			width = Math.max(width, segment.from.lane + 1, segment.to.lane + 1);
+			width = Math.max(width, segment.lane + 1, segment.toLane + 1);
 		}
 		for (let index = 0; index < lanes.length; index++) {
 			if (lanes[index] !== null) width = Math.max(width, index + 1);
@@ -141,4 +156,41 @@ export const LANE_COLOURS = [
  */
 export function laneColour(colour) {
 	return LANE_COLOURS[colour % LANE_COLOURS.length];
+}
+
+/** 泳道中心线在行内的横向像素位置。 */
+export function laneCentre(lane) {
+	return lane * LANE_WIDTH + LANE_WIDTH / 2;
+}
+
+/**
+ * 把一条线段转成 SVG 路径描述。
+ *
+ * 竖直段是直线；横移段是「先竖直到行中、再横移、再竖直」的两段折线；
+ * 弯曲段是三次贝塞尔，两端保持竖直切向，控制点各取纵向跨度的一半——
+ * 这保证入线从行顶、出线到行底都能接上相邻行的线。
+ *
+ * @param segment - 布局给出的线段。
+ * @param isLast - 是否是最后一行（末行的出线终止于节点高度）。
+ * @returns 路径描述；线段无长度时返回 null。
+ */
+export function segmentGeometry(segment, isLast = false) {
+	const x1 = laneCentre(segment.lane);
+	const x2 = laneCentre(segment.toLane);
+	const half = ROW_HEIGHT / 2;
+	const y1 = segment.fromTop ? 0 : half;
+	const y2 = segment.toBottom ? (isLast ? half : ROW_HEIGHT) : half;
+	if (segment.curved && x1 !== x2) {
+		const bend = (y2 - y1) / 2;
+		return { kind: 'path', d: `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}` };
+	}
+	if (x1 !== x2) {
+		return {
+			kind: 'bend',
+			horizontal: { x1, y1, x2: x1, y2: half },
+			vertical: { x1: x2, y1: half, x2, y2 },
+		};
+	}
+	if (y1 === y2) return null;
+	return { kind: 'line', x1, y1, x2, y2 };
 }

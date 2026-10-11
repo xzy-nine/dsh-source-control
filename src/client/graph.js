@@ -6,10 +6,12 @@
  */
 import React from 'react';
 import { Tag } from '@deepseek-ai/dsh-client-ui-primitives';
-import { laneColour, layoutCommits, LANE_WIDTH, NODE_RADIUS, ROW_HEIGHT } from './lanes.js';
+import { laneCentre, laneColour, layoutCommits, segmentGeometry, LANE_WIDTH, NODE_RADIUS, ROW_HEIGHT } from './lanes.js';
 
 /**
  * 画一行的泳道线。
+ *
+ * 几何由 lanes.js 的 segmentGeometry 给出（纯函数，可单测），这里只做元素拼装。
  *
  * @param props.row - 该行的布局。
  * @param props.laneCount - 全局泳道数，用于固定宽度。
@@ -18,32 +20,29 @@ import { laneColour, layoutCommits, LANE_WIDTH, NODE_RADIUS, ROW_HEIGHT } from '
  */
 function LaneCell({ row, laneCount, isLast }) {
 	const width = laneCount * LANE_WIDTH;
-	const centre = (lane) => lane * LANE_WIDTH + LANE_WIDTH / 2;
 	const half = ROW_HEIGHT / 2;
 	return React.createElement(
 		'svg',
 		{ className: 'ggg-lane', width, height: ROW_HEIGHT, viewBox: `0 0 ${width} ${ROW_HEIGHT}`, 'aria-hidden': 'true' },
-		// 连线：先横移再向下，画成两段，拐点落在两行之间。
 		...(row.segments ?? []).flatMap((segment, index) => {
-			const x1 = centre(segment.from.lane);
-			const x2 = centre(segment.to.lane);
+			const geometry = segmentGeometry(segment, isLast);
+			if (geometry === null) return [];
 			const stroke = laneColour(segment.colour);
-			const y1 = segment.straight ? 0 : half;
-			const parts = [];
-			if (segment.straight) {
-				if (!isLast) parts.push(React.createElement('line', { key: `s${index}`, x1, y1: 0, x2, y2: ROW_HEIGHT, stroke, strokeWidth: 1.5 }));
-			} else {
-				parts.push(React.createElement('path', {
-					key: `p${index}`,
-					d: `M ${x1} ${y1} C ${x1} ${half + 6}, ${x2} ${half - 6}, ${x2} ${ROW_HEIGHT}`,
-					fill: 'none', stroke, strokeWidth: 1.5,
-				}));
+			const common = { stroke, strokeWidth: 1.5 };
+			if (geometry.kind === 'path') {
+				return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
 			}
-			return parts;
+			if (geometry.kind === 'bend') {
+				return [
+					React.createElement('line', { key: `h${index}`, ...geometry.horizontal, ...common }),
+					React.createElement('line', { key: `v${index}`, ...geometry.vertical, ...common }),
+				];
+			}
+			return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
 		}),
 		// 节点：当前提交。
 		React.createElement('circle', {
-			cx: centre(row.lane), cy: half, r: NODE_RADIUS,
+			cx: laneCentre(row.lane), cy: half, r: NODE_RADIUS,
 			fill: laneColour(row.colour), stroke: 'var(--dsw-alias-bg-base)', strokeWidth: 1,
 		}),
 	);
