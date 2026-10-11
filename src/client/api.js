@@ -34,17 +34,19 @@ export async function callApi(cwd, message) {
  * `loadCommits` 需要仓库的远程列表与 stash 列表参与引用标注，因此先取仓库信息。
  *
  * @param {string} cwd - 会话工作区路径。
- * @param {number} maxCommits - 最多加载的提交数。
+ * @param {object} options - 读取选项。
+ * @param {number} options.maxCommits - 最多加载的提交数。
+ * @param {string} options.commitOrdering - 排序方式：topo（拓扑，默认）/ date（提交时间）/ author-date（作者时间）。
  * @returns {Promise<object>} 提交、HEAD、当前分支、远程与是否还有更多提交。
  */
-export async function loadGraph(cwd, maxCommits = 200) {
+export async function loadGraph(cwd, { maxCommits = 200, commitOrdering = 'topo' } = {}) {
 	const repoInfo = await callApi(cwd, {
 		command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [],
 	});
 	const remotes = Array.isArray(repoInfo.remotes) ? repoInfo.remotes : [];
 	const commitsPayload = await callApi(cwd, {
 		command: 'loadCommits', branches: null, maxCommits, showTags: true, showRemoteBranches: true,
-		includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'date',
+		includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering,
 		remotes, hideRemotes: [], stashes: Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [],
 	});
 	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;

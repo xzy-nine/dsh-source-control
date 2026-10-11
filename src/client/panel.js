@@ -11,6 +11,7 @@ import {
 	IconCloseOutlineRegular, IconCompareSplitOutlineRegular, IconPlusOutlineRegular,
 	IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { OrderingMenu, SettingsPanel, ORDERING, DEFAULT_ORDERING } from './settings.js';
 import {
 	commitStaged, discardPaths, fetchRepo, loadCommitFiles, loadGraph, loadWorkingTree, pushBranch, stagePaths, unstagePaths,
 } from './api.js';
@@ -113,6 +114,9 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 	const [message, setMessage] = React.useState('');
 	const [amend, setAmend] = React.useState(false);
 	const [maxCommits, setMaxCommits] = React.useState(200);
+	// 排序方式：默认拓扑序，见 ORDERING 的说明。
+	const [commitOrdering, setCommitOrdering] = React.useState(DEFAULT_ORDERING);
+	const [settingsOpen, setSettingsOpen] = React.useState(false);
 
 	const workingTreePath = cwd ?? null;
 
@@ -125,7 +129,7 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 		setState((previous) => ({ ...previous, phase: 'loading', error: null }));
 		try {
 			const [graph, entries] = await Promise.all([
-				loadGraph(workingTreePath, maxCommits),
+				loadGraph(workingTreePath, { maxCommits, commitOrdering }),
 				loadWorkingTree(workingTreePath),
 			]);
 			setState((previous) => ({
@@ -135,7 +139,7 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 		} catch (error) {
 			setState((previous) => ({ ...previous, phase: 'error', error: error instanceof Error ? error.message : String(error) }));
 		}
-	}, [workingTreePath, maxCommits]);
+	}, [workingTreePath, maxCommits, commitOrdering]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -227,11 +231,16 @@ export function GitGraphPanel({ cwd, onOpenDiff }) {
 			}, React.createElement(IconBranchOutlineRegular, { size: 15 })),
 			React.createElement('span', { className: 'ggg-bar-spacer' }),
 			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', title: '重新加载', disabled: state.busy,
-				onClick: () => { void refresh(); },
+				variant: 'toolbar', size: 'sm', title: '设置', disabled: state.busy,
+				onClick: () => setSettingsOpen(true),
 			}, React.createElement(IconSettingsOutlineRegular, { size: 15 })),
 		),
 		state.error !== null && React.createElement('div', { className: 'ggg-error' }, state.error),
+
+		React.createElement(SettingsPanel, {
+			open: settingsOpen, onClose: () => setSettingsOpen(false),
+			commitOrdering, onCommitOrderingChange: setCommitOrdering,
+		}),
 
 		// ── 存储库 ──────────────────────────────────────────────
 		React.createElement(
