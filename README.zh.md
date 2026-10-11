@@ -1,24 +1,38 @@
 # dsh-dev-git-graph
 
+DSH 插件：会话 **Git Graph 页**——在 DSH Web GUI 内置右侧 Sidebar 中以「Git Graph」页显示**当前会话工作区**的
+提交图、变更列表与提交框。界面按 VS Code 的「源代码管理 + 图形」视图排布，控件取自 DSH 的
+`@deepseek-ai/dsh-client-ui-primitives`，因此外观与 Harness 本身一致。
+
 ## 架构
 
 ```
-内置右侧栏页「Git Graph」(client.js)
+内置右侧栏页「Git Graph」(src/client/index.js，主文档内 React 树)
   └─ useSessions() 取该会话工作区 cwd
-  └─ iframe /dsh-dev-git-graph/gg/index.html?repo=<cwd>
-        │ host 注入 window.__DSH_GG_BOOT__ = { apiBase, repo, initialState, ... }
-        ▼
-  └─ VS Code 兼容桥：postMessage → fetch POST /dsh-dev-git-graph/gg/api
+  └─ 面板：工具栏 / 存储库 / 变更 + 提交框 / 提交图（泳道 SVG）
+        │ fetch POST /dsh-dev-git-graph/gg/api
         ▼
 host 路由 (src/git-graph/routes.ts)
+  └─ src/git-graph/working-tree.ts：工作区状态 / 暂存 / 提交 / 丢弃
         ▼
 本地 git 仓库
 ```
 
-- API：`POST /dsh-dev-git-graph/gg/api`，命令集对齐原扩展 `gitGraphView.respondToMessage`（约 60 个命令）。
-- 主题：CSS 把 `--vscode-*` 映射到 DSH `--dsw-alias-*` 设计变量（缺省值兜底），随主题变明暗。
-- 页注册：`ctx.sidebarRightTabs.register`（id `dsh-dev-git-graph/git-graph`，kind `devGitGraph`），
+- **界面**：`src/client/` 下的 React 组件，由 esbuild 打包为 `lib/client.js`；`react` 与
+  `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，外部化引用。
+- **主题**：样式只用 `--dsw-alias-*` 语义 token，随主题明暗切换。
+- **页注册**：`ctx.sidebarRightTabs.register`（id `dsh-dev-git-graph/git-graph`，kind `devGitGraph`），
   正文进带键席位 `sidebar.right.pane.tab`，chip 标题进 `sidebar.right.pane.tab.title`。
+
+## 面板布局
+
+| 区域 | 内容 |
+|---|---|
+| 工具栏 | 刷新、抓取、推送当前分支 |
+| 存储库 | 当前仓库与所在分支 |
+| 更改 | 工作区变更列表（状态字符 + 文件类型图标 + 悬停操作：打开差异 / 丢弃 / 暂存或取消暂存）；全部暂存与全部丢弃 |
+| 提交框 | 提交信息（Ctrl+Enter 提交）、修补上一次提交、提交按钮（显示已暂存数量） |
+| 图形 | 提交泳道图：分支彩线、引用标签（分支 / 远程 / 标签 / 贮藏）、提交信息、作者、相对时间、短哈希；选中提交展开其改动文件 |
 
 ## 打开入口（内置右侧栏）
 
@@ -29,41 +43,42 @@ host 路由 (src/git-graph/routes.ts)
 | 引导页入口胶囊 | 类型定义的 `guide` 条目 | 右侧栏 tab 条「+」打开引导页后，点「Git Graph」胶囊即打开该页 |
 | 会话 header 图标按钮 | `conversation.session.header.utilities`（order -5） | 直接打开该页；已打开时聚焦 |
 
+## 宿主命令
+
+| 命令 | 说明 |
+|---|---|
+| `loadWorkingTree` | 读取工作区变更（解析 `git status --porcelain -z`，含重命名原路径） |
+| `stagePaths` | 暂存指定路径；空数组表示全部 |
+| `unstagePaths` | 取消暂存；仓库还没有 HEAD 时退回 `git rm --cached` |
+| `discardPaths` | 丢弃改动（未跟踪文件走 `git clean`，已跟踪文件走 `git restore`） |
+| `commitStaged` | 提交暂存区，返回新提交哈希 |
+
 ## 与原版差异
 
 | 项 | 说明 |
 |---|---|
+| 界面 | 不再内嵌 VS Code webview，改为 DSH 组件构成的 React 面板 |
 | VS Code 专属命令 | `openFile` / `viewDiff` / `viewDiffWithWorkingFile` / `openTerminal` / `createPullRequest` / `createArchive` 等返回「暂不支持」 |
-| 状态持久化 | 前端 localStorage（原扩展用 workspaceState），`setGlobalViewState` 等直接 ACK |
 | 仓库来源 | 自动绑定当前会话工作区（无工作区时页内显示提示） |
-
-## 汉化
-
-```bash
-pnpm --filter dsh-dev-git-graph i18n
-
-# 只校验（键完整性、HTML 标签与属性名、HTML 实体），不写文件
-pnpm --filter dsh-dev-git-graph i18n:check
-```
-
-- `scripts/i18n/zh.json` 是唯一译文来源（键为源码英文原文，含 HTML 片段原文）。
-- `scripts/i18n/literals.mjs` 按 JS 词法扫描字面量（跳过注释与正则字面量）；`extract.mjs` 判定候选；`wrap.mjs` 按位置包裹。
-- `generate.mjs` 重跑幂等：已知 519 条候选、518 条译文，已包裹的位置不会重复包裹。
-- 与外部数据比较的字面量（`bad revision 'HEAD'`、`git branch -D`）在 BLOCKLIST 中，永不翻译。
-- HTML 片段只翻译标签外文本与 `title`/`placeholder`/`aria-label`/`alt` 的值；标签、属性名、id/class/data-* 一律不动，校验会拒绝结构变化的译文。
-- 日期与相对时间（`utils.ts`）不用查表：月份、星期与「N 分钟前」按中文格式直接生成。
 
 ## 构建与安装
 
 ```bash
+# 构建：宿主 tsc → lib/，前端 esbuild → lib/client.js
 pnpm --filter dsh-dev-git-graph build
 
-# 类型检查
+# 类型检查与泳道布局测试
 pnpm --filter dsh-dev-git-graph typecheck
+pnpm --filter dsh-dev-git-graph test
 
 # 安装到 web profile（本地目录）
 dsh plugin --profile web add file:/path/to/dsh-plugins/packages/dsh-dev-git-graph
 # 重启 dsh web 生效；会话页右侧栏「+」→ 引导页出现「Git Graph」，会话 header 亦有图标按钮
 ```
+
+- 宿主半边用 `tsc -p tsconfig.json` 编译到 `lib/`；前端半边用 `scripts/build-client.mjs`
+  （esbuild）打成 `lib/client.js`。
+- `react` 与 `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，构建时外部化；
+  浏览器半边不得引入其他裸模块。
 
 ## 许可

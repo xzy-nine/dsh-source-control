@@ -1,37 +1,12 @@
 /**
- * dsh-dev-git-graph git-graph 宿主路由：
- * - 静态服务 media/ 下打包好的 git-graph 前端（iframe 加载）。
- * - 以 POST /dsh-dev-git-graph/gg/api 暴露原扩展 gitGraphView.respondToMessage 的命令集，
- *   数据层复用 vendor/git-graph/dataSource.ts（源码级移植，见 vendor/git-graph/LICENSE）。
+ * dsh-dev-git-graph 宿主路由：以 POST /dsh-dev-git-graph/gg/api 暴露 git 命令集，
+ * 数据层复用 vendor/git-graph/dataSource.ts（源码级移植，见 vendor/git-graph/LICENSE），
+ * 工作区变更命令见 ./working-tree.ts。前端是主文档内的 React 面板，不再有静态页。
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
 import type http from 'node:http';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
-import {
-	createDefaultRepos,
-	createDefaultViewConfig,
-	DEFAULT_GIT_GRAPH_VIEW_GLOBAL_STATE,
-	DEFAULT_GIT_GRAPH_VIEW_WORKSPACE_STATE,
-} from './defaultConfig.js';
-
-const moduleDir = dirname(fileURLToPath(import.meta.url));
-// lib/src/git-graph/routes.js -> 包根
-const pkgRoot = join(moduleDir, '..', '..', '..');
-const mediaDir = join(pkgRoot, 'media');
-
-const MIME: Record<string, string> = {
-	'.html': 'text/html; charset=utf-8',
-	'.js': 'text/javascript; charset=utf-8',
-	'.css': 'text/css; charset=utf-8',
-	'.svg': 'image/svg+xml',
-	'.png': 'image/png',
-	'.woff': 'font/woff',
-	'.woff2': 'font/woff2',
-};
+import { commitStaged, discardPaths, loadWorkingTree, stagePaths, unstagePaths } from './working-tree.js';
 
 let dataSourcePromise: Promise<DataSource> | null = null;
 
@@ -66,73 +41,6 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 	});
 }
 
-function buildIndexHtml(repo: string): string {
-	const template = readFileSync(join(mediaDir, 'index.html'), 'utf8');
-	const boot = {
-		apiBase: '/dsh-dev-git-graph/gg',
-		repo,
-		initialState: {
-			config: createDefaultViewConfig(),
-			lastActiveRepo: repo,
-			loadViewTo: null,
-			repos: createDefaultRepos(repo),
-			loadRepoInfoRefreshId: 0,
-			loadCommitsRefreshId: 0,
-		},
-		globalState: DEFAULT_GIT_GRAPH_VIEW_GLOBAL_STATE,
-		workspaceState: DEFAULT_GIT_GRAPH_VIEW_WORKSPACE_STATE,
-	};
-	const bootScript = `<script>window.__DSH_GG_BOOT__=${JSON.stringify(boot).replace(/</g, '\\u003c')};</script>`;
-	return template.replace('</head>', bootScript + '\n</head>');
-}
-
-// 静态资源进程内缓存 + gzip 预压缩：media 在启动后不变，重复打开面板无需重读盘/重压缩。
-// index.html 含 per-repo boot，不进缓存。
-const staticCache = new Map<string, { raw: Buffer; gz: Buffer; mime: string }>();
-
-function getStatic(name: string): { raw: Buffer; gz: Buffer; mime: string } | null {
-	const safe = name.replace(/[^a-zA-Z0-9._-]/g, '');
-	const hit = staticCache.get(safe);
-	if (hit) return hit;
-	const file = join(mediaDir, safe);
-	if (!existsSync(file)) return null;
-	const raw = readFileSync(file);
-	const ext = safe.slice(safe.lastIndexOf('.'));
-	const entry = { raw, gz: gzipSync(raw), mime: MIME[ext] ?? 'application/octet-stream' };
-	staticCache.set(safe, entry);
-	return entry;
-}
-
-function sendMaybeGzip(req: http.IncomingMessage, res: http.ServerResponse, entry: { raw: Buffer; gz: Buffer; mime: string }, cacheControl: string): void {
-	const accept = String(req.headers['accept-encoding'] ?? '');
-	const headers: Record<string, string> = { 'content-type': entry.mime, 'cache-control': cacheControl };
-	if (accept.includes('gzip')) {
-		headers['content-encoding'] = 'gzip';
-		res.writeHead(200, headers);
-		res.end(entry.gz);
-	} else {
-		res.writeHead(200, headers);
-		res.end(entry.raw);
-	}
-}
-
-function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, name: string, repo: string | null): boolean {
-	const safe = name.replace(/[^a-zA-Z0-9._-]/g, '');
-	if (safe === 'index.html') {
-		// per-repo boot 注入，实时构建但 no-store
-		const file = join(mediaDir, 'index.html');
-		if (!existsSync(file)) return false;
-		res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store' });
-		res.end(buildIndexHtml(repo ?? ''));
-		return true;
-	}
-	const entry = getStatic(safe);
-	if (!entry) return false;
-	// JS/CSS 内容指纹稳定（启动后不变），允许长缓存避免重复传输
-	sendMaybeGzip(req, res, entry, 'public, max-age=3600');
-	return true;
-}
-
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 	const ds = await getDataSource();
 	let msg: Record<string, unknown>;
@@ -142,7 +50,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		return sendBadRequest(res, '请求体不是合法 JSON');
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
-	if (!repo && msg.command !== 'loadRepos') {
+	if (!repo) {
 		return sendBadRequest(res, '缺少 repo');
 	}
 
@@ -159,7 +67,40 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		respond({ command: cmd, error: await fn() });
 	};
 
+	/**
+	 * 执行一条工作区操作：成功时把返回值并入响应，失败时以 `error` 回投。
+	 *
+	 * 与 `respondError` 的区别是后者的函数本身返回错误值；这里的函数返回数据或抛错。
+	 *
+	 * @param cmd - 命令名，原样回投。
+	 * @param fn - 执行体，返回值会并入响应载荷。
+	 */
+	const respondResult = async (cmd: string, fn: () => Promise<Record<string, unknown>>): Promise<void> => {
+		try {
+			respond({ command: cmd, ...(await fn()), error: null });
+		} catch (error) {
+			respond({ command: cmd, error: error instanceof Error ? error.message : String(error) });
+		}
+	};
+
 	switch (msg.command as string) {
+		/* --- 工作区变更（DSH 版新增：变更列表 / 暂存 / 提交 / 丢弃） --- */
+		case 'loadWorkingTree':
+			await respondResult('loadWorkingTree', async () => ({ repo, entries: await loadWorkingTree(repo) }));
+			break;
+		case 'stagePaths':
+			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
+			break;
+		case 'unstagePaths':
+			await respondResult('unstagePaths', async () => { await unstagePaths(repo, arr<string>('paths')); return { repo }; });
+			break;
+		case 'discardPaths':
+			await respondResult('discardPaths', async () => { await discardPaths(repo, arr<string>('paths'), bool('untracked')); return { repo }; });
+			break;
+		case 'commitStaged':
+			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
+			break;
+
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
 			const repoInfo = await ds.getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
@@ -215,9 +156,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 		case 'tagDetails':
 			respond({ command: 'tagDetails', tagName: str('tagName'), commitHash: str('commitHash'), ...(await ds.getTagDetails(repo, str('tagName'))) });
-			break;
-		case 'loadRepos':
-			respond({ command: 'loadRepos', repos: createDefaultRepos(repo), lastActiveRepo: repo || null, loadViewTo: null });
 			break;
 
 		/* --- 分支操作 --- */
@@ -429,29 +367,7 @@ export interface GgRouteContext {
 export function registerGgRoutes(webServer: GgRouteContext): Array<() => void> {
 	const disposers: Array<() => void> = [];
 
-	// 前端入口/静态资源（真实 webServer 前缀规则：path 不带尾斜杠，/dsh-dev-git-graph/gg 同时匹配自身与 /dsh-dev-git-graph/gg/...）
-	disposers.push(
-		webServer.register({
-			kind: 'prefix',
-			path: '/dsh-dev-git-graph/gg',
-			handler: (req, res) => {
-				const url = new URL(req.url ?? '/', 'http://x');
-				const repo = url.searchParams.get('repo');
-				const sub = url.pathname.slice('/dsh-dev-git-graph/gg'.length).replace(/^\//, '');
-				if (sub === '' || sub === 'index.html') {
-					if (!serveStatic(req, res, 'index.html', repo)) {
-						sendJson(res, 404, { error: 'git-graph 前端未构建（缺少 media/index.html）' });
-					}
-					return;
-				}
-				if (!serveStatic(req, res, sub, repo)) {
-					sendJson(res, 404, { error: 'not found: ' + sub });
-				}
-			},
-		}),
-	);
-
-	// 消息 API（POST）
+	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
 	disposers.push(
 		webServer.register({
 			kind: 'exact',

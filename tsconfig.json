@@ -15,5 +15,5 @@
     "noUnusedParameters": false
   },
   "include": ["src/**/*.ts", "vendor/git-graph/**/*.ts"],
-  "exclude": ["vendor/git-graph/web/**", "node_modules"]
+  "exclude": ["node_modules"]
 }

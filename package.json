@@ -1,7 +1,7 @@
 {
   "name": "dsh-dev-git-graph",
   "version": "0.2.0",
-  "description": "DSH 插件：内置右侧栏 Git Graph 提交图页——移植 vscode-git-graph 1.30.0，host 直跑 git 命令 + 同源静态服务，按会话工作区自动绑定仓库，经引导页入口或会话 header 按钮打开。",
+  "description": "DSH 插件：内置右侧栏 Git Graph 页——提交图、变更列表与提交框，控件使用 DSH ui-primitives；host 直跑 git 命令。",
   "license": "MIT",
   "author": "xzy-nine",
   "keywords": [
@@ -12,8 +12,8 @@
     "git",
     "git-graph",
     "commit-graph",
-    "vscode-git-graph",
     "sidebar",
+    "source-control",
     "visualization"
   ],
   "repository": {
@@ -37,7 +37,6 @@
   },
   "files": [
     "lib",
-    "media",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
@@ -45,11 +44,13 @@
     "vendor/git-graph/LICENSE"
   ],
   "scripts": {
-    "build": "pnpm run build:host && cp src/client.js lib/client.js",
+    "build": "pnpm run build:host && pnpm run build:client",
     "build:host": "tsc -p tsconfig.json",
+    "build:client": "node scripts/build-client.mjs",
     "prepublishOnly": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsc -p tsconfig.json --watch"
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test test/*.test.mjs"
   },
   "dsh": {
     "bundle": {
@@ -71,6 +72,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@types/node": "^24.0.0",
+    "esbuild": "^0.24.2",
     "typescript": "^5.9.2"
   },
   "peerDependencies": {

@@ -1,16 +1,19 @@
 # dsh-dev-git-graph
 
-It automatically binds to the **current session's workspace** and renders the commit graph (branch lanes, commit messages, dates, authors, refs), with the full set of git operations from the original extension available via right-click: checkout, merge, rebase, push/pull, tag, stash, and more.
+A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plugin that adds a **Git Graph page** to the DSH Web GUI's built-in right Sidebar: the commit graph, the working-tree changes list, and a commit box, arranged like VS Code's Source Control + Graph view. Its controls come from `@deepseek-ai/dsh-client-ui-primitives`, so it looks and behaves like the rest of the Harness.
+
+It automatically binds to the **current session's workspace**; no manual repo selection is needed.
 
 [中文文档](README.zh.md)
 
 ## Features
 
 - **Right Sidebar page**: a `devGitGraph` page type in the built-in right Sidebar; no third-party sidebar plugin required.
-- **Auto-bound repo**: the graph is loaded for the session's working directory; no manual repo selection needed.
-- **Full git operations**: checkout, cherry-pick, revert, merge, rebase, push, fetch, tag, stash — driven by the original extension's ~60 commands, executed directly against your local git.
-- **Theming**: maps DSH design tokens (`--dsw-alias-*`) onto the graph UI; follows the host's light / dark mode.
-- **No external processes**: the host runs `git` directly via `child_process.spawn` (array args, no shell injection) and serves the frontend same-origin.
+- **Auto-bound repo**: the panel reads the session's working directory from the sessions snapshot.
+- **Working tree**: stage, unstage, discard, and commit, with per-file status and hover actions.
+- **Commit graph**: branch lanes, ref labels (branch / remote / tag / stash), subject, author, relative time, and short hash; selecting a commit lists its changed files.
+- **Theming**: styles use only `--dsw-alias-*` semantic tokens and follow the host's light / dark mode.
+- **No external processes**: the host runs `git` directly via `child_process.spawn` (array args, no shell injection).
 
 ## Install
 
@@ -33,45 +36,53 @@ Both open the same page type, registered through `ctx.sidebarRightTabs.register`
 ```mermaid
 flowchart LR
   subgraph GUI["DSH Web GUI"]
-    TAB["right Sidebar page Git Graph"] --> IFRAME["iframe /dsh-dev-git-graph/gg/index.html?repo=cwd"]
+    TAB["right Sidebar page Git Graph (React tree)"] --> PANEL["toolbar / repos / changes + commit box / commit graph"]
   end
   subgraph HOST["dsh web host plugin"]
-    R1["GET /dsh-dev-git-graph/gg/* static + inject boot data"] -.-> IFRAME
-    IFRAME -->|postMessage bridge| R2["POST /dsh-dev-git-graph/gg/api ~60 commands"]
+    PANEL -->|"fetch POST /dsh-dev-git-graph/gg/api"| API["command set"]
+    API --> WT["src/git-graph/working-tree.ts (status / stage / commit / discard)"] --> REPO
   end
 ```
 
-- **API**: `POST /dsh-dev-git-graph/gg/api` mirrors the original extension's `gitGraphView.respondToMessage` command set.
+- **Frontend**: React components under `src/client/`, bundled by esbuild into `lib/client.js`. `react` and
+  `@deepseek-ai/dsh-client-ui-primitives` are shell-shared platform modules and stay external.
+- **Lanes**: `src/client/lanes.js` is a pure function (commit list → per-row lanes and links) rendered to SVG
+  by React; it does not touch the DOM and is unit-tested.
+- **API**: `POST /dsh-dev-git-graph/gg/api` keeps the ported command set and adds the working-tree commands.
+
+### Host commands added for the changes panel
+
+| Command | Purpose |
+|---|---|
+| `loadWorkingTree` | Working-tree changes (parses `git status --porcelain -z`, including rename origins) |
+| `stagePaths` | Stage the given paths; an empty array stages everything |
+| `unstagePaths` | Unstage; falls back to `git rm --cached` while the repo has no HEAD |
+| `discardPaths` | Discard changes (`git clean` for untracked files, `git restore` for tracked ones) |
+| `commitStaged` | Commit the index and return the new hash |
 
 | Area | Behaviour |
 |---|---|
+| UI | No embedded VS Code webview; a React panel built from DSH primitives |
 | VS Code-only commands | `openFile` / `viewDiff` / `viewDiffWithWorkingFile` / `openTerminal` / `createPullRequest` / `createArchive` return "not supported" |
-| View state persistence | localStorage (the extension used workspaceState); `setGlobalViewState` etc. are ACKed |
 | Repo source | auto-bound to the current session's workspace |
 
 ## Security
 
-- Git is executed with **array arguments** (no shell), so repo paths / refs can't be used for shell injection.
-- Static file serving sanitizes filenames against a whitelist.
-- The API only acts on the repo path supplied by the host's own boot payload (the session cwd).
-
-## Localization
-
-```sh
-pnpm --filter dsh-dev-git-graph i18n:check  # validate keys, HTML tags/attribute names, entities only
-```
-
-- `scripts/i18n/zh.json` is the single translation source, keyed by the English literal (HTML fragments included).
-- `literals.mjs` scans by JS lexical rules (comments and regex literals skipped), `extract.mjs` selects candidates, `wrap.mjs` wraps by position; re-running is idempotent.
-- Literals compared against external data (`bad revision 'HEAD'`, `git branch -D`) are blocklisted and never translated.
-- HTML fragments translate only text nodes and `title`/`placeholder`/`aria-label`/`alt` values; tags, attribute names, and id/class/data-* values are frozen by the validator.
-- Dates and relative times are generated directly in Chinese format rather than through the table.
+- Git is executed with **array arguments** (no shell), so repo paths and refs cannot be used for shell injection.
+- The API acts only on the repo path supplied by the caller (the session workspace); no path from the browser is
+  used to reach outside it.
 
 ## Development
 
 ```sh
-pnpm --filter dsh-dev-git-graph build      # build:web (tsc + pack) -> build:host (tsc) -> cp client.js
-pnpm --filter dsh-dev-git-graph typecheck  # two tsconfigs: host (NodeNext) + web (DOM)
+pnpm --filter dsh-dev-git-graph build      # build:host (tsc) + build:client (esbuild)
+pnpm --filter dsh-dev-git-graph typecheck  # host (NodeNext)
+pnpm --filter dsh-dev-git-graph test       # lane layout unit tests
 ```
+
+- The host half compiles to `lib/` with `tsc -p tsconfig.json`; the browser half is bundled into
+  `lib/client.js` by `scripts/build-client.mjs`.
+- The browser half must not import bare modules other than the shell-shared `react` and
+  `@deepseek-ai/dsh-client-ui-primitives`.
 
 ## License

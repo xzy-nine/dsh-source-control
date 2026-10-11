@@ -5,9 +5,7 @@ package-lock.json
 *.tsbuildinfo
 
 # 构建产物：
-#   lib/     —— build:host（tsc -p tsconfig.json）
-#   media/   —— build:web（tsc -p web.tsconfig.json + scripts/pack-web.mjs）
-# 二者都由 pnpm build 从 src/ 与 vendor/ 生成，逐字节可复现；发布时由
-# prepublishOnly 重新构建，打包内容由 package.json 的 files 白名单决定。
+#   lib/  —— build:host（tsc -p tsconfig.json）与 build:client（scripts/build-client.mjs）
+# 由 src/ 与 vendor/ 生成，逐字节可复现；发布时由 prepublishOnly 重新构建，
+# 打包内容由 package.json 的 files 白名单决定。
 lib/
-media/
