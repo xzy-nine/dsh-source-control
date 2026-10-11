@@ -16,8 +16,10 @@ export const STYLES = `
 .ggg-settings-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600}
 .ggg-settings-row{display:flex;align-items:center;gap:12px}
 .ggg-settings-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}
-.ggg-sec{border-bottom:1px solid var(--dsw-alias-border-l1)}
-.ggg-sec-head{display:flex;align-items:center;gap:6px;padding:6px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600}
+.ggg-sec{border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0}
+.ggg-sec-head{cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600;user-select:none}
+.ggg-sec-head .ggg-chevron{transition:transform 0.15s ease}
+.ggg-sec-head.collapsed .ggg-chevron{transform:rotate(-90deg)}
 .ggg-sec-head .ggg-count{color:var(--dsw-alias-label-tertiary);font-weight:400}
 .ggg-sec-head .ggg-head-actions{margin-left:auto;display:flex;gap:2px}
 .ggg-repos{display:flex;flex-direction:column;gap:1px;padding:0 6px 6px}
@@ -34,8 +36,13 @@ export const STYLES = `
 .ggg-repo-kind{flex:none;padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px}
 .ggg-repo-sync{flex:none;display:inline-flex;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ggg-sec-note{color:var(--dsw-alias-state-warn-primary);cursor:default}
-.ggg-workspace-body{display:flex;flex-direction:column}
+.ggg-sec.ggg-workspace{flex:1 1 auto;min-height:0}
+.ggg-sec.ggg-graph-sec{flex:0 0 auto}
+.ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}
 .ggg-workspace-body .ggg-commit-box{border-top:none}
+.ggg-sec-resize{flex:none;height:6px;cursor:row-resize;background:transparent;transition:background 0.12s ease}
+.ggg-sec-resize:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ggg-sec-resize.is-dragging{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-change-group{margin-top:2px;padding-top:2px}
 .ggg-change-group + .ggg-change-group{border-top:1px solid var(--dsw-alias-border-l1)}
 .ggg-group-root{cursor:pointer}
@@ -69,6 +76,7 @@ export const STYLES = `
 .ggg-row{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
 .ggg-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ggg-row.is-selected{background:var(--dsw-alias-interactive-bg-active)}
+.ggg-row.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-lane{flex:none;height:24px}
 .ggg-subject{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:none;max-width:45%;overflow:hidden}

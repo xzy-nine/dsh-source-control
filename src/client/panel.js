@@ -33,6 +33,25 @@ import {
 	showCheckbox, showConfirmation, showSelect, showText,
 } from './dialog.js';
 
+/** 会话级存储（窗口存活期内有效）：读取时回退到默认值。 */
+function loadSession(key, fallback) {
+	try {
+		const raw = sessionStorage.getItem(key);
+		return raw === null ? fallback : JSON.parse(raw);
+	} catch {
+		return fallback;
+	}
+}
+
+/** 会话级存储（窗口存活期内有效）：写入。 */
+function saveSession(key, value) {
+	try {
+		sessionStorage.setItem(key, JSON.stringify(value));
+	} catch {
+		/* 忽略写入失败 */
+	}
+}
+
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
 function changeOf(entry) {
 	const indexStatus = entry.index;
@@ -150,7 +169,9 @@ function ChangeNodeRow({ row, busy, open, staged, onToggle, onStage, onUnstage, 
 		);
 	}
 	const entry = row.entry;
-	const { staged: fileStaged, type, untracked } = changeOf(entry);
+	const fileStaged = staged;
+	const type = staged ? entry.index : (entry.worktree === '?' ? 'U' : entry.worktree);
+	const untracked = entry.index === '?' && entry.worktree === '?';
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event) => {
 		event.preventDefault();
@@ -219,7 +240,9 @@ function ChangeGroup({
 	staged, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 }) {
-	const visible = entries.filter((entry) => changeOf(entry).staged === staged);
+	const visible = entries.filter((entry) => staged
+		? (entry.index !== ' ' && entry.index !== '?')
+		: (entry.worktree !== ' '));
 	if (visible.length === 0) return [];
 	const tree = buildChangeTree(visible);
 	const rows = [];
@@ -229,7 +252,7 @@ function ChangeGroup({
 	const onStage = (paths) => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
 	const onUnstage = (paths) => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
 	const onDiscard = (paths, untracked) => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); };
-	const onOpen = (item) => { void openDiff('*', item.path, changeOf(item).staged); };
+	const onOpen = (item) => { void openDiff('*', item.path, staged); };
 	const descendantsOf = (folderPath) => {
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
@@ -354,6 +377,40 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [collapsedByGroup, setCollapsedByGroup] = React.useState(() => ({ staged: new Set(), unstaged: new Set() }));
 	const [groupExpanded, setGroupExpanded] = React.useState(() => ({ staged: true, unstaged: true }));
 	const [syncById, setSyncById] = React.useState(() => new Map());
+	// 存储库、图形两区可收起（默认展开）；会话级持久化。
+	const [repoSecOpen, setRepoSecOpen] = React.useState(() => loadSession('dsh-git-graph-repo-open', true));
+	const [graphSecOpen, setGraphSecOpen] = React.useState(() => loadSession('dsh-git-graph-graph-open', true));
+	// 图形区高度（像素）；会话级持久化，默认 320。
+	const [graphHeight, setGraphHeight] = React.useState(() => loadSession('dsh-git-graph-graph-height', 320));
+	const toggleRepoSec = React.useCallback(() => {
+		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-repo-open', next); return next; });
+	}, []);
+	const toggleGraphSec = React.useCallback(() => {
+		setGraphSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-graph-open', next); return next; });
+	}, []);
+	const commitGraphHeight = React.useCallback((value) => {
+		const clamped = Math.max(120, Math.min(value, 720));
+		setGraphHeight(clamped);
+		saveSession('dsh-git-graph-graph-height', clamped);
+	}, []);
+	// 拖拽图形区上沿：把高度让渡给工作区（向下拖＝图形变矮）。
+	const startGraphResize = React.useCallback((event) => {
+		event.preventDefault();
+		const startY = event.clientY;
+		const startHeight = graphHeight;
+		const handle = event.currentTarget;
+		handle.classList.add('is-dragging');
+		const onMove = (moveEvent) => {
+			commitGraphHeight(startHeight + (moveEvent.clientY - startY));
+		};
+		const onUp = () => {
+			handle.classList.remove('is-dragging');
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+		};
+		window.addEventListener('pointermove', onMove);
+		window.addEventListener('pointerup', onUp);
+	}, [graphHeight, commitGraphHeight]);
 
 	const selectedNode = React.useMemo(() => findNode(repoNodes, selectedId), [repoNodes, selectedId]);
 	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
@@ -592,8 +649,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		const tagNames = (commit.tags ?? []).map((tag) => tag.name);
 		const remoteNames = (commit.remotes ?? []).map((remote) => remote.name);
 		const isHead = commit.hash === '*';
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
 		showContextMenu({
 			x: event.clientX, y: event.clientY,
+			onClose: () => target.classList.remove('ggg-menu-target'),
 			items: [
 				{ title: '查看提交', disabled: isHead, onClick: () => { void selectCommit(commit.hash); } },
 				{ title: '检出此提交', disabled: isHead, onClick: () => { void run(async () => { await checkoutCommit(workingTreePath, commit.hash); }); } },
@@ -639,11 +699,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	/** 分支标签（head / remote / tag）右键菜单。 */
 	const openRefMenu = React.useCallback(({ commit, refInfo, event }) => {
 		const x = event.clientX, y = event.clientY;
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
+		const onClose = () => target.classList.remove('ggg-menu-target');
 		if (refInfo.type === 'head') {
 			const name = refInfo.name;
 			const isCurrent = name === state.head;
 			showContextMenu({
-				x, y,
+				x, y, onClose,
 				items: [
 					{ title: '检出此分支', disabled: isCurrent, onClick: () => { void run(async () => { await checkoutBranch(workingTreePath, name, null); }); } },
 					{ title: '从此分支创建新分支…', onClick: async () => {
@@ -678,7 +741,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			const name = refInfo.name;
 			const short = name.replace(/^[^/]+\//, '');
 			showContextMenu({
-				x, y,
+				x, y, onClose,
 				items: [
 					{ title: '检出远程分支…', onClick: async () => {
 						const localName = await showText({ title: '检出远程分支', label: '本地分支名', value: short, placeholder: 'feature/xxx' });
@@ -711,7 +774,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		if (refInfo.type === 'tag') {
 			const name = refInfo.name;
 			showContextMenu({
-				x, y,
+				x, y, onClose,
 				items: [
 					{ title: '检出此标签', onClick: () => { void run(async () => { await checkoutCommit(workingTreePath, commit.hash); }); } },
 					{ title: '从此标签创建分支…', onClick: async () => {
@@ -740,7 +803,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		// stash
 		const selector = refInfo.name;
 		showContextMenu({
-			x, y,
+			x, y, onClose,
 			items: [
 				{ title: '应用贮藏', onClick: () => { void run(async () => { await applyStash(workingTreePath, selector, false); }); } },
 				{ title: '弹出贮藏', onClick: () => { void run(async () => { await popStash(workingTreePath, selector, false); }); } },
@@ -812,13 +875,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		React.createElement(
 			'div',
 			{ className: 'ggg-sec' },
-			React.createElement('div', { className: 'ggg-sec-head' },
-				React.createElement(IconChevronDownOutlineRegular, { size: 14 }),
+			React.createElement('div', {
+				className: 'ggg-sec-head' + (repoSecOpen ? '' : ' collapsed'),
+				onClick: toggleRepoSec,
+			},
+				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
 				'存储库',
 				React.createElement('span', { className: 'ggg-count' }, String(repoNodes.length)),
 				treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
 			),
-			React.createElement(
+			repoSecOpen && React.createElement(
 				'div',
 				{ className: 'ggg-repos' },
 				treeStatus === 'loading' && React.createElement('div', { className: 'ggg-hint' }, '正在发现仓库…'),
@@ -881,19 +947,39 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		),
 
 		// ── 图形 ────────────────────────────────────────────────
-		state.phase === 'loading' && state.commits.length === 0
-			? React.createElement('div', { className: 'ggg-empty' }, '正在加载提交图…')
-			: React.createElement(CommitGraph, {
-				commits: state.commits,
-				head: state.head,
-				selectedHash: state.selectedHash,
-				onSelect: (hash) => { void selectCommit(hash); },
-				onLoadMore: () => setMaxCommits((previous) => previous + 200),
-				moreCommitsAvailable: state.more,
-				onContextMenu: handleContextMenu,
-				formatDate: dateFmt,
-				issueLinking: issueLinking(),
+		React.createElement(
+			'div',
+			{ className: 'ggg-sec ggg-graph-sec' },
+			React.createElement('div', {
+				className: 'ggg-sec-head' + (graphSecOpen ? '' : ' collapsed'),
+				onClick: toggleGraphSec,
+			},
+				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+				'图形',
+				React.createElement('span', { className: 'ggg-count' }, String(state.commits.length)),
+			),
+			graphSecOpen && React.createElement('div', {
+				className: 'ggg-sec-resize',
+				onPointerDown: startGraphResize,
 			}),
+			graphSecOpen && (
+				state.phase === 'loading' && state.commits.length === 0
+					? React.createElement('div', { className: 'ggg-empty', style: { height: graphHeight } }, '正在加载提交图…')
+					: React.createElement('div', {
+						style: { height: graphHeight, display: 'flex', flexDirection: 'column', minHeight: 0 },
+					}, React.createElement(CommitGraph, {
+						commits: state.commits,
+						head: state.head,
+						selectedHash: state.selectedHash,
+						onSelect: (hash) => { void selectCommit(hash); },
+						onLoadMore: () => setMaxCommits((previous) => previous + 200),
+						moreCommitsAvailable: state.more,
+						onContextMenu: handleContextMenu,
+						formatDate: dateFmt,
+						issueLinking: issueLinking(),
+					}))
+			),
+		),
 		state.detail !== null && React.createElement(
 			'div',
 			{ className: 'ggg-detail' },
