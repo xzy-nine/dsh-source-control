@@ -637,3 +637,16 @@ export async function exportRepoConfig(cwd) {
 	const payload = await callApi(cwd, { command: 'exportRepoConfig' });
 	return payload.config ?? null;
 }
+
+/**
+ * 取某个提交中某文件的前后内容，供 DiffBlock 渲染。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} hash - 提交哈希；'*' 表示工作区。
+ * @param {string} path - 文件路径（相对仓库根）。
+ * @param {boolean} staged - 工作区时是否取暂存区内容。
+ * @returns {Promise<{path: string, oldText: string|null, newText: string|null}>}
+ */
+export async function fileDiffContent(cwd, hash, path, staged = false) {
+	return callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged });
+}

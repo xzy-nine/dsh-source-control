@@ -215,4 +215,11 @@ export const STYLES = `
 .ggg-set-remote-edit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-set-form-actions{display:flex;gap:6px;margin-top:6px}
 .ggg-dialog-hint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
+
+/* ── 侧边栏差异查看页 ─────────────────────────────────────── */
+.ggg-diff-tab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
+.ggg-diff-tab-head{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.ggg-diff-tab-path{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ggg-diff-tab-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
+.ggg-diff-tab-body{flex:1;min-height:0;overflow:auto;padding:4px 0}
 `;

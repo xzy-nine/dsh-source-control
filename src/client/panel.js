@@ -245,6 +245,16 @@ function ChangeNodeRow({ row, busy, open, staged, onToggle, onStage, onUnstage, 
  * @param props.onOpen - 打开某个文件的差异。
  * @returns 展开块元素。
  */
+/**
+ * 提交改动文件列表；点击差异按钮在侧边栏打开 DiffBlock 视图。
+ *
+ * @param props.files - 改动文件列表。
+ * @param props.busy - 是否正在加载。
+ * @param props.collapsed - 折叠路径集合。
+ * @param props.onToggle - 折叠/展开文件夹。
+ * @param props.onOpen - 打开文件差异。
+ * @returns 文件列表元素。
+ */
 function CommitDetail({ files, busy, collapsed, onToggle, onOpen }) {
 	if (files.length === 0) {
 		return React.createElement('div', { className: 'ggg-hint' }, '正在加载改动文件…');
@@ -288,7 +298,7 @@ function CommitDetail({ files, busy, collapsed, onToggle, onOpen }) {
 					React.createElement('span', { className: 'ggg-detail-del' }, `-${entry.deletions}`),
 				),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-change-btn', title: '打开差异', disabled: busy,
+					type: 'button', className: 'ggg-change-btn', title: '查看差异', disabled: busy,
 					onClick: () => onOpen(entry.path),
 				}, React.createElement(IconCompareSplitOutlineRegular, { size: 14 })),
 			);

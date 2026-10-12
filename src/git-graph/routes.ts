@@ -4,6 +4,8 @@
  * 工作区变更命令见 ./working-tree.ts。前端是主文档内的 React 面板，不再有静态页。
  */
 import type http from 'node:http';
+import fs from 'node:fs/promises';
+import nodePath from 'node:path';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, runGit, stagePaths, unstagePaths } from './working-tree.js';
@@ -373,6 +375,37 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				respond({ command: 'exportRepoConfig', error: null, config: { repo, config, repoInfo } });
 			} catch (e) {
 				respond({ command: 'exportRepoConfig', error: e instanceof Error ? e.message : String(e), config: null });
+			}
+			break;
+		}
+		case 'fileDiffContent': {
+			const filePath = str('filePath');
+			const commitHash = str('commitHash');
+			const staged = bool('staged');
+			try {
+				let oldText: string | null = null;
+				let newText: string | null = null;
+				if (commitHash === '*') {
+					if (staged) {
+						// 暂存区 vs HEAD
+						try { oldText = await gitOrThrow(['show', `HEAD:${filePath}`], repo); } catch { oldText = null; }
+						try { newText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { newText = null; }
+					} else {
+						// 工作区 vs 暂存区
+						try { oldText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { oldText = null; }
+						try {
+							const fullPath = nodePath.resolve(repo, filePath);
+							newText = await fs.readFile(fullPath, 'utf8');
+						} catch { newText = null; }
+					}
+				} else {
+					// 提交差异：oldText 取父提交，newText 取该提交
+					try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
+					try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
+				}
+				respond({ command: 'fileDiffContent', path: filePath, oldText, newText });
+			} catch (e) {
+				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, error: e instanceof Error ? e.message : String(e) });
 			}
 			break;
 		}

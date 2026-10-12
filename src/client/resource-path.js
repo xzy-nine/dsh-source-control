@@ -50,3 +50,38 @@ export function diffFileAddress(sessionId, workspaceRoot, repoRoot, filePath) {
 	const encoded = path.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
 	return `${FILE_ADDRESS_PREFIX}${encodeURIComponent(sessionId)}/${encoded}`;
 }
+
+/** git-diff 地址前缀。 */
+const GIT_DIFF_PREFIX = 'dsh-resource://git-diff/session/';
+
+/**
+ * 构造 git 提交差异的资源地址。
+ *
+ * @param sessionId - 会话 id。
+ * @param hash - 提交哈希；'*' 表示工作区。
+ * @param filePath - 文件路径（相对仓库根）。
+ * @returns `dsh-resource://git-diff/session/<sessionId>/<hash>/<path>` 地址。
+ */
+export function gitDiffAddress(sessionId, hash, filePath) {
+	const encoded = String(filePath).split('/').map((s) => encodeURIComponent(s)).join('/');
+	return `${GIT_DIFF_PREFIX}${encodeURIComponent(sessionId)}/${encodeURIComponent(hash)}/${encoded}`;
+}
+
+/**
+ * 解析 git-diff 资源地址。
+ *
+ * @param address - `dsh-resource://git-diff/session/<sessionId>/<hash>/<path>` 地址。
+ * @returns `{ sessionId, hash, path }` 或 null。
+ */
+export function parseGitDiffAddress(address) {
+	if (typeof address !== 'string' || !address.startsWith(GIT_DIFF_PREFIX)) return null;
+	const rest = address.slice(GIT_DIFF_PREFIX.length);
+	const slash1 = rest.indexOf('/');
+	if (slash1 === -1) return null;
+	const slash2 = rest.indexOf('/', slash1 + 1);
+	if (slash2 === -1) return null;
+	const sessionId = decodeURIComponent(rest.slice(0, slash1));
+	const hash = decodeURIComponent(rest.slice(slash1 + 1, slash2));
+	const path = rest.slice(slash2 + 1).split('/').map((s) => decodeURIComponent(s)).join('/');
+	return { sessionId, hash, path };
+}
