@@ -19,8 +19,8 @@ import {
 import {
 	addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
 	commitStaged, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
-	discardPaths, discoverRepositories, dropStash, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
-	loadGraph, loadRepoSync, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
+	deleteUserDetails, discardPaths, discoverRepositories, dropStash, editUserDetails, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
+	loadConfig, loadGraph, loadRepoSync, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
 	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, unstagePaths,
 } from './api.js';
 import { CommitGraph } from './graph.js';
@@ -668,6 +668,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [maxCommits, setMaxCommits] = React.useState(200);
 	const [settings, setSettings] = React.useState(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
+	const [userDetails, setUserDetails] = React.useState(null);
 	const [filterOpen, setFilterOpen] = React.useState(false);
 	const [filterSearch, setFilterSearch] = React.useState('');
 	const [filterSelected, setFilterSelected] = React.useState(() => new Set());
@@ -1146,6 +1147,38 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		void run(async () => { await deleteRemote(workingTreePath, name); });
 	}, [workingTreePath, run]);
 
+	/* 打开设置时加载仓库配置（用户身份等）。 */
+	React.useEffect(() => {
+		if (!settingsOpen || workingTreePath === null) return;
+		void (async () => {
+			try {
+				const cfg = await loadConfig(workingTreePath, state.remotes ?? []);
+				const user = cfg?.config?.user;
+				setUserDetails({ userName: user?.name, userEmail: user?.email });
+			} catch { /* 加载失败时保留空表单 */ }
+		})();
+	}, [settingsOpen, workingTreePath, state.remotes]);
+
+	const reloadUserDetails = async () => {
+		const cfg = await loadConfig(workingTreePath, state.remotes ?? []);
+		const user = cfg?.config?.user;
+		setUserDetails({ userName: user?.name, userEmail: user?.email });
+	};
+
+	const handleEditUserDetails = React.useCallback((name, email, location, deleteLocalName, deleteLocalEmail) => {
+		void run(async () => {
+			await editUserDetails(workingTreePath, name, email, location, deleteLocalName, deleteLocalEmail);
+			await reloadUserDetails();
+		});
+	}, [workingTreePath, run, state.remotes]);
+
+	const handleDeleteUserDetails = React.useCallback((delName, delEmail, location) => {
+		void run(async () => {
+			await deleteUserDetails(workingTreePath, delName, delEmail, location);
+			await reloadUserDetails();
+		});
+	}, [workingTreePath, run, state.remotes]);
+
 	/** 报错提示：依赖 VS Code 的动作在 DSH 中不可用。 */
 	const unsupported = React.useCallback(async (label) => {
 		reportError(setState, `${label}：DSH 版本暂不支持，请在对应工具中操作`);
@@ -1404,6 +1437,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => setSettingsOpen(false),
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
+			userDetails, onEditUserDetails: handleEditUserDetails, onDeleteUserDetails: handleDeleteUserDetails,
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {

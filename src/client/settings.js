@@ -10,6 +10,12 @@ import {
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 
+/** 用户身份配置位置选项。 */
+const CONFIG_LOCATION = [
+	{ value: 'global', label: '全局', title: '写入 ~/.gitconfig' },
+	{ value: 'local', label: '仓库', title: '写入当前仓库 .git/config' },
+];
+
 /** localStorage 键。 */
 export const SETTINGS_KEY = 'dsh-git-graph-settings';
 
@@ -198,7 +204,7 @@ function SelectRow({ label, options, value, onChange }) {
  * @param props.onDeleteRemote - 删除远端回调。
  * @returns 面板元素，未展开时返回 null。
  */
-export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDeleteRemote }) {
+export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDeleteRemote, userDetails, onEditUserDetails, onDeleteUserDetails }) {
 	if (!open) return null;
 	const patch = (partial) => onChange({ ...settings, ...partial });
 	return React.createElement(
@@ -261,8 +267,11 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 					}),
 				),
 				React.createElement(Section, { title: 'User Details' },
-					React.createElement('div', { className: 'ggg-set-note' },
-						'用户身份信息由 git 配置管理；DSH 版本暂不支持在此直接编辑，请在终端执行 git config 修改。'),
+					React.createElement(UserDetailsForm, {
+						userDetails,
+						onEdit: onEditUserDetails,
+						onDelete: onDeleteUserDetails,
+					}),
 				),
 				React.createElement(Section, { title: 'Remote Configuration' },
 					remotes !== undefined && remotes.length > 0
@@ -325,5 +334,73 @@ function IssueLinkingForm({ config, onChange }) {
 			}),
 		),
 		React.createElement('div', { className: 'ggg-set-note' }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
+	);
+}
+
+/**
+ * 用户身份表单：编辑 user.name 与 user.email。
+ *
+ * @param props.userDetails - { userName: {local, global}, userEmail: {local, global} }。
+ * @param props.onEdit - 保存回调 (name, email, location, deleteLocalName, deleteLocalEmail) => void。
+ * @param props.onDelete - 删除回调 (name, email, location) => void。
+ * @returns 表单元素。
+ */
+function UserDetailsForm({ userDetails, onEdit, onDelete }) {
+	const [name, setName] = React.useState('');
+	const [email, setEmail] = React.useState('');
+	const [location, setLocation] = React.useState('global');
+	const currentName = userDetails?.userName;
+	const currentEmail = userDetails?.userEmail;
+	React.useEffect(() => {
+		if (currentName !== undefined) {
+			setName(currentName.local ?? currentName.global ?? '');
+		}
+		if (currentEmail !== undefined) {
+			setEmail(currentEmail.local ?? currentEmail.global ?? '');
+		}
+	}, [currentName, currentEmail]);
+	const save = () => {
+		const deleteLocalName = (currentName?.local ?? null) !== null && location === 'global';
+		const deleteLocalEmail = (currentEmail?.local ?? null) !== null && location === 'global';
+		onEdit?.(name, email, location, deleteLocalName, deleteLocalEmail);
+	};
+	const remove = () => {
+		onDelete?.(true, true, location);
+		setName('');
+		setEmail('');
+	};
+	return React.createElement(
+		'div',
+		{ className: 'ggg-set-form' },
+		React.createElement('label', { className: 'ggg-set-row-block' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, '用户名'),
+			React.createElement(Input, {
+				value: name,
+				placeholder: 'git user.name',
+				onChange: (event) => setName(event.target.value),
+			}),
+		),
+		React.createElement('label', { className: 'ggg-set-row-block' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, '邮箱'),
+			React.createElement(Input, {
+				value: email,
+				placeholder: 'git user.email',
+				onChange: (event) => setEmail(event.target.value),
+			}),
+		),
+		React.createElement(SelectRow, {
+			label: '写入位置',
+			options: CONFIG_LOCATION,
+			value: location,
+			onChange: setLocation,
+		}),
+		React.createElement('div', { className: 'ggg-set-row ggg-set-row-inline' },
+			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: save }, '保存'),
+			React.createElement(Button, { variant: 'outline', size: 'sm', onClick: remove }, '删除'),
+		),
+		currentName?.local !== undefined && currentName?.local !== null
+			&& React.createElement('div', { className: 'ggg-set-note' }, `仓库级覆盖：${currentName.local} <${currentEmail?.local ?? '?'}>`),
+		currentName?.global !== undefined && currentName?.global !== null
+			&& React.createElement('div', { className: 'ggg-set-note' }, `全局配置：${currentName.global} <${currentEmail?.global ?? '?'}>`),
 	);
 }

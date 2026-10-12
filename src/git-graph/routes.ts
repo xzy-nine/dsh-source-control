@@ -361,10 +361,26 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'rescanForRepos':
 			respond({ command: 'rescanForRepos' });
 			break;
-		case 'deleteUserDetails':
-		case 'editUserDetails':
-			respond({ command: msg.command, errors: ['DSH 版本暂不支持修改 git 用户配置'] });
+		case 'deleteUserDetails': {
+			const location = str('location') as 'local' | 'global';
+			const errors: string[] = [];
+			if (bool('name')) { try { await ds.unsetConfigValue(repo, 'user.name' as any, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			if (bool('email')) { try { await ds.unsetConfigValue(repo, 'user.email' as any, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			respond({ command: 'deleteUserDetails', errors });
 			break;
+		}
+		case 'editUserDetails': {
+			const location = str('location') as 'local' | 'global';
+			const errors: string[] = [];
+			const name = str('name');
+			const email = str('email');
+			try { await ds.setConfigValue(repo, 'user.name' as any, name, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
+			try { await ds.setConfigValue(repo, 'user.email' as any, email, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
+			if (bool('deleteLocalName')) { try { await ds.unsetConfigValue(repo, 'user.name' as any, 'local' as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			if (bool('deleteLocalEmail')) { try { await ds.unsetConfigValue(repo, 'user.email' as any, 'local' as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			respond({ command: 'editUserDetails', errors });
+			break;
+		}
 
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));

@@ -463,6 +463,36 @@ export async function deleteRemote(cwd, name) {
 }
 
 /**
+ * 编辑 git 用户身份（user.name 与 user.email）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} name - 用户名。
+ * @param {string} email - 邮箱。
+ * @param {'global'|'local'} location - 写入位置。
+ * @param {boolean} deleteLocalName - 是否同时删除本地 user.name 覆盖。
+ * @param {boolean} deleteLocalEmail - 是否同时删除本地 user.email 覆盖。
+ * @returns {Promise<string[]>} 错误列表，无错误时为空数组。
+ */
+export async function editUserDetails(cwd, name, email, location, deleteLocalName, deleteLocalEmail) {
+	const payload = await callApi(cwd, { command: 'editUserDetails', name, email, location, deleteLocalName, deleteLocalEmail });
+	return Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+}
+
+/**
+ * 删除 git 用户身份。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {boolean} name - 是否删除 user.name。
+ * @param {boolean} email - 是否删除 user.email。
+ * @param {'global'|'local'} location - 删除位置。
+ * @returns {Promise<string[]>} 错误列表，无错误时为空数组。
+ */
+export async function deleteUserDetails(cwd, name, email, location) {
+	const payload = await callApi(cwd, { command: 'deleteUserDetails', name, email, location });
+	return Array.isArray(payload.errors) ? payload.errors.filter((item) => typeof item === 'string') : [];
+}
+
+/**
  * 应用贮藏。
  *
  * @param {string} cwd - 会话工作区路径。
