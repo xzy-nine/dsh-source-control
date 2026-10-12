@@ -671,13 +671,14 @@ export async function fetchAiModels() {
  * @param {string} cwd - 仓库路径。
  * @param {string} provider - 供应商 id（空串表示用当前会话模型）。
  * @param {string} model - 模型 id。
+ * @param {string} rules - 自定义规则提示词。
  * @param {{onChunk: (text: string) => void, onWarning?: (text: string) => void, onError?: (text: string) => void, signal?: AbortSignal}} handlers
  */
-export async function generateCommitMessage(cwd, provider, model, handlers) {
+export async function generateCommitMessage(cwd, provider, model, rules, handlers) {
 	const res = await fetch(AI_COMMIT_PATH, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ repo: cwd, provider, model }),
+		body: JSON.stringify({ repo: cwd, provider, model, rules }),
 		signal: handlers.signal,
 	});
 	if (!res.ok) {
@@ -701,6 +702,7 @@ export async function generateCommitMessage(cwd, provider, model, handlers) {
 				if (event === 'chunk') handlers.onChunk(data);
 				else if (event === 'warning') handlers.onWarning?.(data);
 				else if (event === 'error') handlers.onError?.(data);
+				else if (event === 'stats') handlers.onStats?.(data);
 				event = '';
 			}
 		}

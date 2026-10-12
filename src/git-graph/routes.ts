@@ -458,21 +458,77 @@ const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定
 	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
 	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
 
+/** 单文件 diff 长度上限（字符）。 */
+const SINGLE_DIFF_MAX = 50_000;
 /** diff 总长度上限（字符）。 */
-const AI_COMMIT_DIFF_MAX = 200_000;
+const DIFF_TOTAL_MAX = 500_000;
 
 /**
- * 取暂存区 diff，截断至上限。
+ * 为未跟踪文件手工构造 patch。
  * @param repo - 仓库路径。
- * @returns diff 文本；无暂存内容时返回空串。
+ * @param filePath - 文件相对路径。
+ * @returns patch 文本；读失败时返回空串。
  */
-async function getStagedDiff(repo: string): Promise<string> {
+async function untrackedPatch(repo: string, filePath: string): Promise<string> {
 	try {
-		const diff = await gitOrThrow(['diff', '--cached', '--no-color'], repo);
-		return diff.length > AI_COMMIT_DIFF_MAX ? diff.slice(0, AI_COMMIT_DIFF_MAX) + '\n…（diff 已截断）' : diff;
+		const abs = nodePath.resolve(repo, filePath);
+		const content = await fs.readFile(abs, 'utf8');
+		const lines = content.split('\n');
+		if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+		const header = `diff --git a/${filePath} b/${filePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+		const body = lines.map((l) => '+' + l).join('\n');
+		return header + body + '\n';
 	} catch {
 		return '';
 	}
+}
+
+/**
+ * 收集 diff：暂存优先，否则工作区 + 未跟踪。
+ * 逐文件取 diff，超 SINGLE_DIFF_MAX 丢弃，按长度升序贪心填至 DIFF_TOTAL_MAX。
+ * @param repo - 仓库路径。
+ * @returns diff 文本；无内容时返回空串。
+ */
+async function collectDiff(repo: string): Promise<string> {
+	const diffs: string[] = [];
+	try {
+		const stagedOut = await gitOrThrow(['diff', '--cached', '--name-only'], repo);
+		const stagedFiles = stagedOut.split('\n').filter((s) => s.length > 0);
+		if (stagedFiles.length > 0) {
+			for (const f of stagedFiles) {
+				try {
+					const d = await gitOrThrow(['diff', '--cached', '--no-color', '--', f], repo);
+					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
+				} catch { /* skip */ }
+			}
+		} else {
+			const workingOut = await gitOrThrow(['diff', '--name-only'], repo);
+			const workingFiles = workingOut.split('\n').filter((s) => s.length > 0);
+			for (const f of workingFiles) {
+				try {
+					const d = await gitOrThrow(['diff', '--no-color', '--', f], repo);
+					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
+				} catch { /* skip */ }
+			}
+			const untrackedOut = await gitOrThrow(['ls-files', '--others', '--exclude-standard'], repo);
+			const untrackedFiles = untrackedOut.split('\n').filter((s) => s.length > 0);
+			for (const f of untrackedFiles) {
+				const d = await untrackedPatch(repo, f);
+				if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
+			}
+		}
+	} catch {
+		return '';
+	}
+	diffs.sort((a, b) => a.length - b.length);
+	let total = 0;
+	const parts: string[] = [];
+	for (const d of diffs) {
+		if (total + d.length > DIFF_TOTAL_MAX) break;
+		parts.push(d);
+		total += d.length + 1;
+	}
+	return parts.join('\n');
 }
 
 /**
@@ -593,14 +649,16 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 						else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
 					}
 
-					const diff = await getStagedDiff(repo);
-					if (diff.trim() === '') { sendJson(res, 400, { error: '暂存区为空，无 diff 可生成提交信息' }); return; }
+					const diff = await collectDiff(repo);
+					if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
 
+					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
+					const systemPrompt = rules.length > 0 ? AI_COMMIT_SYSTEM_PROMPT + '\n\n' + rules : AI_COMMIT_SYSTEM_PROMPT;
 					const off = await canDisableReasoning(llm, provider, model);
 					const streamOpts: Record<string, unknown> = {
 						provider,
 						model,
-						system: AI_COMMIT_SYSTEM_PROMPT,
+						system: systemPrompt,
 						messages: [{ role: 'user', content: [{ type: 'text', text: `请根据以下 diff 生成提交信息：\n\n${diff}` }] }],
 						maxTokens: 512,
 						temperature: 0,
@@ -615,16 +673,30 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
 					if (warning !== '') sse('warning', warning);
 
+					const startTime = Date.now();
+					let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
 					try {
-						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } } }>;
+						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
 						for await (const chunk of stream) {
 							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) sse('chunk', chunk.text);
+							else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
 								const f = chunk.reason.failure;
 								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
 								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 							}
 						}
+						const elapsedSec = (Date.now() - startTime) / 1000;
+						const outTok = usage?.outputTokens ?? 0;
+						const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
+						sse('stats', {
+							tps,
+							elapsed: elapsedSec.toFixed(1) + 's',
+							inputTokens: usage?.inputTokens ?? 0,
+							outputTokens: outTok,
+							cacheReadTokens: usage?.cacheReadTokens ?? 0,
+							cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+						});
 						sse('done', '');
 					} catch (e) {
 						sse('error', e instanceof Error ? e.message : String(e));

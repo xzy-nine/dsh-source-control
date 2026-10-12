@@ -64,6 +64,7 @@ export function defaultSettings() {
 		graphColours: null,
 		aiCommitProvider: '',
 		aiCommitModel: '',
+		aiCommitRules: '',
 	};
 }
 
@@ -212,10 +213,12 @@ function SelectRow({ label, options, value, onChange }) {
  *
  * @param props.provider - 当前保存的供应商 id（空串 = 未配置）。
  * @param props.model - 当前保存的模型 id。
+ * @param props.rules - 自定义规则提示词。
  * @param props.onChange - (provider, model) => void。
+ * @param props.onRulesChange - (rules) => void。
  * @returns 区元素。
  */
-function AiModelConfigSection({ provider, model, onChange }) {
+function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange }) {
 	const [catalog, setCatalog] = React.useState(null);
 	React.useEffect(() => {
 		let cancelled = false;
@@ -254,6 +257,16 @@ function AiModelConfigSection({ provider, model, onChange }) {
 			},
 				...models.map((m) => React.createElement('option', { key: m, value: m }, m)),
 			),
+		),
+		React.createElement('div', { className: 'ggg-set-row' },
+			React.createElement('label', { className: 'ggg-set-label' }, '规则'),
+			React.createElement('textarea', {
+				className: 'ggg-set-textarea',
+				value: rules,
+				placeholder: '自定义规则提示词，追加到系统提示词末尾。例如：使用中文；提交信息不超过 50 字符。',
+				onChange: (e) => onRulesChange(e.currentTarget.value),
+				rows: 3,
+			}),
 		),
 	);
 }
@@ -401,7 +414,9 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 					React.createElement(AiModelConfigSection, {
 						provider: settings.aiCommitProvider,
 						model: settings.aiCommitModel,
+						rules: settings.aiCommitRules,
 						onChange: (aiCommitProvider, aiCommitModel) => patch({ aiCommitProvider, aiCommitModel }),
+						onRulesChange: (aiCommitRules) => patch({ aiCommitRules }),
 					}),
 				),
 			),

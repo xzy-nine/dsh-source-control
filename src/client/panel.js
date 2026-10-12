@@ -677,6 +677,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [message, setMessage] = React.useState('');
 	const [aiBusy, setAiBusy] = React.useState(false);
 	const [aiWarning, setAiWarning] = React.useState('');
+	const [aiStats, setAiStats] = React.useState(null);
 	const aiAbortRef = React.useRef(null);
 	const [amend, setAmend] = React.useState(false);
 	const [maxCommits, setMaxCommits] = React.useState(200);
@@ -769,6 +770,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		? selectedNode.path
 		: (treeStatus === 'loading' ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined && cwd !== null;
+
+	// 会话级持久化：按仓库/子模块/工作树路径存 sessionStorage，切换页面或工作区后恢复。
+	React.useEffect(() => {
+		if (workingTreePath === null) return;
+		try {
+			const saved = sessionStorage.getItem('ggg-commit-msg:' + workingTreePath);
+			if (saved !== null) setMessage(saved);
+		} catch { /* sessionStorage 不可用 */ }
+	}, [workingTreePath]);
+	React.useEffect(() => {
+		if (workingTreePath === null || aiBusy) return;
+		try { sessionStorage.setItem('ggg-commit-msg:' + workingTreePath, message); } catch { /* */ }
+	}, [workingTreePath, message, aiBusy]);
 
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef(null);
@@ -1145,18 +1159,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const handleAiCommit = () => {
 		if (aiBusy) return;
 		if (workingTreePath === null) { setAiWarning('未选中仓库'); return; }
-		if (stagedPaths.length === 0) { setAiWarning('暂存区为空，无 diff 可生成提交信息'); return; }
 		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
 		setAiBusy(true);
 		setAiWarning('');
+		setAiStats(null);
 		setMessage('');
 		const controller = new AbortController();
 		aiAbortRef.current = controller;
-		generateCommitMessage(workingTreePath, settings.aiCommitProvider ?? '', settings.aiCommitModel ?? '', {
+		generateCommitMessage(workingTreePath, settings.aiCommitProvider ?? '', settings.aiCommitModel ?? '', settings.aiCommitRules ?? '', {
 			signal: controller.signal,
 			onChunk: (text) => setMessage((prev) => prev + text),
 			onWarning: (text) => setAiWarning(text),
 			onError: (text) => setAiWarning(text),
+			onStats: (stats) => setAiStats(stats),
 		}).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err) => setAiWarning(String(err?.message ?? err)));
 	};
 
@@ -1659,11 +1674,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				React.createElement(
 					'div',
 					{ className: 'ggg-commit-box' },
+					aiBusy && React.createElement('div', { className: 'ggg-ai-loading-bar' }),
 					React.createElement('div', { className: 'ggg-commit-input-wrap' },
 						React.createElement('textarea', {
 							className: 'ggg-commit-input',
-							placeholder: `提交变更内容(Ctrl+Enter 在 '${state.head ?? 'master'}'提交)`,
+							placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${state.head ?? 'master'}'提交)`,
 							value: message,
+							disabled: aiBusy,
 							onChange: (event) => setMessage(event.currentTarget.value),
 							onKeyDown: (event) => {
 								if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -1684,6 +1701,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						),
 					),
 					aiWarning !== '' && React.createElement('div', { className: 'ggg-commit-ai-warning' }, aiWarning),
+					aiStats !== null && React.createElement('div', { className: 'ggg-commit-ai-stats' },
+						`${aiStats.tps} tok/s`,
+						` · 输入 ${aiStats.inputTokens}`,
+						` · 输出 ${aiStats.outputTokens}`,
+						` · 缓存读 ${aiStats.cacheReadTokens}`,
+						` · 缓存写 ${aiStats.cacheWriteTokens}`,
+						` · ${aiStats.elapsed}`,
+					),
 					React.createElement(Checkbox, { checked: amend, onChange: toggleAmend, label: '修补上一次提交' }),
 					showSyncButton
 						? React.createElement(Button, {

@@ -164,7 +164,7 @@ export const STYLES = `
 
 /* ── 提交输入框 ───────────────────────────────────────────── */
 .ggg-commit-input-wrap{position:relative;display:flex;align-items:stretch}
-.ggg-commit-input{flex:1;min-height:44px;max-height:160px;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
+.ggg-commit-input{flex:1;min-height:52px;max-height:160px;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
 .ggg-commit-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .ggg-commit-input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .ggg-commit-input-actions{position:absolute;right:4px;top:0;bottom:0;display:flex;align-items:center;gap:2px}
@@ -225,9 +225,14 @@ export const STYLES = `
 
 /* ── AI 提交信息 ─────────────────────────────────────────── */
 .ggg-commit-input-btn.is-busy{opacity:0.5;pointer-events:none}
+.ggg-ai-loading-bar{height:2px;width:100%;background:transparent;overflow:hidden;position:relative;flex:none;border-radius:1px}
+.ggg-ai-loading-bar::after{content:'';position:absolute;top:0;left:-40%;height:2px;width:40%;background:var(--dsw-alias-color-success,#22c55e);border-radius:1px;animation:ggg-ai-slide 1.2s ease-in-out infinite}
+@keyframes ggg-ai-slide{0%{left:-40%}100%{left:100%}}
 .ggg-commit-ai-warning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
+.ggg-commit-ai-stats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}
 .ggg-set-ai-model{display:flex;flex-direction:column;gap:6px}
 .ggg-set-row{display:flex;align-items:center;gap:8px}
 .ggg-set-label{font-size:12px;color:var(--dsw-alias-label-secondary);width:56px;flex:none}
 .ggg-set-select{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary)}
+.ggg-set-textarea{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}
 `;
