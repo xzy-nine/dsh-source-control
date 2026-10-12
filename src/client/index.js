@@ -7,6 +7,7 @@
  */
 import React from 'react';
 import { GitGraphPanel } from './panel.js';
+import { diffFileAddress } from './resource-path.js';
 import { STYLES } from './styles.js';
 
 /** 页类型身份：正文与标题席位都用它当键。 */
@@ -65,14 +66,16 @@ function GitGraphTab(props) {
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
-		if (tabActions === undefined || typeof cwd !== 'string') return;
-		// 地址形如 dsh-resource://file/session/<sessionId>/<相对工作区路径>，
-		// git 给出的路径相对仓库根，与工作区根的相对关系由宿主的地址构造规则处理。
-		const filePath = String(tab?.diff?.path ?? '');
-		const normalized = filePath.replace(/\\/g, '/');
-		const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
-		const relative = normalized.startsWith(`${root}/`) ? normalized.slice(root.length + 1) : normalized.replace(/^\/+/, '');
-		const address = `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${relative.split('/').map(encodeURIComponent).join('/')}`;
+		if (tabActions === undefined) return;
+		// git 给的是仓库相对路径，地址按会话工作区根解析；仓库与工作区不是同一个时
+		// 必须用 diff 里的 repoRoot 拼出绝对路径，再落到工作区相对路径。
+		const address = diffFileAddress(
+			sessionId,
+			typeof cwd === 'string' ? cwd : null,
+			tab?.diff?.repoRoot,
+			String(tab?.diff?.path ?? ''),
+		);
+		if (address === null) return;
 		try {
 			tabActions.openResource(address);
 		} catch (error) {
