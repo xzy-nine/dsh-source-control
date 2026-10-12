@@ -408,6 +408,7 @@ function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle, onMo
 			className: `ggg-repo${active ? ' is-active' : ''}${node.available === false ? ' is-missing' : ''}`,
 			title: node.path,
 			onClick: () => onSelect(node),
+			onContextMenu: (event) => { event.preventDefault(); onMoreActions?.(node, event); },
 		},
 		...guides,
 		React.createElement('span', {

@@ -159,8 +159,7 @@ export const STYLES = `
 /* ── 仓库行右侧操作 ───────────────────────────────────────── */
 .ggg-repo-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
 .ggg-repo-branch-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
-.ggg-repo-more{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
-.ggg-repo:hover .ggg-repo-more{display:inline-flex}
+.ggg-repo-more{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-repo-more:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
 
 /* ── 提交输入框 ───────────────────────────────────────────── */
