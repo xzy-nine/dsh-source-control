@@ -8,10 +8,10 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, runGit, stagePaths, unstagePaths } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { discoverRepositories, loadRepoSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
 
 let dataSourcePromise: Promise<DataSource> | null = null;
 
@@ -105,12 +105,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
 			break;
+		case 'removeWorktree':
+			await respondResult('removeWorktree', async () => {
+				const worktreePath = str('worktreePath');
+				await removeWorktree(repo, worktreePath, bool('force'));
+				return { repo, worktreePath };
+			});
+			break;
 		case 'branchesContaining':
 			// 分支只由尖端提交标识，中间提交的 heads 为空；按包含关系查询才能列出所属分支。
 			await respondResult('branchesContaining', async () => {
 				const hash = str('commitHash');
 				const localOut = await gitOrThrow(['branch', '--contains', hash, '--format=%(refname:short)'], repo);
-				const local = localOut.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+				// 别的工作树占用的分支不可删除，不作为候选；当前工作树自己的分支保留。
+				const foreign = await branchesOfOtherWorktrees(repo);
+				const local = localOut.split('\n').map((line) => line.trim())
+					.filter((line) => line !== '' && !foreign.has(line));
 				const remoteOut = await gitOrThrow(['branch', '-r', '--contains', hash, '--format=%(refname:short)'], repo);
 				// 远程 HEAD 是符号引用，短名只显示远程名本身（如 `origin`），须排除。
 				const remoteNames = new Set((await gitOrThrow(['remote'], repo)).split('\n').map((line) => line.trim()));
@@ -146,11 +156,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 		}
 		case 'loadCommits':
-			respond({
-				command: 'loadCommits',
-				refreshId: num('refreshId'),
-				onlyFollowFirstParent: bool('onlyFollowFirstParent'),
-				...(await ds.getCommits(
+			{
+				const data = await ds.getCommits(
 					repo,
 					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
 					num('maxCommits', 300),
@@ -162,8 +169,25 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 					arr('remotes'),
 					arr('hideRemotes'),
 					arr('stashes'),
-				)),
-			});
+				);
+				// 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。
+				const foreign = await branchesOfOtherWorktrees(repo);
+				const filtered = foreign.size === 0
+					? data
+					: {
+						...data,
+						commits: (data.commits ?? []).map((commit) => ({
+							...commit,
+							heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
+						})),
+					};
+				respond({
+					command: 'loadCommits',
+					refreshId: num('refreshId'),
+					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					...filtered,
+				});
+			}
 			break;
 		case 'loadConfig':
 			respond({ command: 'loadConfig', repo, ...(await ds.getConfig(repo, arr('remotes'))) });

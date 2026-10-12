@@ -6,7 +6,7 @@ import {
 	deleteRemoteBranch, deleteTag, dropStash, fetchIntoLocalBranch, merge, popStash, pushTag, rebase, renameBranch,
 } from '../api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
-import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
+import { showCheckbox, showConfirmation, showMessage, showSelect, showText } from '../dialog.ts';
 import type { Commit, Remote } from '../types.ts';
 
 /** 引用菜单识别出的目标。 */
@@ -80,7 +80,15 @@ export function openRefMenu(
 				{ type: 'divider' },
 				{ title: '复制分支名', onClick: async () => { await copyText(name); } },
 				{ title: '创建归档…', onClick: () => { void handleCreateArchive(name, `分支 ${name}`); } },
-				{ title: '在当前分支上删除…', disabled: isCurrent, onClick: async () => {
+				{ title: '删除分支…', onClick: async () => {
+					// 当前分支不可删除：直接说明原因，而不是置灰等 git 报错。
+					if (isCurrent) {
+						await showMessage({
+							title: '无法删除当前分支',
+							message: `分支 ${name} 是当前检出的分支，不能删除。\n请先切换到其他分支再删除。`,
+						});
+						return;
+					}
 					const ok = await showCheckbox({
 						title: '删除本地分支', message: `确定删除本地分支 ${name}？`, checkboxLabel: '同时强制删除未合并分支', danger: true,
 					});

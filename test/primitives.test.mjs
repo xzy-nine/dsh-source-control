@@ -342,3 +342,40 @@ test('异步打开提交菜单前先取出事件字段', () => {
 	assert.match(menu, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
 });
 
+test('工作树分支从图形区与删除候选中排除', () => {
+	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
+	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
+	assert.match(routes, /heads: \(commit\.heads \?\? \[\]\)\.filter/, 'loadCommits 应过滤分支标签');
+	const discovery = readFileSync(join(root, 'src', 'git-graph', 'repo-discovery.ts'), 'utf8');
+	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
+	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');
+});
+
+test('工作树右键提供移除入口', () => {
+	const panel = readFileSync(join(clientDir, 'panel.ts'), 'utf8');
+	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
+	assert.match(panel, /title: '移除工作树…'/, '菜单应有移除工作树');
+	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
+	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
+	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
+	const host = readFileSync(join(root, 'src', 'git-graph', 'working-tree.ts'), 'utf8');
+	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
+});
+
+test('删除当前分支时提示而非静默失败', () => {
+	// 当前分支仍在候选里，但点击后说明原因。
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	assert.match(menu, /name === head/, '提交菜单应识别当前分支');
+	assert.match(menu, /无法删除当前分支/, '应给出不可删除的提示');
+	const refMenu = readFileSync(join(panelDir, 'ref-menu.ts'), 'utf8');
+	assert.match(refMenu, /if \(isCurrent\)/, '引用菜单应同样拦截当前分支');
+	// 只有删除项不再置灰；检出/重命名/合并/变基对当前分支仍应禁用。
+	const deleteItem = /title: '删除分支…'[^}]*\}/.exec(refMenu);
+	assert.ok(deleteItem !== null, '未找到删除分支项');
+	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
+	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');
+	assert.match(dialog, /export function showMessage/, '应提供仅告知的提示框');
+});
+

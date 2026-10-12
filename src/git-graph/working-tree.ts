@@ -174,3 +174,19 @@ export async function discardPaths(repo: string, paths: readonly string[], untra
 	if (untracked) return gitOrThrow(['clean', '-f', '--', ...paths], repo);
 	return gitOrThrow(['restore', '--', ...paths], repo);
 }
+
+/**
+ * 移除一个链接工作树。
+ *
+ * 主工作树不能被移除（git 报 `is a main working tree`）。工作树内有未提交改动时 git 会
+ * 拒绝并要求 `--force`；目录已不存在时 git 会直接清理登记项，因此两种情况都不需要重试。
+ *
+ * @param repo - 仓库路径（任意工作树均可）。
+ * @param worktreePath - 要移除的工作树路径。
+ * @param force - 是否强制移除有改动的工作树。
+ * @returns 无。
+ */
+export async function removeWorktree(repo: string, worktreePath: string, force: boolean): Promise<void> {
+	const args = force ? ['worktree', 'remove', '--force', worktreePath] : ['worktree', 'remove', worktreePath];
+	await gitOrThrow(args, repo);
+}

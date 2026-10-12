@@ -7,6 +7,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 import { runGit } from './working-tree.js';
+import { foreignWorktreeBranches, parseWorktreeList } from './worktree-branches.js';
 
 /** 节点种类：主工作树仓库、链接工作树、子模块。 */
 export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
@@ -135,34 +136,9 @@ export function parseHead(source: string): { branch: string | null; head: string
  * @returns 每个非 bare 工作树的路径、分支与短哈希。
  */
 export function parseWorktrees(stdout: string): WorktreeInfo[] {
-	const worktrees: WorktreeInfo[] = [];
-	let current: { path: string; branch: string | null; head: string | null; bare: boolean } | null = null;
-	const flush = (): void => {
-		if (current !== null && !current.bare) {
-			worktrees.push({ path: current.path, branch: current.branch, head: current.head });
-		}
-		current = null;
-	};
-	for (const line of stdout.split(/\r?\n/)) {
-		if (line === '') {
-			flush();
-			continue;
-		}
-		const at = line.indexOf(' ');
-		const key = at === -1 ? line : line.slice(0, at);
-		const value = at === -1 ? '' : line.slice(at + 1);
-		if (key === 'worktree') {
-			flush();
-			current = { path: value, branch: null, head: null, bare: false };
-			continue;
-		}
-		if (current === null) continue;
-		if (key === 'HEAD') current.head = value.slice(0, 7);
-		else if (key === 'branch') current.branch = value.replace(/^refs\/heads\//, '');
-		else if (key === 'bare') current.bare = true;
-	}
-	flush();
-	return worktrees;
+	return parseWorktreeList(stdout)
+		.filter((entry) => !entry.bare)
+		.map((entry) => ({ path: entry.path, branch: entry.branch, head: entry.head }));
 }
 
 /**
@@ -352,6 +328,29 @@ async function enclosingRepo(root: string, visited: Set<string>, submoduleIds: S
 		return await repoNodeOf(resolve(top), 0, submoduleIds);
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * 取被「别的工作树」检出的分支。
+ *
+ * 一个分支同时只能被一个工作树检出。查看某个工作树时，别的工作树占用的分支既不是它的
+ * 当前分支，也不可删除（git 报 `cannot delete branch ... used by worktree at ...`），
+ * 因此要从分支标签与删除候选中排除；而**当前工作树自己的分支**保留，仍作为当前分支显示。
+ *
+ * 比较用规范化路径，因此查看主工作树或任一链接工作树都得到正确结果。
+ *
+ * @param repo - 当前查看的仓库或工作树路径。
+ * @returns 被别的工作树占用的分支名集合；枚举失败时为空集。
+ */
+export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string>> {
+	try {
+		const listed = await runGit(['worktree', 'list', '--porcelain'], repo);
+		if (listed.code !== 0) return new Set();
+		return foreignWorktreeBranches(parseWorktreeList(listed.stdout), repo, nodeId);
+	} catch {
+		/* 枚举失败时不排除任何分支 */
+		return new Set();
 	}
 }
 

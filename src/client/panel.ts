@@ -9,10 +9,10 @@ import React from 'react';
 import {
 	addRemote, checkoutBranch, commitStaged, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
-	merge, pushBranch, stagePaths, tagDetails, unstagePaths,
+	merge, pushBranch, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
-import { copyText, showContextMenu } from './context-menu.ts';
-import { showForm, showSelect, showText } from './dialog.ts';
+import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
+import { showCheckbox, showForm, showSelect, showText } from './dialog.ts';
 import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
@@ -134,7 +134,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	const {
 		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSyncById,
+		selectNode, toggleNode, setSyncById, setSelectedId,
 	} = useRepos({ cwd, sessionId });
 
 	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
@@ -484,18 +484,39 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const target = event.currentTarget;
 		target.classList.add('ggg-menu-target');
 		const branchName = node.branch ?? '';
+		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
+		const isLinkedWorktree = node.kind === 'worktree';
+		const items: ContextMenuItem[] = [
+			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run(() => refresh()); } },
+			{ title: '抓取', disabled: state.busy, onClick: () => { selectNodeAndReset(node); void run(async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); } },
+			{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNodeAndReset(node); void run(async () => { await pushBranch(node.path, branchName, []); }); } },
+			{ type: 'divider' },
+			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
+		];
+		if (isLinkedWorktree) {
+			items.push({ type: 'divider' }, {
+				title: '移除工作树…', danger: true, disabled: state.busy,
+				onClick: async () => {
+					const ok = await showCheckbox({
+						title: '移除工作树',
+						message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
+						checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
+					});
+					if (!ok) return;
+					void run(async () => {
+						await removeWorktree(workingTreePath as string, node.path, true);
+						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
+						setSelectedId((previous) => (previous === node.id ? null : previous));
+					});
+				},
+			});
+		}
 		showContextMenu({
 			x: event.clientX, y: event.clientY,
 			onClose: () => target.classList.remove('ggg-menu-target'),
-			items: [
-				{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run(() => refresh()); } },
-				{ title: '抓取', disabled: state.busy, onClick: () => { selectNodeAndReset(node); void run(async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); } },
-				{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNodeAndReset(node); void run(async () => { await pushBranch(node.path, branchName, []); }); } },
-				{ type: 'divider' },
-				{ title: '复制路径', onClick: () => { void copyText(node.path); } },
-			],
+			items,
 		});
-	}, [selectNodeAndReset, run, refresh, state.busy, settings]);
+	}, [selectNodeAndReset, run, refresh, state.busy, settings, workingTreePath, setSelectedId]);
 
 	/** 仓库行分支名点击：弹出分支切换菜单。 */
 	const handleBranchClick = React.useCallback((node, event) => {
@@ -519,9 +540,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
 		void openCommitMenu({
-			workingTreePath, run, selectCommit, remotes: state.remotes, handleCreateArchive,
+			workingTreePath, run, selectCommit, remotes: state.remotes, handleCreateArchive, head: state.head,
 		}, { commit, event });
-	}, [workingTreePath, run, selectCommit, state.remotes, handleCreateArchive]);
+	}, [workingTreePath, run, selectCommit, state.remotes, handleCreateArchive, state.head]);
 
 	/** 分支标签（head / remote / tag / stash）右键菜单。 */
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {

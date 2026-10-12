@@ -181,6 +181,20 @@ export async function commitStaged(cwd: string, message: string, amend = false):
 	return typeof payload.hash === 'string' ? payload.hash : '';
 }
 
+/**
+ * 移除一个链接工作树。
+ *
+ * 主工作树不能被移除；工作树内有未提交改动时需 force。
+ *
+ * @param repo - 仓库路径。
+ * @param worktreePath - 要移除的工作树路径。
+ * @param force - 是否强制移除有改动的工作树。
+ * @returns 无。
+ */
+export async function removeWorktree(repo: string, worktreePath: string, force: boolean): Promise<void> {
+	await callApi(repo, { command: 'removeWorktree', worktreePath, force });
+}
+
 /** 提交改动文件。 */
 export interface CommitFileEntry {
 	readonly path: string;

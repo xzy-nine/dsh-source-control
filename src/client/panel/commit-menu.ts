@@ -6,7 +6,7 @@ import {
 	merge, rebase, resetToCommit, revertCommit,
 } from '../api.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
-import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
+import { showCheckbox, showConfirmation, showMessage, showSelect, showText } from '../dialog.ts';
 import { githubCommitUrl } from './github.ts';
 import type { Commit, Remote } from '../types.ts';
 
@@ -22,6 +22,8 @@ export interface CommitMenuDeps {
 	readonly remotes: readonly Remote[];
 	/** 创建归档。 */
 	readonly handleCreateArchive: (ref: string, refLabel: string) => Promise<void>;
+	/** 当前分支名；用于解释当前分支不可删除。 */
+	readonly head: string | null;
 }
 
 /**
@@ -35,7 +37,7 @@ export async function openCommitMenu(
 	deps: CommitMenuDeps,
 	{ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> },
 ): Promise<void> {
-	const { workingTreePath, run, selectCommit, remotes, handleCreateArchive } = deps;
+	const { workingTreePath, run, selectCommit, remotes, handleCreateArchive, head } = deps;
 	// React 的 currentTarget 只在事件派发期间有效，本函数会 await，因此先在同步段取出。
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
@@ -55,6 +57,14 @@ export async function openCommitMenu(
 		...localBranches.map((name) => ({
 			title: name,
 			onClick: async () => {
+				// 当前分支不可删除：直接说明原因，而不是等 git 报错。
+				if (head !== null && name === head) {
+					await showMessage({
+						title: '无法删除当前分支',
+						message: `分支 ${name} 是当前检出的分支，不能删除。\n请先切换到其他分支再删除。`,
+					});
+					return;
+				}
 				const ok = await showCheckbox({
 					title: '删除本地分支', message: `确定删除本地分支 ${name}？`,
 					checkboxLabel: '同时强制删除未合并分支', danger: true,

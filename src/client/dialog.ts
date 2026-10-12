@@ -70,6 +70,38 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 	});
 }
 
+/** 提示框选项。 */
+export interface MessageOptions {
+	readonly title: string;
+	readonly message: string;
+	/** 关闭按钮文案。 */
+	readonly closeLabel?: string;
+}
+
+/**
+ * 仅告知的提示框：只有一个关闭按钮，不做确认。
+ *
+ * 用于解释某个动作为何不可执行（如删除当前分支），不提供继续路径。
+ *
+ * @param options - 见 {@link MessageOptions}。
+ * @returns 用户关闭后完成。
+ */
+export function showMessage({ title, message, closeLabel = '知道了' }: MessageOptions): Promise<void> {
+	return runDialog<void>((finish) => {
+		function Content(): React.ReactElement {
+			return React.createElement(Modal, {
+				open: true,
+				onClose: () => finish(),
+				title,
+				closeLabel: '关闭',
+				children: React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+				footer: React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => finish() }, closeLabel),
+			});
+		}
+		return React.createElement(Content);
+	});
+}
+
 /** 含勾选的确认框选项。 */
 export interface CheckboxOptions {
 	readonly title: string;
