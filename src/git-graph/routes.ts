@@ -9,6 +9,7 @@ import nodePath from 'node:path';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, runGit, stagePaths, unstagePaths } from './working-tree.js';
+import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { discoverRepositories, loadRepoSync } from './repo-discovery.js';
 
 let dataSourcePromise: Promise<DataSource> | null = null;
@@ -403,9 +404,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 					try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
 					try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
 				}
-				respond({ command: 'fileDiffContent', path: filePath, oldText, newText });
+				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
+				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
+				const hunks = await diffHunksOf(repo, commitHash, filePath, staged);
+				respond({ command: 'fileDiffContent', path: filePath, oldText, newText, hunks });
 			} catch (e) {
-				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, error: e instanceof Error ? e.message : String(e) });
+				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], error: e instanceof Error ? e.message : String(e) });
 			}
 			break;
 		}
@@ -567,6 +571,32 @@ function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provi
 		return provider !== '' && model !== '' ? { provider, model } : null;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * 取某个文件差异的逐块内容。
+ *
+ * 由 git 用 `-U3` 生成统一差异后按 hunk 切分。提交差异与新旧内容同源，一律对比第一个
+ * 父提交，因此合并提交不会落到 git 的合并差异格式（`@@@`，无法按单侧 hunk 解析）。
+ * 命令失败或没有 hunk（二进制、未跟踪的新文件）时返回空数组，前端据此退回整份内容比较。
+ *
+ * @param repo - 仓库路径。
+ * @param commitHash - 提交哈希；`*` 表示工作区。
+ * @param filePath - 文件路径（相对仓库根）。
+ * @param staged - 工作区时是否比较暂存区。
+ * @returns 逐块的新旧内容。
+ */
+async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean): Promise<DiffHunkText[]> {
+	const args = commitHash === '*'
+		? (staged
+			? ['diff', '--no-color', '--unified=3', '--cached', '--', filePath]
+			: ['diff', '--no-color', '--unified=3', '--', filePath])
+		: ['diff', '--no-color', '--unified=3', `${commitHash}~1`, commitHash, '--', filePath];
+	try {
+		return parseUnifiedDiffHunks(await gitOrThrow(args, repo));
+	} catch {
+		return [];
 	}
 }
 

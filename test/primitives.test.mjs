@@ -130,3 +130,82 @@ test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primi
 	assert.ok(exported.has('IconBranchOutlineRegular'));
 	assert.ok(!exported.has('IconBranchOutline'), '裸图标名不应存在，若上游改名需同步本测试');
 });
+
+test('提交框在滚动区之外', () => {
+	// 滚动必须只发生在变更列表上：提交框若落在滚动容器内会随列表一起滚走。
+	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const box = source.indexOf("'ggg-commit-box'");
+	const scroll = source.indexOf("'ggg-changes-scroll'");
+	assert.ok(box !== -1 && scroll !== -1, '未找到提交框或滚动容器标记');
+	assert.ok(box < scroll, '提交框必须排在滚动容器之前');
+	// 两个变更分组都必须在滚动容器内。
+	const stagedGroup = source.indexOf('staged: true', scroll);
+	const unstagedGroup = source.indexOf('staged: false', scroll);
+	assert.ok(stagedGroup !== -1 && unstagedGroup !== -1, '两个变更分组都应在滚动容器内');
+});
+
+test('工作区主体自身不滚动', () => {
+	const source = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
+	const body = /\.ggg-workspace-body\{([^}]*)\}/.exec(source);
+	assert.ok(body !== null, '未找到 .ggg-workspace-body');
+	assert.match(body[1], /overflow:hidden/, '工作区主体不得自身滚动，否则提交框会跟着滚');
+	const scroll = /\.ggg-changes-scroll\{([^}]*)\}/.exec(source);
+	assert.ok(scroll !== null, '未找到 .ggg-changes-scroll');
+	assert.match(scroll[1], /overflow-y:auto/, '变更列表容器应纵向滚动');
+});
+
+test('文件行整行点击即打开', () => {
+	// 文件行不再有「查看差异」按钮：点击行本身即打开。
+	const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
+	assert.ok(!source.includes('IconCompareSplitOutlineRegular'), '不应再引用差异按钮图标');
+	assert.ok(!source.includes("'查看差异'"), '不应再有查看差异按钮');
+	assert.ok(!source.includes("'打开差异'"), '右键菜单不应再写打开差异');
+	const openable = source.match(/ggg-change-openable/g) ?? [];
+	assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
+});
+
+test('未跟踪新文件走普通文件地址', () => {
+	// U（未跟踪）没有可比差异，必须走 dsh-resource://file/… 而不是 git-diff 地址。
+	const indexPath = join(clientDir, 'index.ts');
+	const source = readFileSync(indexPath, 'utf8');
+	assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
+	assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
+	const panelSource = readFileSync(join(clientDir, 'panel.ts'), 'utf8');
+	assert.match(panelSource, /untracked \? 'file'/, '未跟踪文件应生成 file 类型目标');
+});
+
+test('普通文件地址按仓库根换算', () => {
+	// 会话工作区根未必是仓库根：路径要用仓库根拼绝对路径后再相对工作区根取地址。
+	const source = readFileSync(join(clientDir, 'resource-path.ts'), 'utf8');
+	assert.match(source, /relativeTo\(workspaceRoot, absolute\)/, '应先换算成相对工作区根的路径');
+	assert.match(source, /repoRoot/, '仓库根参与绝对路径拼接');
+});
+
+test('状态字符与文件夹数量同处最右一列', () => {
+	// 两者必须共用同一个尾部列，否则文件行与文件夹行的右边界参差。
+	const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
+	const tails = source.match(/ggg-row-tail/g) ?? [];
+	assert.ok(tails.length >= 2, `文件状态与文件夹数量都应使用尾部列，实际 ${tails.length} 处`);
+	// 状态字符排在文件名之后，即最右侧。
+	const nameAt = source.indexOf("'ggg-change-name' }, name)");
+	const statusAt = source.indexOf("ggg-row-tail ggg-status");
+	assert.ok(nameAt !== -1 && statusAt !== -1 && nameAt < statusAt, '状态字符必须排在文件名之后');
+	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
+	const tail = /\.ggg-row-tail\{([^}]*)\}/.exec(styles);
+	assert.ok(tail !== null, '未找到 .ggg-row-tail 样式');
+	assert.match(tail[1], /width:24px/, '尾部列应定宽，使状态字符与数量对齐');
+	// 文件夹数量不再用 margin-left:auto 单独靠右。
+	assert.ok(!/\.ggg-folder \.ggg-count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
+});
+
+test('差异按 git 算出的 hunk 渲染', () => {
+	// 整份内容交给 DiffBlock 时，超过其本地 diff 搜索上限的改动会退化成整文件全删全加。
+	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+	assert.match(indexSource, /diffData\.hunks\.length > 0/, '应优先使用逐块内容');
+	assert.match(indexSource, /\.map\(\(hunk\)/, '每个 hunk 各自成为一条 diffs 条目');
+	const apiSource = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	assert.match(apiSource, /hunks/, 'API 客户端应透出 hunks');
+	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	assert.match(routes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
+	assert.match(routes, /--unified=3/, '宿主应请求带上下文的统一差异');
+});

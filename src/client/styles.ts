@@ -38,8 +38,10 @@ export const STYLES = `
 .ggg-sec-note{color:var(--dsw-alias-state-warn-primary);cursor:default}
 .ggg-sec.ggg-workspace{flex:1 1 auto;min-height:0}
 .ggg-sec.ggg-graph-sec{flex:0 0 auto}
-.ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}
-.ggg-workspace-body .ggg-commit-box{border-top:none}
+/* 提交框固定在分区顶部，不随变更列表滚动；只有 .ggg-changes-scroll 滚动。 */
+.ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+.ggg-workspace-body .ggg-commit-box{border-top:none;flex:none}
+.ggg-changes-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
 /* 可拖拽的分界线：4px 命中区骑在分界线上（上下各溢出 2px，不占布局高度），
  * 拖动时显示一条高亮线。 */
 .ggg-sec-resize{flex:none;position:relative;height:4px;margin-top:-2px;margin-bottom:-2px;cursor:row-resize;-webkit-user-select:none;user-select:none;touch-action:none}
@@ -65,16 +67,20 @@ export const STYLES = `
 .ggg-change{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;min-width:0}
 .ggg-change:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ggg-change.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
+/* 文件行整行可点即打开；文件夹行仍是展开/收起。 */
+.ggg-change-openable{cursor:pointer}
 .ggg-change-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .ggg-change-dir{color:var(--dsw-alias-label-tertiary)}
 .ggg-folder{cursor:pointer}
 .ggg-folder .ggg-change-name{flex:1 1 auto;direction:ltr;text-align:left;color:var(--dsw-alias-label-secondary)}
-.ggg-folder .ggg-count{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;margin-left:auto}
+.ggg-folder .ggg-count{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400}
 .ggg-change-stat{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ggg-change-btn{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-change:hover .ggg-change-btn{display:inline-flex}
 .ggg-change-btn:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
-.ggg-status{flex:none;width:14px;text-align:center;font-weight:600;font-size:11px}
+/* 文件状态字符与文件夹数量共用最右一列：定宽使两者左右边界都对齐。 */
+.ggg-row-tail{flex:none;width:24px;text-align:center}
+.ggg-status{font-weight:600;font-size:11px}
 .ggg-status[data-type='M']{color:var(--dsw-alias-state-warn-primary)}
 .ggg-status[data-type='A']{color:var(--dsw-alias-state-success-primary)}
 .ggg-status[data-type='D']{color:var(--dsw-alias-state-error-primary)}

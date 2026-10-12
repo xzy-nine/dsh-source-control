@@ -121,7 +121,7 @@ export interface ChangesSectionProps {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, untracked?: boolean) => Promise<void>;
 }
 
 /**
@@ -207,17 +207,22 @@ export function ChangesSection({
 						onClick: onSubmit,
 					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),
-			ChangeGroup({
-				staged: true, entries, busy, workingTreePath: workingTreePath as string,
-				groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
-				run, stagePaths, unstagePaths, discardPaths, openDiff,
-			}),
-			ChangeGroup({
-				staged: false, entries, busy, workingTreePath: workingTreePath as string,
-				groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
-				run, stagePaths, unstagePaths, discardPaths, openDiff,
-				forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
-			}),
+			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
+			React.createElement(
+				'div',
+				{ className: 'ggg-changes-scroll' },
+				ChangeGroup({
+					staged: true, entries, busy, workingTreePath: workingTreePath as string,
+					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
+					run, stagePaths, unstagePaths, discardPaths, openDiff,
+				}),
+				ChangeGroup({
+					staged: false, entries, busy, workingTreePath: workingTreePath as string,
+					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
+					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
+				}),
+			),
 		),
 	);
 }

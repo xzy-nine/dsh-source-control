@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import {
-	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
+	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular,
 	IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
@@ -115,7 +115,8 @@ export interface ChangeNodeRowProps {
 	readonly onStage: (paths: readonly string[]) => void;
 	readonly onUnstage: (paths: readonly string[]) => void;
 	readonly onDiscard: (paths: readonly string[], untracked: boolean) => void;
-	readonly onOpen: (entry: WorkingTreeEntry) => void;
+	/** 打开文件：untracked 为 true 时按普通文件打开。 */
+	readonly onOpen: (entry: WorkingTreeEntry, untracked: boolean) => void;
 	readonly descendantsOf: (folderPath: string) => string[];
 }
 
@@ -151,7 +152,7 @@ export function ChangeNodeRow({
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 			React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
 			React.createElement('span', { className: 'ggg-change-name' }, row.name),
-			React.createElement('span', { className: 'ggg-count' }, String(row.count)),
+			React.createElement('span', { className: 'ggg-row-tail ggg-count' }, String(row.count)),
 		);
 	}
 	const entry = row.entry;
@@ -163,7 +164,7 @@ export function ChangeNodeRow({
 		event.preventDefault();
 		const target = event.currentTarget;
 		target.classList.add('ggg-menu-target');
-		const items: ContextMenuItem[] = [{ title: '打开差异', onClick: () => onOpen(entry) }, { type: 'divider' }];
+		const items: ContextMenuItem[] = [{ title: untracked ? '打开文件' : '打开', onClick: () => onOpen(entry, untracked) }, { type: 'divider' }];
 		if (fileStaged) {
 			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
 		} else {
@@ -173,34 +174,37 @@ export function ChangeNodeRow({
 		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
 	};
+	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
+	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+		if (busy) return;
+		event.preventDefault();
+		onOpen(entry, untracked);
+	};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-change', title: entry.path, onContextMenu: handleContextMenu },
+		{ className: 'ggg-change ggg-change-openable', title: entry.path, onClick: handleClick, onContextMenu: handleContextMenu },
 		...guidesOf(row.depth),
 		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: 'ggg-status', 'data-type': type }, type),
 		React.createElement('span', { className: 'ggg-change-name' }, name),
-		React.createElement('button', {
-			type: 'button', className: 'ggg-change-btn', title: '打开差异', disabled: busy,
-			onClick: () => onOpen(entry),
-		}, React.createElement(IconCompareSplitOutlineRegular, { size: 14 })),
+		// 悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。
 		fileStaged
 			? React.createElement('button', {
 				type: 'button', className: 'ggg-change-btn', title: '取消暂存', disabled: busy,
-				onClick: () => onUnstage([entry.path]),
+				onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onUnstage([entry.path]); },
 			}, React.createElement(IconCloseOutlineRegular, { size: 14 }))
 			: React.createElement(
 				React.Fragment,
 				null,
 				React.createElement('button', {
 					type: 'button', className: 'ggg-change-btn', title: '丢弃改动', disabled: busy,
-					onClick: () => onDiscard([entry.path], untracked),
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onDiscard([entry.path], untracked); },
 				}, React.createElement(IconTrashOutlineRegular, { size: 14 })),
 				React.createElement('button', {
 					type: 'button', className: 'ggg-change-btn', title: '暂存改动', disabled: busy,
-					onClick: () => onStage([entry.path]),
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onStage([entry.path]); },
 				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
 			),
+		React.createElement('span', { className: 'ggg-row-tail ggg-status', 'data-type': type }, type),
 	);
 }
 
@@ -214,7 +218,7 @@ export interface CommitDetailProps {
 }
 
 /**
- * 提交改动文件列表；点击差异按钮在侧边栏打开 DiffBlock 视图。
+ * 提交改动文件列表；点击文件行在侧边栏打开 DiffBlock 视图。
  *
  * @param props - 见 {@link CommitDetailProps}。
  * @returns 文件列表元素。
@@ -250,7 +254,10 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 			const stat = entry.additions !== null && entry.additions !== undefined;
 			return React.createElement(
 				'div',
-				{ key: `e:${entry.path}`, className: 'ggg-change', title: entry.path },
+				{
+					key: `e:${entry.path}`, className: 'ggg-change ggg-change-openable', title: entry.path,
+					onClick: () => { if (!busy) onOpen(entry.path); },
+				},
 				...guidesOf(row.depth),
 				React.createElement(FileTypeIcon, { path: name, size: 14 }),
 				React.createElement('span', { className: 'ggg-status', 'data-type': entry.type }, entry.type),
@@ -261,10 +268,6 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 					React.createElement('span', { className: 'ggg-detail-add' }, `+${entry.additions}`),
 					React.createElement('span', { className: 'ggg-detail-del' }, `-${entry.deletions}`),
 				),
-				React.createElement('button', {
-					type: 'button', className: 'ggg-change-btn', title: '查看差异', disabled: busy,
-					onClick: () => onOpen(entry.path),
-				}, React.createElement(IconCompareSplitOutlineRegular, { size: 14 })),
 			);
 		}),
 	);
@@ -285,7 +288,7 @@ export interface ChangeGroupProps {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, untracked?: boolean) => Promise<void>;
 	readonly forceShow?: boolean;
 }
 
@@ -311,7 +314,7 @@ export function ChangeGroup({
 	const onStage = (paths: readonly string[]): void => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
 	const onUnstage = (paths: readonly string[]): void => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); };
-	const onOpen = (item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged); };
+	const onOpen = (item: WorkingTreeEntry, untracked: boolean): void => { void openDiff('*', item.path, staged, untracked); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);

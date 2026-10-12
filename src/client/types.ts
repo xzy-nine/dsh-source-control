@@ -195,7 +195,8 @@ export interface DiffTarget {
 	readonly type: 'diff';
 	readonly title: string;
 	readonly diff: {
-		readonly kind: 'worktree' | 'commit';
+		/** 打开方式：工作区差异、提交差异，或普通文件（未跟踪的新文件没有可比差异）。 */
+		readonly kind: 'worktree' | 'commit' | 'file';
 		readonly path: string;
 		readonly staged?: boolean;
 		readonly untracked?: boolean;

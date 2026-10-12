@@ -676,23 +676,36 @@ export interface FileDiffContent {
 	readonly path?: string;
 	readonly oldText: string | null;
 	readonly newText: string | null;
+	/** 由 git 算出的逐块内容；为空时前端退回整份内容比较。 */
+	readonly hunks: Array<{ readonly oldText: string; readonly newText: string }>;
 }
 
 /**
  * 取某个提交中某文件的前后内容，供 DiffBlock 渲染。
  *
+ * hunks 由宿主用 git 直接算出：前端 DiffBlock 的本地 diff 在改动量超过其搜索上限时
+ * 会退化成整文件「全删全加」，因此逐块内容优先。
+ *
  * @param cwd - 会话工作区路径。
  * @param hash - 提交哈希；'*' 表示工作区。
  * @param path - 文件路径（相对仓库根）。
  * @param staged - 工作区时是否取暂存区内容。
- * @returns 前后内容。
+ * @returns 前后内容与逐块差异。
  */
 export async function fileDiffContent(cwd: string, hash: string, path: string, staged = false): Promise<FileDiffContent> {
 	const payload = await callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged });
+	const raw = Array.isArray(payload.hunks) ? payload.hunks : [];
+	const hunks = raw.flatMap((item) => {
+		const hunk = item as { oldText?: unknown; newText?: unknown };
+		return typeof hunk.oldText === 'string' && typeof hunk.newText === 'string'
+			? [{ oldText: hunk.oldText, newText: hunk.newText }]
+			: [];
+	});
 	return {
 		path: typeof payload.path === 'string' ? payload.path : path,
 		oldText: typeof payload.oldText === 'string' ? payload.oldText : null,
 		newText: typeof payload.newText === 'string' ? payload.newText : null,
+		hunks,
 	};
 }
 

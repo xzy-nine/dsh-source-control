@@ -202,11 +202,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
 	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
 
-	/** 打开某个提交或工作区文件的差异。 */
-	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean) => {
-		const diff = hash === '*'
-			? { kind: 'worktree', path, staged, untracked: false, repoRoot: workingTreePath }
-			: { kind: 'commit', hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath };
+	/**
+	 * 打开某个提交或工作区文件。
+	 *
+	 * 未跟踪的新文件没有可比差异，按普通文件打开（kind 为 'file'）。
+	 * repoRoot 传所选仓库根：它与会话工作区根未必相同，地址由索引侧换算。
+	 *
+	 * @param hash - 提交哈希；'*' 表示工作区。
+	 * @param path - 文件路径（相对仓库根）。
+	 * @param staged - 工作区时是否取暂存区内容。
+	 * @param untracked - 是否是未跟踪的新文件。
+	 */
+	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, untracked = false) => {
+		const kind = untracked ? 'file' : (hash === '*' ? 'worktree' : 'commit');
+		const diff = kind === 'file'
+			? { kind, path, repoRoot: workingTreePath }
+			: kind === 'worktree'
+				? { kind, path, staged, untracked: false, repoRoot: workingTreePath }
+				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath };
 		if (typeof onOpenDiff === 'function') {
 			onOpenDiff({ id: `gg-diff:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
 		}

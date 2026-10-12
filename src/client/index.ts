@@ -11,7 +11,7 @@
 import React from 'react';
 import { DiffBlock } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel.ts';
-import { gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
+import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
 import { fileDiffContent } from './api.ts';
 import { STYLES } from './styles.ts';
 
@@ -84,16 +84,29 @@ function GitGraphTab(props) {
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
 		if (tabActions === undefined) return;
-		const hash = tab?.diff?.kind === 'worktree' ? '*' : (tab?.diff?.hashFull ?? tab?.diff?.hash ?? '*');
-		const address = gitDiffAddress(sessionId, hash, String(tab?.diff?.path ?? ''));
-		const staged = tab?.diff?.kind === 'worktree' && tab?.diff?.staged === true;
-		const repoRoot = typeof tab?.diff?.repoRoot === 'string' ? tab.diff.repoRoot : null;
+		const diff = tab?.diff ?? {};
+		const path = String(diff.path ?? '');
+		// 未跟踪的新文件没有可比差异：交给普通文件页打开，地址为 dsh-resource://file/…。
+		if (diff.kind === 'file') {
+			const address = diffFileAddress(sessionId, cwd, String(diff.repoRoot ?? cwd ?? ''), path);
+			if (address === null) return;
+			try {
+				tabActions.openResource(address);
+			} catch (error) {
+				void error;
+			}
+			return;
+		}
+		const hash = diff.kind === 'worktree' ? '*' : (diff.hashFull ?? diff.hash ?? '*');
+		const address = gitDiffAddress(sessionId, hash, path);
+		const staged = diff.kind === 'worktree' && diff.staged === true;
+		const repoRoot = typeof diff.repoRoot === 'string' ? diff.repoRoot : null;
 		try {
 			tabActions.openResource(address, { params: { staged, repoRoot } });
 		} catch (error) {
 			void error;
 		}
-	}, [tabActions, sessionId]);
+	}, [tabActions, sessionId, cwd]);
 	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff });
 }
 
@@ -172,7 +185,10 @@ function GitDiffTab(props) {
 				&& React.createElement('div', { className: 'ggg-empty' }, '无法获取差异内容'),
 			!loading && diffData !== null && (diffData.oldText !== null || diffData.newText !== null)
 				&& React.createElement(DiffBlock, {
-					diffs: [{ path: parsed.path, oldText: diffData.oldText ?? '', newText: diffData.newText ?? '' }],
+					// 逐块渲染：整份内容交给 DiffBlock 时，超出其本地 diff 搜索上限的改动
+					// 会退化成整文件「全删全加」。
+					diffs: (diffData.hunks.length > 0 ? diffData.hunks : [{ oldText: diffData.oldText ?? '', newText: diffData.newText ?? '' }])
+						.map((hunk) => ({ path: parsed.path, oldText: hunk.oldText, newText: hunk.newText })),
 					labels: DIFF_LABELS,
 				}),
 		),
