@@ -54,6 +54,7 @@
     "typecheck:host": "tsc -p tsconfig.json --noEmit",
     "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
+    "pretest": "pnpm run build:client",
     "test": "node --test test/*.test.mjs"
   },
   "dsh": {

@@ -7,7 +7,7 @@ DSH 插件：会话 **Git Graph 页**——在 DSH Web GUI 内置右侧 Sidebar 
 ## 架构
 
 ```
-内置右侧栏页「Git Graph」(src/client/index.js，主文档内 React 树)
+内置右侧栏页「Git Graph」(src/client/index.ts，主文档内 React 树)
   └─ useSessions() 取该会话工作区 cwd
   └─ 面板：工具栏 / 存储库 / 变更 + 提交框 / 提交图（泳道 SVG）
         │ fetch POST /dsh-dev-git-graph/gg/api
@@ -18,8 +18,12 @@ host 路由 (src/git-graph/routes.ts)
 本地 git 仓库
 ```
 
-- **界面**：`src/client/` 下的 React 组件，由 esbuild 打包为 `lib/client.js`；`react` 与
+- **界面**：`src/client/` 下的 React 组件（全部 TypeScript），由 esbuild 打包为 `lib/client.js`；`react` 与
   `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，外部化引用。
+- **面板拆分**：`src/client/panel.ts` 只持有状态与数据加载并组装分区；`src/client/panel/` 下按职责分列
+  —— `sections.ts`（三个分区组件）、`changes.ts`（变更树纯函数与展示组件）、`refs.ts`（引用与提交图纯计算）、
+  `commit-menu.ts` / `ref-menu.ts`（右键菜单）、`ref-filter-dialog.ts`、`repo-row.ts`、`github.ts`、
+  `storage.ts`、`errors.ts`，以及 `use-repos.ts` / `use-graph-data.ts` / `use-commit-stats.ts` 三个 hooks。
 - **主题**：样式以 `--dsw-alias-*` 语义 token 为主、随主题明暗切换；引用标记取泳道调色板的固定色。
 - **页注册**：`ctx.sidebarRightTabs.register`（id `dsh-dev-git-graph/git-graph`，kind `devGitGraph`），
   正文进带键席位 `sidebar.right.pane.tab`，chip 标题进 `sidebar.right.pane.tab.title`。
@@ -96,6 +100,10 @@ dsh plugin --profile web add file:/path/to/dsh-plugins/packages/dsh-dev-git-grap
 - 包管理器为 pnpm；`pnpm-workspace.yaml` 放行 esbuild 的安装脚本，`pnpm-lock.yaml` 随仓库提交。
 - 宿主半边用 `tsc -p tsconfig.json` 编译到 `lib/`；前端半边用 `scripts/build-client.mjs`
   （esbuild）打成 `lib/client.js`。`prepare` 在安装后自动跑一次完整构建。
+- 类型检查分两段：`tsconfig.json`（宿主，NodeNext）与 `tsconfig.client.json`（客户端，bundler 解析、
+  `allowImportingTsExtensions`、不产出）。`pnpm typecheck` 依次跑两段。
+- `pnpm test` 的 `pretest` 先重建客户端产物，`test/client-bundle.test.mjs` 在模拟 ModuleLoader 下
+  加载 `lib/client.js`，校验包络、外部模块请求与 `apply` 的席位注册。
 - `react` 与 `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，构建时外部化；
   浏览器半边不得引入其他裸模块。
 

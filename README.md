@@ -45,9 +45,14 @@ flowchart LR
   end
 ```
 
-- **Frontend**: React components under `src/client/`, bundled by esbuild into `lib/client.js`. `react` and
+- **Frontend**: React components under `src/client/` (all TypeScript), bundled by esbuild into `lib/client.js`. `react` and
   `@deepseek-ai/dsh-client-ui-primitives` are shell-shared platform modules and stay external.
-- **Lanes**: `src/client/lanes.js` is a pure function (commit list → per-row lanes and links) rendered to SVG
+- **Panel split**: `src/client/panel.ts` holds only state and data loading and assembles the sections;
+  `src/client/panel/` carries the rest by responsibility — `sections.ts` (the three sections),
+  `changes.ts` (change-tree helpers and rows), `refs.ts` (ref and graph computations),
+  `commit-menu.ts` / `ref-menu.ts`, `ref-filter-dialog.ts`, `repo-row.ts`, `github.ts`, `storage.ts`,
+  `errors.ts`, plus the `use-repos.ts` / `use-graph-data.ts` / `use-commit-stats.ts` hooks.
+- **Lanes**: `src/client/lanes.ts` is a pure function (commit list → per-row lanes and links) rendered to SVG
   by React; it does not touch the DOM and is unit-tested.
 - **API**: `POST /dsh-dev-git-graph/gg/api` keeps the ported command set and adds the working-tree commands.
 
@@ -86,6 +91,10 @@ pnpm test                                  # lane layout unit tests
   `pnpm-lock.yaml` is committed.
 - The host half compiles to `lib/` with `tsc -p tsconfig.json`; the browser half is bundled into
   `lib/client.js` by `scripts/build-client.mjs`. `prepare` runs the full build after install.
+- Type checking runs in two passes: `tsconfig.json` (host, NodeNext) and `tsconfig.client.json`
+  (client, bundler resolution, `allowImportingTsExtensions`, no emit).
+- `pretest` rebuilds the client bundle first; `test/client-bundle.test.mjs` loads `lib/client.js`
+  under a stub ModuleLoader and checks the envelope, external requests, and seat registration.
 - `assets/icons/` holds the ref-marker SVGs; the client build inlines them as text, so the browser half
   requests no extra resources at runtime.
 - The browser half must not import bare modules other than the shell-shared `react` and

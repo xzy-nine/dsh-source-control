@@ -24,7 +24,7 @@ import { loadSession, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
 import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
-import { defaultSettings, formatDate, loadSettings, saveSettings, SettingsPanel } from './settings.ts';
+import { formatDate, loadSettings, saveSettings, SettingsPanel } from './settings.ts';
 import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
 
 /** 面板属性。 */
@@ -133,7 +133,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	}, [repoHeight, commitRepoHeight]);
 
 	const {
-		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
+		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
 		selectNode, toggleNode, setSyncById,
 	} = useRepos({ cwd, sessionId });
 
@@ -626,6 +626,3 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		}),
 	);
 }
-
-/** 默认设置，供外部读取。 */
-export { defaultSettings };
