@@ -326,12 +326,12 @@ function CommitDetail({ files, busy, collapsed, onToggle, onOpen }) {
  */
 function ChangeGroup({
 	staged, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
-	stagePaths, unstagePaths, discardPaths, openDiff,
+	stagePaths, unstagePaths, discardPaths, openDiff, forceShow,
 }) {
 	const visible = entries.filter((entry) => staged
 		? (entry.index !== ' ' && entry.index !== '?')
 		: (entry.worktree !== ' '));
-	if (visible.length === 0) return [];
+	if (visible.length === 0 && !forceShow) return [];
 	const tree = buildChangeTree(visible);
 	const rows = [];
 	flattenChangeTree(tree, '', 1, collapsed, rows);
@@ -1674,7 +1674,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				React.createElement(
 					'div',
 					{ className: 'ggg-commit-box' },
-					aiBusy && React.createElement('div', { className: 'ggg-ai-loading-bar' }),
+					(aiBusy || state.busy || state.phase === 'loading') && React.createElement('div', { className: 'ggg-ai-loading-bar' }),
 					React.createElement('div', { className: 'ggg-commit-input-wrap' },
 						React.createElement('textarea', {
 							className: 'ggg-commit-input',
@@ -1732,6 +1732,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					staged: false, entries: state.entries, busy: state.busy, workingTreePath,
 					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					forceShow: state.entries.some((e) => e.index !== ' ' && e.index !== '?'),
 				}),
 			),
 		),
