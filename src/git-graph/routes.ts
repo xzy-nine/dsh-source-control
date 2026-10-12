@@ -446,7 +446,75 @@ export interface GgRouteContext {
 	}): () => void;
 }
 
-export function registerGgRoutes(webServer: GgRouteContext): Array<() => void> {
+/** AI 提交生成的依赖面。 */
+export interface AiCommitDeps {
+	getLlm?: () => unknown;
+	getAgentDefaultModel?: () => unknown;
+}
+
+/** AI 提交生成的系统提示词。 */
+const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定的 diff 内容，生成一条简洁的提交信息。'
+	+ '要求：第一行不超过 72 字符的 conventional commit 格式（如 `feat: ...`、`fix: ...`、`refactor: ...`）；'
+	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
+	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
+
+/** diff 总长度上限（字符）。 */
+const AI_COMMIT_DIFF_MAX = 200_000;
+
+/**
+ * 取暂存区 diff，截断至上限。
+ * @param repo - 仓库路径。
+ * @returns diff 文本；无暂存内容时返回空串。
+ */
+async function getStagedDiff(repo: string): Promise<string> {
+	try {
+		const diff = await gitOrThrow(['diff', '--cached', '--no-color'], repo);
+		return diff.length > AI_COMMIT_DIFF_MAX ? diff.slice(0, AI_COMMIT_DIFF_MAX) + '\n…（diff 已截断）' : diff;
+	} catch {
+		return '';
+	}
+}
+
+/**
+ * 查模型是否声明了 `off` 推理档位。
+ * @param llm - llm 服务。
+ * @param provider - 供应商 id。
+ * @param model - 模型 id。
+ * @returns 是否可安全发送 `reasoningEffort: 'off'`。
+ */
+async function canDisableReasoning(llm: unknown, provider: string, model: string): Promise<boolean> {
+	const svc = llm as { resolveModelInfo?: (p: string, m: string) => Promise<unknown> };
+	if (!provider || !model || typeof svc.resolveModelInfo !== 'function') return false;
+	try {
+		const info = await svc.resolveModelInfo(provider, model) as { reasoning?: { efforts?: Array<{ id?: string }> } };
+		const efforts = info?.reasoning?.efforts;
+		if (!Array.isArray(efforts)) return false;
+		return efforts.some((e) => e?.id === 'off');
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 取 agent 当前默认模型选择。
+ * @param getAgentDefaultModel - `ctx.get('agentDefaultModel')`。
+ * @returns `{ provider, model }` 或 null。
+ */
+function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provider: string; model: string } | null {
+	if (typeof getAgentDefaultModel !== 'function') return null;
+	try {
+		const svc = getAgentDefaultModel() as { currentSelection?: () => unknown };
+		const sel = svc?.currentSelection?.() as { provider?: string; model?: string } | null;
+		if (sel === null || typeof sel !== 'object') return null;
+		const provider = typeof sel.provider === 'string' ? sel.provider : '';
+		const model = typeof sel.model === 'string' ? sel.model : '';
+		return provider !== '' && model !== '' ? { provider, model } : null;
+	} catch {
+		return null;
+	}
+}
+
+export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDeps): Array<() => void> {
 	const disposers: Array<() => void> = [];
 
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
@@ -463,6 +531,106 @@ export function registerGgRoutes(webServer: GgRouteContext): Array<() => void> {
 				void handleApi(req, res).catch((e) => {
 					sendJson(res, 500, { error: String(e instanceof Error ? e.message : e) });
 				});
+			},
+		}),
+	);
+
+	// AI 模型目录（GET）：供应商列表 + 每供应商的模型 id。
+	disposers.push(
+		webServer.register({
+			kind: 'exact',
+			path: '/dsh-dev-git-graph/gg/ai-models',
+			handler: (req, res) => {
+				if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+				const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
+				if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
+				const providers: Array<{ id: string; name: string }> = [];
+				try {
+					const raw = llm.listProviders();
+					for (const p of (Array.isArray(raw) ? raw : [])) {
+						const id = (p as { id?: string })?.id ?? '';
+						if (id.length > 0) providers.push({ id, name: (p as { name?: string })?.name ?? id });
+					}
+				} catch { /* 目录不可用 */ }
+				void (async () => {
+					const modelsByProvider: Record<string, string[]> = {};
+					for (const p of providers) {
+						try {
+							const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
+							modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
+								.map((m) => (m as { id?: string })?.id ?? '')
+								.filter((id) => id.length > 0);
+						} catch { modelsByProvider[p.id] = []; }
+					}
+					const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+					sendJson(res, 200, { providers, modelsByProvider, fallback });
+				})();
+			},
+		}),
+	);
+
+	// AI 提交信息生成（POST，SSE 流式）：取暂存 diff → 调 llm.stream → 逐 chunk 推送。
+	disposers.push(
+		webServer.register({
+			kind: 'exact',
+			path: '/dsh-dev-git-graph/gg/ai-commit',
+			handler: (req, res) => {
+				if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+				void (async () => {
+					const body = await readBody(req);
+					const repo = typeof body.repo === 'string' ? body.repo : '';
+					if (!repo) { sendJson(res, 400, { error: '缺少 repo' }); return; }
+					const llm = aiDeps?.getLlm?.() as { stream?: (opts: unknown) => AsyncIterable<{ content?: string }> } | undefined;
+					if (!llm || typeof llm.stream !== 'function') { sendJson(res, 503, { error: 'llm 服务不可用' }); return; }
+
+					// 模型解析：请求指定 > agent 默认（附警告）
+					let provider = typeof body.provider === 'string' ? body.provider : '';
+					let model = typeof body.model === 'string' ? body.model : '';
+					let warning = '';
+					if (provider === '' || model === '') {
+						const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+						if (fallback !== null) { provider = fallback.provider; model = fallback.model; warning = '未配置专用模型，使用当前会话模型'; }
+						else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
+					}
+
+					const diff = await getStagedDiff(repo);
+					if (diff.trim() === '') { sendJson(res, 400, { error: '暂存区为空，无 diff 可生成提交信息' }); return; }
+
+					const off = await canDisableReasoning(llm, provider, model);
+					const streamOpts: Record<string, unknown> = {
+						provider,
+						model,
+						system: AI_COMMIT_SYSTEM_PROMPT,
+						messages: [{ role: 'user', content: [{ type: 'text', text: `请根据以下 diff 生成提交信息：\n\n${diff}` }] }],
+						maxTokens: 512,
+						temperature: 0,
+					};
+					if (off) streamOpts.reasoningEffort = 'off';
+
+					res.writeHead(200, {
+						'content-type': 'text/event-stream; charset=utf-8',
+						'cache-control': 'no-store',
+						'connection': 'keep-alive',
+					});
+					const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+					if (warning !== '') sse('warning', warning);
+
+					try {
+						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } } }>;
+						for await (const chunk of stream) {
+							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) sse('chunk', chunk.text);
+							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
+								const f = chunk.reason.failure;
+								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
+								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
+							}
+						}
+						sse('done', '');
+					} catch (e) {
+						sse('error', e instanceof Error ? e.message : String(e));
+					}
+					res.end();
+				})();
 			},
 		}),
 	);

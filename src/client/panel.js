@@ -19,7 +19,7 @@ import {
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
 	commitStaged, createArchive, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
-	deleteUserDetails, discardPaths, discoverRepositories, dropStash, editRemote, editUserDetails, exportRepoConfig, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
+	deleteUserDetails, discardPaths, discoverRepositories, dropStash, editRemote, editUserDetails, exportRepoConfig, fetchIntoLocalBranch, fetchRepo, generateCommitMessage, loadCommitFiles,
 	loadConfig, loadGraph, loadRepoSync, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
 	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, tagDetails, unstagePaths,
 } from './api.js';
@@ -675,6 +675,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		entries: [], selectedHash: null, detail: null, busy: false, remotes: [],
 	});
 	const [message, setMessage] = React.useState('');
+	const [aiBusy, setAiBusy] = React.useState(false);
+	const [aiWarning, setAiWarning] = React.useState('');
+	const aiAbortRef = React.useRef(null);
 	const [amend, setAmend] = React.useState(false);
 	const [maxCommits, setMaxCommits] = React.useState(200);
 	const [settings, setSettings] = React.useState(() => loadSettings());
@@ -1136,6 +1139,25 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			setMessage('');
 			setAmend(false);
 		});
+	};
+
+	/** AI 生成提交信息：流式输出，不开启思考。 */
+	const handleAiCommit = () => {
+		if (aiBusy) return;
+		if (workingTreePath === null) { setAiWarning('未选中仓库'); return; }
+		if (stagedPaths.length === 0) { setAiWarning('暂存区为空，无 diff 可生成提交信息'); return; }
+		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
+		setAiBusy(true);
+		setAiWarning('');
+		setMessage('');
+		const controller = new AbortController();
+		aiAbortRef.current = controller;
+		generateCommitMessage(workingTreePath, settings.aiCommitProvider ?? '', settings.aiCommitModel ?? '', {
+			signal: controller.signal,
+			onChunk: (text) => setMessage((prev) => prev + text),
+			onWarning: (text) => setAiWarning(text),
+			onError: (text) => setAiWarning(text),
+		}).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err) => setAiWarning(String(err?.message ?? err)));
 	};
 
 	const currentSync = syncById.get(selectedId);
@@ -1652,13 +1674,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						}),
 						React.createElement('div', { className: 'ggg-commit-input-actions' },
 							React.createElement('button', {
-								type: 'button', className: 'ggg-commit-input-btn', title: 'AI 辅助提交',
+								type: 'button', className: 'ggg-commit-input-btn' + (aiBusy ? ' is-busy' : ''), title: 'AI 辅助提交',
+								disabled: aiBusy || state.busy,
+								onClick: handleAiCommit,
 							}, React.createElement(IconSparkleRegular, { size: 14 })),
 							React.createElement('button', {
 								type: 'button', className: 'ggg-commit-input-btn', title: '选择提交方式',
 							}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
 						),
 					),
+					aiWarning !== '' && React.createElement('div', { className: 'ggg-commit-ai-warning' }, aiWarning),
 					React.createElement(Checkbox, { checked: amend, onChange: toggleAmend, label: '修补上一次提交' }),
 					showSyncButton
 						? React.createElement(Button, {

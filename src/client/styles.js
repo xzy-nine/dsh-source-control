@@ -222,4 +222,12 @@ export const STYLES = `
 .ggg-diff-tab-path{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ggg-diff-tab-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
 .ggg-diff-tab-body{flex:1;min-height:0;overflow:auto;padding:4px 0}
+
+/* ── AI 提交信息 ─────────────────────────────────────────── */
+.ggg-commit-input-btn.is-busy{opacity:0.5;pointer-events:none}
+.ggg-commit-ai-warning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
+.ggg-set-ai-model{display:flex;flex-direction:column;gap:6px}
+.ggg-set-row{display:flex;align-items:center;gap:8px}
+.ggg-set-label{font-size:12px;color:var(--dsw-alias-label-secondary);width:56px;flex:none}
+.ggg-set-select{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary)}
 `;

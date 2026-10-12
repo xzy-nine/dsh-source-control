@@ -650,3 +650,59 @@ export async function exportRepoConfig(cwd) {
 export async function fileDiffContent(cwd, hash, path, staged = false) {
 	return callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged });
 }
+
+/** AI 模型目录端点。 */
+const AI_MODELS_PATH = '/dsh-dev-git-graph/gg/ai-models';
+/** AI 提交生成端点。 */
+const AI_COMMIT_PATH = '/dsh-dev-git-graph/gg/ai-commit';
+
+/**
+ * 取 AI 模型目录。
+ * @returns {Promise<{providers: Array<{id, name}>, modelsByProvider: Record<string, string[]>, fallback: {provider, model}|null}>}
+ */
+export async function fetchAiModels() {
+	const res = await fetch(AI_MODELS_PATH, { method: 'GET' });
+	if (!res.ok) throw new Error(`宿主返回 ${res.status}`);
+	return res.json();
+}
+
+/**
+ * 流式生成 AI 提交信息。
+ * @param {string} cwd - 仓库路径。
+ * @param {string} provider - 供应商 id（空串表示用当前会话模型）。
+ * @param {string} model - 模型 id。
+ * @param {{onChunk: (text: string) => void, onWarning?: (text: string) => void, onError?: (text: string) => void, signal?: AbortSignal}} handlers
+ */
+export async function generateCommitMessage(cwd, provider, model, handlers) {
+	const res = await fetch(AI_COMMIT_PATH, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ repo: cwd, provider, model }),
+		signal: handlers.signal,
+	});
+	if (!res.ok) {
+		const json = await res.json().catch(() => ({}));
+		throw new Error(json.error || `宿主返回 ${res.status}`);
+	}
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+		let event = '';
+		for (const line of lines) {
+			if (line.startsWith('event: ')) { event = line.slice(7).trim(); }
+			else if (line.startsWith('data: ') && event !== '') {
+				const data = JSON.parse(line.slice(6));
+				if (event === 'chunk') handlers.onChunk(data);
+				else if (event === 'warning') handlers.onWarning?.(data);
+				else if (event === 'error') handlers.onError?.(data);
+				event = '';
+			}
+		}
+	}
+}

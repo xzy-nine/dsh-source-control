@@ -5,6 +5,7 @@
  *    GET /dsh-dev-git-graph/gg/<static>  -> 打包后的 JS/CSS
  *    POST /dsh-dev-git-graph/gg/api      -> 原扩展 gitGraphView.respondToMessage 的命令集（host 直跑 git 命令）
  * 2) 数据层复用 vendor/git-graph/dataSource.ts（mhutchie/vscode-git-graph，许可见 vendor/git-graph/LICENSE）。
+ * 3) AI 提交信息生成：POST /dsh-dev-git-graph/gg/ai-commit —— 取暂存 diff，调 llm.stream 流式返回。
  */
 import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
@@ -28,7 +29,9 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 
 	ctx.inject(['webServer'], (host) => {
 		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
-		const disposers = registerGgRoutes(webServer);
+		const getLlm = () => (ctx as unknown as { get(name: string): unknown }).get('llm');
+		const getAgentDefaultModel = () => (ctx as unknown as { get(name: string): unknown }).get('agentDefaultModel');
+		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel });
 
 		(ctx.on as (event: string, cb: () => void) => void)('dispose', () => {
 			for (const d of disposers) d();

@@ -9,6 +9,7 @@ import {
 	Button, Checkbox, Input, SegmentedControl,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { fetchAiModels } from './api.js';
 
 /** 用户身份配置位置选项。 */
 const CONFIG_LOCATION = [
@@ -61,6 +62,8 @@ export function defaultSettings() {
 		onRepoLoadScrollToHead: false,
 		showAvatars: true,
 		graphColours: null,
+		aiCommitProvider: '',
+		aiCommitModel: '',
 	};
 }
 
@@ -204,6 +207,59 @@ function SelectRow({ label, options, value, onChange }) {
 
 /**
  * 设置面板：浮层显示全部分区。
+/**
+ * AI 提交信息生成的模型配置区。
+ *
+ * @param props.provider - 当前保存的供应商 id（空串 = 未配置）。
+ * @param props.model - 当前保存的模型 id。
+ * @param props.onChange - (provider, model) => void。
+ * @returns 区元素。
+ */
+function AiModelConfigSection({ provider, model, onChange }) {
+	const [catalog, setCatalog] = React.useState(null);
+	React.useEffect(() => {
+		let cancelled = false;
+		fetchAiModels().then((data) => { if (!cancelled) setCatalog(data); }).catch(() => { if (!cancelled) setCatalog(null); });
+		return () => { cancelled = true; };
+	}, []);
+	const providers = catalog?.providers ?? [];
+	const modelsByProvider = catalog?.modelsByProvider ?? {};
+	const fallback = catalog?.fallback ?? null;
+	const models = modelsByProvider[provider] ?? [];
+	return React.createElement(
+		'div',
+		{ className: 'ggg-set-ai-model' },
+		provider === '' && fallback !== null
+			? React.createElement('div', { className: 'ggg-set-note' }, '未配置专用模型，将使用当前会话模型（', fallback.provider, '/', fallback.model, '）。')
+			: provider === ''
+				? React.createElement('div', { className: 'ggg-set-note' }, '未配置专用模型，且无法获取当前会话模型。')
+				: null,
+		React.createElement('div', { className: 'ggg-set-row' },
+			React.createElement('label', { className: 'ggg-set-label' }, '供应商'),
+			React.createElement('select', {
+				className: 'ggg-set-select',
+				value: provider,
+				onChange: (e) => onChange(e.currentTarget.value, ''),
+			},
+				React.createElement('option', { value: '' }, '（使用当前会话模型）'),
+				...providers.map((p) => React.createElement('option', { key: p.id, value: p.id }, p.name || p.id)),
+			),
+		),
+		provider !== '' && React.createElement('div', { className: 'ggg-set-row' },
+			React.createElement('label', { className: 'ggg-set-label' }, '模型'),
+			React.createElement('select', {
+				className: 'ggg-set-select',
+				value: model,
+				onChange: (e) => onChange(provider, e.currentTarget.value),
+			},
+				...models.map((m) => React.createElement('option', { key: m, value: m }, m)),
+			),
+		),
+	);
+}
+
+/**
+ * Git Graph 设置面板。
  *
  * @param props.open - 是否展开。
  * @param props.onClose - 关闭回调。
@@ -340,6 +396,13 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 						variant: 'secondary', size: 'sm',
 						onClick: () => { void onExportConfig?.(); },
 					}, '导出仓库配置'),
+				),
+				React.createElement(Section, { title: 'AI 提交信息' },
+					React.createElement(AiModelConfigSection, {
+						provider: settings.aiCommitProvider,
+						model: settings.aiCommitModel,
+						onChange: (aiCommitProvider, aiCommitModel) => patch({ aiCommitProvider, aiCommitModel }),
+					}),
 				),
 			),
 		),
