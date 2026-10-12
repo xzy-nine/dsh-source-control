@@ -76,13 +76,16 @@ flowchart LR
 ## Development
 
 ```sh
-pnpm --filter dsh-dev-git-graph build      # build:host (tsc) + build:client (esbuild)
-pnpm --filter dsh-dev-git-graph typecheck  # host (NodeNext)
-pnpm --filter dsh-dev-git-graph test       # lane layout unit tests
+pnpm install                               # pnpm workspace, single package
+pnpm build                                 # build:host (tsc) + build:client (esbuild)
+pnpm typecheck                             # host (NodeNext)
+pnpm test                                  # lane layout unit tests
 ```
 
+- The package manager is pnpm; `pnpm-workspace.yaml` allows esbuild's install script and
+  `pnpm-lock.yaml` is committed.
 - The host half compiles to `lib/` with `tsc -p tsconfig.json`; the browser half is bundled into
-  `lib/client.js` by `scripts/build-client.mjs`.
+  `lib/client.js` by `scripts/build-client.mjs`. `prepare` runs the full build after install.
 - `assets/icons/` holds the ref-marker SVGs; the client build inlines them as text, so the browser half
   requests no extra resources at runtime.
 - The browser half must not import bare modules other than the shell-shared `react` and

@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/xzy-nine/dsh-dev-git-graph#readme",
   "type": "module",
+  "packageManager": "pnpm@11.28.5",
   "main": "./lib/src/index.js",
   "types": "./lib/src/index.d.ts",
   "exports": {
@@ -48,6 +49,7 @@
     "build:host": "tsc -p tsconfig.json",
     "build:client": "node scripts/build-client.mjs",
     "prepublishOnly": "pnpm run build",
+    "prepare": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --test test/*.test.mjs"

@@ -78,20 +78,24 @@ host 路由 (src/git-graph/routes.ts)
 ## 构建与安装
 
 ```bash
+# 依赖安装（pnpm workspace 单包）
+pnpm install
+
 # 构建：宿主 tsc → lib/，前端 esbuild → lib/client.js
-pnpm --filter dsh-dev-git-graph build
+pnpm build
 
 # 类型检查与泳道布局测试
-pnpm --filter dsh-dev-git-graph typecheck
-pnpm --filter dsh-dev-git-graph test
+pnpm typecheck
+pnpm test
 
 # 安装到 web profile（本地目录）
 dsh plugin --profile web add file:/path/to/dsh-plugins/packages/dsh-dev-git-graph
 # 重启 dsh web 生效；会话页右侧栏「+」→ 引导页出现「Git Graph」，会话 header 亦有图标按钮
 ```
 
+- 包管理器为 pnpm；`pnpm-workspace.yaml` 放行 esbuild 的安装脚本，`pnpm-lock.yaml` 随仓库提交。
 - 宿主半边用 `tsc -p tsconfig.json` 编译到 `lib/`；前端半边用 `scripts/build-client.mjs`
-  （esbuild）打成 `lib/client.js`。
+  （esbuild）打成 `lib/client.js`。`prepare` 在安装后自动跑一次完整构建。
 - `react` 与 `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，构建时外部化；
   浏览器半边不得引入其他裸模块。
 

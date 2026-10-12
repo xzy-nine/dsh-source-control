@@ -1,7 +1,6 @@
 # 发布内容由 package.json 的 files 白名单决定，这里只排除本地依赖与构建产物。
 
 node_modules/
-package-lock.json
 *.tsbuildinfo
 
 # 构建产物：
