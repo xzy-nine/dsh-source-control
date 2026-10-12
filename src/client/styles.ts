@@ -85,11 +85,11 @@ export const STYLES = `
 .ggg-commit-box{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
 .ggg-empty{padding:16px 12px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
 .ggg-graph{flex:1;min-height:0;overflow:auto;padding:0 0 12px}
-.ggg-row{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
+.ggg-row{display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
 .ggg-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ggg-row.is-selected{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-row.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
-.ggg-lane{flex:none;height:24px}
+.ggg-lane{flex:none;height:22px;overflow:visible}
 .ggg-subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
 .ggg-author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
 .ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:none}
@@ -97,10 +97,10 @@ export const STYLES = `
 .ggg-icon{display:inline-flex;align-items:center}
 .ggg-icon svg{display:block}
 .ggg-ref-text{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}
-.ggg-ref-head{padding:0 8px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#0d1116}
-.ggg-ref-branch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#4f8ff7) 18%,transparent);color:var(--dsw-alias-lane-0,#4f8ff7)}
-.ggg-ref-remote{width:17px;background:var(--dsw-alias-lane-4,#9b7bf6);color:#fff}
-.ggg-ref-tag{width:17px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#fff}
+.ggg-ref-head{padding:0 8px;background:var(--dsw-alias-lane-0,#2f7bff);color:#0d1116}
+.ggg-ref-branch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#2f7bff) 18%,transparent);color:var(--dsw-alias-lane-0,#2f7bff)}
+.ggg-ref-remote{width:17px;background:var(--dsw-alias-lane-4,#8b5cf6);color:#fff}
+.ggg-ref-tag{width:17px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
 .ggg-ref-stash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
 .ggg-ref-wide{width:auto;padding:0 8px}
 .ggg-pager{display:flex;justify-content:center;padding:8px}

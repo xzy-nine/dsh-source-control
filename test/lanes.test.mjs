@@ -6,7 +6,10 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry, LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT } from '../src/client/lanes.ts';
+import {
+	laneCentre, laneColour, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
+	LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT, ROW_OVERLAP, S_CURVE_RADIUS,
+} from '../src/client/lanes.ts';
 
 /** 构造一个提交。 */
 const commit = (hash, ...parents) => ({ hash, parents });
@@ -39,7 +42,7 @@ test('分支与合并各占泳道', () => {
 		commit('r'),
 	]);
 	assert.ok(layout.laneCount >= 2, `期望至少两条泳道，实际 ${layout.laneCount}`);
-	const fork = layout.rows[0].segments.find((segment) => segment.curved);
+	const fork = layout.rows[0].segments.find((segment) => segment.lane !== segment.toLane);
 	assert.ok(fork !== undefined, '合并提交应有分叉线');
 	assert.notEqual(fork.lane, fork.toLane);
 });
@@ -53,7 +56,7 @@ test('等待下游提交的泳道在中间各行保持连线', () => {
 		commit('a', 'r'),
 		commit('r'),
 	]);
-	const fork = layout.rows[0].segments.find((segment) => segment.curved);
+	const fork = layout.rows[0].segments.find((segment) => segment.lane !== segment.toLane);
 	const lane = fork.toLane;
 	for (const row of [1, 2]) {
 		assert.ok(throughAt(layout, row, lane) !== undefined, `第 ${row} 行缺少泳道 ${lane} 的贯穿线`);
@@ -110,7 +113,49 @@ test('父提交未加载时保留泳道并画到行底', () => {
 test('分页外的第二个父提交仍占一条泳道', () => {
 	const layout = layoutCommits([commit('m', 'a', 'later'), commit('a', 'later')]);
 	assert.equal(layout.laneCount, 2);
-	assert.ok(layout.rows[0].segments.some((segment) => segment.curved), '合并的分叉线照画');
+	assert.ok(layout.rows[0].segments.some((segment) => segment.lane !== segment.toLane), '合并的分叉线照画');
+});
+
+test('压实后行间的泳道与颜色仍然连续', () => {
+	// 压实会左移泳道：行底的下标必须与下一行行顶的下标、颜色一致，
+	// 否则线会错位或变色。这里让三条分支并存后依次汇入，触发多次压实。
+	const commits = [
+		commit('m', 'a', 'b', 'd'),
+		commit('a', 'r'),
+		commit('b', 'r'),
+		commit('r'),
+		commit('d', 'r'),
+	];
+	const layout = layoutCommits(commits);
+	for (let row = 0; row + 1 < commits.length; row++) {
+		for (const segment of layout.rows[row].segments.filter((item) => item.toBottom)) {
+			const next = layout.rows[row + 1];
+			const continues = next.segments.find((item) => item.fromTop && item.lane === segment.toLane)
+				?? (next.lane === segment.toLane ? { colour: next.colour } : undefined);
+			assert.ok(continues !== undefined, `第 ${row} 行泳道 ${segment.toLane} 在下一行没有接续`);
+			assert.equal(continues.colour, segment.colour, `第 ${row} 行泳道 ${segment.toLane} 的颜色在行间断开`);
+		}
+	}
+});
+
+test('压实把空洞右侧的泳道左移', () => {
+	// 行内释放出的空洞由其右侧泳道左移填补：压实只向左，且留下 S 形平移段。
+	const layout = layoutCommits([
+		commit('m', 'a', 'b', 'd'),
+		commit('a', 'r'),
+		commit('b', 'r'),
+		commit('r'),
+		commit('d', 'r'),
+	]);
+	const shifted = layout.rows.flatMap((row) => row.segments).filter(
+		(segment) => segment.fromTop && segment.toBottom && segment.lane !== segment.toLane,
+	);
+	assert.ok(shifted.length > 0, '应有随压实左移的贯穿段');
+	for (const segment of shifted) assert.ok(segment.toLane < segment.lane, '压实只向左移动');
+	// 左移段必须是 S 形曲线，不是竖直直线。
+	const geometry = segmentGeometry(shifted[0]);
+	assert.equal(geometry.kind, 'path');
+	assert.match(geometry.d, / V /, 'S 形曲线含竖直段');
 });
 
 test('分页加载后已加载部分的行不变', () => {
@@ -152,35 +197,36 @@ test('几何常量与样式一致', () => {
 	assert.ok(LANE_WIDTH > 0 && ROW_HEIGHT > 0);
 });
 
-test('整行贯穿线从行顶画到行底', () => {
-	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true, curved: false });
+test('整行贯穿线从行顶画到行底并越界重叠', () => {
+	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true });
 	assert.equal(geometry.kind, 'line');
-	assert.equal(geometry.y1, 0);
-	assert.equal(geometry.y2, ROW_HEIGHT);
+	// 两端各越界 ROW_OVERLAP：与相邻行的线重叠，消除亚像素接缝。
+	assert.equal(geometry.y1, -ROW_OVERLAP);
+	assert.equal(geometry.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
 
 test('入线与出线在节点处断开', () => {
-	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false });
-	assert.equal(inbound.y1, 0);
+	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false });
+	assert.equal(inbound.y1, -ROW_OVERLAP);
 	assert.equal(inbound.y2, ROW_HEIGHT / 2);
-	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false });
+	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true });
 	assert.equal(outbound.y1, ROW_HEIGHT / 2);
-	assert.equal(outbound.y2, ROW_HEIGHT);
+	assert.equal(outbound.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
 
 test('曲线入线从行顶起画', () => {
 	// 分支汇入本行节点：上半行必须有线，否则与上一行断开（初版正是从这里断的）。
-	const geometry = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false, curved: true });
+	const geometry = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false });
 	assert.equal(geometry.kind, 'path');
-	assert.match(geometry.d, /^M [\d.]+ 0 /);
+	assert.match(geometry.d, new RegExp(`^M [\\d.]+ ${-ROW_OVERLAP} V 0 `), '起点应越界重叠');
 	assert.ok(geometry.d.includes(`${ROW_HEIGHT / 2}`), '曲线终点应落在节点高度');
 });
 
 test('曲线分叉从节点画到行底', () => {
-	const geometry = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: true });
+	const geometry = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true });
 	assert.equal(geometry.kind, 'path');
 	assert.match(geometry.d, new RegExp(`^M [\\d.]+ ${ROW_HEIGHT / 2} `));
-	assert.ok(geometry.d.trim().endsWith(String(ROW_HEIGHT)));
+	assert.ok(geometry.d.trim().endsWith(`V ${ROW_HEIGHT + ROW_OVERLAP}`), '终点应越界重叠');
 });
 
 test('末行的线画到行底以便下一段接续', () => {
@@ -190,61 +236,123 @@ test('末行的线画到行底以便下一段接续', () => {
 	assert.ok(outbound !== undefined, '末行仍有向下的线');
 	const geometry = segmentGeometry(outbound);
 	assert.equal(geometry.kind, 'line');
-	assert.equal(geometry.y2, ROW_HEIGHT);
-});
-
-test('横移段拆成两段直线', () => {
-	const geometry = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: false });
-	assert.equal(geometry.kind, 'bend');
-	assert.equal(geometry.horizontal.y2, ROW_HEIGHT / 2);
-	assert.equal(geometry.vertical.y1, ROW_HEIGHT / 2);
+	assert.equal(geometry.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
 
 test('零长度线段不产生元素', () => {
-	assert.equal(segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: false, curved: false }), null);
+	assert.equal(segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: false }), null);
 });
 
 test('泳道中心线按泳道宽度排布', () => {
-	assert.equal(laneCentre(0), LANE_WIDTH / 2);
-	assert.equal(laneCentre(3), 3 * LANE_WIDTH + LANE_WIDTH / 2);
+	assert.equal(laneCentre(0), LANE_WIDTH);
+	assert.equal(laneCentre(3), 4 * LANE_WIDTH);
+	// 图形列宽 = LANE_WIDTH * (泳道数 + 1)：两侧各留半个泳道。
+	assert.equal(laneSpanWidth(1), 2 * LANE_WIDTH);
+	assert.equal(laneSpanWidth(3), 4 * LANE_WIDTH);
 });
 
 test('入线与出线停在节点外沿', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
-	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false }, node);
+	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false }, node);
 	assert.equal(inbound.kind, 'line');
-	assert.equal(inbound.y1, 0);
+	assert.equal(inbound.y1, -ROW_OVERLAP);
 	assert.equal(inbound.y2, ROW_HEIGHT / 2 - node.radius);
-	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false }, node);
+	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true }, node);
 	assert.equal(outbound.y1, ROW_HEIGHT / 2 + node.radius);
-	assert.equal(outbound.y2, ROW_HEIGHT);
+	assert.equal(outbound.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
 
 test('贯穿节点的整行线拆成上下两段', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('merge') };
-	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true, curved: false }, node);
+	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true }, node);
 	assert.equal(geometry.kind, 'gap');
-	assert.equal(geometry.upper.y1, 0);
+	assert.equal(geometry.upper.y1, -ROW_OVERLAP);
 	assert.equal(geometry.upper.y2, ROW_HEIGHT / 2 - node.radius);
 	assert.equal(geometry.lower.y1, ROW_HEIGHT / 2 + node.radius);
-	assert.equal(geometry.lower.y2, ROW_HEIGHT);
+	assert.equal(geometry.lower.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
 
 test('别条泳道的贯穿线不受节点影响', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('head') };
-	const geometry = segmentGeometry({ lane: 1, toLane: 1, fromTop: true, toBottom: true, curved: false }, node);
+	const geometry = segmentGeometry({ lane: 1, toLane: 1, fromTop: true, toBottom: true }, node);
 	assert.equal(geometry.kind, 'line');
-	assert.equal(geometry.y1, 0);
-	assert.equal(geometry.y2, ROW_HEIGHT);
+	assert.equal(geometry.y1, -ROW_OVERLAP);
+	assert.equal(geometry.y2, ROW_HEIGHT + ROW_OVERLAP);
 });
+
+/** 取路径描述里的第一对坐标（M 的落点）。 */
+const pathStart = (d) => {
+	const numbers = d.match(/-?[\d.]+/g).map(Number);
+	return { x: numbers[0], y: numbers[1] };
+};
+
+/**
+ * 取路径描述里的最后一个曲线端点（A / H / V 之前的落点），跳过行底越界重叠段。
+ *
+ * @param d - SVG 路径描述。
+ * @returns 端点坐标。
+ */
+const pathEnd = (d) => {
+	// 末尾形如 `... V <越界值>` 时，真正的端点是它之前的那一对坐标。
+	const trimmed = d.trim().replace(/ V -?[\d.]+$/, '');
+	const numbers = trimmed.match(/-?[\d.]+/g).map(Number);
+	return { x: numbers[numbers.length - 2], y: numbers[numbers.length - 1] };
+};
 
 test('曲线端点停在节点外沿', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
-	const inbound = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false, curved: true }, node);
+	// 相邻泳道汇入：圆弧终点即节点圆心，收束点应落在节点外沿上。
+	const inbound = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false }, node);
 	assert.equal(inbound.kind, 'path');
-	assert.match(inbound.d, new RegExp(`, ${laneCentre(0)} ${ROW_HEIGHT / 2 - node.radius}$`));
-	const fork = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: true }, node);
-	assert.match(fork.d, new RegExp(`^M ${laneCentre(0)} ${ROW_HEIGHT / 2 + node.radius} `));
+	const inboundEnd = pathEnd(inbound.d);
+	assert.ok(Math.abs(Math.hypot(inboundEnd.x - node.x, inboundEnd.y - ROW_HEIGHT / 2) - node.radius) < 1e-9,
+		`入线终点应在节点外沿，实际 ${JSON.stringify(inboundEnd)}`);
+
+	const fork = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true }, node);
+	assert.equal(fork.kind, 'path');
+	const forkStart = pathStart(fork.d);
+	assert.ok(Math.abs(Math.hypot(forkStart.x - node.x, forkStart.y - ROW_HEIGHT / 2) - node.radius) < 1e-9,
+		`分叉起点应在节点外沿，实际 ${JSON.stringify(forkStart)}`);
+	assert.ok(fork.d.trim().endsWith(`V ${ROW_HEIGHT + ROW_OVERLAP}`), '分叉曲线应越界重叠到行底之外');
+});
+
+test('隔一条泳道的汇入与分叉走水平段', () => {
+	// 目标与来源相隔两条泳道时，圆弧半径 11 只吃掉一条泳道，其余靠水平段补齐。
+	const inbound = segmentGeometry({ lane: 2, toLane: 0, fromTop: true, toBottom: false });
+	assert.equal(inbound.kind, 'path');
+	assert.match(inbound.d, /A 11 11 0 0 1 22 11 H 11$/, '圆弧落在相邻泳道、行中线，随后水平接入');
+
+	const fork = segmentGeometry({ lane: 0, toLane: 2, fromTop: false, toBottom: true });
+	assert.equal(fork.kind, 'path');
+	assert.match(fork.d, new RegExp(`^M 11 11 H 22 A 11 11 0 0 1 33 22 V ${ROW_HEIGHT + ROW_OVERLAP}$`),
+		'水平引出后圆弧落到行底，再越界重叠');
+});
+
+test('泳道平移走 S 形曲线', () => {
+	const geometry = segmentGeometry({ lane: 2, toLane: 0, fromTop: true, toBottom: true });
+	assert.equal(geometry.kind, 'path');
+	// 两段半径 S_CURVE_RADIUS 的四分之一圆 + 中间水平段，两端越界重叠消除接缝。
+	const bend = ROW_HEIGHT / 2 - S_CURVE_RADIUS;
+	assert.match(
+		geometry.d,
+		new RegExp(`^M ${laneCentre(2)} ${-ROW_OVERLAP} V ${bend} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 1 ${laneCentre(2) - S_CURVE_RADIUS} ${ROW_HEIGHT / 2}`
+			+ ` H ${laneCentre(0) + S_CURVE_RADIUS} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 0 ${laneCentre(0)} ${ROW_HEIGHT / 2 + S_CURVE_RADIUS} V ${ROW_HEIGHT + ROW_OVERLAP}$`),
+		`实际的 S 曲线：${geometry.d}`,
+	);
+});
+
+test('曲线一律不含贝塞尔命令', () => {
+	// 曲线由 M / A / H / V 组成，与参考实现的圆弧风格一致。
+	for (const segment of [
+		{ lane: 1, toLane: 0, fromTop: true, toBottom: false },
+		{ lane: 0, toLane: 1, fromTop: false, toBottom: true },
+		{ lane: 2, toLane: 0, fromTop: true, toBottom: true },
+		{ lane: 0, toLane: 3, fromTop: false, toBottom: true },
+	]) {
+		const geometry = segmentGeometry(segment);
+		assert.equal(geometry.kind, 'path');
+		assert.ok(!/[CQ]/.test(geometry.d), `路径不应含贝塞尔命令：${geometry.d}`);
+	}
 });
 
 test('节点外沿半径按种类递增', () => {

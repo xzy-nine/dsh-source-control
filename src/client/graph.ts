@@ -16,8 +16,8 @@ import {
 	MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
-	HEAD_NODE_RADIUS, LANE_STROKE, LANE_WIDTH, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
-	RING_STROKE, ROW_HEIGHT, laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry,
+	HEAD_CORE_RADIUS, HEAD_NODE_RADIUS, LANE_STROKE, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
+	RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, laneCentre, laneColour, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
 import { copyText } from './context-menu.ts';
@@ -93,7 +93,7 @@ function avatarUrl(email, size = 40) {
  * @returns SVG 元素。
  */
 function LaneCell({ row, isHead, isMerge, isBehind }) {
-	const width = row.width * LANE_WIDTH;
+	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
 	const overrideColour = isBehind ? 'var(--dsw-alias-lane-4, #9b7bf6)' : null;
 	const colour = overrideColour ?? laneColour(row.colour);
@@ -104,7 +104,7 @@ function LaneCell({ row, isHead, isMerge, isBehind }) {
 		const geometry = segmentGeometry(segment, node);
 		if (geometry === null) return [];
 		const stroke = overrideColour ?? laneColour(segment.colour);
-		const common = { stroke, strokeWidth: LANE_STROKE };
+		const common = { stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round' };
 		if (geometry.kind === 'path') {
 			return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
 		}
@@ -114,19 +114,16 @@ function LaneCell({ row, isHead, isMerge, isBehind }) {
 				React.createElement('line', { key: `l${index}`, ...geometry.lower, ...common }),
 			];
 		}
-		if (geometry.kind === 'bend') {
-			return [
-				React.createElement('line', { key: `h${index}`, ...geometry.horizontal, ...common }),
-				React.createElement('line', { key: `v${index}`, ...geometry.vertical, ...common }),
-			];
-		}
 		return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
 	});
 	const ring = (radius) => React.createElement('circle', {
 		key: 'ring', cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
 	});
 	const nodes = isHead
-		? [ring(HEAD_NODE_RADIUS)]
+		? [
+			ring(HEAD_NODE_RADIUS),
+			React.createElement('circle', { key: 'core', cx, cy: half, r: HEAD_CORE_RADIUS, fill: 'none', stroke: colour, strokeWidth: RING_STROKE }),
+		]
 		: isMerge
 			? [
 				ring(MERGE_NODE_RADIUS),
@@ -135,7 +132,12 @@ function LaneCell({ row, isHead, isMerge, isBehind }) {
 			: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
 	return React.createElement(
 		'svg',
-		{ className: 'ggg-lane', width, height: ROW_HEIGHT, viewBox: `0 0 ${width} ${ROW_HEIGHT}`, 'aria-hidden': 'true' },
+		{
+			className: 'ggg-lane', width, height: ROW_HEIGHT,
+			viewBox: `0 0 ${width} ${ROW_HEIGHT}`,
+			// 线段在行顶与行底各越界 ROW_OVERLAP，必须允许溢出，否则越界部分被裁掉、接缝仍在。
+			overflow: 'visible', 'aria-hidden': 'true',
+		},
 		...segments,
 		...nodes,
 	);
@@ -407,7 +409,7 @@ function CommitRow({
  * @returns SVG 元素；没有向下线段时返回 null。
  */
 function DetailGutter({ row }) {
-	const width = row.width * LANE_WIDTH;
+	const width = laneSpanWidth(row.width);
 	const continued = (row.segments ?? []).filter((segment) => segment.toBottom);
 	if (width === 0 || continued.length === 0) return null;
 	return React.createElement(
