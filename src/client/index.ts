@@ -229,6 +229,9 @@ export function apply(ctx) {
 		ctx.effect(() => rightTabs.register({
 			id: TAB_ID,
 			kind: TAB_KIND,
+			// 切到别的侧栏页或工作区再回来时保留挂载：否则面板会重新挂载，
+			// 存储库、更改、图形三区都要从空白重新加载，展开状态也随之丢失。
+			keepMounted: true,
 			title: () => TAB_TITLE,
 			guide: [{
 				id: TAB_ID,
