@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, FileTypeIcon, Input,
+	Button, Checkbox, FileTypeIcon, InlineEditor,
 	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCheckOutlineRegular,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
 	IconDownloadOutlineRegular, IconEnhanceOutlineRegular, IconFolderOpenOutlineRegular,
@@ -616,7 +616,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 
 	/** 提交暂存区。 */
 	const submit = () => {
-		if (message.trim() === '' || stagedPaths.length === 0) return;
+		if (state.busy || message.trim() === '' || stagedPaths.length === 0) return;
 		void run(async () => {
 			await commitStaged(workingTreePath, message, amend);
 			setMessage('');
@@ -918,15 +918,20 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				React.createElement(
 					'div',
 					{ className: 'ggg-commit-box' },
-					React.createElement(Input, {
+					React.createElement(InlineEditor, {
 						value: message,
-						placeholder: state.head === null ? '提交信息（Ctrl+Enter 提交）' : `提交信息（Ctrl+Enter 在“${state.head}”上提交）`,
-						disabled: state.busy,
-						onChange: (event) => setMessage(event.target.value),
-						onKeyDown: (event) => {
-							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); }
-						},
+						label: '提交信息',
+						onChange: setMessage,
+						onSave: submit,
+						onCancel: () => { setMessage(''); },
 					}),
+					React.createElement(
+						'div',
+						{ className: 'ggg-hint' },
+						state.head === null
+							? 'Enter 提交 · Shift+Enter 换行'
+							: `Enter 提交 · Shift+Enter 换行 · 提交到 ${state.head}`,
+					),
 					React.createElement(Checkbox, { checked: amend, onChange: setAmend, label: '修补上一次提交' }),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,

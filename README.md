@@ -10,7 +10,7 @@ It automatically binds to the **current session's workspace**; no manual repo se
 
 - **Right Sidebar page**: a `devGitGraph` page type in the built-in right Sidebar; no third-party sidebar plugin required.
 - **Auto-bound repo**: the panel reads the session's working directory from the sessions snapshot.
-- **Working tree**: stage, unstage, discard, and commit, with per-file status and hover actions.
+- **Working tree**: stage, unstage, discard, and commit, with per-file status and hover actions; the commit message reuses the DSH `InlineEditor` (Enter commits, Shift+Enter breaks the line, Escape clears the draft).
 - **Commit graph**: branch lanes, ref labels (branch / remote / tag / stash), subject, author, relative time, and short hash; selecting a commit lists its changed files.
 - **Theming**: styles use only `--dsw-alias-*` semantic tokens and follow the host's light / dark mode.
 - **No external processes**: the host runs `git` directly via `child_process.spawn` (array args, no shell injection).
