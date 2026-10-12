@@ -293,6 +293,7 @@ function CommitRow({
 		'div',
 		{
 			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}`,
+			'data-hash': commit.hash,
 			onClick: () => onSelect(commit.hash),
 			onContextMenu: (event) => {
 				event.preventDefault();

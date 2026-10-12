@@ -643,6 +643,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [statsByHash, setStatsByHash] = React.useState(() => new Map());
 	const statsInFlight = React.useRef(new Map());
 	const hoverTimer = React.useRef(null);
+	const graphScrollRef = React.useRef(null);
 	const toggleRepoSec = React.useCallback(() => {
 		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-repo-open', next); return next; });
 	}, []);
@@ -1021,8 +1022,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const goToHead = React.useCallback(() => {
 		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
 		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
-		if (target !== undefined) void selectCommit(target.hash);
-	}, [state.commits, state.head, selectCommit]);
+		if (target === undefined) return;
+		const container = graphScrollRef.current;
+		if (container === null) return;
+		const row = container.querySelector(`[data-hash="${target.hash}"]`);
+		if (row !== null) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+	}, [state.commits, state.head]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
 
@@ -1495,6 +1500,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				state.phase === 'loading' && state.commits.length === 0
 					? React.createElement('div', { className: 'ggg-empty', style: { height: graphHeight } }, '正在加载提交图…')
 					: React.createElement('div', {
+						ref: graphScrollRef,
 						style: { height: graphHeight, display: 'flex', flexDirection: 'column', minHeight: 0 },
 					}, React.createElement(CommitGraph, {
 						commits: filterCommitsByRefs(state.commits, filterSelected),
