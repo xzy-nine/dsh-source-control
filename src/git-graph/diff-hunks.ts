@@ -1,41 +1,62 @@
 /**
- * 统一差异（unified diff）的 hunk 解析：把 git 的输出切成逐块的新旧两侧内容。
+ * 统一差异（unified diff）的 hunk 解析：把 git 的输出切成逐块内容与行号区间。
  *
  * 差异视图按 hunk 逐块渲染，而不是把整份文件交给前端本地算 diff：
  * 后者在改动量超过本地搜索上限时会退化成整文件「全删全加」。
+ * 输出形状与 DSH 的 WorkspaceDiffHunk 一致，供复制来的 FileDiff 直接使用。
  */
 
-/** 一个 hunk 的新旧两侧内容（含各自的上下文行）。 */
+/** 一个 hunk：两侧行号区间与带 `+`/`-`/空格前缀的行。 */
 export interface DiffHunkText {
-	/** 旧侧内容：上下文行与删除行。 */
-	readonly oldText: string;
-	/** 新侧内容：上下文行与新增行。 */
-	readonly newText: string;
+	/** 旧侧起始行号（从 1 开始）。 */
+	readonly oldStart: number;
+	/** 旧侧行数。 */
+	readonly oldLines: number;
+	/** 新侧起始行号（从 1 开始）。 */
+	readonly newStart: number;
+	/** 新侧行数。 */
+	readonly newLines: number;
+	/** 行内容，首字符是 `+`、`-` 或空格。 */
+	readonly lines: string[];
 }
 
-/** hunk 头，形如 `@@ -1,3 +1,4 @@`。 */
-const HUNK_HEADER = /^@@ /;
+/** hunk 头，形如 `@@ -1,3 +1,4 @@`；行数可省略（`@@ -1 +1 @@`）。 */
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 /**
- * 解析统一差异为逐块的新旧内容。
+ * 解析 hunk 头。
+ *
+ * @param line - 以 `@@` 开头的行。
+ * @returns 行号区间；无法解析时返回 null。
+ */
+function parseHeader(line: string): { oldStart: number; oldLines: number; newStart: number; newLines: number } | null {
+	const match = HUNK_HEADER.exec(line);
+	if (match === null) return null;
+	return {
+		oldStart: Number(match[1]),
+		// 省略行数表示 1 行。
+		oldLines: match[2] === undefined ? 1 : Number(match[2]),
+		newStart: Number(match[3]),
+		newLines: match[4] === undefined ? 1 : Number(match[4]),
+	};
+}
+
+/**
+ * 解析统一差异为逐块内容。
  *
  * 只读取 hunk：文件头（`diff --git`、`---`、`+++`、`index` 等）在首个 `@@` 之前一律跳过；
- * `\ No newline at end of file` 不进入任何一侧。二进制差异没有 hunk，返回空数组。
+ * `\ No newline at end of file` 不进入任何一行。二进制差异没有 hunk，返回空数组。
  *
  * @param diffText - `git diff --no-color` 的输出。
- * @returns 逐块的新旧内容，按出现顺序。
+ * @returns 逐块内容，按出现顺序。
  */
 export function parseUnifiedDiffHunks(diffText: string): DiffHunkText[] {
 	const hunks: DiffHunkText[] = [];
-	let oldLines: string[] | null = null;
-	let newLines: string[] | null = null;
+	let current: { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] } | null = null;
 
 	const flush = (): void => {
-		if (oldLines !== null && newLines !== null) {
-			hunks.push({ oldText: oldLines.join('\n'), newText: newLines.join('\n') });
-		}
-		oldLines = null;
-		newLines = null;
+		if (current !== null) hunks.push(current);
+		current = null;
 	};
 
 	// 末尾换行是行终止符而非额外空行，先去掉再切分。
@@ -43,27 +64,21 @@ export function parseUnifiedDiffHunks(diffText: string): DiffHunkText[] {
 	if (body === '') return hunks;
 
 	for (const line of body.split('\n')) {
-		if (HUNK_HEADER.test(line)) {
+		if (line.startsWith('@@')) {
+			const header = parseHeader(line);
+			if (header === null) continue;
 			flush();
-			oldLines = [];
-			newLines = [];
+			current = { ...header, lines: [] };
 			continue;
 		}
 		// 首个 hunk 之前是文件头，与 hunk 无关。
-		if (oldLines === null || newLines === null) continue;
+		if (current === null) continue;
 		if (line.startsWith('\\')) continue;
-		if (line.startsWith('+')) {
-			newLines.push(line.slice(1));
-		} else if (line.startsWith('-')) {
-			oldLines.push(line.slice(1));
-		} else if (line.startsWith(' ')) {
-			const text = line.slice(1);
-			oldLines.push(text);
-			newLines.push(text);
+		if (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ')) {
+			current.lines.push(line);
 		} else if (line === '') {
 			// 空上下文行：git 会带前导空格，这里兜住被去尾的实现。
-			oldLines.push('');
-			newLines.push('');
+			current.lines.push(' ');
 		}
 	}
 	flush();

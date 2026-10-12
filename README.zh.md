@@ -24,6 +24,11 @@ host 路由 (src/git-graph/routes.ts)
   —— `sections.ts`（三个分区组件）、`changes.ts`（变更树纯函数与展示组件）、`refs.ts`（引用与提交图纯计算）、
   `commit-menu.ts` / `ref-menu.ts`（右键菜单）、`ref-filter-dialog.ts`、`repo-row.ts`、`github.ts`、
   `storage.ts`、`errors.ts`，以及 `use-repos.ts` / `use-graph-data.ts` / `use-commit-stats.ts` 三个 hooks。
+- **差异视图**：`src/client/file-diff.tsx` 与 `file-diff.module.css` 复制自 DSH `ui-deliverables` 的
+  `FileDiff`（MIT 许可，见文件头来源标注）——该组件未从 ui-primitives 导出，插件无法直接引用。
+  差异 hunk 由宿主 `src/git-graph/diff-hunks.ts` 解析 `git diff --unified=3` 得到。
+- **样式**：`styles.ts` 是全局样式字符串；CSS 模块（`*.module.css`）由 esbuild 的 `local-css`
+  处理，构建脚本把产出的样式内联进包（不生成独立样式文件）。
 - **主题**：样式以 `--dsw-alias-*` 语义 token 为主、随主题明暗切换；引用标记取泳道调色板的固定色。
 - **页注册**：`ctx.sidebarRightTabs.register`（id `dsh-dev-git-graph/git-graph`，kind `devGitGraph`），
   正文进带键席位 `sidebar.right.pane.tab`，chip 标题进 `sidebar.right.pane.tab.title`。
@@ -37,7 +42,7 @@ host 路由 (src/git-graph/routes.ts)
 | 更改 | 工作区变更列表（文件类型图标 + 文件名 + 最右列状态字符，与文件夹数量同列；悬停操作：丢弃 / 暂存或取消暂存）；点击文件行即打开该文件，未跟踪的新文件按普通文件打开；提交框固定在顶部，只有变更列表滚动；全部暂存与全部丢弃 |
 | 提交框 | 提交信息（复用 `InlineEditor` 多行编辑器，Enter 提交、Shift+Enter 换行、Esc 清空草稿）、修补上一次提交、提交按钮（显示已暂存数量） |
 | 图形 | 提交泳道图：标题栏可点击收起，标题上方的分界线是拖拽手柄（向上拖＝图形变高，120–720px，会话级保存）；分支彩线；每行为「泳道 + 提交信息（作者紧随其后，空间不足时随省略号截断）+ 右对齐的引用标记」，图列宽度按该行实际用到的泳道数取，提交信息紧贴其后，引用标记始终固定在右端——当前分支与本地分支是「图标 + 名称」药丸，远端、标签、贮藏是圆形图标（名称见悬停提示与右键菜单）；远程 HEAD（`refs/remotes/<remote>/HEAD`）与本地 HEAD 不作为引用标记列出；节点形状区分种类：当前分支为双同心圆（外 r=7、内 r=4）、合并提交为环加内点（外 r=6、内 r=3）、其余为实心点（r=5），线段停在节点外沿而不穿过节点；行内释放出的泳道空洞由右侧泳道左移填补（S 形平移），分叉与汇入走半径 11px 的圆弧；分页加载只取窗口内的提交，父提交未加载时仍占住泳道并把线画到行底，因此已加载部分的泳道与颜色不会因加载更多而改变；提交日期与短哈希见行悬停卡片；悬停某行浮出卡片（DSH 标准浮窗底色）：作者、时间（主标签按设置里的日期格式，括号内始终补详细日期与时间，主标签已是详细时间时不重复）、完整提交信息、改动文件与增减行数、引用标记（卡片内展开显示名称）、短哈希与复制按钮，除作者与提交信息之间外各段之间都有横线分割；点击某提交在该行下方就地展开改动文件区（属于图形区的一部分，左列续画泳道线、内边距与列间距同提交行，文件树可折叠、逐文件显示 +/− 与状态，点击文件行即打开差异，再次点击同一行收起） |
-| 差异页 | 侧边栏 DiffBlock 视图：逐 hunk 渲染，hunk 由宿主用 `git diff --unified=3` 算出（前端本地 diff 在改动量超过其搜索上限时会退化成整文件全删全加）；块间以 `⋯` 分隔，无 hunk 时退回整份内容比较 |
+| 差异页 | 侧边栏文件差异视图：**复制自 DSH `ui-deliverables` 的 `FileDiff`（MIT 许可）**，含行号列、hunk 头与代码高亮；hunk 由宿主用 `git diff --unified=3` 算出（前端本地 diff 在改动量超过其搜索上限时会退化成整文件全删全加），可按「换行 / 不换行」切换 |
 
 - **提交右键菜单**：查看提交、在 GitHub 上打开（仅有 GitHub 远端时出现）、检出此提交、从此提交创建分支 / 标签、删除分支（二级菜单列出指向该提交的本地与远程分支）、删除标签（二级菜单列出标签）、拣选、还原、重置当前分支、合并、变基、复制哈希与提交信息。
 

@@ -198,14 +198,39 @@ test('状态字符与文件夹数量同处最右一列', () => {
 	assert.ok(!/\.ggg-folder \.ggg-count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
 });
 
-test('差异按 git 算出的 hunk 渲染', () => {
-	// 整份内容交给 DiffBlock 时，超过其本地 diff 搜索上限的改动会退化成整文件全删全加。
+test('文件差异视图为复制自 DSH 的实现', () => {
+	// ui-deliverables 的 FileDiff 未从 ui-primitives 导出，插件无法引用，故按 MIT 许可复制。
+	const viewSource = readFileSync(join(clientDir, 'file-diff.tsx'), 'utf8');
+	assert.match(viewSource, /MIT 许可/, '应标明来源与许可');
+	assert.match(viewSource, /ui-deliverables/, '应写明来源路径');
+	assert.match(viewSource, /export function FileDiff/, '应导出 FileDiff');
+	assert.match(viewSource, /export function hunkRows/, '应保留原实现的行号计算');
+	assert.match(viewSource, /from '\.\/file-diff\.module\.css'/, '应通过 CSS 模块引用样式');
+	const cssSource = readFileSync(join(clientDir, 'file-diff.module.css'), 'utf8');
+	assert.match(cssSource, /\.number/, 'CSS 模块应含行号列样式');
+	assert.match(cssSource, /\.hunkHeader/, 'CSS 模块应含 hunk 头样式');
 	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-	assert.match(indexSource, /diffData\.hunks\.length > 0/, '应优先使用逐块内容');
-	assert.match(indexSource, /\.map\(\(hunk\)/, '每个 hunk 各自成为一条 diffs 条目');
-	const apiSource = readFileSync(join(clientDir, 'api.ts'), 'utf8');
-	assert.match(apiSource, /hunks/, 'API 客户端应透出 hunks');
+	assert.match(indexSource, /from '\.\/file-diff\.tsx'/, '差异页应引用复制的视图');
+	assert.ok(!indexSource.includes('DiffBlock'), '不应再使用 ui-primitives 的 DiffBlock');
 	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
 	assert.match(routes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
 	assert.match(routes, /--unified=3/, '宿主应请求带上下文的统一差异');
+});
+
+test('构建脚本把 CSS 模块的样式内联进包', () => {
+	// esbuild 的 local-css 只产出类名映射；样式文本必须显式内联，否则视图无样式。
+	const script = readFileSync(join(root, 'scripts', 'build-client.mjs'), 'utf8');
+	assert.match(script, /'\.css': 'local-css'/, 'CSS 应作为模块处理');
+	assert.match(script, /endsWith\('\.css'\)/, '应收集 esbuild 产出的样式');
+	assert.match(script, /dsh-dev-git-graph-module-style/, '应把样式内联为一段 style');
+	assert.match(script, /jsx: 'automatic'/, '复制的视图使用自动 JSX 运行时');
+});
+
+test('宿主 hunk 形状与视图一致', () => {
+	// 视图按 DSH 的 WorkspaceDiffHunk 取字段（含行数），宿主必须给出同样的形状。
+	const source = readFileSync(join(root, 'src', 'git-graph', 'diff-hunks.ts'), 'utf8');
+	for (const field of ['oldStart', 'oldLines', 'newStart', 'newLines', 'lines']) {
+		assert.match(source, new RegExp(field), `hunk 应含 ${field}`);
+	}
+	assert.match(source, /HUNK_HEADER/, '应解析 hunk 头取得行号区间');
 });

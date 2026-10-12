@@ -6,11 +6,11 @@
  * 面板本身是主文档内的 React 树，控件全部来自 DSH 的 ui-primitives。
  *
  * 另注册 git-diff 页类型：点击提交改动文件的差异按钮时，在侧边栏打开
- * DiffBlock 视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
+ * 带行号的差异视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
  */
 import React from 'react';
-import { DiffBlock } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel.ts';
+import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
 import { fileDiffContent } from './api.ts';
 import { STYLES } from './styles.ts';
@@ -28,14 +28,6 @@ const HEADER_ACTION_ORDER = -5;
 /** git-diff 页类型身份。 */
 const DIFF_TAB_ID = 'dsh-dev-git-graph/diff';
 const DIFF_TAB_KIND = 'devGitGraphDiff';
-
-/** DiffBlock 所需的本地化标签。 */
-const DIFF_LABELS = {
-	codeLabel: '代码', wrapLabel: '换行', unwrapLabel: '不换行',
-	copy: '复制', copied: '已复制',
-	collapseAria: '折叠差异', expandAria: (n) => `展开剩余 ${n} 行`,
-	collapse: '折叠', expand: (n) => `展开 ${n} 行`,
-};
 
 /** 样式只注入一次。 */
 function ensureStyle() {
@@ -133,7 +125,9 @@ function GitGraphHeaderAction(props) {
 }
 
 /**
- * git-diff 侧栏页正文：解析地址，取差异内容，渲染 DiffBlock。
+ * git-diff 侧栏页正文：解析地址，取差异内容，渲染文件差异视图。
+ *
+ * 视图是复制自 DSH ui-deliverables 的 FileDiff（见 ./file-diff.tsx）。
  *
  * @param props.sessionId - 席位给出的会话 id。
  * @param props.useSessions - session 作用域席位的标准快照 hook。
@@ -157,40 +151,47 @@ function GitDiffTab(props) {
 	const gitCwd = repoRoot ?? cwd;
 	const [diffData, setDiffData] = React.useState(null);
 	const [loading, setLoading] = React.useState(true);
-	React.useEffect(() => {
+	const [wrap, setWrap] = React.useState(false);
+	const load = React.useCallback(() => {
 		if (parsed === null || typeof gitCwd !== 'string') return;
-		let cancelled = false;
 		setLoading(true);
 		setDiffData(null);
 		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged)
-			.then((data) => { if (!cancelled) { setDiffData(data); setLoading(false); } })
-			.catch(() => { if (!cancelled) { setDiffData(null); setLoading(false); } });
-		return () => { cancelled = true; };
+			.then((data) => { setDiffData(data); setLoading(false); })
+			.catch(() => { setDiffData(null); setLoading(false); });
 	}, [parsed, gitCwd, staged]);
+	React.useEffect(() => {
+		load();
+	}, [load]);
 	if (parsed === null) {
 		return React.createElement('div', { className: 'ggg-empty' }, '无效的差异地址');
 	}
+	// 比较状态：加载中、无法读取，或可绘制的文本比较。
+	const state: ChangesDiffState = loading
+		? 'loading'
+		: diffData === null
+			? 'error'
+			: {
+				kind: 'text', path: parsed.path,
+				before: diffData.oldText !== null, after: diffData.newText !== null,
+				hunks: diffData.hunks, coarse: false,
+			};
 	return React.createElement(
 		'div',
 		{ className: 'ggg-diff-tab' },
 		React.createElement('div', { className: 'ggg-diff-tab-head' },
 			React.createElement('span', { className: 'ggg-diff-tab-path' }, parsed.path),
 			React.createElement('span', { className: 'ggg-diff-tab-hash' }, parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
+			React.createElement('button', {
+				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': wrap,
+				title: wrap ? '不换行' : '换行',
+				onClick: () => setWrap((value) => !value),
+			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(
 			'div',
 			{ className: 'ggg-diff-tab-body' },
-			loading && React.createElement('div', { className: 'ggg-empty' }, '正在加载差异…'),
-			!loading && diffData !== null && diffData.oldText === null && diffData.newText === null
-				&& React.createElement('div', { className: 'ggg-empty' }, '无法获取差异内容'),
-			!loading && diffData !== null && (diffData.oldText !== null || diffData.newText !== null)
-				&& React.createElement(DiffBlock, {
-					// 逐块渲染：整份内容交给 DiffBlock 时，超出其本地 diff 搜索上限的改动
-					// 会退化成整文件「全删全加」。
-					diffs: (diffData.hunks.length > 0 ? diffData.hunks : [{ oldText: diffData.oldText ?? '', newText: diffData.newText ?? '' }])
-						.map((hunk) => ({ path: parsed.path, oldText: hunk.oldText, newText: hunk.newText })),
-					labels: DIFF_LABELS,
-				}),
+			React.createElement(FileDiff, { state, split: false, wrap, retry: load }),
 		),
 	);
 }

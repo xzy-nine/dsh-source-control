@@ -1,8 +1,8 @@
 /**
- * 统一差异的 hunk 解析测试：用真实 git 输出校验逐块切分。
+ * 宿主 hunk 解析的测试：用真实 git 输出校验逐块切分与行号区间。
  *
- * 重点是「改动量大时不再退化成整文件」——前端 DiffBlock 的本地 diff 在改动超过其
- * 搜索上限时会输出整份旧文件与整份新文件，因此逐块内容必须由 git 给出。
+ * 重点：改动量大时不再退化成整文件「全删全加」——逐块内容必须由 git 给出；
+ * 输出形状与 DSH 的 WorkspaceDiffHunk 一致，供复制来的 FileDiff 直接使用。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +27,9 @@ function unifiedDiff(repo, ...args) {
 	return execFileSync('git', ['diff', '--no-color', '--unified=3', ...args], { cwd: repo, encoding: 'utf8' });
 }
 
+/** 取 hunk 中某一侧的行文本（去掉首字符前缀）。 */
+const sideLines = (hunk, sign) => hunk.lines.filter((line) => line.startsWith(sign)).map((line) => line.slice(1));
+
 test('相隔较远的两处改动切成两个 hunk', () => {
 	// 400 行文件只改首尾：整文件退化会得到 400 删 + 400 加，逐块应只有两小段。
 	const { repo, git } = makeRepo();
@@ -41,16 +44,39 @@ test('相隔较远的两处改动切成两个 hunk', () => {
 
 		const hunks = parseUnifiedDiffHunks(unifiedDiff(repo, '--', 'big.txt'));
 		assert.equal(hunks.length, 2, '首尾两处改动应各成一个 hunk');
-		const total = hunks.reduce((sum, hunk) => sum + hunk.oldText.split('\n').length, 0);
+		const total = hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
 		assert.ok(total < 20, `逐块内容应只含改动附近，实际 ${total} 行`);
-		assert.ok(hunks[0].newText.includes('CHANGED head'), '首个 hunk 应含头部改动');
-		assert.ok(hunks[1].newText.includes('CHANGED tail'), '末个 hunk 应含尾部改动');
+		assert.ok(sideLines(hunks[0], '+').includes('CHANGED head'), '首个 hunk 应含头部改动');
+		assert.ok(sideLines(hunks[1], '+').includes('CHANGED tail'), '末个 hunk 应含尾部改动');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}
 });
 
-test('上下文行同时进入新旧两侧', () => {
+test('hunk 头给出两侧行号区间与行数', () => {
+	const hunks = parseUnifiedDiffHunks([
+		'@@ -7,7 +9,8 @@',
+		' keep',
+		'-old',
+		'+new',
+		'',
+	].join('\n'));
+	assert.equal(hunks.length, 1);
+	assert.equal(hunks[0].oldStart, 7);
+	assert.equal(hunks[0].oldLines, 7);
+	assert.equal(hunks[0].newStart, 9);
+	assert.equal(hunks[0].newLines, 8);
+});
+
+test('省略行数的 hunk 头按 1 行处理', () => {
+	const hunks = parseUnifiedDiffHunks(['@@ -3 +5 @@', '-a', '+b', ''].join('\n'));
+	assert.equal(hunks[0].oldStart, 3);
+	assert.equal(hunks[0].oldLines, 1);
+	assert.equal(hunks[0].newStart, 5);
+	assert.equal(hunks[0].newLines, 1);
+});
+
+test('行保留首字符前缀，供视图判定种类', () => {
 	const { repo, git } = makeRepo();
 	try {
 		writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n');
@@ -60,14 +86,17 @@ test('上下文行同时进入新旧两侧', () => {
 
 		const hunks = parseUnifiedDiffHunks(unifiedDiff(repo, '--', 'a.txt'));
 		assert.equal(hunks.length, 1);
-		assert.equal(hunks[0].oldText, 'one\ntwo\nthree', '旧侧含上下文与删除行');
-		assert.equal(hunks[0].newText, 'one\nTWO\nthree', '新侧含上下文与新增行');
+		// 视图按 line[0] 判种类：`+` 新增、`-` 删除、空格为上下文。
+		assert.deepEqual(hunks[0].lines.map((line) => line[0]), [' ', '-', '+', ' ']);
+		assert.deepEqual(sideLines(hunks[0], '-'), ['two']);
+		assert.deepEqual(sideLines(hunks[0], '+'), ['TWO']);
+		assert.deepEqual(hunks[0].lines.filter((line) => line.startsWith(' ')).map((line) => line.slice(1)), ['one', 'three']);
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}
 });
 
-test('新增文件的旧侧为空', () => {
+test('新增文件只有新增行', () => {
 	const { repo, git } = makeRepo();
 	try {
 		writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -78,14 +107,15 @@ test('新增文件的旧侧为空', () => {
 
 		const hunks = parseUnifiedDiffHunks(unifiedDiff(repo, '--cached', '--', 'added.txt'));
 		assert.equal(hunks.length, 1);
-		assert.equal(hunks[0].oldText, '', '新增文件没有旧侧内容');
-		assert.equal(hunks[0].newText, 'fresh\ncontent');
+		assert.deepEqual(sideLines(hunks[0], '-'), [], '新增文件没有删除行');
+		assert.deepEqual(sideLines(hunks[0], '+'), ['fresh', 'content']);
+		assert.equal(hunks[0].oldStart, 0, '新文件旧侧从 0 起');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}
 });
 
-test('删除文件的旧侧保留、新侧为空', () => {
+test('删除文件只有删除行', () => {
 	const { repo, git } = makeRepo();
 	try {
 		writeFileSync(join(repo, 'gone.txt'), 'a\nb\n');
@@ -95,15 +125,16 @@ test('删除文件的旧侧保留、新侧为空', () => {
 
 		const hunks = parseUnifiedDiffHunks(unifiedDiff(repo, '--cached', '--', 'gone.txt'));
 		assert.equal(hunks.length, 1);
-		assert.equal(hunks[0].oldText, 'a\nb');
-		assert.equal(hunks[0].newText, '');
+		assert.deepEqual(sideLines(hunks[0], '-'), ['a', 'b']);
+		assert.deepEqual(sideLines(hunks[0], '+'), []);
+		assert.equal(hunks[0].newLines, 0, '删除后新侧为 0 行');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}
 });
 
-test('文件头不进入任何一侧', () => {
-	const diff = [
+test('文件头不进入任何一行', () => {
+	const hunks = parseUnifiedDiffHunks([
 		'diff --git a/x.ts b/x.ts',
 		'index 1111111..2222222 100644',
 		'--- a/x.ts',
@@ -113,26 +144,22 @@ test('文件头不进入任何一侧', () => {
 		'-old',
 		'+new',
 		'',
-	].join('\n');
-	const hunks = parseUnifiedDiffHunks(diff);
+	].join('\n'));
 	assert.equal(hunks.length, 1);
-	assert.equal(hunks[0].oldText, 'keep\nold');
-	assert.equal(hunks[0].newText, 'keep\nnew');
+	assert.deepEqual(hunks[0].lines, [' keep', '-old', '+new']);
 });
 
 test('无换行标记不进入内容', () => {
-	const diff = [
+	const hunks = parseUnifiedDiffHunks([
 		'@@ -1 +1 @@',
 		'-old',
 		'\\ No newline at end of file',
 		'+new',
 		'\\ No newline at end of file',
 		'',
-	].join('\n');
-	const hunks = parseUnifiedDiffHunks(diff);
+	].join('\n'));
 	assert.equal(hunks.length, 1);
-	assert.equal(hunks[0].oldText, 'old');
-	assert.equal(hunks[0].newText, 'new');
+	assert.deepEqual(hunks[0].lines, ['-old', '+new']);
 });
 
 test('二进制与空差异没有 hunk', () => {
@@ -141,7 +168,7 @@ test('二进制与空差异没有 hunk', () => {
 });
 
 test('多个 hunk 按出现顺序返回', () => {
-	const diff = [
+	const hunks = parseUnifiedDiffHunks([
 		'@@ -1,1 +1,1 @@',
 		'-a',
 		'+A',
@@ -152,7 +179,7 @@ test('多个 hunk 按出现顺序返回', () => {
 		'-c',
 		'+C',
 		'',
-	].join('\n');
-	const hunks = parseUnifiedDiffHunks(diff);
-	assert.deepEqual(hunks.map((hunk) => hunk.newText), ['A', 'B', 'C']);
+	].join('\n'));
+	assert.deepEqual(hunks.map((hunk) => sideLines(hunk, '+')), [['A'], ['B'], ['C']]);
+	assert.deepEqual(hunks.map((hunk) => hunk.newStart), [1, 10, 20]);
 });

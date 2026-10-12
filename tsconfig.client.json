@@ -7,6 +7,7 @@
     "strict": false,
     "noImplicitAny": false,
     "noEmit": true,
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -14,5 +15,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": []
   },
-  "include": ["src/client/**/*.ts"]
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx"]
 }

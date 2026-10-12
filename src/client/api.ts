@@ -676,15 +676,21 @@ export interface FileDiffContent {
 	readonly path?: string;
 	readonly oldText: string | null;
 	readonly newText: string | null;
-	/** 由 git 算出的逐块内容；为空时前端退回整份内容比较。 */
-	readonly hunks: Array<{ readonly oldText: string; readonly newText: string }>;
+	/** 由 git 算出的逐块差异（形状同 DSH 的 WorkspaceDiffHunk）。 */
+	readonly hunks: Array<{
+		readonly oldStart: number;
+		readonly oldLines: number;
+		readonly newStart: number;
+		readonly newLines: number;
+		readonly lines: string[];
+	}>;
 }
 
 /**
- * 取某个提交中某文件的前后内容，供 DiffBlock 渲染。
+ * 取某个提交中某文件的前后内容与逐块差异。
  *
- * hunks 由宿主用 git 直接算出：前端 DiffBlock 的本地 diff 在改动量超过其搜索上限时
- * 会退化成整文件「全删全加」，因此逐块内容优先。
+ * hunks 由宿主用 git 直接算出：前端本地 diff 在改动量超过其搜索上限时会退化成整文件
+ * 「全删全加」，因此逐块差异优先。
  *
  * @param cwd - 会话工作区路径。
  * @param hash - 提交哈希；'*' 表示工作区。
@@ -695,11 +701,17 @@ export interface FileDiffContent {
 export async function fileDiffContent(cwd: string, hash: string, path: string, staged = false): Promise<FileDiffContent> {
 	const payload = await callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged });
 	const raw = Array.isArray(payload.hunks) ? payload.hunks : [];
-	const hunks = raw.flatMap((item) => {
-		const hunk = item as { oldText?: unknown; newText?: unknown };
-		return typeof hunk.oldText === 'string' && typeof hunk.newText === 'string'
-			? [{ oldText: hunk.oldText, newText: hunk.newText }]
-			: [];
+	const hunks: FileDiffContent['hunks'] = raw.flatMap((item) => {
+		const hunk = item as { oldStart?: unknown; oldLines?: unknown; newStart?: unknown; newLines?: unknown; lines?: unknown };
+		if (typeof hunk.oldStart !== 'number' || typeof hunk.newStart !== 'number' || !Array.isArray(hunk.lines)) return [];
+		const lines = hunk.lines.filter((line): line is string => typeof line === 'string');
+		return [{
+			oldStart: hunk.oldStart,
+			oldLines: typeof hunk.oldLines === 'number' ? hunk.oldLines : lines.filter((line) => !line.startsWith('+')).length,
+			newStart: hunk.newStart,
+			newLines: typeof hunk.newLines === 'number' ? hunk.newLines : lines.filter((line) => !line.startsWith('-')).length,
+			lines,
+		}];
 	});
 	return {
 		path: typeof payload.path === 'string' ? payload.path : path,
