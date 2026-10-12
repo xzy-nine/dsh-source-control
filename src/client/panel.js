@@ -420,7 +420,6 @@ function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle, onMo
 				? React.createElement(IconArchiveOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
 				: React.createElement(RepoIcon),
 		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
-		isSubmodule && React.createElement('span', { className: 'ggg-repo-kind' }, '子模块'),
 		refText !== '' && React.createElement(IconBranchOutlineRegular, { size: 12, className: 'ggg-repo-branch-icon' }),
 		refText !== '' && React.createElement('span', {
 			className: 'ggg-repo-branch' + (onBranchClick !== undefined && !isDetached ? ' is-clickable' : ''),
@@ -1378,8 +1377,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					onSelect: selectNode,
 					onToggle: toggleNode,
 					onMoreActions: handleRepoMoreActions,
-					onBranchClick: node.id === selectedId ? handleBranchClick : undefined,
-					headHash: node.id === selectedId ? headCommitHash : null,
+					onBranchClick: handleBranchClick,
+					headHash: headCommitHash,
 				})),
 			),
 			repoSecOpen && React.createElement('div', {
