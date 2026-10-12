@@ -53,6 +53,15 @@ export const STYLES = `
 .ggg-group-root .ggg-count{margin-left:auto}
 .ggg-change-group .ggg-changes{max-height:none}
 .ggg-changes{display:flex;flex-direction:column;padding:0 6px 6px}
+/* 图形区内的改动文件展开块：左列续画泳道线，右侧排文件树。
+ * 内边距与列间距都与 .ggg-row 一致（8px），泳道列与文件树才不会相对提交行位移。 */
+.ggg-detail-inline{display:flex;align-items:stretch;gap:8px;padding:0 8px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.ggg-detail-inline .ggg-detail-gutter{flex:none;align-self:stretch;display:block}
+.ggg-detail-inline .ggg-detail-body{flex:1 1 auto;min-width:0;padding:4px 0 6px;font-size:12px}
+.ggg-detail-changes{padding:0}
+.ggg-detail-stat{flex:none;display:inline-flex;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.ggg-detail-add{color:var(--dsw-alias-state-success-primary)}
+.ggg-detail-del{color:var(--dsw-alias-state-error-primary)}
 .ggg-change{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;min-width:0}
 .ggg-change:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ggg-change.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
@@ -109,10 +118,6 @@ export const STYLES = `
 .ggg-card-copy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .ggg-error{padding:10px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px;white-space:pre-wrap}
-.ggg-detail{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);max-height:40%;overflow:auto;font-size:12px}
-.ggg-detail-title{font-weight:600}
-.ggg-detail-meta{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1.6}
-.ggg-detail-body{white-space:pre-wrap;color:var(--dsw-alias-label-secondary);line-height:1.6;max-height:120px;overflow:auto}
 .ggg-issue-link{color:var(--dsw-alias-brand-primary);text-decoration:none}
 .ggg-issue-link:hover{text-decoration:underline}
 .ggg-row-uncommitted{font-style:italic}

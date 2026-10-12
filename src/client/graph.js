@@ -328,6 +328,32 @@ function CommitRow({
 }
 
 /**
+ * 展开块左侧的泳道续画：把该行画到行底的线段在展开块高度内继续向下延伸。
+ *
+ * @param props.row - 该行的布局。
+ * @returns SVG 元素；没有向下线段时返回 null。
+ */
+function DetailGutter({ row }) {
+	const width = row.width * LANE_WIDTH;
+	const continued = (row.segments ?? []).filter((segment) => segment.toBottom);
+	if (width === 0 || continued.length === 0) return null;
+	return React.createElement(
+		'svg',
+		{
+			className: 'ggg-detail-gutter', width, viewBox: `0 0 ${width} 100`,
+			preserveAspectRatio: 'none', 'aria-hidden': 'true',
+		},
+		...continued.map((segment, index) => React.createElement('line', {
+			key: index,
+			x1: laneCentre(segment.toLane), y1: 0,
+			x2: laneCentre(segment.toLane), y2: 100,
+			stroke: laneColour(segment.colour), strokeWidth: LANE_STROKE,
+			vectorEffect: 'non-scaling-stroke',
+		})),
+	);
+}
+
+/**
  * 提交图主体。
  *
  * @param props.commits - 提交序列。
@@ -342,11 +368,12 @@ function CommitRow({
  * @param props.issueLinking - Issue 链接配置。
  * @param props.commitStats - 提交哈希 -> 改动统计的映射。
  * @param props.onHoverCommit - 悬停回调：进入传哈希，离开传 null。
+ * @param props.renderDetail - 选中行的展开内容：({ commit, row }) => 元素或 null。
  * @returns 提交图元素。
  */
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
-	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit,
+	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit, renderDetail,
 }) {
 	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
 	const graphRef = React.useRef(null);
@@ -355,13 +382,13 @@ export function CommitGraph({
 	if (commits.length === 0) {
 		return React.createElement('div', { className: 'ggg-empty' }, '这个仓库还没有提交');
 	}
-	return React.createElement(
-		'div',
-		{ className: 'ggg-graph', ref: graphRef },
-		...commits.map((commit, index) => React.createElement(CommitRow, {
+	const items = [];
+	for (const [index, commit] of commits.entries()) {
+		const row = layout.rows[index];
+		items.push(React.createElement(CommitRow, {
 			key: commit.hash,
 			commit,
-			row: layout.rows[index],
+			row,
 			head,
 			selected: commit.hash === selectedHash,
 			onSelect,
@@ -372,7 +399,22 @@ export function CommitGraph({
 			stats: commitStats?.get(commit.hash) ?? null,
 			onHover: onHoverCommit,
 			widthAnchorRef: graphRef,
-		})),
+		}));
+		// 改动文件区是图形区的一部分：展开在该提交行下方。
+		const detail = renderDetail?.({ commit, row });
+		if (detail !== null && detail !== undefined) {
+			items.push(React.createElement(
+				'div',
+				{ key: `${commit.hash}:detail`, className: 'ggg-detail-inline' },
+				React.createElement(DetailGutter, { row }),
+				React.createElement('div', { className: 'ggg-detail-body' }, detail),
+			));
+		}
+	}
+	return React.createElement(
+		'div',
+		{ className: 'ggg-graph', ref: graphRef },
+		...items,
 		moreCommitsAvailable && React.createElement(
 			'div',
 			{ className: 'ggg-pager' },

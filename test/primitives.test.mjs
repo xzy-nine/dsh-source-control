@@ -82,6 +82,37 @@ test('图形区高度跟随拖动方向', () => {
 	assert.match(body, /commitGraphHeight\(startHeight - \(moveEvent\.clientY - startY\)\)/, '拖拽位移必须取负号');
 });
 
+test('改动文件区在图形区内展开', () => {
+	// 展开块由 CommitGraph 按选中行渲染，面板不再另起一块。
+	const graphSource = readFileSync(join(clientDir, 'graph.js'), 'utf8');
+	assert.match(graphSource, /renderDetail/, 'CommitGraph 必须接收 renderDetail');
+	assert.match(graphSource, /ggg-detail-inline/, '展开块必须由图形区渲染');
+	const panelSource = readFileSync(join(clientDir, 'panel.js'), 'utf8');
+	const section = panelSource.indexOf("'ggg-sec ggg-graph-sec'");
+	assert.ok(section !== -1, '未找到图形区标记');
+	assert.ok(!panelSource.includes("'ggg-detail'"), '面板不应再渲染独立的 ggg-detail 区块');
+});
+
+test('展开块左内边距与提交行一致', () => {
+	// 少了与 .ggg-row 相同的左内边距与列间距，泳道列会相对提交行左移。
+	const source = readFileSync(join(clientDir, 'styles.js'), 'utf8');
+	const row = /\.ggg-row\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
+	const inline = /\.ggg-detail-inline\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
+	assert.ok(row, '提交行应有 8px 列间距与 0 8px 内边距');
+	assert.ok(inline, '展开块应有同样的 8px 列间距与 0 8px 内边距，与提交行对齐');
+});
+
+test('再次点击同一提交行收起展开', () => {
+	// 点已选中的行必须收起（清空选中与详情），否则无法二次点击关闭。
+	const source = readFileSync(join(clientDir, 'panel.js'), 'utf8');
+	const start = source.indexOf('const toggleCommit');
+	assert.ok(start !== -1, '未找到 toggleCommit');
+	const body = source.slice(start, source.indexOf('const stagedPaths', start));
+	assert.match(body, /state\.selectedHash === hash/, '必须先判断是否已选中');
+	assert.match(body, /selectedHash: null, detail: null/, '收起时必须清空选中与详情');
+	assert.match(source, /onSelect: \(hash\) => \{ toggleCommit\(hash\)/, '图形行点击必须走 toggleCommit');
+});
+
 test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primitives 源码检出' }, () => {
 	const exported = primitivesExports();
 	// 产品图标一律以 Regular 或 Medium 结尾；裸名不存在，正是初版写错的地方。

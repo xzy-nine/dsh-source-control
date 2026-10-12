@@ -236,6 +236,67 @@ function ChangeNodeRow({ row, busy, open, staged, onToggle, onStage, onUnstage, 
 }
 
 /**
+ * 展开块里的改动文件树：与工作区变更区同构，但文件行只提供「打开差异」。
+ *
+ * @param props.files - 改动文件列表：{ path, type, additions, deletions }。
+ * @param props.busy - 是否正在执行操作。
+ * @param props.collapsed - 已折叠的文件夹路径集合。
+ * @param props.onToggle - 切换文件夹折叠。
+ * @param props.onOpen - 打开某个文件的差异。
+ * @returns 展开块元素。
+ */
+function CommitDetail({ files, busy, collapsed, onToggle, onOpen }) {
+	if (files.length === 0) {
+		return React.createElement('div', { className: 'ggg-hint' }, '正在加载改动文件…');
+	}
+	const rows = [];
+	flattenChangeTree(buildChangeTree(files), '', 1, collapsed, rows);
+	return React.createElement(
+		'div',
+		{ className: 'ggg-changes ggg-detail-changes' },
+		...rows.map((row) => {
+			if (row.kind === 'folder') {
+				return React.createElement(
+					'div',
+					{
+						key: `f:${row.path}`, className: 'ggg-change ggg-folder', title: row.path,
+						onClick: () => onToggle(row.path),
+					},
+					...guidesOf(row.depth),
+					React.createElement('span', {
+						className: `ggg-repo-chevron${row.open ? '' : ' is-collapsed'}`,
+					}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
+					React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
+					React.createElement('span', { className: 'ggg-change-name' }, row.name),
+					React.createElement('span', { className: 'ggg-count' }, String(row.count)),
+				);
+			}
+			const entry = row.entry;
+			const { name } = splitPath(entry.path);
+			const stat = entry.additions !== null && entry.additions !== undefined;
+			return React.createElement(
+				'div',
+				{ key: `e:${entry.path}`, className: 'ggg-change', title: entry.path },
+				...guidesOf(row.depth),
+				React.createElement(FileTypeIcon, { path: name, size: 14 }),
+				React.createElement('span', { className: 'ggg-status', 'data-type': entry.type }, entry.type),
+				React.createElement('span', { className: 'ggg-change-name' }, name),
+				stat && React.createElement(
+					'span',
+					{ className: 'ggg-detail-stat' },
+					React.createElement('span', { className: 'ggg-detail-add' }, `+${entry.additions}`),
+					React.createElement('span', { className: 'ggg-detail-del' }, `-${entry.deletions}`),
+				),
+				React.createElement('button', {
+					type: 'button', className: 'ggg-change-btn', title: '打开差异', disabled: busy,
+					onClick: () => onOpen(entry.path),
+				}, React.createElement(IconCompareSplitOutlineRegular, { size: 14 })),
+			);
+		}),
+	);
+}
+
+/**
  * 一个变更分组：暂存的更改 / 更改。
  *
  * @param props.staged - 是否处理已暂存条目。
@@ -386,7 +447,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [selectedId, setSelectedId] = React.useState(null);
 	const [expandedIds, setExpandedIds] = React.useState(() => loadExpanded(sessionId));
 	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；会话级、不持久化。
-	const [collapsedByGroup, setCollapsedByGroup] = React.useState(() => ({ staged: new Set(), unstaged: new Set() }));
+	// detail 是图形区内展开块的文件夹集合。
+	const [collapsedByGroup, setCollapsedByGroup] = React.useState(() => ({ staged: new Set(), unstaged: new Set(), detail: new Set() }));
 	const [groupExpanded, setGroupExpanded] = React.useState(() => ({ staged: true, unstaged: true }));
 	const [syncById, setSyncById] = React.useState(() => new Map());
 	// 存储库、图形两区可收起（默认展开）；会话级持久化。
@@ -681,6 +743,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
 	}, [workingTreePath, state.commits, state.entries]);
+
+	/** 点击提交行：展开改动文件；再次点击同一行收起。 */
+	const toggleCommit = React.useCallback((hash) => {
+		if (state.selectedHash === hash) {
+			setState((previous) => ({ ...previous, selectedHash: null, detail: null }));
+			return;
+		}
+		void selectCommit(hash);
+	}, [state.selectedHash, selectCommit]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
 
@@ -1094,7 +1165,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						commits: state.commits,
 						head: state.head,
 						selectedHash: state.selectedHash,
-						onSelect: (hash) => { void selectCommit(hash); },
+						onSelect: (hash) => { toggleCommit(hash); },
 						onLoadMore: () => setMaxCommits((previous) => previous + 200),
 						moreCommitsAvailable: state.more,
 						onContextMenu: handleContextMenu,
@@ -1103,31 +1174,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						issueLinking: issueLinking(),
 						commitStats: statsByHash,
 						onHoverCommit: hoverCommit,
+						renderDetail: ({ commit }) => (state.detail !== null && state.detail.commit.hash === commit.hash
+							? React.createElement(CommitDetail, {
+								files: state.detail.files,
+								busy: state.busy,
+								collapsed: collapsedByGroup.detail,
+								onToggle: (path) => toggleChange('detail', path),
+								onOpen: (path) => { void openDiff(commit.hash, path, false); },
+							})
+							: null),
 					}))
 			),
-		),
-		state.detail !== null && React.createElement(
-			'div',
-			{ className: 'ggg-detail' },
-			React.createElement('div', { className: 'ggg-detail-title' }, state.detail.commit.message),
-			React.createElement('div', { className: 'ggg-detail-meta' },
-				`${state.detail.commit.hash.slice(0, 8)} · ${state.detail.commit.author}`),
-			...(state.detail.commit.parents ?? []).length > 0
-				? [React.createElement('div', { key: 'parents', className: 'ggg-detail-meta' },
-					`父提交：${state.detail.commit.parents.map((parent) => parent.slice(0, 8)).join('、')}`)]
-				: [],
-			...state.detail.files.map((file) => React.createElement(
-				'div',
-				{ key: file.path, className: 'ggg-change' },
-				React.createElement(FileTypeIcon, { path: file.path.split('/').pop() ?? file.path, size: 13 }),
-				React.createElement('span', { className: 'ggg-status', 'data-type': file.type }, file.type),
-				React.createElement('span', { className: 'ggg-change-name' }, file.path),
-				React.createElement(Button, {
-					variant: 'toolbar', size: 'sm', title: '打开差异', disabled: state.busy,
-					onClick: () => { void openDiff(state.detail.commit.hash, file.path, false); },
-				}, React.createElement(IconCompareSplitOutlineRegular, { size: 13 })),
-			)),
-			state.detail.files.length === 0 && React.createElement('div', { className: 'ggg-hint' }, '正在加载改动文件…'),
 		),
 	);
 }
