@@ -7,11 +7,11 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, FileTypeIcon, InlineEditor,
+	Button, Checkbox, FileTypeIcon,
 	IconBranchOutlineRegular, IconCheckOutlineRegular,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
-	IconDownloadOutlineRegular, IconFolderOpenOutlineRegular,
-	IconPlusOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
+	IconArchiveOutlineRegular, IconDownloadOutlineRegular, IconEllipsisOutlineRegular, IconFolderOpenOutlineRegular,
+	IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconSparkleRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	defaultSettings, formatDate, loadSettings, saveSettings, SettingsPanel,
@@ -24,7 +24,7 @@ import {
 	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, unstagePaths,
 } from './api.js';
 import { CommitGraph } from './graph.js';
-import { RepoIcon } from './ref-icons.js';
+import { RepoIcon, TagRefIcon, RemoteRefIcon } from './ref-icons.js';
 import { copyText, openExternal, showContextMenu } from './context-menu.js';
 import {
 	ancestryOf, findNode, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
@@ -393,11 +393,15 @@ function ChangeGroup({
  * @param props.onToggle - 展开/收起回调。
  * @returns 行元素。
  */
-function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
+function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, headHash }) {
 	const hasChildren = (node.children ?? []).length > 0;
-	const kindLabel = node.kind === 'worktree' ? '工作树' : node.kind === 'submodule' ? '子模块' : '';
+	const isWorktree = node.kind === 'worktree';
+	const isSubmodule = node.kind === 'submodule';
 	const guides = [];
 	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
+	const branchName = (sync?.branch ?? node.branch) ?? '';
+	const isDetached = branchName === '' && headHash !== null && headHash !== undefined;
+	const refText = isDetached ? headHash.slice(0, 7) : branchName;
 	return React.createElement(
 		'div',
 		{
@@ -410,16 +414,28 @@ function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
 			className: `ggg-repo-chevron${expanded ? '' : ' is-collapsed'}${hasChildren ? '' : ' is-empty'}`,
 			onClick: (event) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-		React.createElement(RepoIcon),
+		isWorktree
+			? React.createElement(IconBranchOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
+			: isSubmodule
+				? React.createElement(IconArchiveOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
+				: React.createElement(RepoIcon),
 		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
-		kindLabel !== '' && React.createElement('span', { className: 'ggg-repo-kind' }, kindLabel),
-		React.createElement('span', { className: 'ggg-repo-branch' }, (sync?.branch ?? node.branch) ?? ''),
+		isSubmodule && React.createElement('span', { className: 'ggg-repo-kind' }, '子模块'),
+		refText !== '' && React.createElement(IconBranchOutlineRegular, { size: 12, className: 'ggg-repo-branch-icon' }),
+		refText !== '' && React.createElement('span', {
+			className: 'ggg-repo-branch' + (onBranchClick !== undefined && !isDetached ? ' is-clickable' : ''),
+			onClick: (event) => { if (onBranchClick !== undefined && !isDetached) { event.stopPropagation(); onBranchClick(node, event); } },
+		}, refText),
 		sync !== undefined && (sync.ahead > 0 || sync.behind > 0) && React.createElement(
 			'span',
 			{ className: 'ggg-repo-sync', title: `领先 ${sync.ahead}、落后 ${sync.behind}` },
 			sync.behind > 0 && React.createElement('span', null, `↓${sync.behind}`),
 			sync.ahead > 0 && React.createElement('span', null, `↑${sync.ahead}`),
 		),
+		React.createElement('button', {
+			type: 'button', className: 'ggg-repo-more', title: '更多操作',
+			onClick: (event) => { event.stopPropagation(); onMoreActions?.(node, event); },
+		}, React.createElement(IconEllipsisOutlineRegular, { size: 14 })),
 	);
 }
 
@@ -431,6 +447,167 @@ function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
  * @param props.onOpenDiff - 打开文件差异（打开右侧栏 Diff 页）。
  * @returns 面板元素。
  */
+
+/**
+ * 从提交列表收集所有引用（分支、远程、标签），去重后按类型排序。
+ *
+ * @param commits - 提交列表。
+ * @returns 引用列表：{ name, hash, type, kind }。
+ */
+function collectRefs(commits) {
+	const seen = new Set();
+	const refs = [];
+	for (const commit of commits) {
+		for (const name of commit.heads ?? []) {
+			const key = `b:${name}`;
+			if (!seen.has(key)) { seen.add(key); refs.push({ name, hash: commit.hash, type: 'branch', kind: '分支' }); }
+		}
+		for (const remote of commit.remotes ?? []) {
+			const key = `r:${remote.name}`;
+			if (!seen.has(key)) { seen.add(key); refs.push({ name: remote.name, hash: commit.hash, type: 'remote', kind: '远程' }); }
+		}
+		for (const tag of commit.tags ?? []) {
+			const key = `t:${tag.name}`;
+			if (!seen.has(key)) { seen.add(key); refs.push({ name: tag.name, hash: commit.hash, type: 'tag', kind: '标记' }); }
+		}
+	}
+	return refs;
+}
+
+/**
+ * 计算「自动」模式应显示的分支：当前分支及向其合并的分支（祖先提交上的分支）。
+ *
+ * @param commits - 提交列表。
+ * @param head - 当前分支名。
+ * @returns 分支名称集合。
+ */
+function computeAutoRefs(commits, head) {
+	if (head === null) return new Set();
+	const commitByHash = new Map();
+	for (const commit of commits) {
+		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
+	}
+	let headHash = null;
+	for (const commit of commits) {
+		if ((commit.heads ?? []).includes(head)) { headHash = commit.hash; break; }
+	}
+	if (headHash === null) return new Set();
+	// 祖先提交（含 HEAD 自身）
+	const ancestorHashes = new Set();
+	const queue = [headHash];
+	while (queue.length > 0) {
+		const hash = queue.shift();
+		if (ancestorHashes.has(hash)) continue;
+		ancestorHashes.add(hash);
+		const commit = commitByHash.get(hash);
+		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
+	}
+	// 收集祖先提交上的分支名
+	const result = new Set();
+	for (const hash of ancestorHashes) for (const name of commitByHash.get(hash)?.heads ?? []) result.add(name);
+	return result;
+}
+
+/**
+ * 按选中的引用名称过滤提交列表：仅保留选中引用可达的提交（含工作区伪提交）。
+ *
+ * @param commits - 全部提交。
+ * @param selectedNames - 选中的引用名称集合；空集表示不过滤。
+ * @returns 过滤后的提交列表。
+ */
+function filterCommitsByRefs(commits, selectedNames) {
+	if (selectedNames.size === 0) return commits;
+	const commitByHash = new Map();
+	for (const commit of commits) {
+		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
+	}
+	const rootHashes = new Set();
+	for (const commit of commits) {
+		if (commit.hash === '*') continue;
+		for (const name of commit.heads ?? []) if (selectedNames.has(name)) rootHashes.add(commit.hash);
+		for (const remote of commit.remotes ?? []) if (selectedNames.has(remote.name)) rootHashes.add(commit.hash);
+		for (const tag of commit.tags ?? []) if (selectedNames.has(tag.name)) rootHashes.add(commit.hash);
+	}
+	const reachable = new Set();
+	const queue = [...rootHashes];
+	while (queue.length > 0) {
+		const hash = queue.shift();
+		if (reachable.has(hash)) continue;
+		reachable.add(hash);
+		const commit = commitByHash.get(hash);
+		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
+	}
+	return commits.filter((commit) => commit.hash === '*' || reachable.has(commit.hash));
+}
+
+/**
+ * 引用筛选弹窗：搜索、快捷勾选、多选列表。
+ *
+ * @param props.refs - 全部引用列表。
+ * @param props.selected - 已选引用名称集合。
+ * @param props.onToggle - 切换某引用的选中状态。
+ * @param props.onSelectAll - 全选/全不选。
+ * @param props.onClose - 关闭弹窗。
+ * @returns 弹窗元素。
+ */
+function RefFilterDialog({ refs, selected, search, onSearch, onToggle, onSelectAll, autoChecked, onToggleAuto, onClose }) {
+	const filtered = refs.filter((ref) => search === '' || ref.name.includes(search) || ref.hash.includes(search));
+	const allChecked = refs.length > 0 && refs.every((ref) => selected.has(ref.name));
+	return React.createElement(
+		'div',
+		{ className: 'ggg-filter-backdrop', onClick: onClose },
+		React.createElement(
+			'div',
+			{ className: 'ggg-filter-dialog', onClick: (event) => event.stopPropagation() },
+			// 顶部：搜索框 + 已选徽章 + 确定按钮
+			React.createElement(
+				'div',
+				{ className: 'ggg-filter-top' },
+				React.createElement('input', {
+					type: 'text', className: 'ggg-filter-search', placeholder: '搜索分支、标签…',
+					value: search, onChange: (event) => onSearch(event.currentTarget.value),
+				}),
+				React.createElement('span', { className: 'ggg-filter-badge' }, `${selected.size}`),
+				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: onClose }, '确定'),
+			),
+			// 快捷选项
+			React.createElement(
+				'div',
+				{ className: 'ggg-filter-quick' },
+				React.createElement('label', { className: 'ggg-filter-quick-item' },
+					React.createElement(Checkbox, { checked: allChecked, onChange: () => onSelectAll(!allChecked) }),
+					React.createElement('span', { className: 'ggg-filter-quick-label' }, '全部'),
+					React.createElement('span', { className: 'ggg-filter-quick-hint' }, '显示所有分支与标签'),
+				),
+				React.createElement('label', { className: 'ggg-filter-quick-item' },
+					React.createElement(Checkbox, { checked: autoChecked, onChange: onToggleAuto }),
+					React.createElement('span', { className: 'ggg-filter-quick-label' }, '自动'),
+					React.createElement('span', { className: 'ggg-filter-quick-hint' }, '仅显示当前分支及向其合并的分支'),
+				),
+			),
+			// 引用列表
+			React.createElement(
+				'div',
+				{ className: 'ggg-filter-list' },
+				...filtered.map((ref) => {
+					const isChecked = selected.has(ref.name);
+					return React.createElement(
+						'label',
+						{ key: `${ref.type}:${ref.name}`, className: `ggg-filter-row${isChecked ? ' is-checked' : ''}` },
+						React.createElement(Checkbox, { checked: isChecked, onChange: () => onToggle(ref.name) }),
+						ref.type === 'branch' && React.createElement(IconBranchOutlineRegular, { size: 14, className: 'ggg-filter-icon' }),
+						ref.type === 'remote' && React.createElement(RemoteRefIcon),
+						ref.type === 'tag' && React.createElement(TagRefIcon),
+						React.createElement('span', { className: 'ggg-filter-name' }, ref.name),
+						React.createElement('span', { className: 'ggg-filter-hash' }, ref.hash.slice(0, 7)),
+						React.createElement('span', { className: 'ggg-filter-kind' }, ref.kind),
+					);
+				}),
+			),
+		),
+	);
+}
+
 export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [state, setState] = React.useState({
 		phase: 'loading', error: null, commits: [], head: null, more: false,
@@ -441,6 +618,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [maxCommits, setMaxCommits] = React.useState(200);
 	const [settings, setSettings] = React.useState(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
+	const [filterOpen, setFilterOpen] = React.useState(false);
+	const [filterSearch, setFilterSearch] = React.useState('');
+	const [filterSelected, setFilterSelected] = React.useState(() => new Set());
+	const [filterAuto, setFilterAuto] = React.useState(false);
 	const [repoNodes, setRepoNodes] = React.useState([]);
 	const [treeStatus, setTreeStatus] = React.useState('loading');
 	const [treeNote, setTreeNote] = React.useState(null);
@@ -456,6 +637,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [graphSecOpen, setGraphSecOpen] = React.useState(() => loadSession('dsh-git-graph-graph-open', true));
 	// 图形区高度（像素）；会话级持久化，默认 320。
 	const [graphHeight, setGraphHeight] = React.useState(() => loadSession('dsh-git-graph-graph-height', 320));
+	// 存储库区高度（像素）；会话级持久化，默认 200。
+	const [repoHeight, setRepoHeight] = React.useState(() => loadSession('dsh-git-graph-repo-height', 200));
 	// 悬停卡片的改动统计：按提交哈希缓存，悬停时按需拉取。
 	const [statsByHash, setStatsByHash] = React.useState(() => new Map());
 	const statsInFlight = React.useRef(new Map());
@@ -489,6 +672,30 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		window.addEventListener('pointermove', onMove);
 		window.addEventListener('pointerup', onUp);
 	}, [graphHeight, commitGraphHeight]);
+
+	const commitRepoHeight = React.useCallback((value) => {
+		const clamped = Math.max(80, Math.min(value, 600));
+		setRepoHeight(clamped);
+		saveSession('dsh-git-graph-repo-height', clamped);
+	}, []);
+	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
+	const startRepoResize = React.useCallback((event) => {
+		event.preventDefault();
+		const startY = event.clientY;
+		const startHeight = repoHeight;
+		const handle = event.currentTarget;
+		handle.classList.add('is-dragging');
+		const onMove = (moveEvent) => {
+			commitRepoHeight(startHeight + (moveEvent.clientY - startY));
+		};
+		const onUp = () => {
+			handle.classList.remove('is-dragging');
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+		};
+		window.addEventListener('pointermove', onMove);
+		window.addEventListener('pointerup', onUp);
+	}, [repoHeight, commitRepoHeight]);
 
 	const selectedNode = React.useMemo(() => findNode(repoNodes, selectedId), [repoNodes, selectedId]);
 	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
@@ -710,6 +917,63 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		}
 	}, [workingTreePath, refresh]);
 
+	/** 仓库行「更多操作」右键菜单。 */
+	const handleRepoMoreActions = React.useCallback((node, event) => {
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
+		const branchName = node.branch ?? '';
+		showContextMenu({
+			x: event.clientX, y: event.clientY,
+			onClose: () => target.classList.remove('ggg-menu-target'),
+			items: [
+				{ title: '刷新', onClick: () => { selectNode(node); void run(() => refresh()); } },
+				{ title: '抓取', disabled: state.busy, onClick: () => { selectNode(node); void run(async () => { await fetchRepo(node.path, null); }); } },
+				{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNode(node); void run(async () => { await pushBranch(node.path, branchName, []); }); } },
+				{ type: 'divider' },
+				{ title: '复制路径', onClick: () => { void copyText(node.path); } },
+			],
+		});
+	}, [selectNode, run, refresh, state.busy]);
+
+	/** 仓库行分支名点击：弹出分支切换菜单。 */
+	const handleBranchClick = React.useCallback((node, event) => {
+		const branches = new Set();
+		for (const commit of state.commits) {
+			for (const name of commit.heads ?? []) branches.add(name);
+		}
+		if (branches.size === 0) return;
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
+		showContextMenu({
+			x: event.clientX, y: event.clientY,
+			onClose: () => target.classList.remove('ggg-menu-target'),
+			items: [...branches].sort().map((name) => ({
+				title: name,
+				onClick: () => { selectNode(node); void run(async () => { await checkoutBranch(node.path, name); }); },
+			})),
+		});
+	}, [state.commits, selectNode, run]);
+
+	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
+	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+
+	/** 更改区「更多操作」右键菜单。 */
+	const handleChangesMoreActions = React.useCallback((event) => {
+		const target = event.currentTarget;
+		target.classList.add('ggg-menu-target');
+		const allPaths = state.entries.map((entry) => entry.path);
+		showContextMenu({
+			x: event.clientX, y: event.clientY,
+			onClose: () => target.classList.remove('ggg-menu-target'),
+			items: [
+				{ title: '刷新', disabled: state.busy, onClick: () => { void run(() => refresh()); } },
+				{ type: 'divider' },
+				{ title: `暂存全部（${allPaths.length}）`, disabled: state.busy || allPaths.length === 0, onClick: () => { void run(async () => { await stagePaths(workingTreePath, allPaths); }); } },
+				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: state.busy || allPaths.length === 0, onClick: () => { void run(async () => { await discardPaths(workingTreePath, allPaths, false); }); } },
+			],
+		});
+	}, [run, refresh, state.busy, state.entries, workingTreePath]);
+
 	/** 打开某个提交或工作区文件的差异。 */
 	const openDiff = React.useCallback(async (hash, path, staged) => {
 		const diff = hash === '*'
@@ -753,7 +1017,25 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		void selectCommit(hash);
 	}, [state.selectedHash, selectCommit]);
 
+	/** 转到当前 HEAD 提交：选中并展开其改动文件。 */
+	const goToHead = React.useCallback(() => {
+		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
+		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
+		if (target !== undefined) void selectCommit(target.hash);
+	}, [state.commits, state.head, selectCommit]);
+
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
+
+	/** 勾选「修补上一次提交」时自动填入上一提交消息；取消勾选时清空。 */
+	const toggleAmend = React.useCallback((checked) => {
+		setAmend(checked);
+		if (checked) {
+			const lastCommit = state.commits.find((commit) => commit.hash !== '*');
+			if (lastCommit !== undefined) setMessage(lastCommit.message ?? '');
+		} else {
+			setMessage('');
+		}
+	}, [state.commits]);
 
 	/** 提交暂存区。 */
 	const submit = () => {
@@ -1029,33 +1311,34 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	return React.createElement(
 		'div',
 		{ className: 'ggg-root' },
-		// ── 工具栏 ──────────────────────────────────────────────
-		React.createElement(
-			'div',
-			{ className: 'ggg-bar' },
-			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', title: '刷新', disabled: state.busy,
-				onClick: () => { void run(() => refresh()); },
-			}, React.createElement(IconRefreshOutlineRegular, { size: 15 })),
-			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', title: '抓取', disabled: state.busy,
-				onClick: () => { void run(async () => { await fetchRepo(workingTreePath, null); }); },
-			}, React.createElement(IconDownloadOutlineRegular, { size: 15 })),
-			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', title: '推送当前分支', disabled: state.busy || state.head === null,
-				onClick: () => { void run(async () => { await pushBranch(workingTreePath, state.head, []); }); },
-			}, React.createElement(IconBranchOutlineRegular, { size: 15 })),
-			React.createElement('span', { className: 'ggg-bar-spacer' }),
-			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', title: '设置', disabled: state.busy,
-				onClick: () => setSettingsOpen(true),
-			}, React.createElement(IconSettingsOutlineRegular, { size: 15 })),
-		),
 		state.error !== null && React.createElement('div', { className: 'ggg-error' }, state.error),
 
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => setSettingsOpen(false),
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
+		}),
+
+		filterOpen && React.createElement(RefFilterDialog, {
+			refs: collectRefs(state.commits),
+			selected: filterSelected, search: filterSearch,
+			onSearch: setFilterSearch,
+			onToggle: (name) => { setFilterAuto(false); setFilterSelected((previous) => {
+				const next = new Set(previous);
+				if (next.has(name)) next.delete(name);
+				else next.add(name);
+				return next;
+			}); },
+			onSelectAll: (checked) => { setFilterAuto(false); setFilterSelected(() => {
+				if (!checked) return new Set();
+				return new Set(collectRefs(state.commits).map((ref) => ref.name));
+			}); },
+			autoChecked: filterAuto,
+			onToggleAuto: (checked) => {
+				setFilterAuto(checked);
+				if (checked) setFilterSelected(() => computeAutoRefs(state.commits, state.head));
+				else setFilterSelected(new Set());
+			},
+			onClose: () => setFilterOpen(false),
 		}),
 
 		// ── 存储库 ──────────────────────────────────────────────
@@ -1068,12 +1351,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			},
 				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
 				'存储库',
-				React.createElement('span', { className: 'ggg-count' }, String(repoNodes.length)),
 				treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
+				React.createElement('span', { className: 'ggg-head-actions' },
+					React.createElement(Button, {
+						variant: 'toolbar', size: 'sm', title: '设置', disabled: state.busy,
+						onClick: (event) => { event.stopPropagation(); setSettingsOpen(true); },
+					}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
+				),
 			),
 			repoSecOpen && React.createElement(
 				'div',
-				{ className: 'ggg-repos' },
+				{ className: 'ggg-repos', style: { maxHeight: repoHeight, overflowY: 'auto' } },
 				treeStatus === 'loading' && React.createElement('div', { className: 'ggg-hint' }, '正在发现仓库…'),
 				treeStatus !== 'loading' && visibleRows.length === 0
 					&& React.createElement('div', { className: 'ggg-hint' }, '没有发现 git 仓库'),
@@ -1084,19 +1372,37 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					sync: syncById.get(node.id),
 					onSelect: selectNode,
 					onToggle: toggleNode,
+					onMoreActions: handleRepoMoreActions,
+					onBranchClick: node.id === selectedId ? handleBranchClick : undefined,
+					headHash: node.id === selectedId ? headCommitHash : null,
 				})),
 			),
+			repoSecOpen && React.createElement('div', {
+				className: 'ggg-sec-resize',
+				title: '拖动调整存储库区高度',
+				onPointerDown: startRepoResize,
+			}),
 		),
 
-		// ── 工作区 ──────────────────────────────────────────────
+		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(
 			'div',
 			{ className: 'ggg-sec ggg-workspace' },
 			React.createElement(
 				'div',
 				{ className: 'ggg-sec-head' },
-				React.createElement(IconChevronDownOutlineRegular, { size: 14 }),
-				'工作区',
+				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+				'更改',
+				React.createElement('span', { className: 'ggg-head-actions' },
+					React.createElement(Button, {
+						variant: 'toolbar', size: 'sm', title: '刷新', disabled: state.busy,
+						onClick: (event) => { event.stopPropagation(); void run(() => refresh()); },
+					}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+					React.createElement(Button, {
+						variant: 'toolbar', size: 'sm', title: '更多操作',
+						onClick: (event) => { event.stopPropagation(); handleChangesMoreActions(event); },
+					}, React.createElement(IconEllipsisOutlineRegular, { size: 14 })),
+				),
 			),
 			React.createElement(
 				'div',
@@ -1105,25 +1411,33 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				React.createElement(
 					'div',
 					{ className: 'ggg-commit-box' },
-					React.createElement(InlineEditor, {
-						value: message,
-						label: '提交信息',
-						onChange: setMessage,
-						onSave: submit,
-						onCancel: () => { setMessage(''); },
-					}),
-					React.createElement(
-						'div',
-						{ className: 'ggg-hint' },
-						state.head === null
-							? 'Enter 提交 · Shift+Enter 换行'
-							: `Enter 提交 · Shift+Enter 换行 · 提交到 ${state.head}`,
+					React.createElement('div', { className: 'ggg-commit-input-wrap' },
+						React.createElement('textarea', {
+							className: 'ggg-commit-input',
+							placeholder: `提交变更内容(Ctrl+Enter 在 '${state.head ?? 'master'}'提交)`,
+							value: message,
+							onChange: (event) => setMessage(event.currentTarget.value),
+							onKeyDown: (event) => {
+								if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+									event.preventDefault();
+									submit();
+								}
+							},
+						}),
+						React.createElement('div', { className: 'ggg-commit-input-actions' },
+							React.createElement('button', {
+								type: 'button', className: 'ggg-commit-input-btn', title: 'AI 辅助提交',
+							}, React.createElement(IconSparkleRegular, { size: 14 })),
+							React.createElement('button', {
+								type: 'button', className: 'ggg-commit-input-btn', title: '选择提交方式',
+							}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+						),
 					),
-					React.createElement(Checkbox, { checked: amend, onChange: setAmend, label: '修补上一次提交' }),
+					React.createElement(Checkbox, { checked: amend, onChange: toggleAmend, label: '修补上一次提交' }),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,
 						onClick: submit,
-					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), `提交（${stagedPaths.length}）`),
+					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 				),
 				ChangeGroup({
 					staged: true, entries: state.entries, busy: state.busy, workingTreePath,
@@ -1154,7 +1468,28 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			},
 				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
 				'图形',
-				React.createElement('span', { className: 'ggg-count' }, String(state.commits.length)),
+				React.createElement('span', { className: 'ggg-head-actions' },
+					selectedNode !== null && React.createElement('span', { className: 'ggg-head-repo' },
+						React.createElement(RepoIcon),
+						React.createElement('span', null, selectedNode.name),
+					),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '筛选分支与标签',
+						onClick: (event) => { event.stopPropagation(); setFilterOpen(true); },
+					}, React.createElement(IconBranchOutlineRegular, { size: 14 }), '分支'),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '转到当前历史记录',
+						onClick: (event) => { event.stopPropagation(); goToHead(); },
+					}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '从所有远程抓取', disabled: state.busy,
+						onClick: (event) => { event.stopPropagation(); void run(async () => { await fetchRepo(workingTreePath, null); }); },
+					}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: state.busy,
+						onClick: (event) => { event.stopPropagation(); void run(() => refresh()); },
+					}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+				),
 			),
 			graphSecOpen && (
 				state.phase === 'loading' && state.commits.length === 0
@@ -1162,7 +1497,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					: React.createElement('div', {
 						style: { height: graphHeight, display: 'flex', flexDirection: 'column', minHeight: 0 },
 					}, React.createElement(CommitGraph, {
-						commits: state.commits,
+						commits: filterCommitsByRefs(state.commits, filterSelected),
 						head: state.head,
 						selectedHash: state.selectedHash,
 						onSelect: (hash) => { toggleCommit(hash); },

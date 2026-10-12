@@ -155,4 +155,53 @@ export const STYLES = `
 .ggg-field-inline{flex-direction:row;align-items:center;gap:8px;cursor:pointer}
 .ggg-field-label{color:var(--dsw-alias-label-secondary)}
 .ggg-field-text{flex:1}
+
+/* ── 仓库行右侧操作 ───────────────────────────────────────── */
+.ggg-repo-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+.ggg-repo-branch-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+.ggg-repo-more{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.ggg-repo:hover .ggg-repo-more{display:inline-flex}
+.ggg-repo-more:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* ── 提交输入框 ───────────────────────────────────────────── */
+.ggg-commit-input-wrap{position:relative;display:flex;align-items:stretch}
+.ggg-commit-input{flex:1;min-height:44px;max-height:160px;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
+.ggg-commit-input:focus{border-color:var(--dsw-alias-brand-primary)}
+.ggg-commit-input::placeholder{color:var(--dsw-alias-label-tertiary)}
+.ggg-commit-input-actions{position:absolute;right:4px;top:0;bottom:0;display:flex;align-items:center;gap:2px}
+.ggg-commit-input-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.ggg-commit-input-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 图标按钮（无常驻边框与背景） ─────────────────────────── */
+.ggg-icon-btn{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+.ggg-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.ggg-icon-btn:disabled{opacity:0.5;cursor:default}
+
+/* ── 图形区标题栏仓库名（图标+名称） ─────────────────────── */
+.ggg-head-repo{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;padding:0 4px}
+
+/* ── 仓库行分支名可点击 ───────────────────────────────────── */
+.ggg-repo-branch.is-clickable{cursor:pointer;border-radius:3px;padding:0 2px}
+.ggg-repo-branch.is-clickable:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 引用筛选弹窗 ─────────────────────────────────────────── */
+.ggg-filter-backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3)}
+.ggg-filter-dialog{width:420px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.2);overflow:hidden}
+.ggg-filter-top{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.ggg-filter-search{flex:1;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}
+.ggg-filter-search:focus{border-color:var(--dsw-alias-brand-primary)}
+.ggg-filter-search::placeholder{color:var(--dsw-alias-label-tertiary)}
+.ggg-filter-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;border-radius:9px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}
+.ggg-filter-quick{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.ggg-filter-quick-item{display:flex;align-items:center;gap:6px;cursor:pointer}
+.ggg-filter-quick-label{font-size:12px;color:var(--dsw-alias-label-primary)}
+.ggg-filter-quick-hint{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.ggg-filter-list{flex:1;overflow-y:auto;padding:4px 0}
+.ggg-filter-row{display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer}
+.ggg-filter-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ggg-filter-row.is-checked{background:var(--dsw-alias-interactive-bg-active)}
+.ggg-filter-icon{flex:none;color:var(--dsw-alias-label-tertiary)}
+.ggg-filter-name{font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ggg-filter-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace)}
+.ggg-filter-kind{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:0 6px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover)}
 `;
