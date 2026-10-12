@@ -757,6 +757,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef(null);
+	const entriesSigRef = React.useRef('');
+	const busyRef = React.useRef(false);
 
 	/* ── 仓库发现 ─────────────────────────────────────────── */
 
@@ -906,6 +908,26 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
+
+	/* ── 低频轮询：检测外部工作区变更 ─────────────────────── */
+	entriesSigRef.current = state.entries.map((e) => `${e.path}:${e.status}`).join('\n');
+	busyRef.current = state.busy;
+	React.useEffect(() => {
+		if (workingTreePath === null) return undefined;
+		let cancelled = false;
+		const intervalId = setInterval(() => {
+			if (cancelled || document.visibilityState !== 'visible' || busyRef.current) return;
+			void (async () => {
+				try {
+					const entries = await loadWorkingTree(workingTreePath);
+					if (cancelled) return;
+					const newSig = entries.map((e) => `${e.path}:${e.status}`).join('\n');
+					if (entriesSigRef.current !== newSig) void refresh();
+				} catch { /* 忽略轮询失败 */ }
+			})();
+		}, 15000);
+		return () => { cancelled = true; clearInterval(intervalId); };
+	}, [workingTreePath, refresh]);
 
 	// 换仓库后旧的统计不再适用。
 	React.useEffect(() => { setStatsByHash(new Map()); }, [workingTreePath]);
@@ -1419,8 +1441,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				'存储库',
 				treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
 				React.createElement('span', { className: 'ggg-head-actions' },
-					React.createElement(Button, {
-						variant: 'toolbar', size: 'sm', title: '设置', disabled: state.busy,
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '设置', disabled: state.busy,
 						onClick: (event) => { event.stopPropagation(); setSettingsOpen(true); },
 					}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
 				),
@@ -1460,8 +1482,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
 				'更改',
 				React.createElement('span', { className: 'ggg-head-actions' },
-					React.createElement(Button, {
-						variant: 'toolbar', size: 'sm', title: '刷新', disabled: state.busy,
+					React.createElement('button', {
+						type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: state.busy,
 						onClick: (event) => { event.stopPropagation(); void run(() => refresh()); },
 					}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 				),
