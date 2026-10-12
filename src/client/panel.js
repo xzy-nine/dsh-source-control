@@ -409,7 +409,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		setGraphHeight(clamped);
 		saveSession('dsh-git-graph-graph-height', clamped);
 	}, []);
-	// 拖拽图形区上沿：把高度让渡给工作区（向下拖＝图形变矮）。
+	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
 	const startGraphResize = React.useCallback((event) => {
 		event.preventDefault();
 		const startY = event.clientY;
@@ -417,7 +417,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		const handle = event.currentTarget;
 		handle.classList.add('is-dragging');
 		const onMove = (moveEvent) => {
-			commitGraphHeight(startHeight + (moveEvent.clientY - startY));
+			commitGraphHeight(startHeight - (moveEvent.clientY - startY));
 		};
 		const onUp = () => {
 			handle.classList.remove('is-dragging');
@@ -1071,6 +1071,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		React.createElement(
 			'div',
 			{ className: 'ggg-sec ggg-graph-sec' },
+			// 拖拽手柄落在工作区与图形的分界线上（图形标题之前）。
+			graphSecOpen && React.createElement('div', {
+				className: 'ggg-sec-resize',
+				title: '拖动调整图形区高度',
+				onPointerDown: startGraphResize,
+			}),
 			React.createElement('div', {
 				className: 'ggg-sec-head' + (graphSecOpen ? '' : ' collapsed'),
 				onClick: toggleGraphSec,
@@ -1079,10 +1085,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				'图形',
 				React.createElement('span', { className: 'ggg-count' }, String(state.commits.length)),
 			),
-			graphSecOpen && React.createElement('div', {
-				className: 'ggg-sec-resize',
-				onPointerDown: startGraphResize,
-			}),
 			graphSecOpen && (
 				state.phase === 'loading' && state.commits.length === 0
 					? React.createElement('div', { className: 'ggg-empty', style: { height: graphHeight } }, '正在加载提交图…')

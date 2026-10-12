@@ -1,5 +1,6 @@
 /**
- * 校验客户端从 ui-primitives 导入的每个名字都真实存在。
+ * 校验客户端从 ui-primitives 导入的每个名字都真实存在，以及图形区的
+ * 拖拽手柄位置与拖动方向。
  *
  * 背景：ui-primitives 的产品图标导出名带 `Regular` / `Medium` 权重后缀，
  * 写成裸名会得到 undefined，React 渲染时不报编译错误、只在运行时抛
@@ -54,12 +55,31 @@ const available = existsSync(PRIMITIVES_INDEX) && existsSync(PRIMITIVES_ICONS);
 test('ui-primitives 导入名全部存在', { skip: !available && '未找到 ui-primitives 源码检出' }, () => {
 	const exported = primitivesExports();
 	assert.ok(exported.size > 100, `导出表过小（${exported.size}），可能解析出错`);
-	for (const file of ['index.js', 'panel.js', 'graph.js', 'api.js', 'lanes.js', 'styles.js']) {
+	for (const file of ['index.js', 'panel.js', 'graph.js', 'api.js', 'lanes.js', 'styles.js', 'settings.js', 'context-menu.js', 'dialog.js', 'ref-icons.js']) {
 		if (!existsSync(join(clientDir, file))) continue;
 		for (const name of importedNames(file)) {
 			assert.ok(exported.has(name), `${file} 导入了不存在的导出名：${name}`);
 		}
 	}
+});
+
+test('图形区拖拽手柄在图形标题之前', () => {
+	// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
+	// 否则会出现在标题与图形之间。
+	const source = readFileSync(join(clientDir, 'panel.js'), 'utf8');
+	const section = source.indexOf("'ggg-sec ggg-graph-sec'");
+	const handle = source.indexOf("'ggg-sec-resize'");
+	const title = source.indexOf("'图形'");
+	assert.ok(section !== -1 && handle !== -1 && title !== -1, '未找到图形区标记');
+	assert.ok(handle > section && handle < title, '拖拽手柄必须排在图形标题之前');
+});
+
+test('图形区高度跟随拖动方向', () => {
+	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
+	const source = readFileSync(join(clientDir, 'panel.js'), 'utf8');
+	const start = source.indexOf('const startGraphResize');
+	const body = source.slice(start, source.indexOf('window.addEventListener(\'pointermove\'', start));
+	assert.match(body, /commitGraphHeight\(startHeight - \(moveEvent\.clientY - startY\)\)/, '拖拽位移必须取负号');
 });
 
 test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primitives 源码检出' }, () => {

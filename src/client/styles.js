@@ -40,9 +40,12 @@ export const STYLES = `
 .ggg-sec.ggg-graph-sec{flex:0 0 auto}
 .ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}
 .ggg-workspace-body .ggg-commit-box{border-top:none}
-.ggg-sec-resize{flex:none;height:6px;cursor:row-resize;background:transparent;transition:background 0.12s ease}
-.ggg-sec-resize:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.ggg-sec-resize.is-dragging{background:var(--dsw-alias-interactive-bg-active)}
+/* 可拖拽的分界线：4px 命中区骑在分界线上（上下各溢出 2px，不占布局高度），
+ * 拖动时显示一条高亮线。 */
+.ggg-sec-resize{flex:none;position:relative;height:4px;margin-top:-2px;margin-bottom:-2px;cursor:row-resize;-webkit-user-select:none;user-select:none;touch-action:none}
+.ggg-sec-resize::after{content:'';position:absolute;left:0;right:0;top:1px;height:2px;border-radius:2px;background:transparent;transition:background 0.12s ease}
+.ggg-sec-resize:hover::after{background:var(--dsw-alias-interactive-bg-active)}
+.ggg-sec-resize.is-dragging::after{background:var(--dsw-alias-state-business-primary)}
 .ggg-change-group{margin-top:2px;padding-top:2px}
 .ggg-change-group + .ggg-change-group{border-top:1px solid var(--dsw-alias-border-l1)}
 .ggg-group-root{cursor:pointer}
