@@ -33,17 +33,18 @@ import { copyText } from './context-menu.js';
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge }) {
+function LaneCell({ row, isHead, isMerge, isBehind }) {
 	const width = row.width * LANE_WIDTH;
 	const half = ROW_HEIGHT / 2;
-	const colour = laneColour(row.colour);
+	const overrideColour = isBehind ? 'var(--dsw-alias-lane-4, #9b7bf6)' : null;
+	const colour = overrideColour ?? laneColour(row.colour);
 	const cx = laneCentre(row.lane);
 	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
 	const node = { x: cx, radius: nodeOuterRadius(nodeKind) };
 	const segments = (row.segments ?? []).flatMap((segment, index) => {
 		const geometry = segmentGeometry(segment, node);
 		if (geometry === null) return [];
-		const stroke = laneColour(segment.colour);
+		const stroke = overrideColour ?? laneColour(segment.colour);
 		const common = { stroke, strokeWidth: LANE_STROKE };
 		if (geometry.kind === 'path') {
 			return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
@@ -282,7 +283,7 @@ function renderSubject(message, issueLinking) {
  * @returns 行元素。
  */
 function CommitRow({
-	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	commit, row, head, selected, isAhead, isBehind, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	stats, onHover, widthAnchorRef,
 }) {
 	const isUncommitted = commit.hash === '*';
@@ -307,7 +308,7 @@ function CommitRow({
 			onPointerEnter: () => onHover?.(commit.hash),
 			onPointerLeave: () => onHover?.(null),
 		},
-		React.createElement(LaneCell, { row, isHead, isMerge }),
+		React.createElement(LaneCell, { row, isHead, isMerge, isBehind }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
@@ -375,6 +376,7 @@ function DetailGutter({ row }) {
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit, renderDetail,
+	aheadHashes, behindHashes,
 }) {
 	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
 	const graphRef = React.useRef(null);
@@ -392,6 +394,8 @@ export function CommitGraph({
 			row,
 			head,
 			selected: commit.hash === selectedHash,
+			isAhead: aheadHashes?.has(commit.hash) ?? false,
+			isBehind: behindHashes?.has(commit.hash) ?? false,
 			onSelect,
 			onContextMenu,
 			formatDate: dateFmt,

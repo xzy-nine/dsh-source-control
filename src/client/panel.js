@@ -540,6 +540,57 @@ function filterCommitsByRefs(commits, selectedNames) {
 }
 
 /**
+ * 计算领先与落后的提交哈希集合。
+ *
+ * 领先：本地 HEAD 可达但远程跟踪分支不可达的提交。
+ * 落后：远程跟踪分支可达但本地 HEAD 不可达的提交。
+ *
+ * @param commits - 提交列表。
+ * @param head - 本地分支名。
+ * @param upstream - 远程跟踪分支名（如 origin/main）。
+ * @returns {{ ahead: Set<string>, behind: Set<string> }}
+ */
+function computeAheadBehind(commits, head, upstream) {
+	const empty = { ahead: new Set(), behind: new Set() };
+	if (head === null || upstream === null) return empty;
+	const commitByHash = new Map();
+	for (const commit of commits) {
+		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
+	}
+	// 找本地 HEAD 和远程跟踪分支的提交哈希
+	let localHash = null;
+	let remoteHash = null;
+	for (const commit of commits) {
+		if (commit.hash === '*') continue;
+		if (localHash === null && (commit.heads ?? []).includes(head)) localHash = commit.hash;
+		for (const remote of commit.remotes ?? []) {
+			if (remote.name === upstream) remoteHash = commit.hash;
+		}
+	}
+	if (localHash === null || remoteHash === null) return empty;
+	// 收集各自祖先
+	const ancestorsOf = (rootHash) => {
+		const seen = new Set();
+		const queue = [rootHash];
+		while (queue.length > 0) {
+			const hash = queue.shift();
+			if (seen.has(hash)) continue;
+			seen.add(hash);
+			const commit = commitByHash.get(hash);
+			if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
+		}
+		return seen;
+	};
+	const localAncestors = ancestorsOf(localHash);
+	const remoteAncestors = ancestorsOf(remoteHash);
+	const ahead = new Set();
+	const behind = new Set();
+	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);
+	for (const hash of remoteAncestors) if (!localAncestors.has(hash)) behind.add(hash);
+	return { ahead, behind };
+}
+
+/**
  * 引用筛选弹窗：搜索、快捷勾选、多选列表。
  *
  * @param props.refs - 全部引用列表。
@@ -841,11 +892,18 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
 				remotes: graph.remotes, entries,
 			}));
+			// 刷新选中仓库的领先/落后状态
+			try {
+				const sync = await loadRepoSync(workingTreePath, controller.signal);
+				if (generation === generationRef.current && selectedId !== null) {
+					setSyncById((previous) => new Map(previous).set(selectedId, sync));
+				}
+			} catch { /* 忽略 sync 刷新失败 */ }
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, maxCommits, settings, hasWorkspace]);
+	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -957,23 +1015,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
 	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
 
-	/** 更改区「更多操作」右键菜单。 */
-	const handleChangesMoreActions = React.useCallback((event) => {
-		const target = event.currentTarget;
-		target.classList.add('ggg-menu-target');
-		const allPaths = state.entries.map((entry) => entry.path);
-		showContextMenu({
-			x: event.clientX, y: event.clientY,
-			onClose: () => target.classList.remove('ggg-menu-target'),
-			items: [
-				{ title: '刷新', disabled: state.busy, onClick: () => { void run(() => refresh()); } },
-				{ type: 'divider' },
-				{ title: `暂存全部（${allPaths.length}）`, disabled: state.busy || allPaths.length === 0, onClick: () => { void run(async () => { await stagePaths(workingTreePath, allPaths); }); } },
-				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: state.busy || allPaths.length === 0, onClick: () => { void run(async () => { await discardPaths(workingTreePath, allPaths, false); }); } },
-			],
-		});
-	}, [run, refresh, state.busy, state.entries, workingTreePath]);
-
 	/** 打开某个提交或工作区文件的差异。 */
 	const openDiff = React.useCallback(async (hash, path, staged) => {
 		const diff = hash === '*'
@@ -1048,6 +1089,27 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			await commitStaged(workingTreePath, message, amend);
 			setMessage('');
 			setAmend(false);
+		});
+	};
+
+	const currentSync = syncById.get(selectedId);
+	const aheadBehind = React.useMemo(
+		() => computeAheadBehind(state.commits, state.head, currentSync?.upstream ?? null),
+		[state.commits, state.head, currentSync],
+	);
+	const workAreaEmpty = state.entries.length === 0;
+	const hasRemoteDiff = currentSync !== undefined && (currentSync.ahead > 0 || currentSync.behind > 0);
+	const showSyncButton = workAreaEmpty && hasRemoteDiff;
+	const handleSync = () => {
+		if (state.busy || workingTreePath === null) return;
+		void run(async () => {
+			await fetchRepo(workingTreePath, null);
+			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
+				await merge(workingTreePath, currentSync.upstream);
+			}
+			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
+				await pushBranch(workingTreePath, state.head, []);
+			}
 		});
 	};
 
@@ -1402,10 +1464,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						variant: 'toolbar', size: 'sm', title: '刷新', disabled: state.busy,
 						onClick: (event) => { event.stopPropagation(); void run(() => refresh()); },
 					}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
-					React.createElement(Button, {
-						variant: 'toolbar', size: 'sm', title: '更多操作',
-						onClick: (event) => { event.stopPropagation(); handleChangesMoreActions(event); },
-					}, React.createElement(IconEllipsisOutlineRegular, { size: 14 })),
 				),
 			),
 			React.createElement(
@@ -1438,10 +1496,18 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						),
 					),
 					React.createElement(Checkbox, { checked: amend, onChange: toggleAmend, label: '修补上一次提交' }),
-					React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,
-						onClick: submit,
-					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
+					showSyncButton
+						? React.createElement(Button, {
+							variant: 'primary', size: 'sm', disabled: state.busy,
+							onClick: handleSync,
+						}, '同步更改',
+							currentSync.behind > 0 && React.createElement('span', null, ` ↓${currentSync.behind}`),
+							currentSync.ahead > 0 && React.createElement('span', null, ` ↑${currentSync.ahead}`),
+						)
+						: React.createElement(Button, {
+							variant: 'primary', size: 'sm', disabled: state.busy || message.trim() === '' || stagedPaths.length === 0,
+							onClick: submit,
+						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 				),
 				ChangeGroup({
 					staged: true, entries: state.entries, busy: state.busy, workingTreePath,
@@ -1505,6 +1571,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						commits: filterCommitsByRefs(state.commits, filterSelected),
 						head: state.head,
 						selectedHash: state.selectedHash,
+						aheadHashes: aheadBehind.ahead,
+						behindHashes: aheadBehind.behind,
 						onSelect: (hash) => { toggleCommit(hash); },
 						onLoadMore: () => setMaxCommits((previous) => previous + 200),
 						moreCommitsAvailable: state.more,
