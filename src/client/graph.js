@@ -3,81 +3,164 @@
  *
  * 泳道由 lanes.js 纯函数算出，这里只负责画；每一行是独立的 DOM 行，
  * 因此不必像移植版那样用一个整体 SVG 覆盖所有行。
+ *
+ * 行内排布：泳道 | 提交信息与作者（同一段可截断文本）| 引用标记（右对齐）。
+ * 当前分支与本地分支是「图标 + 名称」的药丸，远端、标签、贮藏是圆形图标，
+ * 名称经 title 与右键菜单给出。节点形状区分提交种类：当前分支为空心环，
+ * 合并提交为环加内点，其余为实心点。
  */
 import React from 'react';
-import { Tag } from '@deepseek-ai/dsh-client-ui-primitives';
-import { laneCentre, laneColour, layoutCommits, segmentGeometry, LANE_WIDTH, NODE_RADIUS, ROW_HEIGHT } from './lanes.js';
+import {
+	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconGoalOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives';
+import {
+	HEAD_NODE_RADIUS, LANE_STROKE, LANE_WIDTH, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
+	RING_STROKE, ROW_HEIGHT, laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry,
+} from './lanes.js';
+import { RemoteRefIcon, TagRefIcon } from './ref-icons.js';
 
 /**
- * 画一行的泳道线。
+ * 画一行的泳道线与节点。
  *
- * 几何由 lanes.js 的 segmentGeometry 给出（纯函数，可单测），这里只做元素拼装。
+ * 几何由 lanes.js 的 segmentGeometry 给出（纯函数，可单测），这里只做元素拼装；
+ * 线段按本行节点的外沿断开，节点内部不画线。
  *
  * @param props.row - 该行的布局。
  * @param props.laneCount - 全局泳道数，用于固定宽度。
  * @param props.isLast - 是否是最后一行（末行不画向下的线）。
+ * @param props.isHead - 是否是当前分支指向的提交。
+ * @param props.isMerge - 是否是合并提交（两个以上父提交）。
  * @returns SVG 元素。
  */
-function LaneCell({ row, laneCount, isLast }) {
+function LaneCell({ row, laneCount, isLast, isHead, isMerge }) {
 	const width = laneCount * LANE_WIDTH;
 	const half = ROW_HEIGHT / 2;
+	const colour = laneColour(row.colour);
+	const cx = laneCentre(row.lane);
+	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
+	const node = { x: cx, radius: nodeOuterRadius(nodeKind) };
+	const segments = (row.segments ?? []).flatMap((segment, index) => {
+		const geometry = segmentGeometry(segment, isLast, node);
+		if (geometry === null) return [];
+		const stroke = laneColour(segment.colour);
+		const common = { stroke, strokeWidth: LANE_STROKE };
+		if (geometry.kind === 'path') {
+			return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
+		}
+		if (geometry.kind === 'gap') {
+			return [
+				React.createElement('line', { key: `u${index}`, ...geometry.upper, ...common }),
+				React.createElement('line', { key: `l${index}`, ...geometry.lower, ...common }),
+			];
+		}
+		if (geometry.kind === 'bend') {
+			return [
+				React.createElement('line', { key: `h${index}`, ...geometry.horizontal, ...common }),
+				React.createElement('line', { key: `v${index}`, ...geometry.vertical, ...common }),
+			];
+		}
+		return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
+	});
+	const ring = (radius) => React.createElement('circle', {
+		key: 'ring', cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
+	});
+	const nodes = isHead
+		? [ring(HEAD_NODE_RADIUS)]
+		: isMerge
+			? [
+				ring(MERGE_NODE_RADIUS),
+				React.createElement('circle', { key: 'core', cx, cy: half, r: MERGE_CORE_RADIUS, fill: colour }),
+			]
+			: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
 	return React.createElement(
 		'svg',
 		{ className: 'ggg-lane', width, height: ROW_HEIGHT, viewBox: `0 0 ${width} ${ROW_HEIGHT}`, 'aria-hidden': 'true' },
-		...(row.segments ?? []).flatMap((segment, index) => {
-			const geometry = segmentGeometry(segment, isLast);
-			if (geometry === null) return [];
-			const stroke = laneColour(segment.colour);
-			const common = { stroke, strokeWidth: 1.5 };
-			if (geometry.kind === 'path') {
-				return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
-			}
-			if (geometry.kind === 'bend') {
-				return [
-					React.createElement('line', { key: `h${index}`, ...geometry.horizontal, ...common }),
-					React.createElement('line', { key: `v${index}`, ...geometry.vertical, ...common }),
-				];
-			}
-			return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
-		}),
-		// 节点：当前提交。
-		React.createElement('circle', {
-			cx: laneCentre(row.lane), cy: half, r: NODE_RADIUS,
-			fill: laneColour(row.colour), stroke: 'var(--dsw-alias-bg-base)', strokeWidth: 1,
-		}),
+		...segments,
+		...nodes,
 	);
 }
 
 /**
- * 取提交的引用标签，并附上用于右键识别的类型与名称。
+ * 取提交的引用标记，并附上用于右键识别的类型与名称。
  *
  * @param commit - 提交。
  * @param head - 当前 HEAD 指向的分支。
- * @returns 标签列表：{ key, text, tone, refType, refName }。
+ * @returns 标记列表：{ key, kind, text, title, refType, refName }。
  */
 function refLabels(commit, head) {
 	const labels = [];
 	for (const name of commit.heads ?? []) {
 		const isHead = head !== null && name === head;
-		labels.push({ key: `h:${name}`, text: name, tone: isHead ? 'solid' : 'info', refType: 'head', refName: name });
+		labels.push({
+			key: `h:${name}`,
+			kind: isHead ? 'head' : 'branch',
+			text: name,
+			title: isHead ? `当前分支 ${name}` : `分支 ${name}`,
+			refType: 'head',
+			refName: name,
+		});
 	}
 	for (const remote of commit.remotes ?? []) {
-		labels.push({ key: `r:${remote.name}`, text: remote.name, tone: 'neutral', refType: 'remote', refName: remote.name, remote: remote.remote });
+		labels.push({
+			key: `r:${remote.name}`, kind: 'remote', text: remote.name,
+			title: `远程分支 ${remote.name}`, refType: 'remote', refName: remote.name,
+		});
 	}
 	for (const tag of commit.tags ?? []) {
-		labels.push({ key: `t:${tag.name}`, text: tag.name, tone: 'warning', refType: 'tag', refName: tag.name });
+		labels.push({
+			key: `t:${tag.name}`, kind: 'tag', text: tag.name,
+			title: `标签 ${tag.name}`, refType: 'tag', refName: tag.name,
+		});
 	}
 	if (commit.stash !== null && commit.stash !== undefined) {
-		labels.push({ key: 'stash', text: commit.stash.selector ?? 'stash', tone: 'neutral', refType: 'stash', refName: commit.stash.selector ?? 'stash' });
+		const selector = commit.stash.selector ?? 'stash';
+		labels.push({
+			key: 'stash', kind: 'stash', text: selector,
+			title: `贮藏 ${selector}`, refType: 'stash', refName: selector,
+		});
 	}
 	return labels;
+}
+
+/** 圆形标记的图标：只有图标、名称进 title 的种类。 */
+const ROUND_KINDS = new Set(['remote', 'tag', 'stash']);
+
+/**
+ * 画一个引用标记。
+ *
+ * @param props.label - refLabels 给出的标记。
+ * @returns 标记元素。
+ */
+function RefChip({ label }) {
+	const icon = label.kind === 'remote'
+		? React.createElement(RemoteRefIcon)
+		: label.kind === 'tag'
+			? React.createElement(TagRefIcon)
+			: label.kind === 'stash'
+				? React.createElement(IconArchiveOutlineRegular, { size: 12 })
+				: label.kind === 'head'
+					? React.createElement(IconGoalOutlineRegular, { size: 12 })
+					: React.createElement(IconBranchOutlineRegular, { size: 12 });
+	return React.createElement(
+		'span',
+		{
+			className: `ggg-ref ggg-ref-${label.kind}`,
+			title: label.title,
+			'data-ref-type': label.refType,
+			'data-ref-name': label.refName,
+			// 圆形标记只有图标，名称经 aria-label 与 title 给出。
+			...(ROUND_KINDS.has(label.kind) ? { role: 'img', 'aria-label': label.title } : {}),
+		},
+		icon,
+		ROUND_KINDS.has(label.kind) ? null : React.createElement('span', { className: 'ggg-ref-text' }, label.text),
+	);
 }
 
 /**
  * 把提交信息中的 Issue 编号替换成链接。
  *
- * @param {string} message - 提交信息。
- * @param {object|null} issueLinking - { issueRegex, issueUrlTemplate }。
+ * @param message - 提交信息。
+ * @param issueLinking - { issueRegex, issueUrlTemplate }。
  * @returns 行内节点数组。
  */
 function renderSubject(message, issueLinking) {
@@ -132,11 +215,12 @@ function renderSubject(message, issueLinking) {
  */
 function CommitRow({ commit, row, laneCount, head, isLast, selected, onSelect, onContextMenu, formatDate, issueLinking }) {
 	const isUncommitted = commit.hash === '*';
-	const date = new Date(commit.date * 1000);
 	const labels = refLabels(commit, head);
+	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
+	const isMerge = (commit.parents ?? []).length > 1;
 	const title = isUncommitted
 		? '未提交的变更'
-		: `${commit.hash}\n${commit.author} <${commit.email}>\n${date.toLocaleString()}`;
+		: `${commit.hash}\n${commit.author} <${commit.email}>\n${formatDate(commit.date)}`;
 	return React.createElement(
 		'div',
 		{
@@ -153,19 +237,18 @@ function CommitRow({ commit, row, laneCount, head, isLast, selected, onSelect, o
 			},
 			title,
 		},
-		React.createElement(LaneCell, { row, laneCount, isLast }),
+		React.createElement(LaneCell, { row, laneCount, isLast, isHead, isMerge }),
+		React.createElement(
+			'span',
+			{ className: 'ggg-subject' },
+			...renderSubject(commit.message, issueLinking),
+			!isUncommitted && React.createElement('span', { className: 'ggg-author' }, commit.author),
+		),
 		labels.length > 0 && React.createElement(
 			'span',
 			{ className: 'ggg-refs' },
-			...labels.map((label) => React.createElement(Tag, {
-				key: label.key, tone: label.tone,
-				'data-ref-type': label.refType, 'data-ref-name': label.refName,
-			}, label.text)),
+			...labels.map((label) => React.createElement(RefChip, { key: label.key, label })),
 		),
-		React.createElement('span', { className: 'ggg-subject' }, ...renderSubject(commit.message, issueLinking)),
-		!isUncommitted && React.createElement('span', { className: 'ggg-meta' }, commit.author),
-		!isUncommitted && React.createElement('span', { className: 'ggg-meta' }, formatDate(commit.date)),
-		React.createElement('span', { className: 'ggg-hash' }, isUncommitted ? '未提交' : commit.hash.slice(0, 7)),
 	);
 }
 

@@ -20,7 +20,7 @@ host 路由 (src/git-graph/routes.ts)
 
 - **界面**：`src/client/` 下的 React 组件，由 esbuild 打包为 `lib/client.js`；`react` 与
   `@deepseek-ai/dsh-client-ui-primitives` 是 shell 共享的平台模块，外部化引用。
-- **主题**：样式只用 `--dsw-alias-*` 语义 token，随主题明暗切换。
+- **主题**：样式以 `--dsw-alias-*` 语义 token 为主、随主题明暗切换；引用标记取泳道调色板的固定色。
 - **页注册**：`ctx.sidebarRightTabs.register`（id `dsh-dev-git-graph/git-graph`，kind `devGitGraph`），
   正文进带键席位 `sidebar.right.pane.tab`，chip 标题进 `sidebar.right.pane.tab.title`。
 
@@ -32,7 +32,7 @@ host 路由 (src/git-graph/routes.ts)
 | 存储库 | 当前仓库与所在分支 |
 | 更改 | 工作区变更列表（状态字符 + 文件类型图标 + 悬停操作：打开差异 / 丢弃 / 暂存或取消暂存）；全部暂存与全部丢弃 |
 | 提交框 | 提交信息（复用 `InlineEditor` 多行编辑器，Enter 提交、Shift+Enter 换行、Esc 清空草稿）、修补上一次提交、提交按钮（显示已暂存数量） |
-| 图形 | 提交泳道图：分支彩线、引用标签（分支 / 远程 / 标签 / 贮藏）、提交信息、作者、相对时间、短哈希；选中提交展开其改动文件 |
+| 图形 | 提交泳道图：分支彩线；每行为「泳道 + 提交信息（作者紧随其后，空间不足时随省略号截断）+ 右对齐的引用标记」——当前分支与本地分支是「图标 + 名称」药丸，远端、标签、贮藏是圆形图标（名称见悬停提示与右键菜单）；节点形状区分种类：当前分支为空心环、合并提交为环加内点、其余为实心点，线段停在节点外沿而不穿过节点；提交日期与短哈希见行悬停提示；选中提交展开其改动文件 |
 
 ### 提交排序
 

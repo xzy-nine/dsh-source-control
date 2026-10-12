@@ -11,8 +11,32 @@
 export const LANE_WIDTH = 14;
 /** 单行像素高度。 */
 export const ROW_HEIGHT = 24;
-/** 节点半径。 */
-export const NODE_RADIUS = 3.5;
+/** 普通提交的节点半径。 */
+export const NODE_RADIUS = 4;
+/** 当前分支节点的外环半径。 */
+export const HEAD_NODE_RADIUS = 5;
+/** 合并提交节点的外环半径。 */
+export const MERGE_NODE_RADIUS = 4;
+/** 合并提交节点的内点半径。 */
+export const MERGE_CORE_RADIUS = 2.2;
+/** 环节点的线宽。 */
+export const RING_STROKE = 2;
+/** 泳道线宽。 */
+export const LANE_STROKE = 2;
+/** 线段与节点外沿之间的留白。 */
+export const NODE_GAP = 1;
+
+/**
+ * 节点外沿半径：线段在此断开，节点内部不画线。
+ *
+ * @param kind - 节点种类：'head'、'merge' 或 'plain'。
+ * @returns 外沿半径（像素），含线宽与留白。
+ */
+export function nodeOuterRadius(kind) {
+	if (kind === 'head') return HEAD_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
+	if (kind === 'merge') return MERGE_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
+	return NODE_RADIUS + NODE_GAP;
+}
 
 /**
  * 计算提交序列的泳道布局。
@@ -170,27 +194,42 @@ export function laneCentre(lane) {
  * 弯曲段是三次贝塞尔，两端保持竖直切向，控制点各取纵向跨度的一半——
  * 这保证入线从行顶、出线到行底都能接上相邻行的线。
  *
+ * 给出 node 时，落到节点上的端点停在节点外沿，贯穿节点的整行线拆成上下两段
+ * （kind 为 'gap'），节点内部因此不出现线。
+ *
  * @param segment - 布局给出的线段。
  * @param isLast - 是否是最后一行（末行的出线终止于节点高度）。
+ * @param node - 本行节点：{ x, radius }；不给时线段画到节点中心。
  * @returns 路径描述；线段无长度时返回 null。
  */
-export function segmentGeometry(segment, isLast = false) {
+export function segmentGeometry(segment, isLast = false, node = null) {
 	const x1 = laneCentre(segment.lane);
 	const x2 = laneCentre(segment.toLane);
 	const half = ROW_HEIGHT / 2;
 	const y1 = segment.fromTop ? 0 : half;
 	const y2 = segment.toBottom ? (isLast ? half : ROW_HEIGHT) : half;
+	if (y1 === y2) return null;
+	const gap = node === null ? 0 : node.radius;
+	// 贯穿节点的整行线：拆成上下两段，节点内部留空。
+	if (gap > 0 && x1 === node.x && x2 === node.x && y1 < half && y2 > half) {
+		return {
+			kind: 'gap',
+			upper: { x1, y1, x2: x1, y2: half - gap },
+			lower: { x1, y1: half + gap, x2: x1, y2 },
+		};
+	}
+	const start = gap > 0 && x1 === node.x && y1 === half ? half + gap : y1;
+	const end = gap > 0 && x2 === node.x && y2 === half ? half - gap : y2;
 	if (segment.curved && x1 !== x2) {
-		const bend = (y2 - y1) / 2;
-		return { kind: 'path', d: `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}` };
+		const bend = (end - start) / 2;
+		return { kind: 'path', d: `M ${x1} ${start} C ${x1} ${start + bend}, ${x2} ${end - bend}, ${x2} ${end}` };
 	}
 	if (x1 !== x2) {
 		return {
 			kind: 'bend',
-			horizontal: { x1, y1, x2: x1, y2: half },
-			vertical: { x1: x2, y1: half, x2, y2 },
+			horizontal: { x1, y1: start, x2: x1, y2: half },
+			vertical: { x1: x2, y1: half, x2, y2: end },
 		};
 	}
-	if (y1 === y2) return null;
-	return { kind: 'line', x1, y1, x2, y2 };
+	return { kind: 'line', x1, y1: start, x2, y2: end };
 }

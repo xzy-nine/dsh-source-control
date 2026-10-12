@@ -29,6 +29,8 @@ const bundled = await build({
 	target: ['chrome100'],
 	// charset 'utf8' 保留中文字面量原样，默认的 'ascii' 会转义成 \\uXXXX。
 	charset: 'utf8',
+	// assets/ 下的图标以文本形式内联，客户端不额外请求资源。
+	loader: { '.svg': 'text' },
 	external: CLIENT_EXTERNALS,
 	write: false,
 	legalComments: 'none',

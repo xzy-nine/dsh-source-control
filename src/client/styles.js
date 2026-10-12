@@ -1,7 +1,7 @@
 /**
- * 视图样式：只使用 --dsw-* 语义 token，随主题明暗切换。
+ * 视图样式：以 --dsw-* 语义 token 为主，随主题明暗切换；引用标记取泳道调色板的固定色。
  *
- * 组件自身（Button / Input / Tag 等）从 ui-primitives 取得，这里只负责布局与
+ * 组件自身（Button / Input / Checkbox 等）从 ui-primitives 取得，这里只负责布局与
  * 提交图这类没有对应组件的部分。
  */
 export const STYLES = `
@@ -78,10 +78,18 @@ export const STYLES = `
 .ggg-row.is-selected{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-row.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-lane{flex:none;height:24px}
-.ggg-subject{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:none;max-width:45%;overflow:hidden}
-.ggg-meta{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}
-.ggg-hash{flex:none;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.ggg-subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ggg-author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
+.ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;overflow:hidden}
+.ggg-ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
+.ggg-ref-icon{display:inline-flex;align-items:center}
+.ggg-ref-icon svg{display:block}
+.ggg-ref-text{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.ggg-ref-head{padding:0 8px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#0d1116}
+.ggg-ref-branch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#4f8ff7) 18%,transparent);color:var(--dsw-alias-lane-0,#4f8ff7)}
+.ggg-ref-remote{width:17px;background:var(--dsw-alias-lane-4,#9b7bf6);color:#fff}
+.ggg-ref-tag{width:17px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#fff}
+.ggg-ref-stash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
 .ggg-pager{display:flex;justify-content:center;padding:8px}
 .ggg-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .ggg-error{padding:10px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px;white-space:pre-wrap}

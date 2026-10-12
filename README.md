@@ -11,8 +11,8 @@ It automatically binds to the **current session's workspace**; no manual repo se
 - **Right Sidebar page**: a `devGitGraph` page type in the built-in right Sidebar; no third-party sidebar plugin required.
 - **Auto-bound repo**: the panel reads the session's working directory from the sessions snapshot.
 - **Working tree**: stage, unstage, discard, and commit, with per-file status and hover actions; the commit message reuses the DSH `InlineEditor` (Enter commits, Shift+Enter breaks the line, Escape clears the draft).
-- **Commit graph**: branch lanes, ref labels (branch / remote / tag / stash), subject, author, relative time, and short hash; selecting a commit lists its changed files.
-- **Theming**: styles use only `--dsw-alias-*` semantic tokens and follow the host's light / dark mode.
+- **Commit graph**: branch lanes plus one row per commit — the subject with the author beside it, then right-aligned ref markers: icon-and-name pills for the current and other local branches, and circular cloud / tag / archive badges for remotes, tags, and stashes (names in the tooltip and the context menu). Node shape names the kind: hollow ring for the current branch, ring with a core for merges, filled dot otherwise; lane lines stop at the node's outer edge instead of running through it. The date and short hash are in the row tooltip; selecting a commit lists its changed files.
+- **Theming**: styles use `--dsw-alias-*` semantic tokens and follow the host's light / dark mode; ref markers use the fixed lane palette.
 - **No external processes**: the host runs `git` directly via `child_process.spawn` (array args, no shell injection).
 
 ## Install
@@ -82,6 +82,8 @@ pnpm --filter dsh-dev-git-graph test       # lane layout unit tests
 
 - The host half compiles to `lib/` with `tsc -p tsconfig.json`; the browser half is bundled into
   `lib/client.js` by `scripts/build-client.mjs`.
+- `assets/icons/` holds the ref-marker SVGs; the client build inlines them as text, so the browser half
+  requests no extra resources at runtime.
 - The browser half must not import bare modules other than the shell-shared `react` and
   `@deepseek-ai/dsh-client-ui-primitives`.
 

@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { laneCentre, laneColour, layoutCommits, segmentGeometry, LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT } from '../src/client/lanes.js';
+import { laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry, LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT } from '../src/client/lanes.js';
 
 /** 构造一个提交。 */
 const commit = (hash, ...parents) => ({ hash, parents });
@@ -182,5 +182,48 @@ test('零长度线段不产生元素', () => {
 test('泳道中心线按泳道宽度排布', () => {
 	assert.equal(laneCentre(0), LANE_WIDTH / 2);
 	assert.equal(laneCentre(3), 3 * LANE_WIDTH + LANE_WIDTH / 2);
+});
+
+test('入线与出线停在节点外沿', () => {
+	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
+	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false }, false, node);
+	assert.equal(inbound.kind, 'line');
+	assert.equal(inbound.y1, 0);
+	assert.equal(inbound.y2, ROW_HEIGHT / 2 - node.radius);
+	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false }, false, node);
+	assert.equal(outbound.y1, ROW_HEIGHT / 2 + node.radius);
+	assert.equal(outbound.y2, ROW_HEIGHT);
+});
+
+test('贯穿节点的整行线拆成上下两段', () => {
+	const node = { x: laneCentre(0), radius: nodeOuterRadius('merge') };
+	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true, curved: false }, false, node);
+	assert.equal(geometry.kind, 'gap');
+	assert.equal(geometry.upper.y1, 0);
+	assert.equal(geometry.upper.y2, ROW_HEIGHT / 2 - node.radius);
+	assert.equal(geometry.lower.y1, ROW_HEIGHT / 2 + node.radius);
+	assert.equal(geometry.lower.y2, ROW_HEIGHT);
+});
+
+test('别条泳道的贯穿线不受节点影响', () => {
+	const node = { x: laneCentre(0), radius: nodeOuterRadius('head') };
+	const geometry = segmentGeometry({ lane: 1, toLane: 1, fromTop: true, toBottom: true, curved: false }, false, node);
+	assert.equal(geometry.kind, 'line');
+	assert.equal(geometry.y1, 0);
+	assert.equal(geometry.y2, ROW_HEIGHT);
+});
+
+test('曲线端点停在节点外沿', () => {
+	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
+	const inbound = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false, curved: true }, false, node);
+	assert.equal(inbound.kind, 'path');
+	assert.match(inbound.d, new RegExp(`, ${laneCentre(0)} ${ROW_HEIGHT / 2 - node.radius}$`));
+	const fork = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: true }, false, node);
+	assert.match(fork.d, new RegExp(`^M ${laneCentre(0)} ${ROW_HEIGHT / 2 + node.radius} `));
+});
+
+test('节点外沿半径按种类递增', () => {
+	assert.ok(nodeOuterRadius('head') > nodeOuterRadius('merge'), '当前分支节点最大');
+	assert.ok(nodeOuterRadius('merge') > nodeOuterRadius('plain'), '合并节点大于普通节点');
 });
 
