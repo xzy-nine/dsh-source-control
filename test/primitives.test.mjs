@@ -250,3 +250,64 @@ test('宿主 hunk 形状与视图一致', () => {
 	}
 	assert.match(source, /HUNK_HEADER/, '应解析 hunk 头取得行号区间');
 });
+
+test('未提交行的文案译为中文', () => {
+	// 数据层给出的 message 是 `Uncommitted Changes (2)`，界面须显示中文。
+	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(source, /UNCOMMITTED_MESSAGE/, '应有未提交文案的匹配规则');
+	assert.match(source, /'未提交的更改'/, '无数量时应显示中文');
+	assert.match(source, /未提交的更改（\$\{match\[1\]\}）/, '带数量时应显示中文');
+	assert.match(source, /displayMessage\(commit\)/, '行文本应经翻译函数');
+});
+
+test('未提交行不触发浮窗与右键', () => {
+	// 未提交行不对应真实提交：不给右键菜单，也不套悬停卡片。
+	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(source, /onContextMenu: isUncommitted \? undefined/, '未提交行不给右键菜单');
+	assert.match(source, /if \(!isUncommitted\) onHover\?\.\(commit\.hash\)/, '未提交行不预取悬停数据');
+	assert.match(source, /if \(isUncommitted\) return anchor;/, '未提交行不套 HoverCard');
+});
+
+test('未提交行用虚线且不画节点', () => {
+	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(source, /const node = isUncommitted \? null : \{ x: cx, radius: nodeOuterRadius\(nodeKind\) \}/, '未提交行不传节点，线因此贯穿');
+	assert.match(source, /strokeDasharray: '2 2'/, '未提交行的线应是虚线');
+	assert.match(source, /const nodes = isUncommitted/, '未提交行不渲染任何节点元素');
+});
+
+test('浮窗显示完整提交信息', () => {
+	// 列表的 message 来自 `%s`（只有标题），完整正文按需取回后传给卡片。
+	const graphSource = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(graphSource, /const fullMessage = typeof message === 'string'/, '卡片优先使用完整提交信息');
+	const apiSource = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	assert.match(apiSource, /export async function loadCommitMessage/, '应有取完整信息的函数');
+	assert.match(apiSource, /details\.body/, '应取 commitDetails 的 body');
+	const hookSource = readFileSync(join(panelDir, 'use-commit-stats.ts'), 'utf8');
+	assert.match(hookSource, /messageByHash/, 'hook 应缓存完整信息');
+	assert.match(hookSource, /requestCommitMessage\(hash\)/, '悬停时应拉取完整信息');
+});
+
+test('卡片正文更紧凑且不留空行', () => {
+	// 只有正文收紧：标题（首行）沿用卡片自身字号。
+	const graphSource = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(graphSource, /variant: 'compact'/, 'markdown 应用 compact 变体');
+	assert.match(graphSource, /const \[titleLine, \.\.\.bodyLines\] = fullMessage\.split\('\\n'\)/, '首行作标题、其余作正文');
+	assert.match(graphSource, /bodyLines\.filter\(\(line\) => line\.trim\(\) !== ''\)/, '正文应滤掉空行');
+	assert.match(graphSource, /className: 'ggg-card-title'/, '标题单独渲染');
+	assert.match(graphSource, /className: 'ggg-card-body'/, '正文单独渲染');
+	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
+	// 标题不改字号。
+	const title = /\.ggg-card-title\{([^}]*)\}/.exec(styles);
+	assert.ok(title !== null, '未找到 .ggg-card-title');
+	assert.ok(!/font-size/.test(title[1]), '标题不应改字号');
+	// 正文更小、更紧。
+	const body = /\.ggg-card-body\{([^}]*)\}/.exec(styles);
+	assert.ok(body !== null, '未找到 .ggg-card-body');
+	assert.match(body[1], /font-size:11px/, '正文字号应更小');
+	assert.match(body[1], /line-height:1\.35/, '正文行距应更紧');
+	// 卡片自身字号不变。
+	const card = /\.ggg-card\{([^}]*)\}/.exec(styles);
+	assert.match(card[1], /font-size:12px/, '卡片字号不应改动');
+	assert.match(styles, /data-markdown-variant='compact'\]\s*:is\(p, ul, ol, blockquote\)\{margin:0\}/, 'markdown 段距应压到 0');
+});
+

@@ -90,21 +90,26 @@ function avatarUrl(email, size = 40) {
  * @param props.row - 该行的布局。
  * @param props.isHead - 是否是当前分支指向的提交。
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
+ * @param props.isUncommitted - 是否是工作区未提交行。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge, isBehind }) {
+function LaneCell({ row, isHead, isMerge, isBehind, isUncommitted }) {
 	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
 	const overrideColour = isBehind ? 'var(--dsw-alias-lane-4, #9b7bf6)' : null;
 	const colour = overrideColour ?? laneColour(row.colour);
 	const cx = laneCentre(row.lane);
 	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
-	const node = { x: cx, radius: nodeOuterRadius(nodeKind) };
+	// 未提交行没有对应提交：不画节点，线因此贯穿整行（不留断口）。
+	const node = isUncommitted ? null : { x: cx, radius: nodeOuterRadius(nodeKind) };
 	const segments = (row.segments ?? []).flatMap((segment, index) => {
-		const geometry = segmentGeometry(segment, node);
+		// 未提交行不画节点，其出线因此从行顶起画、贯穿整行，不留节点处的断口。
+		const shaped = isUncommitted && !segment.fromTop ? { ...segment, fromTop: true } : segment;
+		const geometry = segmentGeometry(shaped, node);
 		if (geometry === null) return [];
 		const stroke = overrideColour ?? laneColour(segment.colour);
-		const common = { stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round' };
+		// 未提交行的线用虚线，与真实提交区分。
+		const common = { stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round', ...(isUncommitted ? { strokeDasharray: '2 2' } : {}) };
 		if (geometry.kind === 'path') {
 			return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
 		}
@@ -119,17 +124,20 @@ function LaneCell({ row, isHead, isMerge, isBehind }) {
 	const ring = (radius) => React.createElement('circle', {
 		key: 'ring', cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
 	});
-	const nodes = isHead
-		? [
-			ring(HEAD_NODE_RADIUS),
-			React.createElement('circle', { key: 'core', cx, cy: half, r: HEAD_CORE_RADIUS, fill: 'none', stroke: colour, strokeWidth: RING_STROKE }),
-		]
-		: isMerge
+	const nodes = isUncommitted
+		// 未提交行：节点位置用一段竖线占位（线由 segments 画到节点中心），不画节点。
+		? []
+		: isHead
 			? [
-				ring(MERGE_NODE_RADIUS),
-				React.createElement('circle', { key: 'core', cx, cy: half, r: MERGE_CORE_RADIUS, fill: colour }),
+				ring(HEAD_NODE_RADIUS),
+				React.createElement('circle', { key: 'core', cx, cy: half, r: HEAD_CORE_RADIUS, fill: 'none', stroke: colour, strokeWidth: RING_STROKE }),
 			]
-			: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
+			: isMerge
+				? [
+					ring(MERGE_NODE_RADIUS),
+					React.createElement('circle', { key: 'core', cx, cy: half, r: MERGE_CORE_RADIUS, fill: colour }),
+				]
+				: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
 	return React.createElement(
 		'svg',
 		{
@@ -226,6 +234,23 @@ function RefChip({ label, expanded = false }) {
 	);
 }
 
+/** 未提交伪提交的 message 形如 `Uncommitted Changes (2)`；数据层给出英文，这里译成中文。 */
+const UNCOMMITTED_MESSAGE = /^Uncommitted Changes(?: \((\d+)\))?$/;
+
+/**
+ * 取一行显示的提交信息：未提交伪提交的英文文案译成中文。
+ *
+ * @param commit - 提交。
+ * @returns 显示用文本。
+ */
+function displayMessage(commit) {
+	const message = String(commit.message ?? '');
+	if (commit.hash !== '*') return message;
+	const match = UNCOMMITTED_MESSAGE.exec(message);
+	if (match === null) return message;
+	return match[1] === undefined ? '未提交的更改' : `未提交的更改（${match[1]}）`;
+}
+
 /**
  * 悬停卡片的正文：作者与时间、完整提交信息、改动统计、引用标记、短哈希。
  *
@@ -236,13 +261,17 @@ function RefChip({ label, expanded = false }) {
  * @param props.formatDetail - 详细时间格式化函数（unixSeconds -> 日期与时间）。
  * @returns 卡片正文元素。
  */
-function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown, showAvatars }) {
+function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown, showAvatars, message }) {
 	const isUncommitted = commit.hash === '*';
 	const dated = typeof commit.date === 'number' && Number.isFinite(commit.date);
 	const timeText = dated ? formatDate(commit.date) : '';
 	const detail = dated ? formatDetail(commit.date) : '';
 	const timeLabel = detail === '' || detail === timeText ? timeText : `${timeText}（${detail}）`;
-	const lines = String(commit.message ?? '').split('\n');
+	// 完整提交信息优先：列表里的 message 来自 `%s`，只有标题一行。
+	const fullMessage = typeof message === 'string' && message !== '' ? message : String(commit.message ?? '');
+	// 首行是标题，保持卡片自身字号；其余是正文，字号更小、行距更紧，且不留空行。
+	const [titleLine, ...bodyLines] = fullMessage.split('\n');
+	const body = bodyLines.filter((line) => line.trim() !== '');
 	const avatar = showAvatars && !isUncommitted ? avatarUrl(commit.email ?? commit.author, 40) : null;
 	const avatarEl = avatar !== null
 		? React.createElement('img', { className: 'ggg-card-avatar', src: avatar, alt: '', width: 20, height: 20, loading: 'lazy' })
@@ -261,13 +290,15 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown,
 		React.createElement(
 			'div',
 			{ className: 'ggg-card-message' },
-			markdown
-				? React.createElement(MarkdownText, { text: String(commit.message ?? ''), labels: MD_LABELS })
-				: lines.map((line, index) => React.createElement(
-					'div',
-					{ key: `line-${index}`, className: 'ggg-card-line' },
-					line === '' ? '\u00a0' : line,
-				)),
+			// 标题：首行，保持卡片自身字号。
+			React.createElement('div', { className: 'ggg-card-title' }, titleLine === '' ? '\u00a0' : titleLine),
+			// 正文：其余各行，字号更小、行距更紧。
+			body.length > 0 && (markdown
+				// compact 变体把段落间距从 16px 收到 4px，适合卡片这种小空间。
+				? React.createElement('div', { className: 'ggg-card-body' },
+					React.createElement(MarkdownText, { text: body.join('\n'), labels: MD_LABELS, variant: 'compact' }))
+				: React.createElement('div', { className: 'ggg-card-body' },
+					...body.map((line, index) => React.createElement('div', { key: `line-${index}`, className: 'ggg-card-line' }, line)))),
 		),
 		stats !== null && stats !== undefined && React.createElement(
 			'div',
@@ -356,7 +387,7 @@ function renderSubject(message, issueLinking) {
 function CommitRow({
 	commit, row, head, selected, isAhead, isBehind, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
-	stats, onHover, widthAnchorRef,
+	stats, message, onHover, widthAnchorRef,
 }) {
 	const isUncommitted = commit.hash === '*';
 	const labels = refLabels(commit, head, combineLocalAndRemoteBranchLabels);
@@ -369,7 +400,8 @@ function CommitRow({
 			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}${isMuted ? ' ggg-row-muted' : ''}`,
 			'data-hash': commit.hash,
 			onClick: () => onSelect(commit.hash),
-			onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => {
+			// 未提交行不对应真实提交：不给右键菜单，也不触发悬停卡片。
+			onContextMenu: isUncommitted ? undefined : (event: React.MouseEvent<HTMLDivElement>) => {
 				event.preventDefault();
 				const target = event.target as HTMLElement;
 				const refElement = target.closest('[data-ref-type]');
@@ -378,14 +410,14 @@ function CommitRow({
 					: null;
 				onContextMenu?.({ commit, refInfo, event });
 			},
-			onPointerEnter: () => onHover?.(commit.hash),
-			onPointerLeave: () => onHover?.(null),
+			onPointerEnter: () => { if (!isUncommitted) onHover?.(commit.hash); },
+			onPointerLeave: () => { if (!isUncommitted) onHover?.(null); },
 		},
-		React.createElement(LaneCell, { row, isHead, isMerge, isBehind }),
+		React.createElement(LaneCell, { row, isHead, isMerge, isBehind, isUncommitted }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
-			...renderSubject(commit.message, issueLinking),
+			...renderSubject(displayMessage(commit), issueLinking),
 			!isUncommitted && React.createElement('span', { className: 'ggg-author' }, commit.author),
 		),
 		labels.length > 0 && React.createElement(
@@ -394,9 +426,11 @@ function CommitRow({
 			...labels.map((label) => React.createElement(RefChip, { key: label.key, label })),
 		),
 	);
+	// 未提交行没有可展示的提交信息，直接用行本身，不套悬停卡片。
+	if (isUncommitted) return anchor;
 	return React.createElement(HoverCard, {
 		anchor,
-		content: React.createElement(CommitCard, { commit, labels, stats, formatDate, formatDetail, markdown, showAvatars }),
+		content: React.createElement(CommitCard, { commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars }),
 		variant: 'preview',
 		widthAnchorRef,
 	});
@@ -448,7 +482,7 @@ function DetailGutter({ row }) {
  */
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
-	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit, renderDetail,
+	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	aheadHashes, behindHashes,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
 }) {
@@ -480,6 +514,7 @@ export function CommitGraph({
 			muteMergeCommits,
 			combineLocalAndRemoteBranchLabels,
 			stats: commitStats?.get(commit.hash) ?? null,
+			message: commitMessages?.get(commit.hash) ?? null,
 			onHover: onHoverCommit,
 			widthAnchorRef: graphRef,
 		}));

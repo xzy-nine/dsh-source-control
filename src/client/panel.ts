@@ -146,7 +146,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const { state, setState, refresh } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
-	const { statsByHash, hoverCommit } = useCommitStats({ workingTreePath });
+	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
 
 	// 会话级持久化：按仓库/子模块/工作树路径存 sessionStorage，切换页面或工作区后恢复。
 	React.useEffect(() => {
@@ -620,7 +620,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			commits: filterCommitsByRefs(state.commits, filterSelected),
 			head: state.head, selectedHash: state.selectedHash,
 			aheadHashes: aheadBehind.ahead, behindHashes: aheadBehind.behind,
-			moreCommitsAvailable: state.more, statsByHash,
+			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,

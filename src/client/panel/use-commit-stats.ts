@@ -1,8 +1,8 @@
 /**
- * 提交改动统计：悬停某行时按需拉取并缓存。
+ * 提交改动统计与完整提交信息：悬停某行时按需拉取并缓存。
  */
 import React from 'react';
-import { loadCommitFiles } from '../api.ts';
+import { loadCommitFiles, loadCommitMessage } from '../api.ts';
 import type { CommitStats } from '../types.ts';
 
 /** 提交改动统计 hook 的入参。 */
@@ -15,30 +15,39 @@ export interface UseCommitStatsOptions {
 export interface UseCommitStatsResult {
 	/** 提交哈希 -> 改动统计。 */
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
-	/** 悬停某行：延时预取统计；离开时传 null。 */
+	/** 提交哈希 -> 完整提交信息；未取到时缺省。 */
+	readonly messageByHash: ReadonlyMap<string, string>;
+	/** 悬停某行：延时预取统计与完整信息；离开时传 null。 */
 	readonly hoverCommit: (hash: string | null) => void;
 }
 
 /**
- * 拉取并缓存提交的改动统计。
+ * 拉取并缓存提交的改动统计与完整提交信息。
  *
  * @param options - 见 {@link UseCommitStatsOptions}。
- * @returns 统计缓存与悬停回调。
+ * @returns 统计缓存、完整信息缓存与悬停回调。
  */
 export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseCommitStatsResult {
-	// 悬停卡片的改动统计：按提交哈希缓存，悬停时按需拉取。
+	// 悬停卡片的改动统计与完整信息：按提交哈希缓存，悬停时按需拉取。
 	const [statsByHash, setStatsByHash] = React.useState<Map<string, CommitStats>>(() => new Map());
+	const [messageByHash, setMessageByHash] = React.useState<Map<string, string>>(() => new Map());
 	const statsInFlight = React.useRef<Map<string, AbortController>>(new Map());
+	const messageInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const hoverTimer = React.useRef<number | null>(null);
 
-	// 换仓库后旧的统计不再适用。
-	React.useEffect(() => { setStatsByHash(new Map()); }, [workingTreePath]);
+	// 换仓库后旧的统计与信息不再适用。
+	React.useEffect(() => {
+		setStatsByHash(new Map());
+		setMessageByHash(new Map());
+	}, [workingTreePath]);
 
-	// 卸载时取消未完成的统计请求与悬停计时。
+	// 卸载时取消未完成的请求与悬停计时。
 	React.useEffect(() => () => {
 		if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
 		for (const controller of statsInFlight.current.values()) controller.abort();
+		for (const controller of messageInFlight.current.values()) controller.abort();
 		statsInFlight.current.clear();
+		messageInFlight.current.clear();
 	}, []);
 
 	/**
@@ -68,7 +77,27 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 	}, [workingTreePath, statsByHash]);
 
 	/**
-	 * 悬停提交行：延时预取统计，避免指针扫过时连发请求。
+	 * 拉取某个提交的完整提交信息并缓存；已在缓存或请求中的跳过。
+	 *
+	 * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+	 * @returns 无。
+	 */
+	const requestCommitMessage = React.useCallback((hash: string) => {
+		if (workingTreePath === null || messageByHash.has(hash) || messageInFlight.current.has(hash)) return;
+		const controller = new AbortController();
+		messageInFlight.current.set(hash, controller);
+		loadCommitMessage(workingTreePath, hash, controller.signal).then((message) => {
+			messageInFlight.current.delete(hash);
+			if (controller.signal.aborted || message === null) return;
+			setMessageByHash((previous) => new Map(previous).set(hash, message));
+		}).catch(() => {
+			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
+			messageInFlight.current.delete(hash);
+		});
+	}, [workingTreePath, messageByHash]);
+
+	/**
+	 * 悬停提交行：延时预取统计与完整信息，避免指针扫过时连发请求。
 	 *
 	 * @param hash - 进入的提交哈希；离开时为 null。
 	 * @returns 无。
@@ -82,8 +111,9 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 		hoverTimer.current = window.setTimeout(() => {
 			hoverTimer.current = null;
 			requestCommitStats(hash);
+			requestCommitMessage(hash);
 		}, 220);
-	}, [requestCommitStats]);
+	}, [requestCommitStats, requestCommitMessage]);
 
-	return { statsByHash, hoverCommit };
+	return { statsByHash, messageByHash, hoverCommit };
 }

@@ -210,6 +210,23 @@ export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortS
 }
 
 /**
+ * 读取某个提交的完整提交信息。
+ *
+ * 提交列表里的 message 来自 `git log --format=%s`，只有标题一行；悬停卡片要显示完整
+ * 正文，因此按需从 `commitDetails` 取（该命令的 `%B` 含完整消息）。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+ * @param signal - 取消信号。
+ * @returns 完整提交信息；取不到时返回 null。
+ */
+export async function loadCommitMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<string | null> {
+	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
+	const details = payload.commitDetails as { body?: unknown } | null | undefined;
+	return details !== null && details !== undefined && typeof details.body === 'string' ? details.body : null;
+}
+
+/**
  * 抓取远端引用。
  *
  * @param cwd - 会话工作区路径。

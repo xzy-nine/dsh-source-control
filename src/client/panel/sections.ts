@@ -243,6 +243,8 @@ export interface GraphSectionProps {
 	readonly behindHashes: ReadonlySet<string>;
 	readonly moreCommitsAvailable: boolean;
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
+	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
+	readonly messageByHash: ReadonlyMap<string, string>;
 	readonly detail: { commit: Commit; files: CommitFile[] } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
@@ -271,7 +273,7 @@ export interface GraphSectionProps {
  */
 export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
-	aheadHashes, behindHashes, moreCommitsAvailable, statsByHash, detail, detailCollapsed, settings,
+	aheadHashes, behindHashes, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
 	onOpenFilter, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
@@ -338,6 +340,7 @@ export function GraphSection({
 					combineLocalAndRemoteBranchLabels: settings.combineLocalAndRemoteBranchLabels,
 					graphColours: settings.graphColours,
 					commitStats: statsByHash,
+					commitMessages: messageByHash,
 					onHoverCommit,
 					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
 						? React.createElement(CommitDetail, {

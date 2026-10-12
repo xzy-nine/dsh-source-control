@@ -116,7 +116,15 @@ export const STYLES = `
 .ggg-card-icon{flex:none;color:var(--dsw-alias-label-tertiary)}
 .ggg-card-author{font-weight:500}
 .ggg-card-time{color:var(--dsw-alias-label-tertiary);font-size:11px}
+/* 提交信息：首行是标题，沿用卡片自身字号与行距；其余是正文，字号更小、行距更紧。
+ * MarkdownText 的 compact 变体自带 font-size 与 line-height，段距仍有 4px；
+ * 用 data-markdown-variant 属性（MarkdownText 在 compact 时输出）在卡片内覆盖。 */
 .ggg-card-message{margin-top:6px;padding:0 14px;max-height:132px;overflow:auto;word-break:break-word}
+.ggg-card-title{font:inherit}
+.ggg-card-body{font-size:11px;line-height:1.35}
+.ggg-card-body [data-markdown-variant='compact']{font-size:11px;line-height:1.35}
+.ggg-card-body [data-markdown-variant='compact'] :is(p, ul, ol, blockquote){margin:0}
+.ggg-card-body [data-markdown-variant='compact'] p + p{margin-top:2px}
 .ggg-card-stats{margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px}
 .ggg-card-refs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1)}
 .ggg-card-hash{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
