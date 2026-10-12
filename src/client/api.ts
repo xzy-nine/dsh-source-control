@@ -227,6 +227,24 @@ export async function loadCommitMessage(cwd: string, hash: string, signal?: Abor
 }
 
 /**
+ * 取包含某个提交的分支（本地与远程）。
+ *
+ * 分支只由尖端提交标识，提交列表里中间提交的 `heads` 为空，因此不能凭它判断所属分支，
+ * 需按包含关系向 git 查询。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param hash - 提交哈希。
+ * @returns 本地与远程分支短名。
+ */
+export async function branchesContaining(cwd: string, hash: string): Promise<{ local: string[]; remote: string[] }> {
+	const payload = await callApi(cwd, { command: 'branchesContaining', commitHash: hash });
+	const read = (value: unknown): string[] => Array.isArray(value)
+		? value.filter((item): item is string => typeof item === 'string')
+		: [];
+	return { local: read(payload.local), remote: read(payload.remote) };
+}
+
+/**
  * 抓取远端引用。
  *
  * @param cwd - 会话工作区路径。

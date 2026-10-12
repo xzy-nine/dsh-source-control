@@ -105,6 +105,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
 			break;
+		case 'branchesContaining':
+			// 分支只由尖端提交标识，中间提交的 heads 为空；按包含关系查询才能列出所属分支。
+			await respondResult('branchesContaining', async () => {
+				const hash = str('commitHash');
+				const localOut = await gitOrThrow(['branch', '--contains', hash, '--format=%(refname:short)'], repo);
+				const local = localOut.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+				const remoteOut = await gitOrThrow(['branch', '-r', '--contains', hash, '--format=%(refname:short)'], repo);
+				// 远程 HEAD 是符号引用，短名只显示远程名本身（如 `origin`），须排除。
+				const remoteNames = new Set((await gitOrThrow(['remote'], repo)).split('\n').map((line) => line.trim()));
+				const remote = remoteOut.split('\n').map((line) => line.trim())
+					.filter((line) => line !== '' && !line.endsWith('/HEAD') && !remoteNames.has(line));
+				return { repo, local, remote };
+			});
+			break;
 
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
 		case 'discoverRepositories':

@@ -151,7 +151,8 @@ function GitDiffTab(props) {
 	const gitCwd = repoRoot ?? cwd;
 	const [diffData, setDiffData] = React.useState(null);
 	const [loading, setLoading] = React.useState(true);
-	const [wrap, setWrap] = React.useState(false);
+	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
+	const [wrap, setWrap] = React.useState(true);
 	// 默认左右并排：FileDiff 的 split 模式（单侧改动时它会自动退回单列）。
 	const [split, setSplit] = React.useState(true);
 	const load = React.useCallback(() => {

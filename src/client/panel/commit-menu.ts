@@ -2,7 +2,7 @@
  * 提交行右键菜单：查看、GitHub、检出、分支与标签、拣选/还原/重置/合并/变基、复制与归档。
  */
 import {
-	addTag, checkoutCommit, cherrypickCommit, createBranch, deleteBranch, deleteRemoteBranch, deleteTag,
+	addTag, branchesContaining, checkoutCommit, cherrypickCommit, createBranch, deleteBranch, deleteRemoteBranch, deleteTag,
 	merge, rebase, resetToCommit, revertCommit,
 } from '../api.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
@@ -31,19 +31,28 @@ export interface CommitMenuDeps {
  * @param args - 目标提交与触发事件。
  * @returns 无。
  */
-export function openCommitMenu(
+export async function openCommitMenu(
 	deps: CommitMenuDeps,
 	{ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> },
-): void {
+): Promise<void> {
 	const { workingTreePath, run, selectCommit, remotes, handleCreateArchive } = deps;
-	const branchNames = commit.heads ?? [];
+	// React 的 currentTarget 只在事件派发期间有效，本函数会 await，因此先在同步段取出。
+	const target = event.currentTarget;
+	const { clientX, clientY } = event;
 	const tagNames = (commit.tags ?? []).map((tag) => tag.name);
-	const remoteRefs = commit.remotes ?? [];
 	const isHead = commit.hash === '*';
 	const githubUrl = isHead ? null : githubCommitUrl(remotes, commit.hash);
-	// 指向该提交的分支（本地 + 远程）与标签：删除动作的二级菜单目标。
+	// 包含该提交的分支（本地 + 远程）与指向该提交的标签：删除动作的二级菜单目标。
+	// 分支只由尖端提交标识，中间提交需按「包含」关系查询；查询失败时退回该提交自身的引用。
+	const containing = workingTreePath === null || isHead
+		? { local: [], remote: [] }
+		: await branchesContaining(workingTreePath, commit.hash).catch(() => ({ local: [], remote: [] }));
+	const localBranches = containing.local.length > 0 ? containing.local : (commit.heads ?? []);
+	const remoteNames = containing.remote.length > 0
+		? containing.remote
+		: (commit.remotes ?? []).map((remote) => remote.name);
 	const branchItems: ContextMenuItem[] = [
-		...branchNames.map((name) => ({
+		...localBranches.map((name) => ({
 			title: name,
 			onClick: async () => {
 				const ok = await showCheckbox({
@@ -53,15 +62,15 @@ export function openCommitMenu(
 				if (ok) void run(async () => { await deleteBranch(workingTreePath as string, name, true); });
 			},
 		})),
-		...remoteRefs.map((remote) => ({
-			title: remote.name,
+		...remoteNames.map((name) => ({
+			title: name,
 			onClick: async () => {
 				const ok = await showCheckbox({
-					title: '删除远程分支', message: `确定删除远程分支 ${remote.name}？`,
+					title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
 					checkboxLabel: '我已知晓并继续', danger: true,
 				});
 				if (ok) void run(async () => {
-					await deleteRemoteBranch(workingTreePath as string, remote.name.replace(/^[^/]+\//, ''), remote.remote ?? '');
+					await deleteRemoteBranch(workingTreePath as string, name.replace(/^[^/]+\//, ''), name.split('/')[0]);
 				});
 			},
 		})),
@@ -76,10 +85,10 @@ export function openCommitMenu(
 			if (ok) void run(async () => { await deleteTag(workingTreePath as string, name, remotes.length > 0 ? remotes[0].name : null); });
 		},
 	}));
-	const target = event.currentTarget;
+	// target 与坐标已在同步段取出：本函数会 await 查询分支，之后 currentTarget 已失效。
 	target.classList.add('ggg-menu-target');
 	showContextMenu({
-		x: event.clientX, y: event.clientY,
+		x: clientX, y: clientY,
 		onClose: () => target.classList.remove('ggg-menu-target'),
 		items: [
 			{ title: '查看提交', disabled: isHead, onClick: () => { void selectCommit(commit.hash); } },

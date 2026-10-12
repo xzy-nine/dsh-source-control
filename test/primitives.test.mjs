@@ -311,3 +311,34 @@ test('卡片正文更紧凑且不留空行', () => {
 	assert.match(styles, /data-markdown-variant='compact'\]\s*:is\(p, ul, ol, blockquote\)\{margin:0\}/, 'markdown 段距应压到 0');
 });
 
+test('差异面板默认自动换行', () => {
+	// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
+	const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+	const wrap = /const \[wrap, setWrap\] = React\.useState\((true|false)\)/.exec(source);
+	assert.ok(wrap !== null, '未找到 wrap 初始值');
+	assert.equal(wrap[1], 'true', '换行应默认开启');
+});
+
+test('删除分支按包含关系列出候选', () => {
+	// 分支只由尖端提交标识：中间提交的 heads 为空，只看 heads 会让删除分支在非尖端不可用。
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	assert.match(menu, /branchesContaining/, '应向 git 查询包含该提交的分支');
+	assert.match(menu, /containing\.local\.length > 0 \? containing\.local/, '查询结果优先，失败时退回自身引用');
+	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
+	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	assert.match(routes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
+	assert.match(routes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
+});
+
+test('异步打开提交菜单前先取出事件字段', () => {
+	// openCommitMenu 会 await 查询分支；React 的 currentTarget 在 await 之后已失效。
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	const syncIndex = menu.indexOf('const target = event.currentTarget');
+	const awaitIndex = menu.indexOf('await branchesContaining');
+	assert.ok(syncIndex !== -1, '应取出 currentTarget');
+	assert.ok(awaitIndex !== -1, '应有 await 查询');
+	assert.ok(syncIndex < awaitIndex, 'currentTarget 必须在 await 之前取出');
+	assert.match(menu, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
+});
+

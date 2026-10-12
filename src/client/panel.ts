@@ -516,9 +516,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [state.commits, selectNodeAndReset, run]);
 
-	/** 提交行右键菜单。 */
+	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
-		openCommitMenu({
+		void openCommitMenu({
 			workingTreePath, run, selectCommit, remotes: state.remotes, handleCreateArchive,
 		}, { commit, event });
 	}, [workingTreePath, run, selectCommit, state.remotes, handleCreateArchive]);
