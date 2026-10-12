@@ -190,8 +190,8 @@ export async function loadCommitFiles(cwd, hash, signal) {
  * @param {string|null} name - 远程名；null 表示全部远程。
  * @returns {Promise<void>} 无。
  */
-export async function fetchRepo(cwd, name) {
-	await callApi(cwd, { command: 'fetch', name, prune: false, pruneTags: false });
+export async function fetchRepo(cwd, name, prune = false, pruneTags = false) {
+	await callApi(cwd, { command: 'fetch', name, prune, pruneTags });
 }
 
 /**
@@ -566,4 +566,74 @@ export async function pushStash(cwd, message, includeUntracked = true) {
 export async function cleanUntrackedFiles(cwd, directories = false) {
 	const payload = await callApi(cwd, { command: 'cleanUntrackedFiles', directories });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 读取附注标签详情（消息、打标签者、日期）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} tagName - 标签名。
+ * @param {string} commitHash - 标签指向的提交哈希。
+ * @returns {Promise<object|null>} 标签详情，轻量标签返回 null。
+ */
+export async function tagDetails(cwd, tagName, commitHash) {
+	const payload = await callApi(cwd, { command: 'tagDetails', tagName, commitHash });
+	return payload.tagDetails ?? null;
+}
+
+/**
+ * 添加远程仓库。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} name - 远程名。
+ * @param {string} url - 抓取 URL。
+ * @param {string|null} pushUrl - 推送 URL；与抓取 URL 相同时传 null。
+ * @param {boolean} fetch - 添加后是否立即抓取。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function addRemote(cwd, name, url, pushUrl = null, fetch = false) {
+	const payload = await callApi(cwd, { command: 'addRemote', name, url, pushUrl, fetch });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 编辑远程仓库（名称、URL、推送 URL）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} nameOld - 原远程名。
+ * @param {string} nameNew - 新远程名。
+ * @param {string|null} urlOld - 原 URL。
+ * @param {string|null} urlNew - 新 URL。
+ * @param {string|null} pushUrlOld - 原推送 URL。
+ * @param {string|null} pushUrlNew - 新推送 URL。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function editRemote(cwd, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew) {
+	const payload = await callApi(cwd, { command: 'editRemote', nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 创建归档（zip/tar/tar.gz）。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @param {string} ref - 归档起点（分支名、标签名或提交哈希）。
+ * @param {string} format - 归档格式：'zip'、'tar' 或 'tgz'。
+ * @param {string} outputPath - 归档输出路径（绝对路径）。
+ * @returns {Promise<string|null>} 错误文本，无错误时返回 null。
+ */
+export async function createArchive(cwd, ref, format, outputPath) {
+	const payload = await callApi(cwd, { command: 'createArchive', ref, format, outputPath });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 导出仓库配置为 JSON。
+ *
+ * @param {string} cwd - 会话工作区路径。
+ * @returns {Promise<object>} 仓库配置对象。
+ */
+export async function exportRepoConfig(cwd) {
+	const payload = await callApi(cwd, { command: 'exportRepoConfig' });
+	return payload.config ?? null;
 }

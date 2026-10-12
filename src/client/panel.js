@@ -17,11 +17,11 @@ import {
 	defaultSettings, formatDate, loadSettings, saveSettings, SettingsPanel,
 } from './settings.js';
 import {
-	addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
-	commitStaged, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
-	deleteUserDetails, discardPaths, discoverRepositories, dropStash, editUserDetails, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
+	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
+	commitStaged, createArchive, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
+	deleteUserDetails, discardPaths, discoverRepositories, dropStash, editRemote, editUserDetails, exportRepoConfig, fetchIntoLocalBranch, fetchRepo, loadCommitFiles,
 	loadConfig, loadGraph, loadRepoSync, loadWorkingTree, merge, popStash, pushBranch, pushStash, pushTag,
-	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, unstagePaths,
+	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, tagDetails, unstagePaths,
 } from './api.js';
 import { CommitGraph } from './graph.js';
 import { RepoIcon, TagRefIcon, RemoteRefIcon } from './ref-icons.js';
@@ -30,7 +30,7 @@ import {
 	ancestryOf, findNode, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from './repo-tree.js';
 import {
-	showCheckbox, showConfirmation, showSelect, showText,
+	showCheckbox, showConfirmation, showForm, showSelect, showText,
 } from './dialog.js';
 
 /** 会话级存储（窗口存活期内有效）：读取时回退到默认值。 */
@@ -1008,7 +1008,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			onClose: () => target.classList.remove('ggg-menu-target'),
 			items: [
 				{ title: '刷新', onClick: () => { selectNode(node); void run(() => refresh()); } },
-				{ title: '抓取', disabled: state.busy, onClick: () => { selectNode(node); void run(async () => { await fetchRepo(node.path, null); }); } },
+				{ title: '抓取', disabled: state.busy, onClick: () => { selectNode(node); void run(async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); } },
 				{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNode(node); void run(async () => { await pushBranch(node.path, branchName, []); }); } },
 				{ type: 'divider' },
 				{ title: '复制路径', onClick: () => { void copyText(node.path); } },
@@ -1092,6 +1092,18 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		if (row !== null) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	}, [state.commits, state.head]);
 
+	/** 加载仓库后自动滚动到 HEAD。 */
+	const didAutoScrollRef = React.useRef(false);
+	React.useEffect(() => {
+		if (!settings.onRepoLoadScrollToHead) return;
+		if (didAutoScrollRef.current) return;
+		if (state.phase !== 'ready' || state.commits.length === 0) return;
+		didAutoScrollRef.current = true;
+		const timer = setTimeout(goToHead, 60);
+		return () => clearTimeout(timer);
+	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
+	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
+
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
 
 	/** 勾选「修补上一次提交」时自动填入上一提交消息；取消勾选时清空。 */
@@ -1126,7 +1138,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const handleSync = () => {
 		if (state.busy || workingTreePath === null) return;
 		void run(async () => {
-			await fetchRepo(workingTreePath, null);
+			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				await merge(workingTreePath, currentSync.upstream);
 			}
@@ -1184,6 +1196,86 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		reportError(setState, `${label}：DSH 版本暂不支持，请在对应工具中操作`);
 		setTimeout(() => reportError(setState, null), 2600);
 	}, []);
+
+	/** 添加远程并刷新。 */
+	const handleAddRemote = React.useCallback((name, url, pushUrl) => {
+		void run(async () => { await addRemote(workingTreePath, name, url, pushUrl, false); });
+	}, [workingTreePath, run]);
+
+	/** 编辑远程并刷新。 */
+	const handleEditRemote = React.useCallback((nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew) => {
+		void run(async () => { await editRemote(workingTreePath, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew); });
+	}, [workingTreePath, run]);
+
+	/** 导出仓库配置为 JSON 文件下载。 */
+	const handleExportConfig = React.useCallback(async () => {
+		if (workingTreePath === null) return;
+		try {
+			const config = await exportRepoConfig(workingTreePath);
+			if (config === null) return;
+			const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = 'git-graph-config.json';
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (error) {
+			reportError(setState, error instanceof Error ? error.message : String(error));
+		}
+	}, [workingTreePath]);
+
+	/** 查看标签详情。 */
+	const handleTagDetails = React.useCallback(async (tagName, commitHash) => {
+		if (workingTreePath === null) return;
+		try {
+			const details = await tagDetails(workingTreePath, tagName, commitHash);
+			if (details === null) {
+				reportError(setState, '该标签是轻量标签，无附加信息');
+				setTimeout(() => reportError(setState, null), 2600);
+				return;
+			}
+			const message = details.message ?? '';
+			const tagger = details.tagger ?? '';
+			const date = details.date ?? '';
+			const lines = [
+				`标签：${tagName}`,
+				tagger ? `打标签者：${tagger}` : '',
+				date ? `日期：${date}` : '',
+				message ? `\n${message}` : '',
+			].filter(Boolean).join('\n');
+			await showForm({ title: '标签详情', message: lines, fields: [], confirmLabel: '关闭' });
+		} catch (error) {
+			reportError(setState, error instanceof Error ? error.message : String(error));
+		}
+	}, [workingTreePath]);
+
+	/** 创建归档。 */
+	const handleCreateArchive = React.useCallback(async (ref, refLabel) => {
+		const format = await showSelect({
+			title: '创建归档',
+			message: `从 ${refLabel ?? ref} 创建归档`,
+			options: [
+				{ value: 'zip', label: 'zip' },
+				{ value: 'tar', label: 'tar' },
+				{ value: 'tgz', label: 'tar.gz' },
+			],
+			value: 'zip',
+		});
+		if (format === null) return;
+		const defaultName = `${ref.replace(/[^a-zA-Z0-9._-]/g, '-')}.${format}`;
+		const outputPath = await showText({
+			title: '归档输出路径',
+			label: '文件路径',
+			placeholder: defaultName,
+			value: defaultName,
+		});
+		if (outputPath === null || outputPath === '') return;
+		void run(async () => {
+			const err = await createArchive(workingTreePath, ref, format, outputPath);
+			if (err !== null) reportError(setState, err);
+		});
+	}, [workingTreePath, run]);
 
 	/* ── 右键菜单组装 ─────────────────────────────────────────── */
 
@@ -1277,9 +1369,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				{ type: 'divider' },
 				{ title: '复制哈希', onClick: async () => { await copyText(commit.hash); } },
 				{ title: '复制提交信息', onClick: async () => { await copyText(commit.message); } },
+				{ title: '创建归档…', disabled: isHead, onClick: () => { void handleCreateArchive(commit.hash, `提交 ${commit.hash.slice(0, 7)}`); } },
 			],
 		});
-	}, [workingTreePath, run, selectCommit, state.remotes]);
+	}, [workingTreePath, run, selectCommit, state.remotes, handleCreateArchive]);
 
 	/** 分支标签（head / remote / tag）右键菜单。 */
 	const openRefMenu = React.useCallback(({ commit, refInfo, event }) => {
@@ -1312,6 +1405,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					} },
 					{ type: 'divider' },
 					{ title: '复制分支名', onClick: async () => { await copyText(name); } },
+					{ title: '创建归档…', onClick: () => { void handleCreateArchive(name, `分支 ${name}`); } },
 					{ title: '在当前分支上删除…', disabled: isCurrent, onClick: async () => {
 						const ok = await showCheckbox({
 							title: '删除本地分支', message: `确定删除本地分支 ${name}？`, checkboxLabel: '同时强制删除未合并分支', danger: true,
@@ -1373,6 +1467,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						});
 						if (remote !== null && remote !== '') void run(async () => { await pushTag(workingTreePath, name, [remote], commit.hash, false); });
 					} },
+					{ title: '查看标签详情…', onClick: () => { void handleTagDetails(name, commit.hash); } },
+					{ title: '创建归档…', onClick: () => { void handleCreateArchive(name, `标签 ${name}`); } },
 					{ type: 'divider' },
 					{ title: '复制标签名', onClick: async () => { await copyText(name); } },
 					{ title: '删除标签…', onClick: async () => {
@@ -1406,7 +1502,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				{ title: '复制选择器', onClick: async () => { await copyText(selector); } },
 			],
 		});
-	}, [workingTreePath, run, state.head, state.remotes, unsupported]);
+	}, [workingTreePath, run, state.head, state.remotes, unsupported, handleTagDetails, handleCreateArchive]);
 
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }) => {
@@ -1437,6 +1533,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => setSettingsOpen(false),
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
+			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
 			userDetails, onEditUserDetails: handleEditUserDetails, onDeleteUserDetails: handleDeleteUserDetails,
 		}),
 
@@ -1609,7 +1706,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 					}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
 					React.createElement('button', {
 						type: 'button', className: 'ggg-icon-btn', title: '从所有远程抓取', disabled: state.busy,
-						onClick: (event) => { event.stopPropagation(); void run(async () => { await fetchRepo(workingTreePath, null); }); },
+						onClick: (event) => { event.stopPropagation(); void run(async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
 					}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
 					React.createElement('button', {
 						type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: state.busy,
@@ -1636,6 +1733,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						formatDate: dateFmt,
 						formatDetail: dateDetail,
 						issueLinking: issueLinking(),
+						markdown: settings.markdown,
+						showAvatars: settings.showAvatars,
+						muteMergeCommits: settings.muteMergeCommits,
+						combineLocalAndRemoteBranchLabels: settings.combineLocalAndRemoteBranchLabels,
+						graphColours: settings.graphColours,
 						commitStats: statsByHash,
 						onHoverCommit: hoverCommit,
 						renderDetail: ({ commit }) => (state.detail !== null && state.detail.commit.hash === commit.hash

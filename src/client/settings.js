@@ -53,6 +53,14 @@ export function defaultSettings() {
 		onlyFollowFirstParent: false,
 		includeCommitsMentionedByReflogs: false,
 		issueLinkingConfig: null,
+		markdown: true,
+		muteMergeCommits: false,
+		combineLocalAndRemoteBranchLabels: true,
+		fetchAndPrune: false,
+		fetchAndPruneTags: false,
+		onRepoLoadScrollToHead: false,
+		showAvatars: true,
+		graphColours: null,
 	};
 }
 
@@ -72,6 +80,7 @@ export function loadSettings() {
 			...parsed,
 			dateFormat: { ...base.dateFormat, ...(parsed.dateFormat ?? {}) },
 			issueLinkingConfig: parsed.issueLinkingConfig ?? null,
+			graphColours: Array.isArray(parsed.graphColours) ? parsed.graphColours : null,
 		};
 	} catch {
 		return base;
@@ -204,7 +213,7 @@ function SelectRow({ label, options, value, onChange }) {
  * @param props.onDeleteRemote - 删除远端回调。
  * @returns 面板元素，未展开时返回 null。
  */
-export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDeleteRemote, userDetails, onEditUserDetails, onDeleteUserDetails }) {
+export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, userDetails, onEditUserDetails, onDeleteUserDetails }) {
 	if (!open) return null;
 	const patch = (partial) => onChange({ ...settings, ...partial });
 	return React.createElement(
@@ -265,6 +274,41 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 						checked: settings.includeCommitsMentionedByReflogs,
 						onChange: (includeCommitsMentionedByReflogs) => patch({ includeCommitsMentionedByReflogs }),
 					}),
+					React.createElement(ToggleRow, {
+						label: 'Markdown 渲染提交信息',
+						checked: settings.markdown,
+						onChange: (markdown) => patch({ markdown }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '显示作者头像',
+						checked: settings.showAvatars,
+						onChange: (showAvatars) => patch({ showAvatars }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '静音合并提交',
+						checked: settings.muteMergeCommits,
+						onChange: (muteMergeCommits) => patch({ muteMergeCommits }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '合并本地与远程分支标签',
+						checked: settings.combineLocalAndRemoteBranchLabels,
+						onChange: (combineLocalAndRemoteBranchLabels) => patch({ combineLocalAndRemoteBranchLabels }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '抓取时修剪已删除远程分支',
+						checked: settings.fetchAndPrune,
+						onChange: (fetchAndPrune) => patch({ fetchAndPrune }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '抓取时修剪远程标签',
+						checked: settings.fetchAndPruneTags,
+						onChange: (fetchAndPruneTags) => patch({ fetchAndPruneTags }),
+					}),
+					React.createElement(ToggleRow, {
+						label: '加载仓库后滚动到 HEAD',
+						checked: settings.onRepoLoadScrollToHead,
+						onChange: (onRepoLoadScrollToHead) => patch({ onRepoLoadScrollToHead }),
+					}),
 				),
 				React.createElement(Section, { title: 'User Details' },
 					React.createElement(UserDetailsForm, {
@@ -274,20 +318,12 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 					}),
 				),
 				React.createElement(Section, { title: 'Remote Configuration' },
-					remotes !== undefined && remotes.length > 0
-						? React.createElement('div', { className: 'ggg-set-remotes' },
-							...remotes.map((remote) => React.createElement(
-								'div',
-								{ key: remote.name, className: 'ggg-set-remote' },
-								React.createElement('span', { className: 'ggg-set-remote-name' }, remote.name),
-								React.createElement('span', { className: 'ggg-set-remote-url' }, remote.url ?? ''),
-								React.createElement('button', {
-									type: 'button', className: 'ggg-set-remote-del', title: '删除远程',
-									onClick: () => onDeleteRemote?.(remote.name),
-								}, React.createElement(IconTrashOutlineRegular, { size: 13 })),
-							)),
-						)
-						: React.createElement('div', { className: 'ggg-set-note' }, '没有配置远程仓库'),
+					React.createElement(RemoteConfigSection, {
+						remotes,
+						onDeleteRemote,
+						onAddRemote,
+						onEditRemote,
+					}),
 				),
 				React.createElement(Section, { title: 'Issue Linking' },
 					React.createElement(IssueLinkingForm, {
@@ -299,8 +335,92 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 					React.createElement('div', { className: 'ggg-set-note' },
 						'创建 Pull Request 依赖 GitHub 等宿主集成；DSH 版本暂不支持，请在相应平台上创建。'),
 				),
+				React.createElement(Section, { title: '仓库配置' },
+					React.createElement(Button, {
+						variant: 'secondary', size: 'sm',
+						onClick: () => { void onExportConfig?.(); },
+					}, '导出仓库配置'),
+				),
 			),
 		),
+	);
+}
+
+/**
+ * 远程仓库配置区：列出已有远程（含编辑/删除）与添加远程表单。
+ *
+ * @param props.remotes - 远程列表。
+ * @param props.onDeleteRemote - 删除远程回调。
+ * @param props.onAddRemote - 添加远程回调 (name, url, pushUrl) => void。
+ * @param props.onEditRemote - 编辑远程回调 (nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew) => void。
+ * @returns 区元素。
+ */
+function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemote }) {
+	const [adding, setAdding] = React.useState(false);
+	const [editing, setEditing] = React.useState(null);
+	const [name, setName] = React.useState('');
+	const [url, setUrl] = React.useState('');
+	const [pushUrl, setPushUrl] = React.useState('');
+	const submitAdd = () => {
+		if (!name || !url) return;
+		onAddRemote?.(name, url, pushUrl || null);
+		setAdding(false); setName(''); setUrl(''); setPushUrl('');
+	};
+	const submitEdit = () => {
+		if (!editing || !name) return;
+		onEditRemote?.(editing.name, name, editing.url ?? null, url || null, editing.pushUrl ?? null, pushUrl || null);
+		setEditing(null); setName(''); setUrl(''); setPushUrl('');
+	};
+	const beginEdit = (remote) => {
+		setEditing(remote);
+		setName(remote.name);
+		setUrl(remote.url ?? '');
+		setPushUrl(remote.pushUrl ?? '');
+	};
+	const form = React.createElement(
+		'div',
+		{ className: 'ggg-set-form' },
+		React.createElement('label', { className: 'ggg-set-row-block' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, '名称'),
+			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e) => setName(e.target.value) }),
+		),
+		React.createElement('label', { className: 'ggg-set-row-block' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, 'URL'),
+			React.createElement(Input, { value: url, placeholder: 'https://github.com/owner/repo.git', onChange: (e) => setUrl(e.target.value) }),
+		),
+		React.createElement('label', { className: 'ggg-set-row-block' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, '推送 URL（可选）'),
+			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e) => setPushUrl(e.target.value) }),
+		),
+		React.createElement('div', { className: 'ggg-set-form-actions' },
+			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
+			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
+		),
+	);
+	return React.createElement(
+		'div',
+		null,
+		remotes !== undefined && remotes.length > 0
+			? React.createElement('div', { className: 'ggg-set-remotes' },
+				...remotes.map((remote) => React.createElement(
+					'div',
+					{ key: remote.name, className: 'ggg-set-remote' },
+					React.createElement('span', { className: 'ggg-set-remote-name' }, remote.name),
+					React.createElement('span', { className: 'ggg-set-remote-url' }, remote.url ?? ''),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-set-remote-edit', title: '编辑远程',
+						onClick: () => beginEdit(remote),
+					}, React.createElement(IconChevronDownOutlineRegular, { size: 13 })),
+					React.createElement('button', {
+						type: 'button', className: 'ggg-set-remote-del', title: '删除远程',
+						onClick: () => onDeleteRemote?.(remote.name),
+					}, React.createElement(IconTrashOutlineRegular, { size: 13 })),
+				)),
+			)
+			: React.createElement('div', { className: 'ggg-set-note' }, '没有配置远程仓库'),
+		!adding && editing === null
+			? React.createElement(Button, { variant: 'secondary', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
+			: form,
 	);
 }
 

@@ -6,7 +6,7 @@
 import type http from 'node:http';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
-import { commitStaged, discardPaths, loadWorkingTree, stagePaths, unstagePaths } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, runGit, stagePaths, unstagePaths } from './working-tree.js';
 import { discoverRepositories, loadRepoSync } from './repo-discovery.js';
 
 let dataSourcePromise: Promise<DataSource> | null = null;
@@ -312,9 +312,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'resetFileToRevision':
 			await respondError('resetFileToRevision', () => ds.resetFileToRevision(repo, str('commitHash'), str('filePath')));
 			break;
-		case 'createArchive':
-			respond({ command: 'createArchive', error: 'DSH 版本暂不支持导出归档' });
+		case 'createArchive': {
+			const ref = str('ref');
+			const format = str('format') || 'zip';
+			const outputPath = str('outputPath');
+			if (!ref || !outputPath) { sendBadRequest(res, '缺少 ref 或 outputPath'); break; }
+			try {
+				const fmtArg = format === 'tgz' ? 'tar.gz' : format;
+				await gitOrThrow(['archive', `--format=${fmtArg}`, `--output=${outputPath}`, ref], repo);
+				respond({ command: 'createArchive', error: null });
+			} catch (e) {
+				respond({ command: 'createArchive', error: e instanceof Error ? e.message : String(e) });
+			}
 			break;
+		}
 		case 'createPullRequest':
 			respond({ command: 'createPullRequest', push: bool('push'), errors: ['DSH 版本暂不支持创建 Pull Request'] });
 			break;
@@ -355,9 +366,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			console.error('[dsh-dev-git-graph][git-graph] ' + String(msg.message ?? ''));
 			respond({ command: 'showErrorMessage' });
 			break;
-		case 'exportRepoConfig':
-			respond({ command: 'exportRepoConfig', error: null });
+		case 'exportRepoConfig': {
+			try {
+				const config = await ds.getConfig(repo, []);
+				const repoInfo = await ds.getRepoInfo(repo, true, true, []);
+				respond({ command: 'exportRepoConfig', error: null, config: { repo, config, repoInfo } });
+			} catch (e) {
+				respond({ command: 'exportRepoConfig', error: e instanceof Error ? e.message : String(e), config: null });
+			}
 			break;
+		}
 		case 'rescanForRepos':
 			respond({ command: 'rescanForRepos' });
 			break;

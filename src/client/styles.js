@@ -204,4 +204,16 @@ export const STYLES = `
 .ggg-filter-name{font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ggg-filter-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace)}
 .ggg-filter-kind{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:0 6px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover)}
+
+/* ── 静音合并提交 ─────────────────────────────────────────── */
+.ggg-row-muted{opacity:0.5}
+
+/* ── 悬停卡片头像 ─────────────────────────────────────────── */
+.ggg-card-avatar{flex:none;width:20px;height:20px;border-radius:50%;object-fit:cover}
+
+/* ── 远程配置编辑按钮 ─────────────────────────────────────── */
+.ggg-set-remote-edit{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:4px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.ggg-set-remote-edit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.ggg-set-form-actions{display:flex;gap:6px;margin-top:6px}
+.ggg-dialog-hint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
 `;

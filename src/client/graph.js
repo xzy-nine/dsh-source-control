@@ -13,6 +13,7 @@ import React from 'react';
 import {
 	HoverCard, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconClockOutlineRegular,
 	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
+	MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	HEAD_NODE_RADIUS, LANE_STROKE, LANE_WIDTH, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
@@ -20,6 +21,64 @@ import {
 } from './lanes.js';
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.js';
 import { copyText } from './context-menu.js';
+
+/** MarkdownText 所需的本地化标签。 */
+const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
+
+/**
+ * 计算字符串的 MD5 哈希（用于 Gravatar 头像 URL）。
+ *
+ * 紧凑实现：处理 UTF-8 字节，输出十六进制摘要。
+ *
+ * @param {string} input - 输入字符串。
+ * @returns {string} 十六进制 MD5 摘要。
+ */
+function md5(input) {
+	const bytes = new TextEncoder().encode(input);
+	const len = bytes.length;
+	const paddedLen = (Math.floor((len + 8) / 64) + 1) * 64;
+	const ab = new Uint8Array(paddedLen);
+	ab.set(bytes);
+	ab[len] = 0x80;
+	const bitLen = len * 8;
+	const view = new DataView(ab.buffer);
+	view.setUint32(paddedLen - 8, bitLen >>> 0, true);
+	view.setUint32(paddedLen - 4, Math.floor(bitLen / 0x100000000), true);
+	const s = new Uint32Array([7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]);
+	const K = new Uint32Array([0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8f1bbcdc, 0x6d6a3e8, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391]);
+	let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+	for (let off = 0; off < ab.length; off += 64) {
+		const M = new Uint32Array(16);
+		for (let i = 0; i < 16; i++) M[i] = view.getUint32(off + i * 4, true);
+		let A = a0, B = b0, C = c0, D = d0;
+		for (let i = 0; i < 64; i++) {
+			let F, g;
+			if (i < 16) { F = (B & C) | (~B & D); g = i; }
+			else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+			else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+			else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+			F = (F + A + K[i] + M[g]) >>> 0;
+			A = D; D = C; C = B;
+			B = (B + ((F << s[i % 16]) | (F >>> (32 - s[i % 16])))) >>> 0;
+		}
+		a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+	}
+	const hex = (n) => Array.from({ length: 4 }, (_, i) => ((n >>> (i * 8)) & 0xff).toString(16).padStart(2, '0')).join('');
+	return hex(a0) + hex(b0) + hex(c0) + hex(d0);
+}
+
+/**
+ * 构造 Gravatar 头像 URL。
+ *
+ * @param {string} email - 作者邮箱。
+ * @param {number} size - 请求的图片像素边长。
+ * @returns {string|null} Gravatar URL，无邮箱时返回 null。
+ */
+function avatarUrl(email, size = 40) {
+	if (typeof email !== 'string' || email === '') return null;
+	const hash = md5(email.trim().toLowerCase());
+	return `https://www.gravatar.com/avatar/${hash}?s=${size}&d=mp`;
+}
 
 /**
  * 画一行的泳道线与节点。
@@ -89,8 +148,9 @@ function LaneCell({ row, isHead, isMerge, isBehind }) {
  * @param head - 当前 HEAD 指向的分支。
  * @returns 标记列表：{ key, kind, text, title, refType, refName }。
  */
-function refLabels(commit, head) {
+function refLabels(commit, head, combineLocalAndRemote) {
 	const labels = [];
+	const localNames = new Set(commit.heads ?? []);
 	for (const name of commit.heads ?? []) {
 		const isHead = head !== null && name === head;
 		labels.push({
@@ -103,6 +163,10 @@ function refLabels(commit, head) {
 		});
 	}
 	for (const remote of commit.remotes ?? []) {
+		if (combineLocalAndRemote) {
+			const short = remote.name.replace(/^[^/]+\//, '');
+			if (localNames.has(short)) continue;
+		}
 		labels.push({
 			key: `r:${remote.name}`, kind: 'remote', text: remote.name,
 			title: `远程分支 ${remote.name}`, refType: 'remote', refName: remote.name,
@@ -170,21 +234,24 @@ function RefChip({ label, expanded = false }) {
  * @param props.formatDetail - 详细时间格式化函数（unixSeconds -> 日期与时间）。
  * @returns 卡片正文元素。
  */
-function CommitCard({ commit, labels, stats, formatDate, formatDetail }) {
+function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown, showAvatars }) {
 	const isUncommitted = commit.hash === '*';
 	const dated = typeof commit.date === 'number' && Number.isFinite(commit.date);
-	// 主标签按设置里的格式；括号内补详细时间，主标签已是详细时间时不重复。
 	const timeText = dated ? formatDate(commit.date) : '';
 	const detail = dated ? formatDetail(commit.date) : '';
 	const timeLabel = detail === '' || detail === timeText ? timeText : `${timeText}（${detail}）`;
 	const lines = String(commit.message ?? '').split('\n');
+	const avatar = showAvatars && !isUncommitted ? avatarUrl(commit.email ?? commit.author, 40) : null;
+	const avatarEl = avatar !== null
+		? React.createElement('img', { className: 'ggg-card-avatar', src: avatar, alt: '', width: 20, height: 20, loading: 'lazy' })
+		: React.createElement(IconUserOutlineRegular, { size: 13, className: 'ggg-card-icon' });
 	return React.createElement(
 		'div',
 		{ className: 'ggg-card' },
 		React.createElement(
 			'div',
 			{ className: 'ggg-card-head' },
-			React.createElement(IconUserOutlineRegular, { size: 13, className: 'ggg-card-icon' }),
+			avatarEl,
 			React.createElement('span', { className: 'ggg-card-author' }, commit.author ?? ''),
 			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: 'ggg-card-icon' }),
 			dated && React.createElement('span', { className: 'ggg-card-time' }, timeLabel),
@@ -192,11 +259,13 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail }) {
 		React.createElement(
 			'div',
 			{ className: 'ggg-card-message' },
-			...lines.map((line, index) => React.createElement(
-				'div',
-				{ key: `line-${index}`, className: 'ggg-card-line' },
-				line === '' ? '\u00a0' : line,
-			)),
+			markdown
+				? React.createElement(MarkdownText, { text: String(commit.message ?? ''), labels: MD_LABELS })
+				: lines.map((line, index) => React.createElement(
+					'div',
+					{ key: `line-${index}`, className: 'ggg-card-line' },
+					line === '' ? '\u00a0' : line,
+				)),
 		),
 		stats !== null && stats !== undefined && React.createElement(
 			'div',
@@ -284,16 +353,18 @@ function renderSubject(message, issueLinking) {
  */
 function CommitRow({
 	commit, row, head, selected, isAhead, isBehind, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
 	stats, onHover, widthAnchorRef,
 }) {
 	const isUncommitted = commit.hash === '*';
-	const labels = refLabels(commit, head);
+	const labels = refLabels(commit, head, combineLocalAndRemoteBranchLabels);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
+	const isMuted = muteMergeCommits && isMerge && !isHead;
 	const anchor = React.createElement(
 		'div',
 		{
-			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}`,
+			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}${isMuted ? ' ggg-row-muted' : ''}`,
 			'data-hash': commit.hash,
 			onClick: () => onSelect(commit.hash),
 			onContextMenu: (event) => {
@@ -323,7 +394,7 @@ function CommitRow({
 	);
 	return React.createElement(HoverCard, {
 		anchor,
-		content: React.createElement(CommitCard, { commit, labels, stats, formatDate, formatDetail }),
+		content: React.createElement(CommitCard, { commit, labels, stats, formatDate, formatDetail, markdown, showAvatars }),
 		variant: 'preview',
 		widthAnchorRef,
 	});
@@ -377,6 +448,7 @@ export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit, renderDetail,
 	aheadHashes, behindHashes,
+	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
 }) {
 	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
 	const graphRef = React.useRef(null);
@@ -401,6 +473,10 @@ export function CommitGraph({
 			formatDate: dateFmt,
 			formatDetail: detailFmt,
 			issueLinking,
+			markdown,
+			showAvatars,
+			muteMergeCommits,
+			combineLocalAndRemoteBranchLabels,
 			stats: commitStats?.get(commit.hash) ?? null,
 			onHover: onHoverCommit,
 			widthAnchorRef: graphRef,

@@ -68,7 +68,7 @@ test('图形区拖拽手柄在图形标题之前', () => {
 	// 否则会出现在标题与图形之间。
 	const source = readFileSync(join(clientDir, 'panel.js'), 'utf8');
 	const section = source.indexOf("'ggg-sec ggg-graph-sec'");
-	const handle = source.indexOf("'ggg-sec-resize'");
+	const handle = source.indexOf("'ggg-sec-resize'", section);
 	const title = source.indexOf("'图形'");
 	assert.ok(section !== -1 && handle !== -1 && title !== -1, '未找到图形区标记');
 	assert.ok(handle > section && handle < title, '拖拽手柄必须排在图形标题之前');
