@@ -227,7 +227,8 @@ export const STYLES = `
 .ggg-diff-tab-head{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
 .ggg-diff-tab-path{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ggg-diff-tab-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
-.ggg-diff-tab-body{flex:1;min-height:0;overflow:auto;padding:0}
+/* 差异页正文：作为复制来的 FileDiff 的弹性父容器，滚动由后者自己承担。 */
+.ggg-diff-tab-body{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .ggg-diff-tab-toggle{flex:none;margin-left:8px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
 .ggg-diff-tab-toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-diff-tab-toggle[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}

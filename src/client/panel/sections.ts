@@ -121,7 +121,7 @@ export interface ChangesSectionProps {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, untracked?: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
 }
 
 /**
@@ -248,7 +248,7 @@ export interface GraphSectionProps {
 	readonly settings: Settings;
 	readonly onToggleSection: () => void;
 	readonly onToggleChange: (key: string, path: string) => void;
-	readonly onOpenDiff: (hash: string, path: string, staged: boolean) => Promise<void>;
+	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
 	readonly onToggleCommit: (hash: string) => void;
 	readonly onLoadMore: () => void;
 	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
@@ -345,7 +345,7 @@ export function GraphSection({
 							busy,
 							collapsed: detailCollapsed,
 							onToggle: (path: string) => onToggleChange('detail', path),
-							onOpen: (path: string) => { void onOpenDiff(commit.hash, path, false); },
+							onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, isNew); },
 						})
 						: null),
 				}))

@@ -205,16 +205,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	/**
 	 * 打开某个提交或工作区文件。
 	 *
-	 * 未跟踪的新文件没有可比差异，按普通文件打开（kind 为 'file'）。
+	 * 新增文件（已暂存的 `A` 与未跟踪的 `?`）没有可比差异，按普通文件打开（kind 为 'file'）。
 	 * repoRoot 传所选仓库根：它与会话工作区根未必相同，地址由索引侧换算。
 	 *
 	 * @param hash - 提交哈希；'*' 表示工作区。
 	 * @param path - 文件路径（相对仓库根）。
 	 * @param staged - 工作区时是否取暂存区内容。
-	 * @param untracked - 是否是未跟踪的新文件。
+	 * @param isNew - 是否是新增文件。
 	 */
-	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, untracked = false) => {
-		const kind = untracked ? 'file' : (hash === '*' ? 'worktree' : 'commit');
+	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, isNew = false) => {
+		const kind = isNew ? 'file' : (hash === '*' ? 'worktree' : 'commit');
 		const diff = kind === 'file'
 			? { kind, path, repoRoot: workingTreePath }
 			: kind === 'worktree'

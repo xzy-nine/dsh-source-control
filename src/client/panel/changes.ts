@@ -115,9 +115,19 @@ export interface ChangeNodeRowProps {
 	readonly onStage: (paths: readonly string[]) => void;
 	readonly onUnstage: (paths: readonly string[]) => void;
 	readonly onDiscard: (paths: readonly string[], untracked: boolean) => void;
-	/** 打开文件：untracked 为 true 时按普通文件打开。 */
-	readonly onOpen: (entry: WorkingTreeEntry, untracked: boolean) => void;
+	/** 打开文件：isNew 为 true 时按普通文件打开（新文件没有可比差异）。 */
+	readonly onOpen: (entry: WorkingTreeEntry, isNew: boolean) => void;
 	readonly descendantsOf: (folderPath: string) => string[];
+}
+
+/**
+ * 是否是新增文件：已暂存的新增（`A`）与未跟踪（`?`）都没有旧侧内容。
+ *
+ * @param entry - 工作区条目。
+ * @returns 是新增文件时为 true。
+ */
+export function isNewFile(entry: WorkingTreeEntry): boolean {
+	return entry.index === 'A' || (entry.index === '?' && entry.worktree === '?');
 }
 
 /** 文件夹行或文件行（变更树内）。 */
@@ -159,12 +169,14 @@ export function ChangeNodeRow({
 	const fileStaged = staged;
 	const type = staged ? entry.index : (entry.worktree === '?' ? 'U' : entry.worktree);
 	const untracked = entry.index === '?' && entry.worktree === '?';
+	// 新增文件（A 或未跟踪）没有旧侧内容，按普通文件打开。
+	const isNew = isNewFile(entry);
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
 		const target = event.currentTarget;
 		target.classList.add('ggg-menu-target');
-		const items: ContextMenuItem[] = [{ title: untracked ? '打开文件' : '打开', onClick: () => onOpen(entry, untracked) }, { type: 'divider' }];
+		const items: ContextMenuItem[] = [{ title: isNew ? '打开文件' : '打开', onClick: () => onOpen(entry, isNew) }, { type: 'divider' }];
 		if (fileStaged) {
 			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
 		} else {
@@ -178,7 +190,7 @@ export function ChangeNodeRow({
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
 		if (busy) return;
 		event.preventDefault();
-		onOpen(entry, untracked);
+		onOpen(entry, isNew);
 	};
 	return React.createElement(
 		'div',
@@ -214,11 +226,12 @@ export interface CommitDetailProps {
 	readonly busy: boolean;
 	readonly collapsed: ReadonlySet<string>;
 	readonly onToggle: (path: string) => void;
-	readonly onOpen: (path: string) => void;
+	/** 打开文件：isNew 为 true 时按普通文件打开（新增文件没有可比差异）。 */
+	readonly onOpen: (path: string, isNew: boolean) => void;
 }
 
 /**
- * 提交改动文件列表；点击文件行在侧边栏打开 DiffBlock 视图。
+ * 提交改动文件列表；点击文件行在侧边栏打开文件视图。
  *
  * @param props - 见 {@link CommitDetailProps}。
  * @returns 文件列表元素。
@@ -252,11 +265,13 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 			const entry = row.entry;
 			const { name } = splitPath(entry.path);
 			const stat = entry.additions !== null && entry.additions !== undefined;
+			// 提交里的 `A` 与工作区伪提交里的 `A`/`U` 都没有旧侧内容。
+			const isNew = entry.type === 'A' || entry.type === 'U';
 			return React.createElement(
 				'div',
 				{
 					key: `e:${entry.path}`, className: 'ggg-change ggg-change-openable', title: entry.path,
-					onClick: () => { if (!busy) onOpen(entry.path); },
+					onClick: () => { if (!busy) onOpen(entry.path, isNew); },
 				},
 				...guidesOf(row.depth),
 				React.createElement(FileTypeIcon, { path: name, size: 14 }),
@@ -288,7 +303,7 @@ export interface ChangeGroupProps {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, untracked?: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
 	readonly forceShow?: boolean;
 }
 
@@ -314,7 +329,7 @@ export function ChangeGroup({
 	const onStage = (paths: readonly string[]): void => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
 	const onUnstage = (paths: readonly string[]): void => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); };
-	const onOpen = (item: WorkingTreeEntry, untracked: boolean): void => { void openDiff('*', item.path, staged, untracked); };
+	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);

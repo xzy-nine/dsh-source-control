@@ -164,14 +164,30 @@ test('文件行整行点击即打开', () => {
 	assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
 });
 
-test('未跟踪新文件走普通文件地址', () => {
-	// U（未跟踪）没有可比差异，必须走 dsh-resource://file/… 而不是 git-diff 地址。
+test('新增文件走普通文件地址', () => {
+	// 新增文件没有旧侧内容，必须走 dsh-resource://file/… 而不是 git-diff 地址。
 	const indexPath = join(clientDir, 'index.ts');
 	const source = readFileSync(indexPath, 'utf8');
 	assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
 	assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
 	const panelSource = readFileSync(join(clientDir, 'panel.ts'), 'utf8');
-	assert.match(panelSource, /untracked \? 'file'/, '未跟踪文件应生成 file 类型目标');
+	assert.match(panelSource, /isNew \? 'file'/, '新增文件应生成 file 类型目标');
+	// 已暂存的 A 与未跟踪的 ? 都算新增：只看 ? 会漏掉 A。
+	const changesSource = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
+	const judge = /export function isNewFile\(entry: WorkingTreeEntry\): boolean \{([^}]*)\}/.exec(changesSource);
+	assert.ok(judge !== null, '应有 isNewFile 判据');
+	assert.match(judge[1], /index === 'A'/, '已暂存的新增 A 也算新增文件');
+	assert.match(judge[1], /index === '\?'/, '未跟踪的 ? 也算新增文件');
+});
+
+test('差异页默认并排且可切换', () => {
+	// 复制来的 FileDiff 支持统一 / 并排两种布局；差异页应默认并排并给出切换。
+	const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+	assert.match(source, /useState\(true\)/, '默认应为并排');
+	assert.match(source, /FileDiff, \{ state, split, wrap, retry: load \}/, '应把 split 传给 FileDiff');
+	assert.match(source, /setSplit/, '应能切换布局');
+	const css = readFileSync(join(clientDir, 'file-diff.module.css'), 'utf8');
+	assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 });
 
 test('普通文件地址按仓库根换算', () => {

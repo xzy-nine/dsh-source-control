@@ -152,6 +152,8 @@ function GitDiffTab(props) {
 	const [diffData, setDiffData] = React.useState(null);
 	const [loading, setLoading] = React.useState(true);
 	const [wrap, setWrap] = React.useState(false);
+	// 默认左右并排：FileDiff 的 split 模式（单侧改动时它会自动退回单列）。
+	const [split, setSplit] = React.useState(true);
 	const load = React.useCallback(() => {
 		if (parsed === null || typeof gitCwd !== 'string') return;
 		setLoading(true);
@@ -183,6 +185,11 @@ function GitDiffTab(props) {
 			React.createElement('span', { className: 'ggg-diff-tab-path' }, parsed.path),
 			React.createElement('span', { className: 'ggg-diff-tab-hash' }, parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
 			React.createElement('button', {
+				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': split,
+				title: split ? '切换为统一视图' : '切换为左右并排',
+				onClick: () => setSplit((value) => !value),
+			}, split ? '并排' : '统一'),
+			React.createElement('button', {
 				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
 				onClick: () => setWrap((value) => !value),
@@ -191,7 +198,7 @@ function GitDiffTab(props) {
 		React.createElement(
 			'div',
 			{ className: 'ggg-diff-tab-body' },
-			React.createElement(FileDiff, { state, split: false, wrap, retry: load }),
+			React.createElement(FileDiff, { state, split, wrap, retry: load }),
 		),
 	);
 }
