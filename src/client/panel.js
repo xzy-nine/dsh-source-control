@@ -8,11 +8,10 @@
 import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, InlineEditor,
-	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCheckOutlineRegular,
+	IconBranchOutlineRegular, IconCheckOutlineRegular,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconCompareSplitOutlineRegular,
-	IconDownloadOutlineRegular, IconEnhanceOutlineRegular, IconFolderOpenOutlineRegular,
+	IconDownloadOutlineRegular, IconFolderOpenOutlineRegular,
 	IconPlusOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular, IconTrashOutlineRegular,
-	IconWorkspaceTreeOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	defaultSettings, formatDate, loadSettings, saveSettings, SettingsPanel,
@@ -25,7 +24,8 @@ import {
 	rebase, renameBranch, resetToCommit, revertCommit, stagePaths, unstagePaths,
 } from './api.js';
 import { CommitGraph } from './graph.js';
-import { copyText, showContextMenu } from './context-menu.js';
+import { RepoIcon } from './ref-icons.js';
+import { copyText, openExternal, showContextMenu } from './context-menu.js';
 import {
 	ancestryOf, findNode, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from './repo-tree.js';
@@ -50,6 +50,23 @@ function saveSession(key, value) {
 	} catch {
 		/* 忽略写入失败 */
 	}
+}
+
+/**
+ * 取远端列表里 GitHub 仓库的提交页地址。
+ *
+ * @param remotes - 远端列表：{ name, url }。
+ * @param hash - 提交哈希。
+ * @returns 提交页地址；没有 GitHub 远端时返回 null。
+ */
+function githubCommitUrl(remotes, hash) {
+	const ordered = [...remotes].sort((left, right) => (right.name === 'origin' ? 1 : 0) - (left.name === 'origin' ? 1 : 0));
+	for (const remote of ordered) {
+		const url = typeof remote.url === 'string' ? remote.url.trim().replace(/\/+$/, '') : '';
+		const match = /^(?:https?:\/\/|git@)(?:[^@/]+@)?github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/.exec(url);
+		if (match !== null) return `https://github.com/${match[1]}/${match[2]}/commit/${hash}`;
+	}
+	return null;
 }
 
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
@@ -318,11 +335,6 @@ function ChangeGroup({
 function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
 	const hasChildren = (node.children ?? []).length > 0;
 	const kindLabel = node.kind === 'worktree' ? '工作树' : node.kind === 'submodule' ? '子模块' : '';
-	const KindIcon = node.kind === 'worktree'
-		? IconEnhanceOutlineRegular
-		: node.kind === 'submodule'
-			? IconArchiveOutlineRegular
-			: IconWorkspaceTreeOutlineRegular;
 	const guides = [];
 	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
 	return React.createElement(
@@ -337,7 +349,7 @@ function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle }) {
 			className: `ggg-repo-chevron${expanded ? '' : ' is-collapsed'}${hasChildren ? '' : ' is-empty'}`,
 			onClick: (event) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-		React.createElement(KindIcon, { size: 14 }),
+		React.createElement(RepoIcon),
 		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
 		kindLabel !== '' && React.createElement('span', { className: 'ggg-repo-kind' }, kindLabel),
 		React.createElement('span', { className: 'ggg-repo-branch' }, (sync?.branch ?? node.branch) ?? ''),
@@ -705,8 +717,44 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const openCommitMenu = React.useCallback(({ commit, event }) => {
 		const branchNames = commit.heads ?? [];
 		const tagNames = (commit.tags ?? []).map((tag) => tag.name);
-		const remoteNames = (commit.remotes ?? []).map((remote) => remote.name);
+		const remoteRefs = commit.remotes ?? [];
 		const isHead = commit.hash === '*';
+		const githubUrl = isHead ? null : githubCommitUrl(state.remotes, commit.hash);
+		// 指向该提交的分支（本地 + 远程）与标签：删除动作的二级菜单目标。
+		const branchItems = [
+			...branchNames.map((name) => ({
+				title: name,
+				onClick: async () => {
+					const ok = await showCheckbox({
+						title: '删除本地分支', message: `确定删除本地分支 ${name}？`,
+						checkboxLabel: '同时强制删除未合并分支', danger: true,
+					});
+					if (ok) void run(async () => { await deleteBranch(workingTreePath, name, true); });
+				},
+			})),
+			...remoteRefs.map((remote) => ({
+				title: remote.name,
+				onClick: async () => {
+					const ok = await showCheckbox({
+						title: '删除远程分支', message: `确定删除远程分支 ${remote.name}？`,
+						checkboxLabel: '我已知晓并继续', danger: true,
+					});
+					if (ok) void run(async () => {
+						await deleteRemoteBranch(workingTreePath, remote.name.replace(/^[^/]+\//, ''), remote.remote ?? '');
+					});
+				},
+			})),
+		];
+		const tagItems = tagNames.map((name) => ({
+			title: name,
+			onClick: async () => {
+				const ok = await showCheckbox({
+					title: '删除标签', message: `确定删除标签 ${name}？`,
+					checkboxLabel: '同时删除远程标签', danger: true,
+				});
+				if (ok) void run(async () => { await deleteTag(workingTreePath, name, state.remotes.length > 0 ? state.remotes[0].name : null); });
+			},
+		}));
 		const target = event.currentTarget;
 		target.classList.add('ggg-menu-target');
 		showContextMenu({
@@ -714,16 +762,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 			onClose: () => target.classList.remove('ggg-menu-target'),
 			items: [
 				{ title: '查看提交', disabled: isHead, onClick: () => { void selectCommit(commit.hash); } },
+				{ title: '在 GitHub 上打开', visible: githubUrl !== null, onClick: () => { openExternal(githubUrl); } },
+				{ type: 'divider' },
 				{ title: '检出此提交', disabled: isHead, onClick: () => { void run(async () => { await checkoutCommit(workingTreePath, commit.hash); }); } },
 				{ type: 'divider' },
 				{ title: '从此提交创建分支…', disabled: isHead, onClick: async () => {
 					const name = await showText({ title: '从此提交创建分支', label: '新分支名', placeholder: 'feature/xxx' });
 					if (name !== null && name !== '') void run(async () => { await createBranch(workingTreePath, name, commit.hash, true); });
 				} },
+				{ title: '删除分支', disabled: isHead || branchItems.length === 0, children: branchItems },
 				{ title: '从此提交创建标签…', disabled: isHead, onClick: async () => {
 					const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
 					if (name !== null && name !== '') void run(async () => { await addTag(workingTreePath, name, commit.hash, 0, '', false, null); });
 				} },
+				{ title: '删除标签', disabled: isHead || tagItems.length === 0, children: tagItems },
+				{ type: 'divider' },
 				{ title: '从此提交拣选…', disabled: isHead, onClick: () => { void run(async () => { await cherrypickCommit(workingTreePath, commit.hash); }); } },
 				{ title: '从此提交还原…', disabled: isHead, onClick: () => { void run(async () => { await revertCommit(workingTreePath, commit.hash); }); } },
 				{ type: 'divider' },
@@ -752,7 +805,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 				{ title: '复制提交信息', onClick: async () => { await copyText(commit.message); } },
 			],
 		});
-	}, [workingTreePath, run, selectCommit]);
+	}, [workingTreePath, run, selectCommit, state.remotes]);
 
 	/** 分支标签（head / remote / tag）右键菜单。 */
 	const openRefMenu = React.useCallback(({ commit, refInfo, event }) => {

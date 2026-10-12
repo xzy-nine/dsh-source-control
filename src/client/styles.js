@@ -82,8 +82,8 @@ export const STYLES = `
 .ggg-author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
 .ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:none}
 .ggg-ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
-.ggg-ref-icon{display:inline-flex;align-items:center}
-.ggg-ref-icon svg{display:block}
+.ggg-icon{display:inline-flex;align-items:center}
+.ggg-icon svg{display:block}
 .ggg-ref-text{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 .ggg-ref-head{padding:0 8px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#0d1116}
 .ggg-ref-branch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#4f8ff7) 18%,transparent);color:var(--dsw-alias-lane-0,#4f8ff7)}
@@ -116,7 +116,8 @@ export const STYLES = `
 
 /* ── 右键浮层 ───────────────────────────────────────────── */
 .ggg-menu-divider{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
-.ggg-menu-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:6px 10px;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.ggg-menu-item{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;text-align:left;padding:6px 10px;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.ggg-menu-chevron{flex:none;margin-left:auto;color:var(--dsw-alias-label-tertiary)}
 .ggg-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .ggg-menu-item:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}
 .ggg-menu-item-danger{color:var(--dsw-alias-state-error-primary)}
