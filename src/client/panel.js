@@ -382,6 +382,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	const [graphSecOpen, setGraphSecOpen] = React.useState(() => loadSession('dsh-git-graph-graph-open', true));
 	// 图形区高度（像素）；会话级持久化，默认 320。
 	const [graphHeight, setGraphHeight] = React.useState(() => loadSession('dsh-git-graph-graph-height', 320));
+	// 悬停卡片的改动统计：按提交哈希缓存，悬停时按需拉取。
+	const [statsByHash, setStatsByHash] = React.useState(() => new Map());
+	const statsInFlight = React.useRef(new Map());
+	const hoverTimer = React.useRef(null);
 	const toggleRepoSec = React.useCallback(() => {
 		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-repo-open', next); return next; });
 	}, []);
@@ -563,6 +567,60 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	}, [workingTreePath, maxCommits, settings, hasWorkspace]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
+
+	// 换仓库后旧的统计不再适用。
+	React.useEffect(() => { setStatsByHash(new Map()); }, [workingTreePath]);
+
+	// 卸载时取消未完成的统计请求与悬停计时。
+	React.useEffect(() => () => {
+		if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
+		for (const controller of statsInFlight.current.values()) controller.abort();
+		statsInFlight.current.clear();
+	}, []);
+
+	/**
+	 * 拉取某个提交的改动统计并缓存；已在缓存或请求中的跳过。
+	 *
+	 * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+	 * @returns 无。
+	 */
+	const requestCommitStats = React.useCallback((hash) => {
+		if (workingTreePath === null || statsByHash.has(hash) || statsInFlight.current.has(hash)) return;
+		const controller = new AbortController();
+		statsInFlight.current.set(hash, controller);
+		loadCommitFiles(workingTreePath, hash, controller.signal).then((files) => {
+			statsInFlight.current.delete(hash);
+			if (controller.signal.aborted) return;
+			let additions = 0;
+			let deletions = 0;
+			for (const file of files) {
+				additions += typeof file.additions === 'number' ? file.additions : 0;
+				deletions += typeof file.deletions === 'number' ? file.deletions : 0;
+			}
+			setStatsByHash((previous) => new Map(previous).set(hash, { files: files.length, additions, deletions }));
+		}).catch(() => {
+			// 统计失败只影响卡片上的那一行，不再提示。
+			statsInFlight.current.delete(hash);
+		});
+	}, [workingTreePath, statsByHash]);
+
+	/**
+	 * 悬停提交行：延时预取统计，避免指针扫过时连发请求。
+	 *
+	 * @param hash - 进入的提交哈希；离开时为 null。
+	 * @returns 无。
+	 */
+	const hoverCommit = React.useCallback((hash) => {
+		if (hoverTimer.current !== null) {
+			clearTimeout(hoverTimer.current);
+			hoverTimer.current = null;
+		}
+		if (hash === null) return;
+		hoverTimer.current = setTimeout(() => {
+			hoverTimer.current = null;
+			requestCommitStats(hash);
+		}, 220);
+	}, [requestCommitStats]);
 
 	/** 执行一次工作区操作并刷新。 */
 	const run = React.useCallback(async (operation) => {
@@ -833,6 +891,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 	}, [openCommitMenu, openRefMenu]);
 
 	const dateFmt = React.useCallback((seconds) => formatDate(seconds, settings.dateFormat), [settings.dateFormat]);
+	// 悬停卡片的括号内始终是详细时间：与主标签同源比较，相同就不重复。
+	const dateDetail = React.useCallback(
+		(seconds) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso === true }),
+		[settings.dateFormat.iso],
+	);
 	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);
 
 	if (state.phase === 'no-workspace') {
@@ -981,7 +1044,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }) {
 						moreCommitsAvailable: state.more,
 						onContextMenu: handleContextMenu,
 						formatDate: dateFmt,
+						formatDetail: dateDetail,
 						issueLinking: issueLinking(),
+						commitStats: statsByHash,
+						onHoverCommit: hoverCommit,
 					}))
 			),
 		),

@@ -11,13 +11,15 @@
  */
 import React from 'react';
 import {
-	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconGoalOutlineRegular,
+	HoverCard, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconClockOutlineRegular,
+	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	HEAD_NODE_RADIUS, LANE_STROKE, LANE_WIDTH, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
 	RING_STROKE, ROW_HEIGHT, laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.js';
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.js';
+import { copyText } from './context-menu.js';
 
 /**
  * 画一行的泳道线与节点。
@@ -128,9 +130,10 @@ const ROUND_KINDS = new Set(['remote', 'tag', 'stash']);
  * 画一个引用标记。
  *
  * @param props.label - refLabels 给出的标记。
+ * @param props.expanded - 是否展开为「图标 + 名称」药丸；默认只有分支带名称。
  * @returns 标记元素。
  */
-function RefChip({ label }) {
+function RefChip({ label, expanded = false }) {
 	const icon = label.kind === 'remote'
 		? React.createElement(RemoteRefIcon)
 		: label.kind === 'tag'
@@ -140,18 +143,82 @@ function RefChip({ label }) {
 				: label.kind === 'head'
 					? React.createElement(IconGoalOutlineRegular, { size: 12 })
 					: React.createElement(IconBranchOutlineRegular, { size: 12 });
+	const named = expanded || !ROUND_KINDS.has(label.kind);
 	return React.createElement(
 		'span',
 		{
-			className: `ggg-ref ggg-ref-${label.kind}`,
+			className: `ggg-ref ggg-ref-${label.kind}${named && ROUND_KINDS.has(label.kind) ? ' ggg-ref-wide' : ''}`,
 			title: label.title,
 			'data-ref-type': label.refType,
 			'data-ref-name': label.refName,
 			// 圆形标记只有图标，名称经 aria-label 与 title 给出。
-			...(ROUND_KINDS.has(label.kind) ? { role: 'img', 'aria-label': label.title } : {}),
+			...(named ? {} : { role: 'img', 'aria-label': label.title }),
 		},
 		icon,
-		ROUND_KINDS.has(label.kind) ? null : React.createElement('span', { className: 'ggg-ref-text' }, label.text),
+		named ? React.createElement('span', { className: 'ggg-ref-text' }, label.text) : null,
+	);
+}
+
+/**
+ * 悬停卡片的正文：作者与时间、完整提交信息、改动统计、引用标记、短哈希。
+ *
+ * @param props.commit - 提交。
+ * @param props.labels - refLabels 给出的引用标记。
+ * @param props.stats - 改动统计 { files, additions, deletions }，未知时为 null。
+ * @param props.formatDate - 日期格式化函数（unixSeconds -> 文本），沿用设置里的格式。
+ * @param props.formatDetail - 详细时间格式化函数（unixSeconds -> 日期与时间）。
+ * @returns 卡片正文元素。
+ */
+function CommitCard({ commit, labels, stats, formatDate, formatDetail }) {
+	const isUncommitted = commit.hash === '*';
+	const dated = typeof commit.date === 'number' && Number.isFinite(commit.date);
+	// 主标签按设置里的格式；括号内补详细时间，主标签已是详细时间时不重复。
+	const timeText = dated ? formatDate(commit.date) : '';
+	const detail = dated ? formatDetail(commit.date) : '';
+	const timeLabel = detail === '' || detail === timeText ? timeText : `${timeText}（${detail}）`;
+	const lines = String(commit.message ?? '').split('\n');
+	return React.createElement(
+		'div',
+		{ className: 'ggg-card' },
+		React.createElement(
+			'div',
+			{ className: 'ggg-card-head' },
+			React.createElement(IconUserOutlineRegular, { size: 13, className: 'ggg-card-icon' }),
+			React.createElement('span', { className: 'ggg-card-author' }, commit.author ?? ''),
+			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: 'ggg-card-icon' }),
+			dated && React.createElement('span', { className: 'ggg-card-time' }, timeLabel),
+		),
+		React.createElement(
+			'div',
+			{ className: 'ggg-card-message' },
+			...lines.map((line, index) => React.createElement(
+				'div',
+				{ key: `line-${index}`, className: 'ggg-card-line' },
+				line === '' ? '\u00a0' : line,
+			)),
+		),
+		stats !== null && stats !== undefined && React.createElement(
+			'div',
+			{ className: 'ggg-card-stats' },
+			`已更改 ${stats.files} 个文件，${stats.additions} 行插入(+)，${stats.deletions} 行删除(-)`,
+		),
+		labels.length > 0 && React.createElement(
+			'div',
+			{ className: 'ggg-card-refs' },
+			...labels.map((label) => React.createElement(RefChip, { key: label.key, label, expanded: true })),
+		),
+		!isUncommitted && React.createElement(
+			'div',
+			{ className: 'ggg-card-hash' },
+			React.createElement('span', { className: 'ggg-card-hash-text' }, commit.hash.slice(0, 7)),
+			React.createElement('button', {
+				type: 'button',
+				className: 'ggg-card-copy',
+				title: '复制完整哈希',
+				'aria-label': '复制完整哈希',
+				onClick: () => { void copyText(commit.hash); },
+			}, React.createElement(IconCopyOutlineRegular, { size: 13 })),
+		),
 	);
 }
 
@@ -207,18 +274,22 @@ function renderSubject(message, issueLinking) {
  * @param props.onSelect - 选中回调。
  * @param props.onContextMenu - 右键回调：({ commit, refInfo, event })。
  * @param props.formatDate - 日期格式化函数（unixSeconds -> 文本）。
+ * @param props.formatDetail - 详细时间格式化函数（unixSeconds -> 日期与时间）。
  * @param props.issueLinking - Issue 链接配置，为 null 时不识别。
+ * @param props.stats - 该提交的改动统计，未知时为 null。
+ * @param props.onHover - 悬停回调：进入传哈希，离开传 null。
+ * @param props.widthAnchorRef - 卡片宽度对齐用的图区元素。
  * @returns 行元素。
  */
-function CommitRow({ commit, row, head, selected, onSelect, onContextMenu, formatDate, issueLinking }) {
+function CommitRow({
+	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	stats, onHover, widthAnchorRef,
+}) {
 	const isUncommitted = commit.hash === '*';
 	const labels = refLabels(commit, head);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
-	const title = isUncommitted
-		? '未提交的变更'
-		: `${commit.hash}\n${commit.author} <${commit.email}>\n${formatDate(commit.date)}`;
-	return React.createElement(
+	const anchor = React.createElement(
 		'div',
 		{
 			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}`,
@@ -232,7 +303,8 @@ function CommitRow({ commit, row, head, selected, onSelect, onContextMenu, forma
 					: null;
 				onContextMenu?.({ commit, refInfo, event });
 			},
-			title,
+			onPointerEnter: () => onHover?.(commit.hash),
+			onPointerLeave: () => onHover?.(null),
 		},
 		React.createElement(LaneCell, { row, isHead, isMerge }),
 		React.createElement(
@@ -247,6 +319,12 @@ function CommitRow({ commit, row, head, selected, onSelect, onContextMenu, forma
 			...labels.map((label) => React.createElement(RefChip, { key: label.key, label })),
 		),
 	);
+	return React.createElement(HoverCard, {
+		anchor,
+		content: React.createElement(CommitCard, { commit, labels, stats, formatDate, formatDetail }),
+		variant: 'preview',
+		widthAnchorRef,
+	});
 }
 
 /**
@@ -260,21 +338,26 @@ function CommitRow({ commit, row, head, selected, onSelect, onContextMenu, forma
  * @param props.moreCommitsAvailable - 是否还有更多提交。
  * @param props.onContextMenu - 右键回调。
  * @param props.formatDate - 日期格式化函数。
+ * @param props.formatDetail - 详细时间格式化函数。
  * @param props.issueLinking - Issue 链接配置。
+ * @param props.commitStats - 提交哈希 -> 改动统计的映射。
+ * @param props.onHoverCommit - 悬停回调：进入传哈希，离开传 null。
  * @returns 提交图元素。
  */
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
-	onContextMenu, formatDate, issueLinking,
+	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, onHoverCommit,
 }) {
 	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
+	const graphRef = React.useRef(null);
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
+	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	if (commits.length === 0) {
 		return React.createElement('div', { className: 'ggg-empty' }, '这个仓库还没有提交');
 	}
 	return React.createElement(
 		'div',
-		{ className: 'ggg-graph' },
+		{ className: 'ggg-graph', ref: graphRef },
 		...commits.map((commit, index) => React.createElement(CommitRow, {
 			key: commit.hash,
 			commit,
@@ -284,7 +367,11 @@ export function CommitGraph({
 			onSelect,
 			onContextMenu,
 			formatDate: dateFmt,
+			formatDetail: detailFmt,
 			issueLinking,
+			stats: commitStats?.get(commit.hash) ?? null,
+			onHover: onHoverCommit,
+			widthAnchorRef: graphRef,
 		})),
 		moreCommitsAvailable && React.createElement(
 			'div',

@@ -168,10 +168,11 @@ export async function commitStaged(cwd, message, amend = false) {
  *
  * @param {string} cwd - 会话工作区路径。
  * @param {string} hash - 提交哈希，`*` 表示工作区未提交变更。
+ * @param {AbortSignal} [signal] - 取消信号。
  * @returns {Promise<object[]>} 改动文件列表。
  */
-export async function loadCommitFiles(cwd, hash) {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null });
+export async function loadCommitFiles(cwd, hash, signal) {
+	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
 	const details = payload.commitDetails;
 	const changes = details !== null && typeof details === 'object' && Array.isArray(details.fileChanges) ? details.fileChanges : [];
 	return changes.map((change) => ({

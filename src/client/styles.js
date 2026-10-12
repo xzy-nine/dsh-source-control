@@ -90,7 +90,20 @@ export const STYLES = `
 .ggg-ref-remote{width:17px;background:var(--dsw-alias-lane-4,#9b7bf6);color:#fff}
 .ggg-ref-tag{width:17px;background:var(--dsw-alias-lane-0,#4f8ff7);color:#fff}
 .ggg-ref-stash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
+.ggg-ref-wide{width:auto;padding:0 8px}
 .ggg-pager{display:flex;justify-content:center;padding:8px}
+/* ── 悬停卡片（浮窗外观由 HoverCard 提供，这里只排内容） ── */
+.ggg-card{display:flex;flex-direction:column;padding:12px 0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.6}
+.ggg-card-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 14px}
+.ggg-card-icon{flex:none;color:var(--dsw-alias-label-tertiary)}
+.ggg-card-author{font-weight:500}
+.ggg-card-time{color:var(--dsw-alias-label-tertiary);font-size:11px}
+.ggg-card-message{margin-top:6px;padding:0 14px;max-height:132px;overflow:auto;word-break:break-word}
+.ggg-card-stats{margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px}
+.ggg-card-refs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1)}
+.ggg-card-hash{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.ggg-card-copy{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.ggg-card-copy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .ggg-error{padding:10px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px;white-space:pre-wrap}
 .ggg-detail{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);max-height:40%;overflow:auto;font-size:12px}
