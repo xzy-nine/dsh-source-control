@@ -23,24 +23,23 @@ import { RemoteRefIcon, TagRefIcon } from './ref-icons.js';
  * 画一行的泳道线与节点。
  *
  * 几何由 lanes.js 的 segmentGeometry 给出（纯函数，可单测），这里只做元素拼装；
- * 线段按本行节点的外沿断开，节点内部不画线。
+ * 线段按本行节点的外沿断开，节点内部不画线。列宽取本行实际用到的泳道数，
+ * 提交信息因此紧贴本行泳道；泳道横向位置由 LANE_WIDTH 决定，逐行对齐。
  *
  * @param props.row - 该行的布局。
- * @param props.laneCount - 全局泳道数，用于固定宽度。
- * @param props.isLast - 是否是最后一行（末行不画向下的线）。
  * @param props.isHead - 是否是当前分支指向的提交。
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
  * @returns SVG 元素。
  */
-function LaneCell({ row, laneCount, isLast, isHead, isMerge }) {
-	const width = laneCount * LANE_WIDTH;
+function LaneCell({ row, isHead, isMerge }) {
+	const width = row.width * LANE_WIDTH;
 	const half = ROW_HEIGHT / 2;
 	const colour = laneColour(row.colour);
 	const cx = laneCentre(row.lane);
 	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
 	const node = { x: cx, radius: nodeOuterRadius(nodeKind) };
 	const segments = (row.segments ?? []).flatMap((segment, index) => {
-		const geometry = segmentGeometry(segment, isLast, node);
+		const geometry = segmentGeometry(segment, node);
 		if (geometry === null) return [];
 		const stroke = laneColour(segment.colour);
 		const common = { stroke, strokeWidth: LANE_STROKE };
@@ -203,9 +202,7 @@ function renderSubject(message, issueLinking) {
  *
  * @param props.commit - 提交。
  * @param props.row - 布局。
- * @param props.laneCount - 泳道总数。
  * @param props.head - 当前分支。
- * @param props.isLast - 是否最后一行。
  * @param props.selected - 是否选中。
  * @param props.onSelect - 选中回调。
  * @param props.onContextMenu - 右键回调：({ commit, refInfo, event })。
@@ -213,7 +210,7 @@ function renderSubject(message, issueLinking) {
  * @param props.issueLinking - Issue 链接配置，为 null 时不识别。
  * @returns 行元素。
  */
-function CommitRow({ commit, row, laneCount, head, isLast, selected, onSelect, onContextMenu, formatDate, issueLinking }) {
+function CommitRow({ commit, row, head, selected, onSelect, onContextMenu, formatDate, issueLinking }) {
 	const isUncommitted = commit.hash === '*';
 	const labels = refLabels(commit, head);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
@@ -237,7 +234,7 @@ function CommitRow({ commit, row, laneCount, head, isLast, selected, onSelect, o
 			},
 			title,
 		},
-		React.createElement(LaneCell, { row, laneCount, isLast, isHead, isMerge }),
+		React.createElement(LaneCell, { row, isHead, isMerge }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
@@ -282,9 +279,7 @@ export function CommitGraph({
 			key: commit.hash,
 			commit,
 			row: layout.rows[index],
-			laneCount: layout.laneCount,
 			head,
-			isLast: index === commits.length - 1,
 			selected: commit.hash === selectedHash,
 			onSelect,
 			onContextMenu,

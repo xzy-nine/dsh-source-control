@@ -49,14 +49,13 @@ export function nodeOuterRadius(kind) {
  * 3. 本行提交若来自上方（被某条泳道等待），画入线；否则它是分支的头。
  * 4. 第一个父提交继承本泳道与颜色；其余父提交是在本行分出的分支，各占一条泳道。
  *
+ * 分页加载只给出窗口内的提交：父提交落在窗口外时仍算有父提交，泳道继续被占住、
+ * 线画到行底，下一次加载由同一泳道接续。因此窗口变长时已加载部分的行不变。
+ *
  * @param commits - 提交序列，按图上的从上到下顺序。
  * @returns 每行布局与泳道总数。
  */
 export function layoutCommits(commits) {
-	/** 行号 -> 提交哈希。 */
-	const rowOf = new Map();
-	commits.forEach((commit, index) => rowOf.set(commit.hash, index));
-
 	/** 泳道 -> 正在等待的提交及颜色；null 表示空闲。 */
 	const lanes = [];
 	const rows = [];
@@ -107,7 +106,8 @@ export function layoutCommits(commits) {
 		const inbound = awaitedAtLane !== null && awaitedAtLane.hash === commit.hash;
 
 		const [firstParent, ...otherParents] = commit.parents ?? [];
-		const hasFirstParent = firstParent !== undefined && rowOf.has(firstParent);
+		// 父提交可能尚未加载：仍算有父提交，泳道继续等它。
+		const hasFirstParent = firstParent !== undefined;
 
 		if (inbound) {
 			segments.push({ lane, toLane: lane, fromTop: true, toBottom: hasFirstParent, colour, curved: false });
@@ -126,7 +126,6 @@ export function layoutCommits(commits) {
 
 		// 4) 其余父提交：本行分出的分支，各占一条泳道（已在等待则并入）。
 		for (const parent of otherParents) {
-			if (!rowOf.has(parent)) continue;
 			let parentLane = -1;
 			for (let index = 0; index < lanes.length; index++) {
 				if (lanes[index] !== null && lanes[index].hash === parent) { parentLane = index; break; }
@@ -198,16 +197,15 @@ export function laneCentre(lane) {
  * （kind 为 'gap'），节点内部因此不出现线。
  *
  * @param segment - 布局给出的线段。
- * @param isLast - 是否是最后一行（末行的出线终止于节点高度）。
  * @param node - 本行节点：{ x, radius }；不给时线段画到节点中心。
  * @returns 路径描述；线段无长度时返回 null。
  */
-export function segmentGeometry(segment, isLast = false, node = null) {
+export function segmentGeometry(segment, node = null) {
 	const x1 = laneCentre(segment.lane);
 	const x2 = laneCentre(segment.toLane);
 	const half = ROW_HEIGHT / 2;
 	const y1 = segment.fromTop ? 0 : half;
-	const y2 = segment.toBottom ? (isLast ? half : ROW_HEIGHT) : half;
+	const y2 = segment.toBottom ? ROW_HEIGHT : half;
 	if (y1 === y2) return null;
 	const gap = node === null ? 0 : node.radius;
 	// 贯穿节点的整行线：拆成上下两段，节点内部留空。

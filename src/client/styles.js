@@ -78,9 +78,9 @@ export const STYLES = `
 .ggg-row.is-selected{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-row.ggg-menu-target{background:var(--dsw-alias-interactive-bg-active)}
 .ggg-lane{flex:none;height:24px}
-.ggg-subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ggg-subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
 .ggg-author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
-.ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;overflow:hidden}
+.ggg-refs{display:inline-flex;align-items:center;gap:4px;flex:none}
 .ggg-ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
 .ggg-ref-icon{display:inline-flex;align-items:center}
 .ggg-ref-icon svg{display:block}

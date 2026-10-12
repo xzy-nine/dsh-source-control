@@ -100,10 +100,34 @@ test('空序列不抛错', () => {
 	assert.equal(layout.laneCount, 0);
 });
 
-test('父提交不在序列中时释放泳道', () => {
+test('父提交未加载时保留泳道并画到行底', () => {
+	// 分页只给出窗口内的提交：'missing' 还没加载，泳道不能释放。
 	const layout = layoutCommits([commit('b', 'missing'), commit('a')]);
-	assert.equal(layout.laneCount, 1);
-	assert.ok(layout.rows[0].segments.every((segment) => Number.isInteger(segment.lane)));
+	assert.equal(layout.laneCount, 2, 'b 的父提交仍占一条泳道，a 另取一条');
+	assert.ok(layout.rows[0].segments.every((segment) => segment.toBottom), 'b 的线画到行底');
+});
+
+test('分页外的第二个父提交仍占一条泳道', () => {
+	const layout = layoutCommits([commit('m', 'a', 'later'), commit('a', 'later')]);
+	assert.equal(layout.laneCount, 2);
+	assert.ok(layout.rows[0].segments.some((segment) => segment.curved), '合并的分叉线照画');
+});
+
+test('分页加载后已加载部分的行不变', () => {
+	// 只加载前 3 个提交时，前 3 行的泳道、颜色与线段必须与加载全部时相同，
+	// 否则「加载更多」会让已在屏幕上的部分跳变。
+	const all = [commit('h', 'g', 'f'), commit('g', 'e'), commit('f', 'e'), commit('e', 'd'), commit('d')];
+	const partial = layoutCommits(all.slice(0, 3));
+	const full = layoutCommits(all);
+	for (let row = 0; row < 3; row++) {
+		assert.equal(partial.rows[row].lane, full.rows[row].lane, `第 ${row} 行泳道不一致`);
+		assert.equal(partial.rows[row].colour, full.rows[row].colour, `第 ${row} 行颜色不一致`);
+		assert.deepEqual(
+			partial.rows[row].segments.map((segment) => [segment.lane, segment.toLane, segment.fromTop, segment.toBottom]),
+			full.rows[row].segments.map((segment) => [segment.lane, segment.toLane, segment.fromTop, segment.toBottom]),
+			`第 ${row} 行线段不一致`,
+		);
+	}
 });
 
 test('没有父提交时线到节点为止', () => {
@@ -159,13 +183,14 @@ test('曲线分叉从节点画到行底', () => {
 	assert.ok(geometry.d.trim().endsWith(String(ROW_HEIGHT)));
 });
 
-test('末行的出线不再向下延伸', () => {
-	// 末行没有下一行可接，纯出线（起点=终点=节点高度）视为零长度，不产生元素。
-	assert.equal(segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false }, true), null);
-	// 入线仍要画到节点，末行的根提交因此有上半段。
-	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false }, true);
-	assert.equal(inbound.y1, 0);
-	assert.equal(inbound.y2, ROW_HEIGHT / 2);
+test('末行的线画到行底以便下一段接续', () => {
+	// 末行的父提交可能还在下一段分页：末行不截断，否则分页边界处断线。
+	const layout = layoutCommits([commit('b', 'outside')]);
+	const outbound = layout.rows[0].segments.find((segment) => !segment.fromTop && segment.toBottom);
+	assert.ok(outbound !== undefined, '末行仍有向下的线');
+	const geometry = segmentGeometry(outbound);
+	assert.equal(geometry.kind, 'line');
+	assert.equal(geometry.y2, ROW_HEIGHT);
 });
 
 test('横移段拆成两段直线', () => {
@@ -186,18 +211,18 @@ test('泳道中心线按泳道宽度排布', () => {
 
 test('入线与出线停在节点外沿', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
-	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false }, false, node);
+	const inbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: false, curved: false }, node);
 	assert.equal(inbound.kind, 'line');
 	assert.equal(inbound.y1, 0);
 	assert.equal(inbound.y2, ROW_HEIGHT / 2 - node.radius);
-	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false }, false, node);
+	const outbound = segmentGeometry({ lane: 0, toLane: 0, fromTop: false, toBottom: true, curved: false }, node);
 	assert.equal(outbound.y1, ROW_HEIGHT / 2 + node.radius);
 	assert.equal(outbound.y2, ROW_HEIGHT);
 });
 
 test('贯穿节点的整行线拆成上下两段', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('merge') };
-	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true, curved: false }, false, node);
+	const geometry = segmentGeometry({ lane: 0, toLane: 0, fromTop: true, toBottom: true, curved: false }, node);
 	assert.equal(geometry.kind, 'gap');
 	assert.equal(geometry.upper.y1, 0);
 	assert.equal(geometry.upper.y2, ROW_HEIGHT / 2 - node.radius);
@@ -207,7 +232,7 @@ test('贯穿节点的整行线拆成上下两段', () => {
 
 test('别条泳道的贯穿线不受节点影响', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('head') };
-	const geometry = segmentGeometry({ lane: 1, toLane: 1, fromTop: true, toBottom: true, curved: false }, false, node);
+	const geometry = segmentGeometry({ lane: 1, toLane: 1, fromTop: true, toBottom: true, curved: false }, node);
 	assert.equal(geometry.kind, 'line');
 	assert.equal(geometry.y1, 0);
 	assert.equal(geometry.y2, ROW_HEIGHT);
@@ -215,10 +240,10 @@ test('别条泳道的贯穿线不受节点影响', () => {
 
 test('曲线端点停在节点外沿', () => {
 	const node = { x: laneCentre(0), radius: nodeOuterRadius('plain') };
-	const inbound = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false, curved: true }, false, node);
+	const inbound = segmentGeometry({ lane: 1, toLane: 0, fromTop: true, toBottom: false, curved: true }, node);
 	assert.equal(inbound.kind, 'path');
 	assert.match(inbound.d, new RegExp(`, ${laneCentre(0)} ${ROW_HEIGHT / 2 - node.radius}$`));
-	const fork = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: true }, false, node);
+	const fork = segmentGeometry({ lane: 0, toLane: 1, fromTop: false, toBottom: true, curved: true }, node);
 	assert.match(fork.d, new RegExp(`^M ${laneCentre(0)} ${ROW_HEIGHT / 2 + node.radius} `));
 });
 
