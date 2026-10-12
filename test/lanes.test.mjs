@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry, LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT } from '../src/client/lanes.js';
+import { laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry, LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT } from '../src/client/lanes.ts';
 
 /** 构造一个提交。 */
 const commit = (hash, ...parents) => ({ hash, parents });

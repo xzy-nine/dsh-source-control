@@ -22,7 +22,7 @@ const REPO_ICON_SIZE = 14;
  * @param size - 图标边长（像素）。
  * @returns HTML 字符串。
  */
-function iconMarkup(svg, size) {
+function iconMarkup(svg: string, size: number): string {
 	return svg
 		.replace(/\s(?:width|height)="[^"]*"/g, '')
 		.replace('<svg', `<svg fill="currentColor" width="${size}" height="${size}"`)
@@ -36,7 +36,7 @@ function iconMarkup(svg, size) {
  * @param markup - 行内标记。
  * @returns 图标元素。
  */
-function ResourceIcon(markup) {
+function ResourceIcon(markup: string): React.ReactElement {
 	return React.createElement('span', {
 		className: 'ggg-icon',
 		'aria-hidden': 'true',
@@ -56,7 +56,7 @@ const BOOK_MARKUP = iconMarkup(bookSvg, REPO_ICON_SIZE);
  *
  * @returns 图标元素。
  */
-export function TagRefIcon() {
+export function TagRefIcon(): React.ReactElement {
 	return ResourceIcon(TAG_MARKUP);
 }
 
@@ -65,7 +65,7 @@ export function TagRefIcon() {
  *
  * @returns 图标元素。
  */
-export function RemoteRefIcon() {
+export function RemoteRefIcon(): React.ReactElement {
 	return ResourceIcon(CLOUD_MARKUP);
 }
 
@@ -74,6 +74,6 @@ export function RemoteRefIcon() {
  *
  * @returns 图标元素。
  */
-export function RepoIcon() {
+export function RepoIcon(): React.ReactElement {
 	return ResourceIcon(BOOK_MARKUP);
 }

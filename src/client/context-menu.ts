@@ -16,10 +16,10 @@ const MENU_WIDTH = 220;
 /**
  * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
  *
- * @param {string} text - 待复制文本。
- * @returns {Promise<boolean>} 写入成功返回 true。
+ * @param text - 待复制文本。
+ * @returns 写入成功返回 true。
  */
-export async function copyText(text) {
+export async function copyText(text: string): Promise<boolean> {
 	if (navigator.clipboard?.writeText) {
 		try {
 			await navigator.clipboard.writeText(text);
@@ -46,10 +46,10 @@ export async function copyText(text) {
 /**
  * 在新标签页打开链接。
  *
- * @param {string} url - 目标地址。
+ * @param url - 目标地址。
  * @returns 无。
  */
-export function openExternal(url) {
+export function openExternal(url: string): void {
 	const link = document.createElement('a');
 	link.href = url;
 	link.target = '_blank';
@@ -59,8 +59,40 @@ export function openExternal(url) {
 	link.remove();
 }
 
+/** 一条菜单项。 */
+export interface ContextMenuItem {
+	/** `divider` 为分隔线，其余为可点击项。 */
+	readonly type?: 'divider';
+	/** 显示文案。 */
+	readonly title?: string;
+	/** 为 false 时该项不渲染。 */
+	readonly visible?: boolean;
+	/** 是否显示为已勾选。 */
+	readonly checked?: boolean;
+	/** 是否禁用。 */
+	readonly disabled?: boolean;
+	/** 是否使用危险样式。 */
+	readonly danger?: boolean;
+	/** 二级菜单项；非空时该项作为二级菜单入口。 */
+	readonly children?: readonly ContextMenuItem[];
+	/** 点击回调。 */
+	readonly onClick?: () => void;
+}
+
+/** 弹出右键菜单的选项。 */
+export interface ShowContextMenuOptions {
+	/** 菜单项列表。 */
+	readonly items: readonly ContextMenuItem[];
+	/** 触发点横坐标。 */
+	readonly x: number;
+	/** 触发点纵坐标。 */
+	readonly y: number;
+	/** 菜单关闭（选中或点击外部）后的回调。 */
+	readonly onClose?: () => void;
+}
+
 /** 菜单项类名。 */
-function itemClass(item, extra = '') {
+function itemClass(item: ContextMenuItem, extra = ''): string {
 	return `ggg-menu-item${item.danger ? ' ggg-menu-item-danger' : ''}`
 		+ `${item.checked ? ' ggg-menu-item-checked' : ''}`
 		+ `${extra === '' ? '' : ` ${extra}`}`;
@@ -69,31 +101,26 @@ function itemClass(item, extra = '') {
 /**
  * 在光标位置弹出右键菜单。
  *
- * @param {object} options - 选项。
- * @param {Array<object>} options.items - 菜单项：{ type?:'divider', title, visible?, checked?, disabled?, danger?, children?, onClick }；
- *   children 非空时该项作为二级菜单入口，点击或悬停展开。
- * @param {number} options.x - 触发点横坐标。
- * @param {number} options.y - 触发点纵坐标。
- * @param {function} [options.onClose] - 菜单关闭（选中或点击外部）后的回调。
+ * @param options - 见 {@link ShowContextMenuOptions}。
  * @returns 无。
  */
-export function showContextMenu({ items, x, y, onClose }) {
+export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions): void {
 	const visibleItems = items.filter((item) => item.visible !== false);
 	if (visibleItems.length === 0) return;
 	const mount = document.createElement('div');
 	document.body.appendChild(mount);
 	const root = createRoot(mount);
-	const close = () => {
+	const close = (): void => {
 		root.unmount();
 		mount.remove();
 		onClose?.();
 	};
-	function MenuContent() {
-		const anchor = React.useRef(mount);
-		const panel = React.useRef(null);
+	function MenuContent(): React.ReactElement {
+		const anchor = React.useRef<HTMLDivElement>(mount);
+		const panel = React.useRef<HTMLDivElement>(null);
 		const [open, setOpen] = React.useState(true);
 		/** 展开的二级菜单：{ children, top }，top 为触发项在菜单内的纵向偏移。 */
-		const [submenu, setSubmenu] = React.useState(null);
+		const [submenu, setSubmenu] = React.useState<{ children: readonly ContextMenuItem[]; top: number } | null>(null);
 		useDismissOnOutsidePointer(anchor, open, setOpen);
 		React.useEffect(() => {
 			if (open === false) close();
@@ -122,14 +149,14 @@ export function showContextMenu({ items, x, y, onClose }) {
 							role: 'menuitem',
 							className: itemClass(item, hasChildren ? 'ggg-menu-item-parent' : ''),
 							disabled: item.disabled === true,
-							onPointerEnter: (event) => {
+							onPointerEnter: (event: React.PointerEvent<HTMLButtonElement>) => {
 								if (!hasChildren) {
 									setSubmenu(null);
 									return;
 								}
 								setSubmenu({ children, top: event.currentTarget.offsetTop });
 							},
-							onClick: (event) => {
+							onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
 								if (hasChildren) {
 									// 触屏没有悬停：点击同样展开二级菜单。
 									setSubmenu({ children, top: event.currentTarget.offsetTop });

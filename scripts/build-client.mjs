@@ -1,5 +1,5 @@
 /**
- * 构建浏览器半边：把 src/client/index.js 用 esbuild 打成 DSH 的模块包络。
+ * 构建浏览器半边：把 src/client/index.ts 用 esbuild 打成 DSH 的模块包络。
  *
  * react 与 @deepseek-ai/dsh-client-ui-primitives 是 shell 共享的平台模块，
  * 因此外部化；其余依赖一律打进包内。宿主半边仍由 tsc 从 src/ 编译。
@@ -22,7 +22,7 @@ const CLIENT_EXTERNALS = [
 ];
 
 const bundled = await build({
-	entryPoints: [join(root, 'src', 'client', 'index.js')],
+	entryPoints: [join(root, 'src', 'client', 'index.ts')],
 	bundle: true,
 	format: 'cjs',
 	platform: 'browser',

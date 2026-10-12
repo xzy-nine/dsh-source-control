@@ -1,0 +1,349 @@
+/**
+ * 面板的三个分区：存储库、更改（含提交框）、图形。
+ *
+ * 每个分区只接收已算好的数据与回调，状态与数据加载由面板主体持有。
+ */
+import React from 'react';
+import {
+	Button, Checkbox, IconBranchOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular,
+	IconSparkleRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives';
+import { CommitGraph } from '../graph.ts';
+import { RepoIcon } from '../ref-icons.ts';
+import { ChangeGroup, CommitDetail } from './changes.ts';
+import { RepoRow } from './repo-row.ts';
+import type {
+	AiStats, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
+} from '../types.ts';
+
+/** 存储库分区。 */
+export interface RepoSectionProps {
+	readonly open: boolean;
+	readonly height: number;
+	readonly busy: boolean;
+	readonly treeStatus: 'loading' | 'ready' | 'empty' | 'error';
+	readonly treeNote: string | null;
+	readonly visibleRows: ReadonlyArray<{ node: RepoNode; depth: number }>;
+	readonly selectedId: string | null;
+	readonly expandedIds: ReadonlySet<string>;
+	readonly syncById: ReadonlyMap<string, RepoSync>;
+	readonly headHash: string | null;
+	readonly onToggleSection: () => void;
+	readonly onOpenSettings: () => void;
+	readonly onSelect: (node: RepoNode) => void;
+	readonly onToggle: (node: RepoNode) => void;
+	readonly onMoreActions: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
+	readonly onBranchClick: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
+	readonly onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
+}
+
+/**
+ * 存储库分区：标题栏 + 仓库树 + 下沿拖拽手柄。
+ *
+ * @param props - 见 {@link RepoSectionProps}。
+ * @returns 分区元素。
+ */
+export function RepoSection({
+	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
+	onToggleSection, onOpenSettings, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
+}: RepoSectionProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: 'ggg-sec' },
+		React.createElement('div', {
+			className: 'ggg-sec-head' + (open ? '' : ' collapsed'),
+			onClick: onToggleSection,
+		},
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			'存储库',
+			treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
+			React.createElement('span', { className: 'ggg-head-actions' },
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '设置', disabled: busy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },
+				}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
+			),
+		),
+		open && React.createElement(
+			'div',
+			{ className: 'ggg-repos', style: { maxHeight: height, overflowY: 'auto' } },
+			treeStatus === 'loading' && React.createElement('div', { className: 'ggg-hint' }, '正在发现仓库…'),
+			treeStatus !== 'loading' && visibleRows.length === 0
+				&& React.createElement('div', { className: 'ggg-hint' }, '没有发现 git 仓库'),
+			...visibleRows.map(({ node, depth }) => React.createElement(RepoRow, {
+				key: node.id, node, depth,
+				active: node.id === selectedId,
+				expanded: expandedIds.has(node.id),
+				sync: syncById.get(node.id),
+				onSelect,
+				onToggle,
+				onMoreActions,
+				onBranchClick,
+				headHash,
+			})),
+		),
+		open && React.createElement('div', {
+			className: 'ggg-sec-resize',
+			title: '拖动调整存储库区高度',
+			onPointerDown: onResizeStart,
+		}),
+	);
+}
+
+/** 更改分区。 */
+export interface ChangesSectionProps {
+	readonly entries: readonly WorkingTreeEntry[];
+	readonly busy: boolean;
+	readonly phase: PanelPhase;
+	readonly workingTreePath: string | null;
+	readonly head: string | null;
+	readonly message: string;
+	readonly onMessageChange: (message: string) => void;
+	readonly amend: boolean;
+	readonly onToggleAmend: (checked: boolean) => void;
+	readonly aiBusy: boolean;
+	readonly aiWarning: string;
+	readonly aiStats: AiStats | null;
+	readonly onAiCommit: () => void;
+	readonly showSyncButton: boolean;
+	readonly syncBehind: number;
+	readonly syncAhead: number;
+	readonly onSync: () => void;
+	readonly stagedPaths: readonly string[];
+	readonly onSubmit: () => void;
+	readonly onRefresh: () => void;
+	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string> };
+	readonly groupExpanded: { staged: boolean; unstaged: boolean };
+	readonly toggleChange: (key: string, path: string) => void;
+	readonly toggleGroup: (key: string) => void;
+	readonly run: (operation: () => Promise<void>) => Promise<void>;
+	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
+	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
+	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
+	readonly openDiff: (hash: string, path: string, staged: boolean) => Promise<void>;
+}
+
+/**
+ * 更改分区：标题栏 + 提交框 + 两个变更分组。
+ *
+ * @param props - 见 {@link ChangesSectionProps}。
+ * @returns 分区元素。
+ */
+export function ChangesSection({
+	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend,
+	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
+	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+	stagePaths, unstagePaths, discardPaths, openDiff,
+}: ChangesSectionProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: 'ggg-sec ggg-workspace' },
+		React.createElement(
+			'div',
+			{ className: 'ggg-sec-head' },
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			'更改',
+			React.createElement('span', { className: 'ggg-head-actions' },
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: busy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
+				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+			),
+		),
+		React.createElement(
+			'div',
+			{ className: 'ggg-workspace-body' },
+			// ── 提交框 ────────────────────────────────────────
+			React.createElement(
+				'div',
+				{ className: 'ggg-commit-box' },
+				(aiBusy || busy || phase === 'loading') && React.createElement('div', { className: 'ggg-ai-loading-bar' }),
+				React.createElement('div', { className: 'ggg-commit-input-wrap' },
+					React.createElement('textarea', {
+						className: 'ggg-commit-input',
+						placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${head ?? 'master'}'提交)`,
+						value: message,
+						disabled: aiBusy,
+						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => onMessageChange(event.currentTarget.value),
+						onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+								event.preventDefault();
+								onSubmit();
+							}
+						},
+					}),
+					React.createElement('div', { className: 'ggg-commit-input-actions' },
+						React.createElement('button', {
+							type: 'button', className: 'ggg-commit-input-btn' + (aiBusy ? ' is-busy' : ''), title: 'AI 辅助提交',
+							disabled: aiBusy || busy,
+							onClick: onAiCommit,
+						}, React.createElement(IconSparkleRegular, { size: 14 })),
+						React.createElement('button', {
+							type: 'button', className: 'ggg-commit-input-btn', title: '选择提交方式',
+						}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+					),
+				),
+				aiWarning !== '' && React.createElement('div', { className: 'ggg-commit-ai-warning' }, aiWarning),
+				aiStats !== null && React.createElement('div', { className: 'ggg-commit-ai-stats' },
+					`${aiStats.tps} tok/s`,
+					` · 输入 ${aiStats.inputTokens}`,
+					` · 输出 ${aiStats.outputTokens}`,
+					` · 缓存读 ${aiStats.cacheReadTokens}`,
+					` · 缓存写 ${aiStats.cacheWriteTokens}`,
+					` · ${aiStats.elapsed}`,
+				),
+				React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+				showSyncButton
+					? React.createElement(Button, {
+						variant: 'primary', size: 'sm', disabled: busy,
+						onClick: onSync,
+					}, '同步更改',
+						syncBehind > 0 && React.createElement('span', null, ` ↓${syncBehind}`),
+						syncAhead > 0 && React.createElement('span', null, ` ↑${syncAhead}`),
+					)
+					: React.createElement(Button, {
+						variant: 'primary', size: 'sm', disabled: busy || message.trim() === '' || stagedPaths.length === 0,
+						onClick: onSubmit,
+					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
+			),
+			ChangeGroup({
+				staged: true, entries, busy, workingTreePath: workingTreePath as string,
+				groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
+				run, stagePaths, unstagePaths, discardPaths, openDiff,
+			}),
+			ChangeGroup({
+				staged: false, entries, busy, workingTreePath: workingTreePath as string,
+				groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
+				run, stagePaths, unstagePaths, discardPaths, openDiff,
+				forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
+			}),
+		),
+	);
+}
+
+/** 图形分区。 */
+export interface GraphSectionProps {
+	readonly open: boolean;
+	readonly height: number;
+	readonly busy: boolean;
+	readonly phase: PanelPhase;
+	readonly commitCount: number;
+	readonly selectedNode: RepoNode | null;
+	readonly graphScrollRef: React.RefObject<HTMLDivElement | null>;
+	readonly commits: readonly Commit[];
+	readonly head: string | null;
+	readonly selectedHash: string | null;
+	readonly aheadHashes: ReadonlySet<string>;
+	readonly behindHashes: ReadonlySet<string>;
+	readonly moreCommitsAvailable: boolean;
+	readonly statsByHash: ReadonlyMap<string, CommitStats>;
+	readonly detail: { commit: Commit; files: CommitFile[] } | null;
+	readonly detailCollapsed: ReadonlySet<string>;
+	readonly settings: Settings;
+	readonly onToggleSection: () => void;
+	readonly onToggleChange: (key: string, path: string) => void;
+	readonly onOpenDiff: (hash: string, path: string, staged: boolean) => Promise<void>;
+	readonly onToggleCommit: (hash: string) => void;
+	readonly onLoadMore: () => void;
+	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
+	readonly onHoverCommit: (hash: string | null) => void;
+	readonly onOpenFilter: () => void;
+	readonly onGoToHead: () => void;
+	readonly onFetch: () => void;
+	readonly onRefresh: () => void;
+	readonly onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
+	readonly formatDate: (seconds: number) => string;
+	readonly formatDetail: (seconds: number) => string;
+	readonly issueLinking: unknown;
+}
+
+/**
+ * 图形分区：标题栏（筛选/定位/抓取/刷新）+ 提交图 + 上沿拖拽手柄。
+ *
+ * @param props - 见 {@link GraphSectionProps}。
+ * @returns 分区元素。
+ */
+export function GraphSection({
+	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
+	aheadHashes, behindHashes, moreCommitsAvailable, statsByHash, detail, detailCollapsed, settings,
+	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
+	onOpenFilter, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
+}: GraphSectionProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: 'ggg-sec ggg-graph-sec' },
+		// 拖拽手柄落在工作区与图形的分界线上（图形标题之前）。
+		open && React.createElement('div', {
+			className: 'ggg-sec-resize',
+			title: '拖动调整图形区高度',
+			onPointerDown: onResizeStart,
+		}),
+		React.createElement('div', {
+			className: 'ggg-sec-head' + (open ? '' : ' collapsed'),
+			onClick: onToggleSection,
+		},
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			'图形',
+			React.createElement('span', { className: 'ggg-head-actions' },
+				selectedNode !== null && React.createElement('span', { className: 'ggg-head-repo' },
+					React.createElement(RepoIcon),
+					React.createElement('span', null, selectedNode.name),
+				),
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '筛选分支与标签',
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
+				}, React.createElement(IconBranchOutlineRegular, { size: 14 }), '分支'),
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '转到当前历史记录',
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },
+				}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '从所有远程抓取', disabled: busy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
+				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: busy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
+				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+			),
+		),
+		open && (
+			phase === 'loading' && commitCount === 0
+				? React.createElement('div', { className: 'ggg-empty', style: { height } }, '正在加载提交图…')
+				: React.createElement('div', {
+					ref: graphScrollRef,
+					style: { height, display: 'flex', flexDirection: 'column', minHeight: 0 },
+				}, React.createElement(CommitGraph, {
+					commits,
+					head,
+					selectedHash,
+					aheadHashes,
+					behindHashes,
+					onSelect: (hash: string) => { onToggleCommit(hash); },
+					onLoadMore,
+					moreCommitsAvailable,
+					onContextMenu,
+					formatDate,
+					formatDetail,
+					issueLinking,
+					markdown: settings.markdown,
+					showAvatars: settings.showAvatars,
+					muteMergeCommits: settings.muteMergeCommits,
+					combineLocalAndRemoteBranchLabels: settings.combineLocalAndRemoteBranchLabels,
+					graphColours: settings.graphColours,
+					commitStats: statsByHash,
+					onHoverCommit,
+					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
+						? React.createElement(CommitDetail, {
+							files: detail.files,
+							busy,
+							collapsed: detailCollapsed,
+							onToggle: (path: string) => onToggleChange('detail', path),
+							onOpen: (path: string) => { void onOpenDiff(commit.hash, path, false); },
+						})
+						: null),
+				}))
+		),
+	);
+}

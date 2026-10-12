@@ -9,7 +9,9 @@ import {
 	Button, Checkbox, Input, SegmentedControl,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { fetchAiModels } from './api.js';
+import { fetchAiModels } from './api.ts';
+import type { AiModelCatalog } from './api.ts';
+import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
 
 /** 用户身份配置位置选项。 */
 const CONFIG_LOCATION = [
@@ -20,9 +22,7 @@ const CONFIG_LOCATION = [
 /** localStorage 键。 */
 export const SETTINGS_KEY = 'dsh-git-graph-settings';
 
-/**
- * 提交排序选项，三档与 git 的 `--order` 参数一致。
- */
+/** 提交排序选项，三档与 git 的 `--order` 参数一致。 */
 export const ORDERING = [
 	{ value: 'topo', label: '拓扑', title: '按拓扑排序（同一分支的提交相邻）' },
 	{ value: 'date', label: '时间', title: '按提交时间排序' },
@@ -44,7 +44,7 @@ export const DATE_FORMAT_TYPE = [
  *
  * @returns 设置对象。
  */
-export function defaultSettings() {
+export function defaultSettings(): Settings {
 	return {
 		commitOrdering: 'date',
 		dateFormat: { type: 0, iso: false },
@@ -73,12 +73,12 @@ export function defaultSettings() {
  *
  * @returns 设置对象。
  */
-export function loadSettings() {
+export function loadSettings(): Settings {
 	const base = defaultSettings();
 	try {
 		const raw = localStorage.getItem(SETTINGS_KEY);
 		if (!raw) return base;
-		const parsed = JSON.parse(raw);
+		const parsed = JSON.parse(raw) as Partial<Settings>;
 		return {
 			...base,
 			...parsed,
@@ -94,10 +94,10 @@ export function loadSettings() {
 /**
  * 把设置写入 localStorage。
  *
- * @param {object} settings - 设置对象。
+ * @param settings - 设置对象。
  * @returns 无。
  */
-export function saveSettings(settings) {
+export function saveSettings(settings: Settings): void {
 	try {
 		localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 	} catch {
@@ -112,10 +112,11 @@ export function saveSettings(settings) {
  * @param props.onChange - 选择回调。
  * @returns 下拉元素。
  */
-export function OrderingMenu({ value, onChange }) {
-	const [open, setOpen] = React.useState(false);
+export function OrderingMenu({ value, onChange }: { value: string; onChange: (next: string) => void }): React.ReactElement {
 	const current = ORDERING.find((option) => option.value === value) ?? ORDERING[0];
 	return React.createElement(SegmentedControl, {
+		id: 'ggg-ordering',
+		label: '提交排序',
 		value: current.value,
 		onChange,
 		options: ORDERING.map((option) => ({ value: option.value, label: option.label, title: option.title })),
@@ -125,11 +126,11 @@ export function OrderingMenu({ value, onChange }) {
 /**
  * 把时间戳格式化为提交行展示文本。
  *
- * @param {number} unixSeconds - 提交时间（秒）。
- * @param {object} dateFormat - { type, iso }。
+ * @param unixSeconds - 提交时间（秒）。
+ * @param dateFormat - 日期格式设置。
  * @returns 格式化文本。
  */
-export function formatDate(unixSeconds, dateFormat) {
+export function formatDate(unixSeconds: number, dateFormat: DateFormat): string {
 	const date = new Date(unixSeconds * 1000);
 	const type = dateFormat?.type ?? 0;
 	if (type === 1) {
@@ -141,11 +142,11 @@ export function formatDate(unixSeconds, dateFormat) {
 		if (diff < 86400 * 365) return `${Math.floor(diff / (86400 * 30))} 个月前`;
 		return `${Math.floor(diff / (86400 * 365))} 年前`;
 	}
-	let text;
+	let text: string;
 	if (dateFormat?.iso === true) {
 		text = date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
 	} else {
-		const pad = (n) => String(n).padStart(2, '0');
+		const pad = (n: number): string => String(n).padStart(2, '0');
 		const ymd = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 		if (type === 2) {
 			text = ymd;
@@ -162,7 +163,7 @@ export function formatDate(unixSeconds, dateFormat) {
  * @param props.title - 标题。
  * @returns 分区元素。
  */
-function Section({ title, children }) {
+function Section({ title, children }: { title: string; children?: React.ReactNode }): React.ReactElement {
 	return React.createElement(
 		'div',
 		{ className: 'ggg-set-section' },
@@ -179,11 +180,11 @@ function Section({ title, children }) {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-function ToggleRow({ label, checked, onChange }) {
+function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (next: boolean) => void }): React.ReactElement {
 	return React.createElement(
 		'label',
 		{ className: 'ggg-set-row ggg-set-row-inline' },
-		React.createElement(Checkbox, { checked, onChange: (next) => onChange(next) }),
+		React.createElement(Checkbox, { checked, onChange, label }),
 		React.createElement('span', { className: 'ggg-set-row-text' }, label),
 	);
 }
@@ -197,29 +198,38 @@ function ToggleRow({ label, checked, onChange }) {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-function SelectRow({ label, options, value, onChange }) {
+function SelectRow({ label, options, value, onChange }: {
+	label: string;
+	options: ReadonlyArray<{ value: string; label: string; title?: string }>;
+	value: string;
+	onChange: (next: string) => void;
+}): React.ReactElement {
 	return React.createElement(
 		'div',
 		{ className: 'ggg-set-row' },
 		React.createElement('span', { className: 'ggg-set-row-text' }, label),
-		React.createElement(SegmentedControl, { value, onChange, options }),
+		React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
 	);
 }
 
-/**
- * 设置面板：浮层显示全部分区。
 /**
  * AI 提交信息生成的模型配置区。
  *
  * @param props.provider - 当前保存的供应商 id（空串 = 未配置）。
  * @param props.model - 当前保存的模型 id。
  * @param props.rules - 自定义规则提示词。
- * @param props.onChange - (provider, model) => void。
- * @param props.onRulesChange - (rules) => void。
+ * @param props.onChange - 供应商与模型变更回调。
+ * @param props.onRulesChange - 规则变更回调。
  * @returns 区元素。
  */
-function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange }) {
-	const [catalog, setCatalog] = React.useState(null);
+function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange }: {
+	provider: string;
+	model: string;
+	rules: string;
+	onChange: (provider: string, model: string) => void;
+	onRulesChange: (rules: string) => void;
+}): React.ReactElement {
+	const [catalog, setCatalog] = React.useState<AiModelCatalog | null>(null);
 	React.useEffect(() => {
 		let cancelled = false;
 		fetchAiModels().then((data) => { if (!cancelled) setCatalog(data); }).catch(() => { if (!cancelled) setCatalog(null); });
@@ -242,7 +252,7 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 			React.createElement('select', {
 				className: 'ggg-set-select',
 				value: provider,
-				onChange: (e) => onChange(e.currentTarget.value, ''),
+				onChange: (e: React.ChangeEvent<HTMLSelectElement>) => onChange(e.currentTarget.value, ''),
 			},
 				React.createElement('option', { value: '' }, '（使用当前会话模型）'),
 				...providers.map((p) => React.createElement('option', { key: p.id, value: p.id }, p.name || p.id)),
@@ -253,7 +263,7 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 			React.createElement('select', {
 				className: 'ggg-set-select',
 				value: model,
-				onChange: (e) => onChange(provider, e.currentTarget.value),
+				onChange: (e: React.ChangeEvent<HTMLSelectElement>) => onChange(provider, e.currentTarget.value),
 			},
 				...models.map((m) => React.createElement('option', { key: m, value: m }, m)),
 			),
@@ -264,27 +274,47 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 				className: 'ggg-set-textarea',
 				value: rules,
 				placeholder: '自定义规则提示词，追加到系统提示词末尾。例如：使用中文；提交信息不超过 50 字符。',
-				onChange: (e) => onRulesChange(e.currentTarget.value),
+				onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => onRulesChange(e.currentTarget.value),
 				rows: 3,
 			}),
 		),
 	);
 }
 
+/** 用户身份（本地与全局）。 */
+export interface UserDetails {
+	readonly userName?: { local?: string | null; global?: string | null } | null;
+	readonly userEmail?: { local?: string | null; global?: string | null } | null;
+}
+
+/** 设置面板属性。 */
+export interface SettingsPanelProps {
+	readonly open: boolean;
+	readonly onClose: () => void;
+	readonly settings: Settings;
+	readonly onChange: (next: Settings) => void;
+	readonly remotes: readonly Remote[];
+	readonly onDeleteRemote: (name: string) => void;
+	readonly onAddRemote?: (name: string, url: string, pushUrl: string | null) => void;
+	readonly onEditRemote?: (nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void;
+	readonly onExportConfig?: () => void;
+	readonly userDetails: UserDetails | null;
+	readonly onEditUserDetails: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;
+	readonly onDeleteUserDetails: (delName: boolean, delEmail: boolean, location: string) => void;
+}
+
 /**
  * Git Graph 设置面板。
  *
- * @param props.open - 是否展开。
- * @param props.onClose - 关闭回调。
- * @param props.settings - 当前设置。
- * @param props.onChange - 设置变更回调（传回整个设置对象）。
- * @param props.remotes - 远端列表。
- * @param props.onDeleteRemote - 删除远端回调。
+ * @param props - 见 {@link SettingsPanelProps}。
  * @returns 面板元素，未展开时返回 null。
  */
-export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, userDetails, onEditUserDetails, onDeleteUserDetails }) {
+export function SettingsPanel({
+	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig,
+	userDetails, onEditUserDetails, onDeleteUserDetails,
+}: SettingsPanelProps): React.ReactElement | null {
 	if (!open) return null;
-	const patch = (partial) => onChange({ ...settings, ...partial });
+	const patch = (partial: Partial<Settings>): void => onChange({ ...settings, ...partial });
 	return React.createElement(
 		React.Fragment,
 		null,
@@ -406,7 +436,7 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
 				),
 				React.createElement(Section, { title: '仓库配置' },
 					React.createElement(Button, {
-						variant: 'secondary', size: 'sm',
+						variant: 'outline', size: 'sm',
 						onClick: () => { void onExportConfig?.(); },
 					}, '导出仓库配置'),
 				),
@@ -429,27 +459,32 @@ export function SettingsPanel({ open, onClose, settings, onChange, remotes, onDe
  *
  * @param props.remotes - 远程列表。
  * @param props.onDeleteRemote - 删除远程回调。
- * @param props.onAddRemote - 添加远程回调 (name, url, pushUrl) => void。
- * @param props.onEditRemote - 编辑远程回调 (nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew) => void。
+ * @param props.onAddRemote - 添加远程回调。
+ * @param props.onEditRemote - 编辑远程回调。
  * @returns 区元素。
  */
-function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemote }) {
+function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemote }: {
+	remotes: readonly Remote[];
+	onDeleteRemote: (name: string) => void;
+	onAddRemote?: ((name: string, url: string, pushUrl: string | null) => void) | undefined;
+	onEditRemote?: ((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void) | undefined;
+}): React.ReactElement {
 	const [adding, setAdding] = React.useState(false);
-	const [editing, setEditing] = React.useState(null);
+	const [editing, setEditing] = React.useState<Remote | null>(null);
 	const [name, setName] = React.useState('');
 	const [url, setUrl] = React.useState('');
 	const [pushUrl, setPushUrl] = React.useState('');
-	const submitAdd = () => {
+	const submitAdd = (): void => {
 		if (!name || !url) return;
 		onAddRemote?.(name, url, pushUrl || null);
 		setAdding(false); setName(''); setUrl(''); setPushUrl('');
 	};
-	const submitEdit = () => {
+	const submitEdit = (): void => {
 		if (!editing || !name) return;
 		onEditRemote?.(editing.name, name, editing.url ?? null, url || null, editing.pushUrl ?? null, pushUrl || null);
 		setEditing(null); setName(''); setUrl(''); setPushUrl('');
 	};
-	const beginEdit = (remote) => {
+	const beginEdit = (remote: Remote): void => {
 		setEditing(remote);
 		setName(remote.name);
 		setUrl(remote.url ?? '');
@@ -460,15 +495,15 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		{ className: 'ggg-set-form' },
 		React.createElement('label', { className: 'ggg-set-row-block' },
 			React.createElement('span', { className: 'ggg-set-row-text' }, '名称'),
-			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e) => setName(e.target.value) }),
+			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value) }),
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
 			React.createElement('span', { className: 'ggg-set-row-text' }, 'URL'),
-			React.createElement(Input, { value: url, placeholder: 'https://github.com/owner/repo.git', onChange: (e) => setUrl(e.target.value) }),
+			React.createElement(Input, { value: url, placeholder: 'https://github.com/owner/repo.git', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value) }),
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
 			React.createElement('span', { className: 'ggg-set-row-text' }, '推送 URL（可选）'),
-			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e) => setPushUrl(e.target.value) }),
+			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setPushUrl(e.target.value) }),
 		),
 		React.createElement('div', { className: 'ggg-set-form-actions' },
 			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
@@ -497,7 +532,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 			)
 			: React.createElement('div', { className: 'ggg-set-note' }, '没有配置远程仓库'),
 		!adding && editing === null
-			? React.createElement(Button, { variant: 'secondary', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
+			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
 			: form,
 	);
 }
@@ -505,11 +540,14 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 /**
  * Issue 链接配置表单。
  *
- * @param props.config - 当前配置 { issueRegex, issueUrlTemplate }。
+ * @param props.config - 当前配置。
  * @param props.onChange - 变更回调。
  * @returns 表单元素。
  */
-function IssueLinkingForm({ config, onChange }) {
+function IssueLinkingForm({ config, onChange }: {
+	config: IssueLinkingConfig | null;
+	onChange: (config: IssueLinkingConfig) => void;
+}): React.ReactElement {
 	const regex = config?.issueRegex ?? '';
 	const url = config?.issueUrlTemplate ?? '';
 	return React.createElement(
@@ -520,7 +558,7 @@ function IssueLinkingForm({ config, onChange }) {
 			React.createElement(Input, {
 				value: regex,
 				placeholder: '如 #(\\d+)',
-				onChange: (event) => onChange({ issueRegex: event.target.value, issueUrlTemplate: url }),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: event.target.value, issueUrlTemplate: url }),
 			}),
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
@@ -528,7 +566,7 @@ function IssueLinkingForm({ config, onChange }) {
 			React.createElement(Input, {
 				value: url,
 				placeholder: '如 https://github.com/owner/repo/issues/%ID%',
-				onChange: (event) => onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }),
 			}),
 		),
 		React.createElement('div', { className: 'ggg-set-note' }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
@@ -538,31 +576,35 @@ function IssueLinkingForm({ config, onChange }) {
 /**
  * 用户身份表单：编辑 user.name 与 user.email。
  *
- * @param props.userDetails - { userName: {local, global}, userEmail: {local, global} }。
- * @param props.onEdit - 保存回调 (name, email, location, deleteLocalName, deleteLocalEmail) => void。
- * @param props.onDelete - 删除回调 (name, email, location) => void。
+ * @param props.userDetails - 当前身份配置。
+ * @param props.onEdit - 保存回调。
+ * @param props.onDelete - 删除回调。
  * @returns 表单元素。
  */
-function UserDetailsForm({ userDetails, onEdit, onDelete }) {
+function UserDetailsForm({ userDetails, onEdit, onDelete }: {
+	userDetails: UserDetails | null;
+	onEdit: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;
+	onDelete: (delName: boolean, delEmail: boolean, location: string) => void;
+}): React.ReactElement {
 	const [name, setName] = React.useState('');
 	const [email, setEmail] = React.useState('');
 	const [location, setLocation] = React.useState('global');
 	const currentName = userDetails?.userName;
 	const currentEmail = userDetails?.userEmail;
 	React.useEffect(() => {
-		if (currentName !== undefined) {
+		if (currentName !== undefined && currentName !== null) {
 			setName(currentName.local ?? currentName.global ?? '');
 		}
-		if (currentEmail !== undefined) {
+		if (currentEmail !== undefined && currentEmail !== null) {
 			setEmail(currentEmail.local ?? currentEmail.global ?? '');
 		}
 	}, [currentName, currentEmail]);
-	const save = () => {
+	const save = (): void => {
 		const deleteLocalName = (currentName?.local ?? null) !== null && location === 'global';
 		const deleteLocalEmail = (currentEmail?.local ?? null) !== null && location === 'global';
 		onEdit?.(name, email, location, deleteLocalName, deleteLocalEmail);
 	};
-	const remove = () => {
+	const remove = (): void => {
 		onDelete?.(true, true, location);
 		setName('');
 		setEmail('');
@@ -575,7 +617,7 @@ function UserDetailsForm({ userDetails, onEdit, onDelete }) {
 			React.createElement(Input, {
 				value: name,
 				placeholder: 'git user.name',
-				onChange: (event) => setName(event.target.value),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setName(event.target.value),
 			}),
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
@@ -583,7 +625,7 @@ function UserDetailsForm({ userDetails, onEdit, onDelete }) {
 			React.createElement(Input, {
 				value: email,
 				placeholder: 'git user.email',
-				onChange: (event) => setEmail(event.target.value),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setEmail(event.target.value),
 			}),
 		),
 		React.createElement(SelectRow, {

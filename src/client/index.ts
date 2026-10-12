@@ -10,10 +10,10 @@
  */
 import React from 'react';
 import { DiffBlock } from '@deepseek-ai/dsh-client-ui-primitives';
-import { GitGraphPanel } from './panel.js';
-import { gitDiffAddress, parseGitDiffAddress } from './resource-path.js';
-import { fileDiffContent } from './api.js';
-import { STYLES } from './styles.js';
+import { GitGraphPanel } from './panel.ts';
+import { gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
+import { fileDiffContent } from './api.ts';
+import { STYLES } from './styles.ts';
 
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-dev-git-graph/git-graph';

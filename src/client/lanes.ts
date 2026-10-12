@@ -3,8 +3,6 @@
  *
  * 与移植版的 graph.ts 分开：后者直接操作 SVG DOM，这里只输出纯数据，
  * 由 React 渲染，因此可以在不触碰 DOM 的情况下单测。
- *
- * 类型见 lanes.d.ts。
  */
 
 /** 泳道几何参数，与 CSS 保持一致。 */
@@ -26,16 +24,63 @@ export const LANE_STROKE = 2;
 /** 线段与节点外沿之间的留白。 */
 export const NODE_GAP = 1;
 
+/** 节点种类。 */
+export type NodeKind = 'head' | 'merge' | 'plain';
+
 /**
  * 节点外沿半径：线段在此断开，节点内部不画线。
  *
- * @param kind - 节点种类：'head'、'merge' 或 'plain'。
+ * @param kind - 节点种类。
  * @returns 外沿半径（像素），含线宽与留白。
  */
-export function nodeOuterRadius(kind) {
+export function nodeOuterRadius(kind: NodeKind): number {
 	if (kind === 'head') return HEAD_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
 	if (kind === 'merge') return MERGE_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
 	return NODE_RADIUS + NODE_GAP;
+}
+
+/** 布局所需的提交形状。 */
+export interface LayoutCommit {
+	/** 提交哈希。 */
+	readonly hash: string;
+	/** 父提交哈希。 */
+	readonly parents?: readonly string[];
+}
+
+/** 一条泳道线段。 */
+export interface LaneSegment {
+	/** 起点泳道。 */
+	readonly lane: number;
+	/** 终点泳道。 */
+	readonly toLane: number;
+	/** 是否从行顶进入。 */
+	readonly fromTop: boolean;
+	/** 是否画到行底。 */
+	readonly toBottom: boolean;
+	/** 颜色下标。 */
+	readonly colour: number;
+	/** 是否为弯曲段。 */
+	readonly curved: boolean;
+}
+
+/** 一行的布局。 */
+export interface LaneRow {
+	/** 本行提交所在泳道。 */
+	readonly lane: number;
+	/** 颜色下标。 */
+	readonly colour: number;
+	/** 本行的线段。 */
+	readonly segments: readonly LaneSegment[];
+	/** 本行需要的泳道宽度。 */
+	readonly width: number;
+}
+
+/** 布局结果。 */
+export interface LaneLayout {
+	/** 每行布局。 */
+	readonly rows: LaneRow[];
+	/** 泳道总数。 */
+	readonly laneCount: number;
 }
 
 /**
@@ -55,15 +100,15 @@ export function nodeOuterRadius(kind) {
  * @param commits - 提交序列，按图上的从上到下顺序。
  * @returns 每行布局与泳道总数。
  */
-export function layoutCommits(commits) {
+export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
 	/** 泳道 -> 正在等待的提交及颜色；null 表示空闲。 */
-	const lanes = [];
-	const rows = [];
+	const lanes: Array<{ hash: string; colour: number } | null> = [];
+	const rows: LaneRow[] = [];
 	let nextColour = 0;
 	let laneCount = 0;
 
 	/** 找一条空闲泳道；没有则新开一条。 */
-	const takeLane = () => {
+	const takeLane = (): number => {
 		for (let index = 0; index < lanes.length; index++) {
 			if (lanes[index] === null) return index;
 		}
@@ -77,21 +122,23 @@ export function layoutCommits(commits) {
 		const awaited = lanes.slice();
 
 		/** 正在等待本行提交的泳道，从左到右。 */
-		const waiting = [];
+		const waiting: number[] = [];
 		for (let index = 0; index < lanes.length; index++) {
-			if (lanes[index] !== null && lanes[index].hash === commit.hash) waiting.push(index);
+			const entry = lanes[index];
+			if (entry !== null && entry !== undefined && entry.hash === commit.hash) waiting.push(index);
 		}
 
 		// 落点：最左的等待泳道，或新开一条（本行是分支的头）。
 		const lane = waiting.length > 0 ? waiting[0] : takeLane();
-		const colour = waiting.length > 0 ? lanes[lane].colour : nextColour++;
+		const awaitedLane = lanes[lane];
+		const colour = waiting.length > 0 && awaitedLane !== null && awaitedLane !== undefined ? awaitedLane.colour : nextColour++;
 
-		const segments = [];
+		const segments: LaneSegment[] = [];
 
 		// 1) 其它泳道：仍在等别的提交的整行贯穿；也在等本提交的弯入节点后释放。
 		for (let index = 0; index < awaited.length; index++) {
 			const entry = awaited[index];
-			if (entry === null || index === lane) continue;
+			if (entry === null || entry === undefined || index === lane) continue;
 			if (entry.hash === commit.hash) {
 				// 汇入本行提交：上半行曲线落到节点，该泳道随即空闲。
 				segments.push({ lane: index, toLane: lane, fromTop: true, toBottom: false, colour: entry.colour, curved: true });
@@ -128,15 +175,17 @@ export function layoutCommits(commits) {
 		for (const parent of otherParents) {
 			let parentLane = -1;
 			for (let index = 0; index < lanes.length; index++) {
-				if (lanes[index] !== null && lanes[index].hash === parent) { parentLane = index; break; }
+				const entry = lanes[index];
+				if (entry !== null && entry !== undefined && entry.hash === parent) { parentLane = index; break; }
 			}
 			if (parentLane === -1) {
 				parentLane = takeLane();
 				lanes[parentLane] = { hash: parent, colour: nextColour++ };
 			}
+			const parentEntry = lanes[parentLane];
 			segments.push({
 				lane, toLane: parentLane, fromTop: false, toBottom: true,
-				colour: lanes[parentLane].colour, curved: true,
+				colour: parentEntry === null || parentEntry === undefined ? 0 : parentEntry.colour, curved: true,
 			});
 		}
 
@@ -146,7 +195,7 @@ export function layoutCommits(commits) {
 			width = Math.max(width, segment.lane + 1, segment.toLane + 1);
 		}
 		for (let index = 0; index < lanes.length; index++) {
-			if (lanes[index] !== null) width = Math.max(width, index + 1);
+			if (lanes[index] !== null && lanes[index] !== undefined) width = Math.max(width, index + 1);
 		}
 		laneCount = Math.max(laneCount, width);
 		rows.push({ lane, colour, segments, width });
@@ -177,13 +226,34 @@ export const LANE_COLOURS = [
  * @param colour - 颜色下标。
  * @returns CSS 颜色值。
  */
-export function laneColour(colour) {
+export function laneColour(colour: number): string {
 	return LANE_COLOURS[colour % LANE_COLOURS.length];
 }
 
 /** 泳道中心线在行内的横向像素位置。 */
-export function laneCentre(lane) {
+export function laneCentre(lane: number): number {
 	return lane * LANE_WIDTH + LANE_WIDTH / 2;
+}
+
+/** 线段几何：竖直段、横移段、贯穿段或曲线段。 */
+export type SegmentGeometry =
+	| { readonly kind: 'path'; readonly d: string }
+	| { readonly kind: 'gap'; readonly upper: Line; readonly lower: Line }
+	| { readonly kind: 'bend'; readonly horizontal: Line; readonly vertical: Line }
+	| { readonly kind: 'line'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number };
+
+/** 一条线段的两端坐标。 */
+export interface Line {
+	readonly x1: number;
+	readonly y1: number;
+	readonly x2: number;
+	readonly y2: number;
+}
+
+/** 节点几何：中心与半径。 */
+export interface NodeGeometry {
+	readonly x: number;
+	readonly radius: number;
 }
 
 /**
@@ -197,10 +267,10 @@ export function laneCentre(lane) {
  * （kind 为 'gap'），节点内部因此不出现线。
  *
  * @param segment - 布局给出的线段。
- * @param node - 本行节点：{ x, radius }；不给时线段画到节点中心。
+ * @param node - 本行节点；不给时线段画到节点中心。
  * @returns 路径描述；线段无长度时返回 null。
  */
-export function segmentGeometry(segment, node = null) {
+export function segmentGeometry(segment: LaneSegment, node: NodeGeometry | null = null): SegmentGeometry | null {
 	const x1 = laneCentre(segment.lane);
 	const x2 = laneCentre(segment.toLane);
 	const half = ROW_HEIGHT / 2;
@@ -209,15 +279,15 @@ export function segmentGeometry(segment, node = null) {
 	if (y1 === y2) return null;
 	const gap = node === null ? 0 : node.radius;
 	// 贯穿节点的整行线：拆成上下两段，节点内部留空。
-	if (gap > 0 && x1 === node.x && x2 === node.x && y1 < half && y2 > half) {
+	if (gap > 0 && node !== null && x1 === node.x && x2 === node.x && y1 < half && y2 > half) {
 		return {
 			kind: 'gap',
 			upper: { x1, y1, x2: x1, y2: half - gap },
 			lower: { x1, y1: half + gap, x2: x1, y2 },
 		};
 	}
-	const start = gap > 0 && x1 === node.x && y1 === half ? half + gap : y1;
-	const end = gap > 0 && x2 === node.x && y2 === half ? half - gap : y2;
+	const start = gap > 0 && node !== null && x1 === node.x && y1 === half ? half + gap : y1;
+	const end = gap > 0 && node !== null && x2 === node.x && y2 === half ? half - gap : y2;
 	if (segment.curved && x1 !== x2) {
 		const bend = (end - start) / 2;
 		return { kind: 'path', d: `M ${x1} ${start} C ${x1} ${start + bend}, ${x2} ${end - bend}, ${x2} ${end}` };

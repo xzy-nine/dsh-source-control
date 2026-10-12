@@ -13,15 +13,15 @@ import {
 /**
  * 在独立 React 根上挂载一个弹窗组件，并在结束时卸载。
  *
- * @param {function} build - 接收 finish(result) 回调，返回要渲染的 React 元素。
- * @returns {Promise<*>} 用户操作结果。
+ * @param build - 接收 finish(result) 回调，返回要渲染的 React 元素。
+ * @returns 用户操作结果。
  */
-function runDialog(build) {
+function runDialog<T>(build: (finish: (result: T) => void) => React.ReactElement): Promise<T> {
 	return new Promise((resolve) => {
 		const container = document.createElement('div');
 		document.body.appendChild(container);
 		const root = createRoot(container);
-		const finish = (result) => {
+		const finish = (result: T): void => {
 			resolve(result);
 			requestAnimationFrame(() => {
 				root.unmount();
@@ -32,20 +32,24 @@ function runDialog(build) {
 	});
 }
 
+/** 确认框选项。 */
+export interface ConfirmationOptions {
+	readonly title: string;
+	readonly message: string;
+	readonly confirmLabel?: string;
+	readonly cancelLabel?: string;
+	readonly danger?: boolean;
+}
+
 /**
  * 简单确认框。
  *
- * @param {object} options - 选项。
- * @param {string} options.title - 标题。
- * @param {string} options.message - 正文。
- * @param {string} [options.confirmLabel] - 确认按钮文案。
- * @param {string} [options.cancelLabel] - 取消按钮文案。
- * @param {boolean} [options.danger] - 确认按钮是否使用危险样式。
- * @returns {Promise<boolean>} 用户点确认返回 true，否则 false。
+ * @param options - 见 {@link ConfirmationOptions}。
+ * @returns 用户点确认返回 true，否则 false。
  */
-export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消', danger = false }) {
-	return runDialog((finish) => {
-		function Content() {
+export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消' }: ConfirmationOptions): Promise<boolean> {
+	return runDialog<boolean>((finish) => {
+		function Content(): React.ReactElement {
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(false),
@@ -57,7 +61,7 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(false) }, cancelLabel),
 					React.createElement(Button, {
-						variant: danger ? 'danger' : 'primary', size: 'sm', onClick: () => finish(true),
+						variant: 'primary', size: 'sm', onClick: () => finish(true),
 					}, confirmLabel),
 				),
 			});
@@ -66,21 +70,25 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 	});
 }
 
+/** 含勾选的确认框选项。 */
+export interface CheckboxOptions {
+	readonly title: string;
+	readonly message: string;
+	readonly checkboxLabel: string;
+	readonly confirmLabel?: string;
+	readonly cancelLabel?: string;
+	readonly danger?: boolean;
+}
+
 /**
  * 含勾选的确认框：复选框未勾选时确认按钮禁用。
  *
- * @param {object} options - 选项。
- * @param {string} options.title - 标题。
- * @param {string} options.message - 正文。
- * @param {string} options.checkboxLabel - 复选框文案。
- * @param {string} [options.confirmLabel] - 确认按钮文案。
- * @param {string} [options.cancelLabel] - 取消按钮文案。
- * @param {boolean} [options.danger] - 确认按钮是否使用危险样式。
- * @returns {Promise<boolean>} 用户勾选并确认返回 true，否则 false。
+ * @param options - 见 {@link CheckboxOptions}。
+ * @returns 用户勾选并确认返回 true，否则 false。
  */
-export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '确认', cancelLabel = '取消', danger = false }) {
-	return runDialog((finish) => {
-		function Content() {
+export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '确认', cancelLabel = '取消' }: CheckboxOptions): Promise<boolean> {
+	return runDialog<boolean>((finish) => {
+		function Content(): React.ReactElement {
 			const [acknowledged, setAcknowledged] = React.useState(false);
 			return React.createElement(RiskConfirmation, {
 				open: true,
@@ -100,21 +108,25 @@ export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '�
 	});
 }
 
+/** 文本输入框选项。 */
+export interface TextOptions {
+	readonly title: string;
+	readonly message?: string;
+	readonly label?: string;
+	readonly value?: string;
+	readonly placeholder?: string;
+	readonly confirmLabel?: string;
+}
+
 /**
  * 文本输入框。
  *
- * @param {object} options - 选项。
- * @param {string} options.title - 标题。
- * @param {string} [options.message] - 可选提示行。
- * @param {string} [options.label] - 输入框标签。
- * @param {string} [options.value] - 初始文本。
- * @param {string} [options.placeholder] - 占位文本。
- * @param {string} [options.confirmLabel] - 确认按钮文案。
- * @returns {Promise<string|null>} 用户确认返回输入文本，取消返回 null。
+ * @param options - 见 {@link TextOptions}。
+ * @returns 用户确认返回输入文本，取消返回 null。
  */
-export function showText({ title, message, label, value = '', placeholder = '', confirmLabel = '确定' }) {
-	return runDialog((finish) => {
-		function Content() {
+export function showText({ title, message = '', label = '', value = '', placeholder = '', confirmLabel = '确定' }: TextOptions): Promise<string | null> {
+	return runDialog<string | null>((finish) => {
+		function Content(): React.ReactElement {
 			const [text, setText] = React.useState(value);
 			return React.createElement(Modal, {
 				open: true,
@@ -124,13 +136,13 @@ export function showText({ title, message, label, value = '', placeholder = '', 
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== undefined && message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
-					label !== undefined && label !== '' && React.createElement('label', { className: 'ggg-field-label', htmlFor: 'ggg-text-input' }, label),
+					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+					label !== '' && React.createElement('label', { className: 'ggg-field-label', htmlFor: 'ggg-text-input' }, label),
 					React.createElement(Input, {
 						id: 'ggg-text-input',
 						value: text,
 						placeholder,
-						onChange: (event) => setText(event.target.value),
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setText(event.target.value),
 					}),
 				),
 				footer: React.createElement(
@@ -147,20 +159,24 @@ export function showText({ title, message, label, value = '', placeholder = '', 
 	});
 }
 
+/** 单选框选项。 */
+export interface SelectOptions {
+	readonly title: string;
+	readonly message?: string;
+	readonly options: ReadonlyArray<{ value: string; label: string; title?: string }>;
+	readonly value?: string;
+	readonly confirmLabel?: string;
+}
+
 /**
  * 单选框：在多个互斥选项中选一个。
  *
- * @param {object} options - 选项。
- * @param {string} options.title - 标题。
- * @param {string} [options.message] - 可选提示行。
- * @param {Array<{value:string,label:string,title?:string}>} options.options - 选项列表。
- * @param {string} [options.value] - 初始选项值。
- * @param {string} [options.confirmLabel] - 确认按钮文案。
- * @returns {Promise<string|null>} 用户确认返回所选值，取消返回 null。
+ * @param options - 见 {@link SelectOptions}。
+ * @returns 用户确认返回所选值，取消返回 null。
  */
-export function showSelect({ title, message, options, value, confirmLabel = '确定' }) {
-	return runDialog((finish) => {
-		function Content() {
+export function showSelect({ title, message = '', options, value, confirmLabel = '确定' }: SelectOptions): Promise<string | null> {
+	return runDialog<string | null>((finish) => {
+		function Content(): React.ReactElement {
 			const [selected, setSelected] = React.useState(value ?? options[0]?.value ?? '');
 			return React.createElement(Modal, {
 				open: true,
@@ -170,8 +186,10 @@ export function showSelect({ title, message, options, value, confirmLabel = '确
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== undefined && message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
 					React.createElement(SegmentedControl, {
+						id: 'ggg-select',
+						label: title,
 						value: selected,
 						onChange: setSelected,
 						options: options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
@@ -191,27 +209,38 @@ export function showSelect({ title, message, options, value, confirmLabel = '确
 	});
 }
 
+/** 表单字段定义。 */
+export type FormField =
+	| { readonly type: 'text'; readonly name: string; readonly label?: string; readonly placeholder?: string; readonly value?: string }
+	| { readonly type: 'checkbox'; readonly name: string; readonly label?: string; readonly value?: boolean }
+	| { readonly type: 'select'; readonly name: string; readonly label?: string; readonly value?: string; readonly options: ReadonlyArray<{ value: string; label: string; title?: string }> }
+	| { readonly type: 'multiselect'; readonly name: string; readonly label?: string; readonly value?: readonly string[]; readonly options: ReadonlyArray<{ value: string; label: string }> };
+
+/** 表单选项。 */
+export interface FormOptions {
+	readonly title: string;
+	readonly message?: string;
+	readonly fields: readonly FormField[];
+	readonly confirmLabel?: string;
+}
+
 /**
  * 表单：支持文本、下拉、单选、勾选与多选项。
  *
- * @param {object} options - 选项。
- * @param {string} options.title - 标题。
- * @param {string} [options.message] - 可选提示行。
- * @param {Array<object>} options.fields - 字段定义。
- * @param {string} [options.confirmLabel] - 确认按钮文案。
- * @returns {Promise<object|null>} 用户确认返回字段值对象，取消返回 null。
+ * @param options - 见 {@link FormOptions}。
+ * @returns 用户确认返回字段值对象，取消返回 null。
  */
-export function showForm({ title, message, fields, confirmLabel = '确定' }) {
-	return runDialog((finish) => {
-		function Content() {
-			const initial = {};
+export function showForm({ title, message = '', fields, confirmLabel = '确定' }: FormOptions): Promise<Record<string, unknown> | null> {
+	return runDialog<Record<string, unknown> | null>((finish) => {
+		function Content(): React.ReactElement {
+			const initial: Record<string, unknown> = {};
 			for (const field of fields) {
 				if (field.type === 'checkbox') initial[field.name] = field.value === true;
 				else if (field.type === 'multiselect') initial[field.name] = Array.isArray(field.value) ? [...field.value] : [];
 				else initial[field.name] = field.value ?? '';
 			}
-			const [values, setValues] = React.useState(initial);
-			const setField = (name, value) => setValues((previous) => ({ ...previous, [name]: value }));
+			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
+			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -220,7 +249,7 @@ export function showForm({ title, message, fields, confirmLabel = '确定' }) {
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== undefined && message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
 					...fields.map((field) => buildField(field, values, setField)),
 				),
 				footer: React.createElement(
@@ -240,12 +269,12 @@ export function showForm({ title, message, fields, confirmLabel = '确定' }) {
 /**
  * 构造单个表单字段。
  *
- * @param {object} field - 字段定义。
- * @param {object} values - 当前全部字段值。
- * @param {function} setField - 字段赋值回调。
+ * @param field - 字段定义。
+ * @param values - 当前全部字段值。
+ * @param setField - 字段赋值回调。
  * @returns 字段元素。
  */
-function buildField(field, values, setField) {
+function buildField(field: FormField, values: Record<string, unknown>, setField: (name: string, value: unknown) => void): React.ReactElement | null {
 	const current = values[field.name];
 	if (field.type === 'text') {
 		return React.createElement(
@@ -253,9 +282,9 @@ function buildField(field, values, setField) {
 			{ key: field.name, className: 'ggg-field' },
 			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
 			React.createElement(Input, {
-				value: current,
+				value: typeof current === 'string' ? current : '',
 				placeholder: field.placeholder ?? '',
-				onChange: (event) => setField(field.name, event.target.value),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setField(field.name, event.target.value),
 			}),
 		);
 	}
@@ -263,7 +292,11 @@ function buildField(field, values, setField) {
 		return React.createElement(
 			'label',
 			{ key: field.name, className: 'ggg-field ggg-field-inline' },
-			React.createElement(Checkbox, { checked: current, onChange: (event) => setField(field.name, event.target.checked) }),
+			React.createElement(Checkbox, {
+				checked: current === true,
+				onChange: (next: boolean) => setField(field.name, next),
+				label: field.label ?? '',
+			}),
 			React.createElement('span', { className: 'ggg-field-text' }, field.label),
 		);
 	}
@@ -273,30 +306,34 @@ function buildField(field, values, setField) {
 			{ key: field.name, className: 'ggg-field' },
 			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
 			React.createElement(SegmentedControl, {
-				value: current,
-				onChange: (value) => setField(field.name, value),
+				id: `ggg-field-${field.name}`,
+				label: field.label ?? field.name,
+				value: typeof current === 'string' ? current : '',
+				onChange: (next: string) => setField(field.name, next),
 				options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 			}),
 		);
 	}
 	if (field.type === 'multiselect') {
+		const selected = Array.isArray(current) ? current as string[] : [];
 		return React.createElement(
 			'div',
 			{ key: field.name, className: 'ggg-field' },
 			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
 			...field.options.map((option) => {
-				const checked = current.includes(option.value);
+				const checked = selected.includes(option.value);
 				return React.createElement(
 					'label',
 					{ key: option.value, className: 'ggg-field ggg-field-inline' },
 					React.createElement(Checkbox, {
 						checked,
-						onChange: (event) => {
-							const next = event.target.checked
-								? [...current, option.value]
-								: current.filter((item) => item !== option.value);
-							setField(field.name, next);
+						onChange: (next: boolean) => {
+							const values2 = next
+								? [...selected, option.value]
+								: selected.filter((item) => item !== option.value);
+							setField(field.name, values2);
 						},
+						label: option.label,
 					}),
 					React.createElement('span', { className: 'ggg-field-text' }, option.label),
 				);

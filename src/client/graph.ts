@@ -18,9 +18,9 @@ import {
 import {
 	HEAD_NODE_RADIUS, LANE_STROKE, LANE_WIDTH, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
 	RING_STROKE, ROW_HEIGHT, laneCentre, laneColour, layoutCommits, nodeOuterRadius, segmentGeometry,
-} from './lanes.js';
-import { RemoteRefIcon, TagRefIcon } from './ref-icons.js';
-import { copyText } from './context-menu.js';
+} from './lanes.ts';
+import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
+import { copyText } from './context-menu.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
@@ -367,10 +367,10 @@ function CommitRow({
 			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}${isMuted ? ' ggg-row-muted' : ''}`,
 			'data-hash': commit.hash,
 			onClick: () => onSelect(commit.hash),
-			onContextMenu: (event) => {
+			onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => {
 				event.preventDefault();
-				const target = event.target;
-				const refElement = target.closest?.('[data-ref-type]');
+				const target = event.target as HTMLElement;
+				const refElement = target.closest('[data-ref-type]');
 				const refInfo = refElement !== null && refElement !== undefined
 					? { type: refElement.getAttribute('data-ref-type'), name: refElement.getAttribute('data-ref-name') }
 					: null;
