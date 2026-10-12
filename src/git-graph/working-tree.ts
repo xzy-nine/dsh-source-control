@@ -16,6 +16,9 @@ export interface GitResult {
 	readonly stderr: string;
 }
 
+/** 仓库尚无提交时 `git restore --staged` 的报错；git 会给出带引号的 HEAD。 */
+const NO_HEAD_PATTERN = /could not resolve ['"]?HEAD['"]?|unknown revision|ambiguous argument ['"]?HEAD['"]?/i;
+
 /** 一条工作区变更：索引与工作区各自的状态码。 */
 export interface WorkingTreeEntry {
 	/** 当前路径，相对仓库根，使用 `/` 分隔。 */
@@ -121,22 +124,24 @@ export function stagePaths(repo: string, paths: readonly string[]): Promise<stri
 /**
  * 取消暂存指定路径；不传路径时取消全部。
  *
- * 仓库尚无提交（没有 HEAD）时 `git restore --staged` 不可用，退回 `git rm --cached`。
+ * `git restore` 没有 `--all` 选项，取消全部用 pathspec `.`。
+ * 仓库尚无提交（没有 HEAD）时 `restore --staged` 需要 HEAD 才能工作，退回从索引移除。
  *
  * @param repo - 仓库路径。
  * @param paths - 要取消暂存的路径。
  * @returns 无。
  */
 export async function unstagePaths(repo: string, paths: readonly string[]): Promise<string> {
-	const target = paths.length === 0 ? ['--all'] : ['--', ...paths];
+	// 空数组表示全部：restore 与 rm 都用 `.` 这个 pathspec。
+	const target = paths.length === 0 ? ['.'] : [...paths];
 	try {
-		return await gitOrThrow(['restore', '--staged', ...target], repo);
+		return await gitOrThrow(['restore', '--staged', '--', ...target], repo);
 	} catch (error) {
 		// 走查错误信息：仅当仓库没有 HEAD 时才退回 rm --cached，其余失败原样抛出。
+		// git 的实际措辞带引号（could not resolve 'HEAD'），正则因此不能写死无引号形式。
 		const message = error instanceof Error ? error.message : String(error);
-		if (!/could not resolve HEAD|unknown revision|ambiguous argument 'HEAD'/i.test(message)) throw error;
-		const files = paths.length === 0 ? ['-r', '.'] : ['--', ...paths];
-		return gitOrThrow(['rm', '--cached', '-r', '--quiet', ...files], repo);
+		if (!NO_HEAD_PATTERN.test(message)) throw error;
+		return gitOrThrow(['rm', '--cached', '-r', '--quiet', '--', ...target], repo);
 	}
 }
 

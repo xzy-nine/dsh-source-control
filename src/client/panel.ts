@@ -323,7 +323,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			onWarning: (text) => setAiWarning(text),
 			onError: (text) => setAiWarning(text),
 			onStats: (stats) => setAiStats(stats as AiStats),
-		}).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
+		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
+		}, amend).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
 	};
 
 	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);

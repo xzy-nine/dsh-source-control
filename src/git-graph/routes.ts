@@ -9,6 +9,7 @@ import nodePath from 'node:path';
 import { DataSource } from '../../vendor/git-graph/dataSource.js';
 import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, runGit, stagePaths, unstagePaths } from './working-tree.js';
+import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { discoverRepositories, loadRepoSync } from './repo-discovery.js';
 
@@ -462,79 +463,6 @@ const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定
 	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
 	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
 
-/** 单文件 diff 长度上限（字符）。 */
-const SINGLE_DIFF_MAX = 50_000;
-/** diff 总长度上限（字符）。 */
-const DIFF_TOTAL_MAX = 500_000;
-
-/**
- * 为未跟踪文件手工构造 patch。
- * @param repo - 仓库路径。
- * @param filePath - 文件相对路径。
- * @returns patch 文本；读失败时返回空串。
- */
-async function untrackedPatch(repo: string, filePath: string): Promise<string> {
-	try {
-		const abs = nodePath.resolve(repo, filePath);
-		const content = await fs.readFile(abs, 'utf8');
-		const lines = content.split('\n');
-		if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-		const header = `diff --git a/${filePath} b/${filePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
-		const body = lines.map((l) => '+' + l).join('\n');
-		return header + body + '\n';
-	} catch {
-		return '';
-	}
-}
-
-/**
- * 收集 diff：暂存优先，否则工作区 + 未跟踪。
- * 逐文件取 diff，超 SINGLE_DIFF_MAX 丢弃，按长度升序贪心填至 DIFF_TOTAL_MAX。
- * @param repo - 仓库路径。
- * @returns diff 文本；无内容时返回空串。
- */
-async function collectDiff(repo: string): Promise<string> {
-	const diffs: string[] = [];
-	try {
-		const stagedOut = await gitOrThrow(['diff', '--cached', '--name-only'], repo);
-		const stagedFiles = stagedOut.split('\n').filter((s) => s.length > 0);
-		if (stagedFiles.length > 0) {
-			for (const f of stagedFiles) {
-				try {
-					const d = await gitOrThrow(['diff', '--cached', '--no-color', '--', f], repo);
-					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
-				} catch { /* skip */ }
-			}
-		} else {
-			const workingOut = await gitOrThrow(['diff', '--name-only'], repo);
-			const workingFiles = workingOut.split('\n').filter((s) => s.length > 0);
-			for (const f of workingFiles) {
-				try {
-					const d = await gitOrThrow(['diff', '--no-color', '--', f], repo);
-					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
-				} catch { /* skip */ }
-			}
-			const untrackedOut = await gitOrThrow(['ls-files', '--others', '--exclude-standard'], repo);
-			const untrackedFiles = untrackedOut.split('\n').filter((s) => s.length > 0);
-			for (const f of untrackedFiles) {
-				const d = await untrackedPatch(repo, f);
-				if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
-			}
-		}
-	} catch {
-		return '';
-	}
-	diffs.sort((a, b) => a.length - b.length);
-	let total = 0;
-	const parts: string[] = [];
-	for (const d of diffs) {
-		if (total + d.length > DIFF_TOTAL_MAX) break;
-		parts.push(d);
-		total += d.length + 1;
-	}
-	return parts.join('\n');
-}
-
 /**
  * 查模型是否声明了 `off` 推理档位。
  * @param llm - llm 服务。
@@ -679,17 +607,22 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 						else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
 					}
 
-					const diff = await collectDiff(repo);
+					// 修补上一次提交时，把上一提交的改动一并纳入 diff。
+					const amend = body.amend === true;
+					const diff = await collectDiff(repo, amend);
 					if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
 
 					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 					const systemPrompt = rules.length > 0 ? AI_COMMIT_SYSTEM_PROMPT + '\n\n' + rules : AI_COMMIT_SYSTEM_PROMPT;
 					const off = await canDisableReasoning(llm, provider, model);
+					const request = amend
+						? `请根据以下 diff 生成提交信息（这是修补上一次提交，diff 含上一次提交的改动与本次改动）：\n\n${diff}`
+						: `请根据以下 diff 生成提交信息：\n\n${diff}`;
 					const streamOpts: Record<string, unknown> = {
 						provider,
 						model,
 						system: systemPrompt,
-						messages: [{ role: 'user', content: [{ type: 'text', text: `请根据以下 diff 生成提交信息：\n\n${diff}` }] }],
+						messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
 						maxTokens: 512,
 						temperature: 0,
 					};

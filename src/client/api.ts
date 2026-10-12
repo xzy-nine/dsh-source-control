@@ -778,13 +778,17 @@ export interface CommitMessageHandlers {
  * @param model - 模型 id。
  * @param rules - 自定义规则提示词。
  * @param handlers - 流式回调与取消信号。
+ * @param amend - 是否修补上一次提交；为真时宿主把上一提交的改动一并纳入 diff。
  * @returns 无。
  */
-export async function generateCommitMessage(cwd: string, provider: string, model: string, rules: string, handlers: CommitMessageHandlers): Promise<void> {
+export async function generateCommitMessage(
+	cwd: string, provider: string, model: string, rules: string,
+	handlers: CommitMessageHandlers, amend = false,
+): Promise<void> {
 	const res = await fetch(AI_COMMIT_PATH, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ repo: cwd, provider, model, rules }),
+		body: JSON.stringify({ repo: cwd, provider, model, rules, amend }),
 		signal: handlers.signal,
 	});
 	if (!res.ok) {
