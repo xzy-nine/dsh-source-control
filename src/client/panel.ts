@@ -203,6 +203,27 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	}, [workingTreePath, refresh, setState]);
 
 	/**
+	 * 在进度条下执行一次不刷新的预备调用。
+	 *
+	 * 用于弹窗打开前的远端查询（如 gh 账号与分支列表）：这类请求耗时可达数秒，
+	 * 若不置 busy，顶部不定进度条不会出现，界面看起来像卡住。失败时返回 null 而不抛错，
+	 * 由调用方决定降级路径。
+	 *
+	 * @param operation - 预备操作。
+	 * @returns 操作结果；失败时为 null。
+	 */
+	const withProgress = React.useCallback(async <T,>(operation: () => Promise<T>): Promise<T | null> => {
+		setState((previous) => ({ ...previous, busy: true }));
+		try {
+			return await operation();
+		} catch {
+			return null;
+		} finally {
+			setState((previous) => ({ ...previous, busy: false }));
+		}
+	}, [setState]);
+
+	/**
 	 * 推送某个仓库的当前分支到其上游，失败时报错。
 	 *
 	 * `pushUpstream` 把失败放在返回值里而不抛错，因此这里显式检查，避免静默失败。
@@ -459,7 +480,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		| { kind: 'github'; owner: string; name: string; private: boolean; description: string }
 		| null
 	> => {
-		const account = await ghAccount(workingTreePath as string).catch(() => null);
+		const account = await withProgress(() => ghAccount(workingTreePath as string));
 		const ghReady = account !== null && account.loggedIn
 			&& account.owners.length > 0
 			&& !account.unavailable.some((item) => item.feature === 'create-repo');
@@ -522,7 +543,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 				},
 			];
 
-		const form = await showTabbedForm({ title: '发布分支', pages, confirmLabel: '发布' });
+		const form = await showTabbedForm({ title: '发布', pages, confirmLabel: '发布' });
 		if (form === null) return null;
 		if (form.page === 'github') {
 			const name = String(form.name ?? '').trim();
@@ -543,7 +564,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const url = String(form.url ?? '').trim();
 		if (url === '') return null;
 		return { kind: 'manual', name, url };
-	}, [workingTreePath, selectedNode]);
+	}, [workingTreePath, selectedNode, withProgress]);
 
 	/**
 	 * 发布当前本地分支：推送到选定远程并建立上游。
@@ -669,7 +690,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const path = workingTreePath;
 		const head = state.head;
 
-		const account = await ghAccount(path).catch(() => null);
+		const account = await withProgress(() => ghAccount(path));
 		if (account === null || !account.loggedIn) {
 			await notify('未检测到可用的 GitHub 登录，请先运行 gh auth login。');
 			return;
@@ -680,7 +701,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			return;
 		}
 
-		const info = await ghRepoInfo(path).catch(() => null);
+		const info = await withProgress(() => ghRepoInfo(path));
 		const branches = (info?.branches ?? []).filter((name) => name !== head);
 		if (branches.length === 0) {
 			await notify('没有可作为目标的分支，请先把分支推送到远程。');
@@ -712,7 +733,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			});
 			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
 		});
-	}, [workingTreePath, state.head, state.busy, state.detail, run, notify]);
+	}, [workingTreePath, state.head, state.busy, state.detail, run, notify, withProgress]);
 
 	/** 导出仓库配置为 JSON 文件下载。 */
 	const handleExportConfig = React.useCallback(async () => {

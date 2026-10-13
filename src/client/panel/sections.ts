@@ -10,7 +10,7 @@ import {
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
-import { PublishBranchIcon, RepoIcon } from '../ref-icons.ts';
+import { PublishIcon, RepoIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
@@ -225,7 +225,7 @@ export function ChangesSection({
 							variant: 'primary', size: 'sm', disabled: busy,
 							title: '把当前分支推送到远程并建立跟踪',
 							onClick: onPublish,
-						}, React.createElement(PublishBranchIcon), '发布分支')
+						}, React.createElement(PublishIcon), '发布')
 						: React.createElement(Button, {
 							variant: 'primary', size: 'sm', disabled: busy || message.trim() === '' || stagedPaths.length === 0,
 							onClick: onSubmit,

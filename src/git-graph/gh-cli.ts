@@ -160,8 +160,16 @@ function ghError(result: GhResult, action: 'generic' | 'create-repo' = 'generic'
 	return failure.message;
 }
 
+/** 账号信息的缓存；每次 gh 调用约 1 秒，同一进程内不重复请求。 */
+let accountCache: { at: number; value: GhAccount } | null = null;
+
+/** 缓存有效期（毫秒）：成功结果可缓存较久。 */
+const ACCOUNT_TTL_MS = 5 * 60_000;
+/** 失败结果（未登录等）的缓存时长：此时用户可能立刻去登录，不宜久留。 */
+const ACCOUNT_FAILURE_TTL_MS = 15_000;
+
 /**
- * 读取当前 GitHub 账号与可用的仓库属主。
+ * 读取当前 GitHub 账号与可用的仓库属主（带进程内缓存）。
  *
  * 同时给出各功能是否可用：缺 `repo` scope 时建仓库与建 PR 都无法进行，前端据此隐藏
  * 对应入口并展示原因，而不是让操作到最后一刻才失败。
@@ -170,6 +178,31 @@ function ghError(result: GhResult, action: 'generic' | 'create-repo' = 'generic'
  * @returns 账号信息；未登录时 `loggedIn` 为 false。
  */
 export async function ghAccount(repo: string): Promise<GhAccount> {
+	if (accountCache !== null) {
+		const ttl = accountCache.value.loggedIn ? ACCOUNT_TTL_MS : ACCOUNT_FAILURE_TTL_MS;
+		if (Date.now() - accountCache.at < ttl) return accountCache.value;
+	}
+	const value = await ghAccountUncached(repo);
+	accountCache = { at: Date.now(), value };
+	return value;
+}
+
+/**
+ * 丢弃账号信息缓存。
+ *
+ * 登录、登出或补授权之后调用，使下一次读取取到最新状态。
+ */
+export function clearGhAccountCache(): void {
+	accountCache = null;
+}
+
+/**
+ * 读取当前 GitHub 账号与可用的仓库属主。
+ *
+ * @param repo - 仓库路径。
+ * @returns 账号信息；未登录时 `loggedIn` 为 false。
+ */
+async function ghAccountUncached(repo: string): Promise<GhAccount> {
 	const unavailable: { feature: 'create-repo' | 'create-pr'; reason: GhFailureKind; message: string }[] = [];
 	const auth = await runGh(['auth', 'status'], repo);
 	if (auth.code !== 0) {
@@ -180,11 +213,13 @@ export async function ghAccount(repo: string): Promise<GhAccount> {
 		return { loggedIn: false, user: null, owners: [], scopes: [], unavailable };
 	}
 
-	const userResult = await runGh(['api', 'user', '--jq', '.login'], repo);
+	// `user` 与 `user/orgs` 互不依赖，并行发起以缩短等待；每次 gh 调用约 1 秒。
+	const [userResult, orgs] = await Promise.all([
+		runGh(['api', 'user', '--jq', '.login'], repo),
+		runGh(['api', 'user/orgs', '--jq', '.[].login'], repo),
+	]);
 	const user = userResult.code === 0 ? userResult.stdout.trim() : '';
 	const owners: string[] = user === '' ? [] : [user];
-
-	const orgs = await runGh(['api', 'user/orgs', '--jq', '.[].login'], repo);
 	if (orgs.code === 0) {
 		for (const line of orgs.stdout.split('\n')) {
 			const login = line.trim();

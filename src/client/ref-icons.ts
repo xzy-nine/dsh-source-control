@@ -53,7 +53,7 @@ const TAG_MARKUP = iconMarkup(tagSvg, REF_ICON_SIZE);
 const CLOUD_MARKUP = iconMarkup(cloudSvg, REF_ICON_SIZE);
 /** 存储库图标的行内标记。 */
 const BOOK_MARKUP = iconMarkup(bookSvg, REPO_ICON_SIZE);
-/** 发布分支图标的行内标记。 */
+/** 发布图标的行内标记。 */
 const CLOUD_UPLOAD_MARKUP = iconMarkup(cloudUploadSvg, ACTION_ICON_SIZE);
 
 /**
@@ -84,10 +84,10 @@ export function RepoIcon(): React.ReactElement {
 }
 
 /**
- * 发布分支图标（云 + 向上箭头）。
+ * 发布图标（云 + 向上箭头）。
  *
  * @returns 图标元素。
  */
-export function PublishBranchIcon(): React.ReactElement {
+export function PublishIcon(): React.ReactElement {
 	return ResourceIcon(CLOUD_UPLOAD_MARKUP);
 }

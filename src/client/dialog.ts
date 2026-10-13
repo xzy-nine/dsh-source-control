@@ -340,20 +340,37 @@ export interface TabbedFormOptions {
  * @param options - 见 {@link TabbedFormOptions}。
  * @returns 用户确认返回字段值对象（含 `page`），取消返回 null。
  */
+/**
+ * 分页表单：顶部页签切换页面，底部确认返回当前页的字段值。
+ *
+ * 各页字段值互相隔离，同名不会串值（如两页各有 `name`）；切换页签保留各自已填内容。
+ * 返回结果附带 `page` 表示所选页签，其后是该页的字段值。
+ *
+ * @param options - 见 {@link TabbedFormOptions}。
+ * @returns 用户确认返回当前页的字段值（含 `page`），取消返回 null。
+ */
 export function showTabbedForm({ title, pages, confirmLabel = '确定' }: TabbedFormOptions): Promise<Record<string, unknown> | null> {
 	return runDialog<Record<string, unknown> | null>((finish) => {
 		function Content(): React.ReactElement {
-			const initial: Record<string, unknown> = { page: pages[0].value };
+			// 每页一份值对象：同名不跨页覆盖。
+			const initial: Record<string, Record<string, unknown>> = {};
 			for (const page of pages) {
+				const pageValues: Record<string, unknown> = {};
 				for (const field of page.fields) {
-					if (field.type === 'checkbox') initial[field.name] = field.value === true;
-					else if (field.type === 'multiselect') initial[field.name] = Array.isArray(field.value) ? [...field.value] : [];
-					else initial[field.name] = field.value ?? '';
+					if (field.type === 'checkbox') pageValues[field.name] = field.value === true;
+					else if (field.type === 'multiselect') pageValues[field.name] = Array.isArray(field.value) ? [...field.value] : [];
+					else pageValues[field.name] = field.value ?? '';
 				}
+				initial[page.value] = pageValues;
 			}
-			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
-			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
-			const active = pages.find((page) => page.value === values.page) ?? pages[0];
+			const [values, setValues] = React.useState<Record<string, Record<string, unknown>>>(initial);
+			const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
+			const active = pages.find((page) => page.value === activeValue) ?? pages[0];
+			const activeValues = values[active.value] ?? {};
+			const setField = (name: string, value: unknown): void => setValues((previous) => ({
+				...previous,
+				[active.value]: { ...(previous[active.value] ?? {}), [name]: value },
+			}));
 			// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 			const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 				{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
@@ -373,18 +390,19 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					pages.length > 1 && React.createElement(SegmentedTabs, {
 						label: title,
 						value: active.value,
-						onChange: (next: string) => setField('page', next),
+						onChange: setActiveValue,
 						items: tabItems,
 					}),
 					active.message !== undefined && active.message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, active.message),
-					...active.fields.map((field) => buildField(field, values, setField)),
+					...active.fields.map((field) => buildField(field, activeValues, setField)),
 				),
 				footer: React.createElement(
 					React.Fragment,
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', onClick: () => finish(values),
+						variant: 'primary', size: 'sm',
+						onClick: () => finish({ page: active.value, ...activeValues }),
 					}, confirmLabel),
 				),
 			});
