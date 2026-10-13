@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, Input, Menu, SegmentedControl,
+	Button, Checkbox, Input, Menu, SegmentedControl, SegmentedTabs,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { fetchAiModels } from './api.ts';
@@ -15,11 +15,6 @@ import type { AiModelCatalog } from './api.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
 
 /** 用户身份配置位置选项。 */
-const CONFIG_LOCATION = [
-	{ value: 'global', label: '全局', title: '写入 ~/.gitconfig' },
-	{ value: 'local', label: '仓库', title: '写入当前仓库 .git/config' },
-];
-
 /** localStorage 键。 */
 export const SETTINGS_KEY = 'dsh-git-graph-settings';
 
@@ -305,6 +300,9 @@ export interface UserDetails {
 	readonly userEmail?: { local?: string | null; global?: string | null } | null;
 }
 
+/** 设置页签：作用范围。 */
+export type SettingsTab = 'repo' | 'global';
+
 /** 设置面板属性。 */
 export interface SettingsPanelProps {
 	readonly open: boolean;
@@ -324,6 +322,9 @@ export interface SettingsPanelProps {
 /**
  * Git Graph 设置面板。
  *
+ * 分「仓库设置」与「全局设置」两个页签：前者作用于当前仓库（身份、远程、导出），后者作用于
+ * 界面与生成行为。用户身份在两侧都显示——它既可写入单个仓库，也可写入全局配置。
+ *
  * @param props - 见 {@link SettingsPanelProps}。
  * @returns 面板元素，未展开时返回 null。
  */
@@ -331,8 +332,134 @@ export function SettingsPanel({
 	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig,
 	userDetails, onEditUserDetails, onDeleteUserDetails,
 }: SettingsPanelProps): React.ReactElement | null {
+	const [tab, setTab] = React.useState<SettingsTab>('repo');
 	if (!open) return null;
 	const patch = (partial: Partial<Settings>): void => onChange({ ...settings, ...partial });
+	const userSection = (scope: SettingsTab): React.ReactElement => React.createElement(Section, { title: 'User Details' },
+		React.createElement(UserDetailsForm, {
+			userDetails,
+			onEdit: onEditUserDetails,
+			onDelete: onDeleteUserDetails,
+			scope,
+		}),
+	);
+	const generalSections = [
+		React.createElement(Section, { title: 'General', key: 'general' },
+			React.createElement(SelectRow, {
+				label: '提交排序',
+				options: ORDERING.map((option) => ({ value: option.value, label: option.label, title: option.title })),
+				value: settings.commitOrdering,
+				onChange: (value) => patch({ commitOrdering: value }),
+			}),
+			React.createElement(SelectRow, {
+				label: '日期格式',
+				options: DATE_FORMAT_TYPE,
+				value: String(settings.dateFormat.type),
+				onChange: (type) => patch({ dateFormat: { ...settings.dateFormat, type: Number(type) } }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '使用 ISO 日期格式',
+				checked: settings.dateFormat.iso,
+				onChange: (iso) => patch({ dateFormat: { ...settings.dateFormat, iso } }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '显示贮藏',
+				checked: settings.showStashes,
+				onChange: (showStashes) => patch({ showStashes }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '显示标签',
+				checked: settings.showTags,
+				onChange: (showTags) => patch({ showTags }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '显示远程分支',
+				checked: settings.showRemoteBranches,
+				onChange: (showRemoteBranches) => patch({ showRemoteBranches }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '只跟随第一个父提交',
+				checked: settings.onlyFollowFirstParent,
+				onChange: (onlyFollowFirstParent) => patch({ onlyFollowFirstParent }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '包含 reflog 提到的提交',
+				checked: settings.includeCommitsMentionedByReflogs,
+				onChange: (includeCommitsMentionedByReflogs) => patch({ includeCommitsMentionedByReflogs }),
+			}),
+			React.createElement(ToggleRow, {
+				label: 'Markdown 渲染提交信息',
+				checked: settings.markdown,
+				onChange: (markdown) => patch({ markdown }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '显示作者头像',
+				checked: settings.showAvatars,
+				onChange: (showAvatars) => patch({ showAvatars }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '静音合并提交',
+				checked: settings.muteMergeCommits,
+				onChange: (muteMergeCommits) => patch({ muteMergeCommits }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '合并本地与远程分支标签',
+				checked: settings.combineLocalAndRemoteBranchLabels,
+				onChange: (combineLocalAndRemoteBranchLabels) => patch({ combineLocalAndRemoteBranchLabels }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '抓取时修剪已删除远程分支',
+				checked: settings.fetchAndPrune,
+				onChange: (fetchAndPrune) => patch({ fetchAndPrune }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '抓取时修剪远程标签',
+				checked: settings.fetchAndPruneTags,
+				onChange: (fetchAndPruneTags) => patch({ fetchAndPruneTags }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '加载仓库后滚动到 HEAD',
+				checked: settings.onRepoLoadScrollToHead,
+				onChange: (onRepoLoadScrollToHead) => patch({ onRepoLoadScrollToHead }),
+			}),
+		),
+		React.createElement(Section, { title: 'Issue Linking', key: 'issue' },
+			React.createElement(IssueLinkingForm, {
+				config: settings.issueLinkingConfig,
+				onChange: (issueLinkingConfig) => patch({ issueLinkingConfig }),
+			}),
+		),
+		React.createElement(Section, { title: 'AI 提交信息', key: 'ai' },
+			React.createElement(AiModelConfigSection, {
+				provider: settings.aiCommitProvider,
+				model: settings.aiCommitModel,
+				rules: settings.aiCommitRules,
+				onChange: (aiCommitProvider, aiCommitModel) => patch({ aiCommitProvider, aiCommitModel }),
+				onRulesChange: (aiCommitRules) => patch({ aiCommitRules }),
+			}),
+		),
+	];
+	const repoSections = [
+		userSection('repo'),
+		React.createElement(Section, { title: 'Remote Configuration', key: 'remote' },
+			React.createElement(RemoteConfigSection, {
+				remotes,
+				onDeleteRemote,
+				onAddRemote,
+				onEditRemote,
+			}),
+		),
+		React.createElement(Section, { title: 'Pull Request Creation', key: 'pr' },
+			React.createElement('div', { className: 'ggg-set-note' },
+				'创建 Pull Request 依赖 GitHub 等宿主集成；DSH 版本暂不支持，请在相应平台上创建。'),
+		),
+		React.createElement(Section, { title: '仓库配置', key: 'export' },
+			React.createElement(Button, {
+				variant: 'outline', size: 'sm',
+				onClick: () => { void onExportConfig?.(); },
+			}, '导出仓库配置'),
+		),
+	];
 	return React.createElement(
 		React.Fragment,
 		null,
@@ -347,126 +474,24 @@ export function SettingsPanel({
 					onClick: onClose,
 				}, React.createElement(IconCloseOutlineRegular, { size: 14 })),
 			),
-			React.createElement('div', { className: 'ggg-settings-body' },
-				React.createElement(Section, { title: 'General' },
-					React.createElement(SelectRow, {
-						label: '提交排序',
-						options: ORDERING.map((option) => ({ value: option.value, label: option.label, title: option.title })),
-						value: settings.commitOrdering,
-						onChange: (value) => patch({ commitOrdering: value }),
-					}),
-					React.createElement(SelectRow, {
-						label: '日期格式',
-						options: DATE_FORMAT_TYPE,
-						value: String(settings.dateFormat.type),
-						onChange: (type) => patch({ dateFormat: { ...settings.dateFormat, type: Number(type) } }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '使用 ISO 日期格式',
-						checked: settings.dateFormat.iso,
-						onChange: (iso) => patch({ dateFormat: { ...settings.dateFormat, iso } }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '显示贮藏',
-						checked: settings.showStashes,
-						onChange: (showStashes) => patch({ showStashes }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '显示标签',
-						checked: settings.showTags,
-						onChange: (showTags) => patch({ showTags }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '显示远程分支',
-						checked: settings.showRemoteBranches,
-						onChange: (showRemoteBranches) => patch({ showRemoteBranches }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '只跟随第一个父提交',
-						checked: settings.onlyFollowFirstParent,
-						onChange: (onlyFollowFirstParent) => patch({ onlyFollowFirstParent }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '包含 reflog 提到的提交',
-						checked: settings.includeCommitsMentionedByReflogs,
-						onChange: (includeCommitsMentionedByReflogs) => patch({ includeCommitsMentionedByReflogs }),
-					}),
-					React.createElement(ToggleRow, {
-						label: 'Markdown 渲染提交信息',
-						checked: settings.markdown,
-						onChange: (markdown) => patch({ markdown }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '显示作者头像',
-						checked: settings.showAvatars,
-						onChange: (showAvatars) => patch({ showAvatars }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '静音合并提交',
-						checked: settings.muteMergeCommits,
-						onChange: (muteMergeCommits) => patch({ muteMergeCommits }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '合并本地与远程分支标签',
-						checked: settings.combineLocalAndRemoteBranchLabels,
-						onChange: (combineLocalAndRemoteBranchLabels) => patch({ combineLocalAndRemoteBranchLabels }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '抓取时修剪已删除远程分支',
-						checked: settings.fetchAndPrune,
-						onChange: (fetchAndPrune) => patch({ fetchAndPrune }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '抓取时修剪远程标签',
-						checked: settings.fetchAndPruneTags,
-						onChange: (fetchAndPruneTags) => patch({ fetchAndPruneTags }),
-					}),
-					React.createElement(ToggleRow, {
-						label: '加载仓库后滚动到 HEAD',
-						checked: settings.onRepoLoadScrollToHead,
-						onChange: (onRepoLoadScrollToHead) => patch({ onRepoLoadScrollToHead }),
-					}),
-				),
-				React.createElement(Section, { title: 'User Details' },
-					React.createElement(UserDetailsForm, {
-						userDetails,
-						onEdit: onEditUserDetails,
-						onDelete: onDeleteUserDetails,
-					}),
-				),
-				React.createElement(Section, { title: 'Remote Configuration' },
-					React.createElement(RemoteConfigSection, {
-						remotes,
-						onDeleteRemote,
-						onAddRemote,
-						onEditRemote,
-					}),
-				),
-				React.createElement(Section, { title: 'Issue Linking' },
-					React.createElement(IssueLinkingForm, {
-						config: settings.issueLinkingConfig,
-						onChange: (issueLinkingConfig) => patch({ issueLinkingConfig }),
-					}),
-				),
-				React.createElement(Section, { title: 'Pull Request Creation' },
-					React.createElement('div', { className: 'ggg-set-note' },
-						'创建 Pull Request 依赖 GitHub 等宿主集成；DSH 版本暂不支持，请在相应平台上创建。'),
-				),
-				React.createElement(Section, { title: '仓库配置' },
-					React.createElement(Button, {
-						variant: 'outline', size: 'sm',
-						onClick: () => { void onExportConfig?.(); },
-					}, '导出仓库配置'),
-				),
-				React.createElement(Section, { title: 'AI 提交信息' },
-					React.createElement(AiModelConfigSection, {
-						provider: settings.aiCommitProvider,
-						model: settings.aiCommitModel,
-						rules: settings.aiCommitRules,
-						onChange: (aiCommitProvider, aiCommitModel) => patch({ aiCommitProvider, aiCommitModel }),
-						onRulesChange: (aiCommitRules) => patch({ aiCommitRules }),
-					}),
-				),
+			React.createElement(SegmentedTabs, {
+				label: '设置范围',
+				value: tab,
+				onChange: (value: SettingsTab) => setTab(value),
+				items: [
+					{ value: 'repo', label: '仓库设置', id: 'ggg-set-tab-repo', panelId: 'ggg-set-panel-repo' },
+					{ value: 'global', label: '全局设置', id: 'ggg-set-tab-global', panelId: 'ggg-set-panel-global' },
+				],
+			}),
+			React.createElement('div', {
+				className: 'ggg-settings-body',
+				id: tab === 'repo' ? 'ggg-set-panel-repo' : 'ggg-set-panel-global',
+				role: 'tabpanel',
+				'aria-labelledby': tab === 'repo' ? 'ggg-set-tab-repo' : 'ggg-set-tab-global',
+			},
+				...(tab === 'repo'
+					? repoSections
+					: [userSection('global'), ...generalSections]),
 			),
 		),
 	);
@@ -606,66 +631,114 @@ function IssueLinkingForm({ config, onChange }: {
  * @param props.onDelete - 删除回调。
  * @returns 表单元素。
  */
-function UserDetailsForm({ userDetails, onEdit, onDelete }: {
+function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 	userDetails: UserDetails | null;
 	onEdit: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;
 	onDelete: (delName: boolean, delEmail: boolean, location: string) => void;
+	/** 表单所在页签：仓库级表单可退化为「跟随全局」，全局表单始终编辑全局值。 */
+	scope: SettingsTab;
 }): React.ReactElement {
+	const globalName = userDetails?.userName?.global ?? null;
+	const globalEmail = userDetails?.userEmail?.global ?? null;
+	const localName = userDetails?.userName?.local ?? null;
+	const localEmail = userDetails?.userEmail?.local ?? null;
 	const [name, setName] = React.useState('');
 	const [email, setEmail] = React.useState('');
-	const [location, setLocation] = React.useState('global');
+	// 仓库表单默认「跟随全局」：本地未配置时不写本地、直接用全局值。
+	const [useGlobal, setUseGlobal] = React.useState(scope === 'repo' && localName === null && localEmail === null);
 	const currentName = userDetails?.userName;
 	const currentEmail = userDetails?.userEmail;
+	/**
+	 * 该页签要编辑的值。
+	 *
+	 * 全局页签只取全局值——取「本地优先」会把仓库级覆盖误写进全局配置；仓库页签取
+	 * 「本地优先」，与仓库实际生效的身份一致。
+	 */
+	const valueOf = (entry: { local?: string | null; global?: string | null } | null | undefined): string =>
+		scope === 'global' ? (entry?.global ?? '') : (entry?.local ?? entry?.global ?? '');
+	// 表单载入时的值：未编辑过就不写回配置。
+	const initial = { name: valueOf(currentName), email: valueOf(currentEmail) };
 	React.useEffect(() => {
-		if (currentName !== undefined && currentName !== null) {
-			setName(currentName.local ?? currentName.global ?? '');
-		}
-		if (currentEmail !== undefined && currentEmail !== null) {
-			setEmail(currentEmail.local ?? currentEmail.global ?? '');
-		}
+		setName(valueOf(currentName));
+		setEmail(valueOf(currentEmail));
 	}, [currentName, currentEmail]);
+	const hasLocal = localName !== null || localEmail !== null;
+	// 仓库级值与全局不同：切换开关会清掉覆盖并改变生效身份，需先确认。
+	const differsFromGlobal = (localName !== null && localName !== globalName)
+		|| (localEmail !== null && localEmail !== globalEmail);
+	// 仓库表单开启「使用全局身份」时隐藏输入框，只展示当前生效的全局值。
+	const inheriting = scope === 'repo' && useGlobal;
+	/** 清除仓库级覆盖，改用全局身份。 */
+	const clearLocalCover = (): void => {
+		setUseGlobal(true);
+		setName(globalName ?? '');
+		setEmail(globalEmail ?? '');
+		onDelete?.(localName !== null, localEmail !== null, 'local');
+	};
+	/** 切换「使用全局身份」。会改变生效身份时先说明仓库级配置将被清除。 */
+	const toggleUseGlobal = (next: boolean): void => {
+		if (!next) { setUseGlobal(false); return; }
+		if (!hasLocal) { setUseGlobal(true); return; }
+		// 本地值与全局相同时清除覆盖不改变生效值，无需确认。
+		if (!differsFromGlobal) { clearLocalCover(); return; }
+		void showConfirmation({
+			title: '使用全局身份',
+			message: `当前仓库配置了 ${[localName, localEmail].filter((value) => value !== null).join(' / ')}，`
+				+ '改用全局身份会清除这些仓库级配置。\n需要现在清除吗？',
+			confirmLabel: '清除并使用全局', danger: true,
+		}).then((ok) => { if (ok) clearLocalCover(); });
+	};
 	const save = (): void => {
-		const deleteLocalName = (currentName?.local ?? null) !== null && location === 'global';
-		const deleteLocalEmail = (currentEmail?.local ?? null) !== null && location === 'global';
-		onEdit?.(name, email, location, deleteLocalName, deleteLocalEmail);
+		// 仓库级「跟随全局」时输入框不可见，没有可保存的内容。
+		if (inheriting) return;
+		// 未编辑则不写入：避免无改动时也覆盖配置。
+		if (name === initial.name && email === initial.email) return;
+		// 各页签只写自己那一级：清除仓库级覆盖由仓库页签的开关负责，这里不代劳。
+		onEdit?.(name, email, scope, false, false);
 	};
 	const remove = (): void => {
-		onDelete?.(true, true, location);
+		onDelete?.(true, true, scope);
 		setName('');
 		setEmail('');
 	};
 	return React.createElement(
 		'div',
 		{ className: 'ggg-set-form' },
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, '用户名'),
-			React.createElement(Input, {
-				value: name,
-				placeholder: 'git user.name',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setName(event.target.value),
-			}),
-		),
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, '邮箱'),
-			React.createElement(Input, {
-				value: email,
-				placeholder: 'git user.email',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setEmail(event.target.value),
-			}),
-		),
-		React.createElement(SelectRow, {
-			label: '写入位置',
-			options: CONFIG_LOCATION,
-			value: location,
-			onChange: setLocation,
+		scope === 'repo' && React.createElement(ToggleRow, {
+			label: '使用全局身份',
+			checked: useGlobal,
+			onChange: toggleUseGlobal,
 		}),
-		React.createElement('div', { className: 'ggg-set-row ggg-set-row-inline' },
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: save }, '保存'),
-			React.createElement(Button, { variant: 'outline', size: 'sm', onClick: remove }, '删除'),
-		),
-		currentName?.local !== undefined && currentName?.local !== null
-			&& React.createElement('div', { className: 'ggg-set-note' }, `仓库级覆盖：${currentName.local} <${currentEmail?.local ?? '?'}>`),
-		currentName?.global !== undefined && currentName?.global !== null
-			&& React.createElement('div', { className: 'ggg-set-note' }, `全局配置：${currentName.global} <${currentEmail?.global ?? '?'}>`),
+		// 使用全局身份时不显示输入框；当前值由下方的配置说明给出，不重复列出。
+		inheriting
+			? (globalName === null && globalEmail === null
+				? React.createElement('div', { className: 'ggg-set-note' }, '未配置全局身份，请在「全局设置」中配置。')
+				: null)
+			: [
+				React.createElement('label', { className: 'ggg-set-row-block', key: 'name' },
+					React.createElement('span', { className: 'ggg-set-row-text' }, '用户名'),
+					React.createElement(Input, {
+						value: name,
+						placeholder: 'git user.name',
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setName(event.target.value),
+					}),
+				),
+				React.createElement('label', { className: 'ggg-set-row-block', key: 'email' },
+					React.createElement('span', { className: 'ggg-set-row-text' }, '邮箱'),
+					React.createElement(Input, {
+						value: email,
+						placeholder: 'git user.email',
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setEmail(event.target.value),
+					}),
+				),
+				React.createElement('div', { className: 'ggg-set-row ggg-set-row-inline', key: 'actions' },
+					React.createElement(Button, { variant: 'primary', size: 'sm', onClick: save }, '保存'),
+					React.createElement(Button, { variant: 'outline', size: 'sm', onClick: remove }, '删除'),
+				),
+			],
+		localName !== null
+			&& React.createElement('div', { className: 'ggg-set-note' }, `仓库级覆盖：${localName} <${localEmail ?? '?'}>`),
+		globalName !== null
+			&& React.createElement('div', { className: 'ggg-set-note' }, `全局配置：${globalName} <${globalEmail ?? '?'}>`),
 	);
 }

@@ -131,7 +131,7 @@ export const STYLES = `
 .ggg-card-copy{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-card-copy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.ggg-error{padding:10px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px;white-space:pre-wrap}
+/* 错误与提示改由顶部轻量横幅呈现（见 panel/toast.ts），面板内不再有错误条。 */
 .ggg-issue-link{color:var(--dsw-alias-brand-primary);text-decoration:none}
 .ggg-issue-link:hover{text-decoration:underline}
 .ggg-row-uncommitted{font-style:italic}

@@ -17,6 +17,7 @@ import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
 import { reportError } from './panel/errors.ts';
+import { showToast } from './panel/toast.ts';
 import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadSession, saveSession } from './panel/storage.ts';
@@ -434,11 +435,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [workingTreePath, run, state.remotes]);
 
-	/** 一般提示：说明当前条件下操作无法进行的原因。 */
+	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
 	const notify = React.useCallback(async (message: string) => {
-		reportError(setState, message);
-		setTimeout(() => reportError(setState, null), 2600);
-	}, [setState]);
+		showToast(message);
+	}, []);
 
 	/** 添加远程并刷新。 */
 	const handleAddRemote = React.useCallback((name: string, url: string, pushUrl: string | null) => {
@@ -474,8 +474,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		try {
 			const details = await tagDetails(workingTreePath, tagName, commitHash);
 			if (details === null) {
-				reportError(setState, '该标签是轻量标签，无附加信息');
-				setTimeout(() => reportError(setState, null), 2600);
+				showToast('该标签是轻量标签，无附加信息');
 				return;
 			}
 			const tagMessage = details.message ?? '';
@@ -617,10 +616,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		return React.createElement('div', { className: 'ggg-empty' }, '该会话没有工作区目录');
 	}
 
+	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条。
+	React.useEffect(() => {
+		if (state.error !== null) showToast(state.error);
+	}, [state.error]);
+
 	return React.createElement(
 		'div',
 		{ className: 'ggg-root' },
-		state.error !== null && React.createElement('div', { className: 'ggg-error' }, state.error),
 
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => setSettingsOpen(false),

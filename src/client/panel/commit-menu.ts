@@ -12,7 +12,7 @@ import {
 	resetToCommit, revertCommit,
 } from '../api.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
-import { showCheckbox, showConfirmation, showMessage, showSelect, showText } from '../dialog.ts';
+import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
 import { githubCommitUrl } from './github.ts';
 import type { Commit, Remote } from '../types.ts';
 
@@ -198,7 +198,7 @@ const ACTIONS: readonly MenuAction[] = [
 					conflicted = result.conflicted;
 				});
 				if (conflicted) {
-					await showMessage({ title: '合并存在冲突', message: '已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。' });
+					await deps.notify('已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。');
 				}
 			};
 			if (ctx.ref !== null) {
@@ -255,10 +255,7 @@ const ACTIONS: readonly MenuAction[] = [
 			const remove = (name: string) => async (): Promise<void> => {
 				// 当前分支不可删除：直接说明原因，而不是置灰等 git 报错。
 				if (name === deps.head) {
-					await showMessage({
-						title: '无法删除当前分支',
-						message: `分支 ${name} 是当前检出的分支，不能删除。\n请先切换到其他分支再删除。`,
-					});
+					await deps.notify(`分支 ${name} 是当前检出的分支，不能删除。请先切换到其他分支再删除。`);
 					return;
 				}
 				const ok = await showCheckbox({

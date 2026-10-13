@@ -367,13 +367,15 @@ test('删除当前分支时提示而非静默失败', () => {
 	// 当前分支仍在候选里，但点击后说明原因。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
 	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
-	assert.match(menu, /await showMessage\(/, '应给出不可删除的提示');
+	assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
 	// 删除项不再置灰，改为点击后提示。
 	const deleteItem = /title: '删除分支…', danger: true, onClick/.exec(menu);
 	assert.ok(deleteItem !== null, '未找到删除分支项');
 	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
-	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');
-	assert.match(dialog, /export function showMessage/, '应提供仅告知的提示框');
+	// 提示走顶部轻量横幅，不再使用需要关闭的模态弹窗。
+	const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
+	assert.match(toast, /export function showToast/, '应提供轻量提示');
+	assert.match(toast, /from '@deepseek-ai\/dsh-client-ui-primitives'/, '提示应复用 ui-primitives 的 Toast');
 });
 
 test('提交菜单与引用菜单共用同一份操作注册表', () => {
