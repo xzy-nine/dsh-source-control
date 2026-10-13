@@ -7,7 +7,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
+	Button, Checkbox, Input, Menu, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
+	IconChevronDownOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /**
@@ -242,12 +243,28 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 	});
 }
 
+/** 表单字段的公共属性。 */
+interface FormFieldBase {
+	readonly name: string;
+	readonly label?: string;
+	/** 条件显示：返回 false 时该字段不渲染（依据其他字段的当前值判断）。 */
+	readonly visibleWhen?: (values: Record<string, unknown>) => boolean;
+}
+
+/** 下拉选项。 */
+export interface DropdownOption {
+	readonly value: string;
+	readonly label: string;
+	readonly title?: string;
+}
+
 /** 表单字段定义。 */
 export type FormField =
-	| { readonly type: 'text'; readonly name: string; readonly label?: string; readonly placeholder?: string; readonly value?: string }
-	| { readonly type: 'checkbox'; readonly name: string; readonly label?: string; readonly value?: boolean }
-	| { readonly type: 'select'; readonly name: string; readonly label?: string; readonly value?: string; readonly options: ReadonlyArray<{ value: string; label: string; title?: string }> }
-	| { readonly type: 'multiselect'; readonly name: string; readonly label?: string; readonly value?: readonly string[]; readonly options: ReadonlyArray<{ value: string; label: string }> };
+	| (FormFieldBase & { readonly type: 'text'; readonly placeholder?: string; readonly value?: string })
+	| (FormFieldBase & { readonly type: 'checkbox'; readonly value?: boolean })
+	| (FormFieldBase & { readonly type: 'select'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
+	| (FormFieldBase & { readonly type: 'dropdown'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
+	| (FormFieldBase & { readonly type: 'multiselect'; readonly value?: readonly string[]; readonly options: ReadonlyArray<{ value: string; label: string }> });
 
 /** 表单选项。 */
 export interface FormOptions {
@@ -382,14 +399,61 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 }
 
 /**
+ * 下拉字段：触发器显示当前值，展开后列出全部选项。
+ *
+ * 选项较多时比分段按钮更合适；与设置面板的 DropdownRow 同一交互。
+ *
+ * @param props.name - 字段名（用于生成 id）。
+ * @param props.label - 字段标签。
+ * @param props.options - 选项。
+ * @param props.value - 当前值。
+ * @param props.onChange - 变更回调。
+ * @returns 字段元素。
+ */
+function DropdownField({ name, label, options, value, onChange }: {
+	name: string;
+	label?: string | undefined;
+	options: ReadonlyArray<DropdownOption>;
+	value: string;
+	onChange: (next: string) => void;
+}): React.ReactElement {
+	const [open, setOpen] = React.useState(false);
+	const triggerRef = React.useRef<HTMLButtonElement>(null);
+	const current = options.find((option) => option.value === value);
+	return React.createElement(
+		'div',
+		{ className: 'ggg-field' },
+		label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, label),
+		React.createElement(Menu, {
+			open,
+			portal: true,
+			getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
+			selectedId: value,
+			items: options.map((option) => ({ id: option.value, label: option.label, title: option.title })),
+			onSelect: (id: string) => { setOpen(false); onChange(id); },
+			onClose: () => setOpen(false),
+			anchor: React.createElement('button', {
+				type: 'button', ref: triggerRef, id: `ggg-field-${name}`, className: 'ggg-set-dropdown',
+				'aria-haspopup': 'menu', 'aria-expanded': open,
+				onClick: () => setOpen((previous) => !previous),
+			},
+				React.createElement('span', { className: 'ggg-set-dropdown-text' }, current?.label ?? value),
+				React.createElement(IconChevronDownOutlineRegular, { size: 13 }),
+			),
+		}),
+	);
+}
+
+/**
  * 构造单个表单字段。
  *
  * @param field - 字段定义。
  * @param values - 当前全部字段值。
  * @param setField - 字段赋值回调。
- * @returns 字段元素。
+ * @returns 字段元素；条件不满足时返回 null。
  */
 function buildField(field: FormField, values: Record<string, unknown>, setField: (name: string, value: unknown) => void): React.ReactElement | null {
+	if (field.visibleWhen !== undefined && !field.visibleWhen(values)) return null;
 	const current = values[field.name];
 	if (field.type === 'text') {
 		return React.createElement(
@@ -428,6 +492,16 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 				options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 			}),
 		);
+	}
+	if (field.type === 'dropdown') {
+		return React.createElement(DropdownField, {
+			key: field.name,
+			name: field.name,
+			label: field.label,
+			options: field.options,
+			value: typeof current === 'string' ? current : '',
+			onChange: (next: string) => setField(field.name, next),
+		});
 	}
 	if (field.type === 'multiselect') {
 		const selected = Array.isArray(current) ? current as string[] : [];

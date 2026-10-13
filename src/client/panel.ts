@@ -464,6 +464,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			&& account.owners.length > 0
 			&& !account.unavailable.some((item) => item.feature === 'create-repo');
 		const repoName = (workingTreePath ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+		const user = account?.user ?? '';
+		const orgs = (account?.owners ?? []).filter((owner) => owner !== user);
 
 		const manualPage: FormPage = {
 			value: 'manual',
@@ -486,8 +488,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 					message: `仓库将创建在所选账号下，并把分支 ${branch} 推送上去。`,
 					fields: [
 						{
-							type: 'select', name: 'owner', label: '所属账号', value: account.user ?? account.owners[0],
-							options: account.owners.map((owner) => ({ value: owner, label: owner === account.user ? `${owner}（个人账号）` : `${owner}（组织）` })),
+							// 账户类型决定下一级：个人账号直接用当前账号，组织再选具体组织。
+							// 没有加入任何组织时不显示该字段，避免出现无选项的分支。
+							type: 'select', name: 'accountType', label: '账户类型', value: 'user',
+							options: [
+								{ value: 'user', label: `个人（${user}）` },
+								{ value: 'org', label: '组织' },
+							],
+							visibleWhen: () => orgs.length > 0,
+						},
+						{
+							type: 'dropdown', name: 'owner', label: '组织', value: orgs[0] ?? '',
+							options: orgs.map((org) => ({ value: org, label: org })),
+							visibleWhen: (values: Record<string, unknown>) => orgs.length > 0 && values.accountType === 'org',
 						},
 						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
 						{
@@ -513,9 +526,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		if (form.page === 'github') {
 			const name = String(form.name ?? '').trim();
 			if (name === '') return null;
+			// 个人账号固定为当前登录用户；组织取所选组织。组织为空时退回个人账号。
+			const chosenOrg = String(form.owner ?? '').trim();
+			const owner = form.accountType === 'org' && chosenOrg !== '' ? chosenOrg : user;
+			if (owner === '') return null;
 			return {
 				kind: 'github',
-				owner: String(form.owner ?? account?.user ?? ''),
+				owner,
 				name,
 				private: String(form.visibility ?? 'private') !== 'public',
 				description: String(form.description ?? '').trim(),
