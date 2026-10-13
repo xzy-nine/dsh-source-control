@@ -25,6 +25,9 @@ import { copyText } from './context-menu.ts';
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
 
+/** 云端已有提交的泳道与节点颜色，与远程标记同色；本地领先时用于标出已同步部分。 */
+const REMOTE_LANE_COLOUR = 'var(--dsw-alias-lane-4, #9b7bf6)';
+
 /**
  * 计算字符串的 MD5 哈希（用于 Gravatar 头像 URL）。
  *
@@ -90,13 +93,14 @@ function avatarUrl(email, size = 40) {
  * @param props.row - 该行的布局。
  * @param props.isHead - 是否是当前分支指向的提交。
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
+ * @param props.isRemote - 是否用远程色标出：云端独有，或本地领先时已同步到云端的部分。
  * @param props.isUncommitted - 是否是工作区未提交行。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge, isBehind, isUncommitted }) {
+function LaneCell({ row, isHead, isMerge, isRemote, isUncommitted }) {
 	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
-	const overrideColour = isBehind ? 'var(--dsw-alias-lane-4, #9b7bf6)' : null;
+	const overrideColour = isRemote ? REMOTE_LANE_COLOUR : null;
 	const colour = overrideColour ?? laneColour(row.colour);
 	const cx = laneCentre(row.lane);
 	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
@@ -374,6 +378,7 @@ function renderSubject(message, issueLinking) {
  * @param props.row - 布局。
  * @param props.head - 当前分支。
  * @param props.selected - 是否选中。
+ * @param props.isRemote - 是否用远程色标出：云端独有，或本地领先时已同步到云端的部分。
  * @param props.onSelect - 选中回调。
  * @param props.onContextMenu - 右键回调：({ commit, refInfo, event })。
  * @param props.formatDate - 日期格式化函数（unixSeconds -> 文本）。
@@ -385,7 +390,7 @@ function renderSubject(message, issueLinking) {
  * @returns 行元素。
  */
 function CommitRow({
-	commit, row, head, selected, isAhead, isBehind, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	commit, row, head, selected, isRemote, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
 	stats, message, onHover, widthAnchorRef,
 }) {
@@ -418,7 +423,7 @@ function CommitRow({
 			onPointerEnter: () => { if (!isUncommitted && stashSelector === null) onHover?.(commit.hash); },
 			onPointerLeave: () => { if (!isUncommitted && stashSelector === null) onHover?.(null); },
 		},
-		React.createElement(LaneCell, { row, isHead, isMerge, isBehind, isUncommitted }),
+		React.createElement(LaneCell, { row, isHead, isMerge, isRemote, isUncommitted }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
@@ -489,7 +494,7 @@ function DetailGutter({ row }) {
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
-	aheadHashes, behindHashes,
+	remoteHashes,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
 }) {
 	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
@@ -508,8 +513,7 @@ export function CommitGraph({
 			row,
 			head,
 			selected: commit.hash === selectedHash,
-			isAhead: aheadHashes?.has(commit.hash) ?? false,
-			isBehind: behindHashes?.has(commit.hash) ?? false,
+			isRemote: remoteHashes?.has(commit.hash) ?? false,
 			onSelect,
 			onContextMenu,
 			formatDate: dateFmt,

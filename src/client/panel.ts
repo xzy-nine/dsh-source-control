@@ -23,7 +23,7 @@ import { hasGitHubRemote } from './panel/github.ts';
 import { needsTranslation, splitCommitPrefix } from './language.ts';
 import { reportError } from './panel/errors.ts';
 import { showToast } from './panel/toast.ts';
-import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
+import { computeRemoteHashes, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
@@ -515,8 +515,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	}, [translateBusy, workingTreePath, message, notify]);
 
 	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);
-	const aheadBehind = React.useMemo(
-		() => computeAheadBehind(state.commits, state.head, currentSync?.upstream ?? null),
+	const remoteHashes = React.useMemo(
+		() => computeRemoteHashes(state.commits, state.head, currentSync?.upstream ?? null),
 		[state.commits, state.head, currentSync],
 	);
 	const workAreaEmpty = state.entries.length === 0;
@@ -1062,7 +1062,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
 			commits: filterCommitsByRefs(state.commits, filterSelected),
 			head: state.head, selectedHash: state.selectedHash,
-			aheadHashes: aheadBehind.ahead, behindHashes: aheadBehind.behind,
+			remoteHashes,
 			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,

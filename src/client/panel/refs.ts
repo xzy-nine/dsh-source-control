@@ -128,21 +128,20 @@ export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: R
 }
 
 /**
- * 计算领先与落后的提交哈希集合。
+ * 计算用远程色标出的提交哈希集合。
  *
- * 领先：本地 HEAD 可达但远程跟踪分支不可达的提交。
- * 落后：远程跟踪分支可达但本地 HEAD 不可达的提交。
+ * 本地领先时取云端可达的全部提交，使领先部分（未推送）保持泳道原色、已同步部分标为远程色；
+ * 否则只标云端独有的提交。
  *
  * @param commits - 提交列表。
  * @param head - 本地分支名。
  * @param upstream - 远程跟踪分支名（如 origin/main）。
- * @returns 领先与落后的哈希集合。
+ * @returns 需要标为远程色的哈希集合；无上游时为空集。
  */
-export function computeAheadBehind(
+export function computeRemoteHashes(
 	commits: readonly Commit[], head: string | null, upstream: string | null,
-): { ahead: Set<string>; behind: Set<string> } {
-	const empty = { ahead: new Set<string>(), behind: new Set<string>() };
-	if (head === null || upstream === null) return empty;
+): Set<string> {
+	if (head === null || upstream === null) return new Set();
 	const commitByHash = new Map<string, Commit>();
 	for (const commit of commits) {
 		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
@@ -157,7 +156,7 @@ export function computeAheadBehind(
 			if (remote.name === upstream) remoteHash = commit.hash;
 		}
 	}
-	if (localHash === null || remoteHash === null) return empty;
+	if (localHash === null || remoteHash === null) return new Set();
 	// 收集各自祖先
 	const ancestorsOf = (rootHash: string): Set<string> => {
 		const seen = new Set<string>();
@@ -174,8 +173,11 @@ export function computeAheadBehind(
 	const localAncestors = ancestorsOf(localHash);
 	const remoteAncestors = ancestorsOf(remoteHash);
 	const ahead = new Set<string>();
-	const behind = new Set<string>();
 	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);
+	// 本地领先时返回云端可达的全部提交，已同步部分因此标为远程色、未推送部分保持泳道原色。
+	if (ahead.size > 0) return remoteAncestors;
+	// 否则只标云端独有的提交（云端领先本地）。
+	const behind = new Set<string>();
 	for (const hash of remoteAncestors) if (!localAncestors.has(hash)) behind.add(hash);
-	return { ahead, behind };
+	return behind;
 }
