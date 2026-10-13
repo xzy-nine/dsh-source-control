@@ -228,7 +228,7 @@ test('文件差异视图为复制自 DSH 的实现', () => {
 	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 	assert.match(indexSource, /from '\.\/file-diff\.tsx'/, '差异页应引用复制的视图');
 	assert.ok(!indexSource.includes('DiffBlock'), '不应再使用 ui-primitives 的 DiffBlock');
-	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
 	assert.match(routes, /--unified=3/, '宿主应请求带上下文的统一差异');
 });
@@ -238,13 +238,13 @@ test('构建脚本把 CSS 模块的样式内联进包', () => {
 	const script = readFileSync(join(root, 'scripts', 'build-client.mjs'), 'utf8');
 	assert.match(script, /'\.css': 'local-css'/, 'CSS 应作为模块处理');
 	assert.match(script, /endsWith\('\.css'\)/, '应收集 esbuild 产出的样式');
-	assert.match(script, /dsh-dev-git-graph-module-style/, '应把样式内联为一段 style');
+	assert.match(script, /dsh-source-control-module-style/, '应把样式内联为一段 style');
 	assert.match(script, /jsx: 'automatic'/, '复制的视图使用自动 JSX 运行时');
 });
 
 test('宿主 hunk 形状与视图一致', () => {
 	// 视图按 DSH 的 WorkspaceDiffHunk 取字段（含行数），宿主必须给出同样的形状。
-	const source = readFileSync(join(root, 'src', 'git-graph', 'diff-hunks.ts'), 'utf8');
+	const source = readFileSync(join(root, 'src', 'source-control', 'diff-hunks.ts'), 'utf8');
 	for (const field of ['oldStart', 'oldLines', 'newStart', 'newLines', 'lines']) {
 		assert.match(source, new RegExp(field), `hunk 应含 ${field}`);
 	}
@@ -333,7 +333,7 @@ test('删除分支按包含关系列出候选', () => {
 	assert.match(menu, /containing\.local\.length > 0 \? containing\.local/, '查询结果优先，失败时退回自身引用');
 	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
-	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
 	assert.match(routes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
 });
@@ -352,10 +352,10 @@ test('异步打开提交菜单前先取出事件字段', () => {
 
 test('工作树分支从图形区与删除候选中排除', () => {
 	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
-	const routes = readFileSync(join(root, 'src', 'git-graph', 'routes.ts'), 'utf8');
+	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
 	assert.match(routes, /heads: \(commit\.heads \?\? \[\]\)\.filter/, 'loadCommits 应过滤分支标签');
-	const discovery = readFileSync(join(root, 'src', 'git-graph', 'repo-discovery.ts'), 'utf8');
+	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
 	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
 	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');
 });
@@ -368,7 +368,7 @@ test('工作树右键提供移除入口', () => {
 	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
-	const host = readFileSync(join(root, 'src', 'git-graph', 'working-tree.ts'), 'utf8');
+	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');
 	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
 });
 

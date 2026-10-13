@@ -13,7 +13,7 @@ import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
 	parseNameStatus, parseNumStat, parseRefs, parseStashReflog, parseTagInfo, parseTagSignature,
 	splitRecords, UNCOMMITTED,
-} from '../src/git-graph/git-parse.ts';
+} from '../src/source-control/git-parse.ts';
 
 /**
  * 建一个临时仓库。

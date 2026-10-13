@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const routesPath = join(root, 'lib', 'src', 'git-graph', 'routes.js');
+const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
 /** 建一个含分支、标签、贮藏、重命名与未跟踪文件的仓库，并返回其路径与 git 辅助函数。 */
 function makeRepo() {
@@ -62,7 +62,7 @@ async function makeCaller(repo) {
 			return () => {};
 		},
 	});
-	const handler = routes.get('/dsh-dev-git-graph/gg/api');
+	const handler = routes.get('/dsh-source-control/gg/api');
 	return (message) => new Promise((resolve, reject) => {
 		const body = JSON.stringify({ repo, ...message });
 		const req = {
@@ -85,7 +85,7 @@ async function makeCaller(repo) {
 
 const built = existsSync(routesPath);
 
-test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产物 lib/src/git-graph/routes.js' }, async () => {
+test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产物 lib/src/source-control/routes.js' }, async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);

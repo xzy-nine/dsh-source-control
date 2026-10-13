@@ -55,9 +55,9 @@ const bundle = `/**
  */
 ${css === '' ? '' : `(function () {
   if (typeof document === 'undefined') return;
-  if (document.getElementById('dsh-dev-git-graph-module-style') !== null) return;
+  if (document.getElementById('dsh-source-control-module-style') !== null) return;
   var style = document.createElement('style');
-  style.id = 'dsh-dev-git-graph-module-style';
+  style.id = 'dsh-source-control-module-style';
   style.textContent = ${JSON.stringify(css)};
   document.head.appendChild(style);
 })();

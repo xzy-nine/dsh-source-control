@@ -1,5 +1,5 @@
 /**
- * Git Graph 面板主体：持有状态与数据加载，把三个分区组装成侧栏页。
+ * 源代码管理面板主体：持有状态与数据加载，把三个分区组装成侧栏页。
  *
  * 布局对齐 VS Code 的「源代码管理 + 图形」视图，控件使用 DSH 的
  * ui-primitives，因此外观与 Harness 本身一致。分区渲染在 ./panel/ 下，
@@ -62,7 +62,7 @@ function interfaceLanguage(): string {
 }
 
 /**
- * Git Graph 面板。
+ * 源代码管理面板。
  *
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
@@ -94,24 +94,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	);
 	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
 	// 存储库、图形两区可收起（默认展开）；会话级持久化。
-	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadSession('dsh-git-graph-repo-open', true));
-	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadSession('dsh-git-graph-graph-open', true));
+	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadSession('dsh-source-control-repo-open', true));
+	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadSession('dsh-source-control-graph-open', true));
 	// 图形区高度（像素）；会话级持久化，默认 320。
-	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadSession('dsh-git-graph-graph-height', 320));
+	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadSession('dsh-source-control-graph-height', 320));
 	// 存储库区高度（像素）；会话级持久化，默认 200。
-	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadSession('dsh-git-graph-repo-height', 200));
+	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadSession('dsh-source-control-repo-height', 200));
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
 
 	const toggleRepoSec = React.useCallback(() => {
-		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-repo-open', next); return next; });
+		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-source-control-repo-open', next); return next; });
 	}, []);
 	const toggleGraphSec = React.useCallback(() => {
-		setGraphSecOpen((previous) => { const next = !previous; saveSession('dsh-git-graph-graph-open', next); return next; });
+		setGraphSecOpen((previous) => { const next = !previous; saveSession('dsh-source-control-graph-open', next); return next; });
 	}, []);
 	const commitGraphHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(120, Math.min(value, 720));
 		setGraphHeight(clamped);
-		saveSession('dsh-git-graph-graph-height', clamped);
+		saveSession('dsh-source-control-graph-height', clamped);
 	}, []);
 	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
 	const startGraphResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -135,7 +135,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const commitRepoHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(80, Math.min(value, 600));
 		setRepoHeight(clamped);
-		saveSession('dsh-git-graph-repo-height', clamped);
+		saveSession('dsh-source-control-repo-height', clamped);
 	}, []);
 	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
 	const startRepoResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -822,7 +822,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = 'git-graph-config.json';
+			a.download = 'source-control-config.json';
 			a.click();
 			URL.revokeObjectURL(url);
 		} catch (error) {

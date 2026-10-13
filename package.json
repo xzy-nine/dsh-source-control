@@ -1,7 +1,7 @@
 {
-  "name": "dsh-dev-git-graph",
+  "name": "dsh-source-control",
   "version": "0.2.0",
-  "description": "DSH 插件：内置右侧栏 Git Graph 页——提交图、变更列表与提交框，控件使用 DSH ui-primitives；host 直跑 git 命令。",
+  "description": "DSH 插件：内置右侧栏 源代码管理 页——提交图、变更列表与提交框，控件使用 DSH ui-primitives；host 直跑 git 命令。",
   "license": "MIT",
   "author": "xzy-nine",
   "keywords": [
@@ -10,7 +10,6 @@
     "dsh",
     "dsh-plugin",
     "git",
-    "git-graph",
     "commit-graph",
     "sidebar",
     "source-control",
@@ -18,9 +17,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://example.com/xzy-nine/dsh-dev-git-graph.git"
+    "url": "git+https://example.com/xzy-nine/dsh-source-control.git"
   },
-  "homepage": "https://example.com/xzy-nine/dsh-dev-git-graph#readme",
+  "homepage": "https://example.com/xzy-nine/dsh-source-control#readme",
   "type": "module",
   "packageManager": "pnpm@11.28.5",
   "main": "./lib/src/index.js",

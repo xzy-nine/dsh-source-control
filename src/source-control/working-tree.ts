@@ -1,5 +1,5 @@
 /**
- * DSH 版 Git Graph 的 git 执行层：在指定仓库中以数组参数跑 git，无 shell。
+ * DSH 版源代码管理的 git 执行层：在指定仓库中以数组参数跑 git，无 shell。
  *
  * 工作区变更（状态、暂存、提交、工作树）在此实现；提交图查询与各类操作见
  * `git-query.ts` 与 `git-actions.ts`，两者共用这里的执行与错误处理。

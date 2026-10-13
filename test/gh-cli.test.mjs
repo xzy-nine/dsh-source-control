@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyGhFailure } from '../src/git-graph/gh-cli.ts';
+import { classifyGhFailure } from '../src/source-control/gh-cli.ts';
 
 /** 构造一次 gh 调用结果。 */
 function result(code, stderr, stdout = '') {

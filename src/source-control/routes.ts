@@ -1,5 +1,5 @@
 /**
- * dsh-dev-git-graph 宿主路由：以 POST /dsh-dev-git-graph/gg/api 暴露 git 命令集。
+ * dsh-source-control 宿主路由：以 POST /dsh-source-control/gg/api 暴露 git 命令集。
  *
  * 数据层由本目录的本地实现提供：提交图与仓库信息见 ./git-query.ts，各类操作见
  * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
@@ -472,7 +472,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-dev-git-graph][git-graph] ' + String(msg.message ?? ''));
+			console.error('[dsh-source-control] ' + String(msg.message ?? ''));
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -724,7 +724,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	disposers.push(
 		webServer.register({
 			kind: 'exact',
-			path: '/dsh-dev-git-graph/gg/api',
+			path: '/dsh-source-control/gg/api',
 			handler: (req, res) => {
 				if (req.method !== 'POST') {
 					res.writeHead(405, { allow: 'POST' });
@@ -742,7 +742,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	disposers.push(
 		webServer.register({
 			kind: 'exact',
-			path: '/dsh-dev-git-graph/gg/ai-models',
+			path: '/dsh-source-control/gg/ai-models',
 			handler: (req, res) => {
 				if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
 				const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
@@ -776,7 +776,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	disposers.push(
 		webServer.register({
 			kind: 'exact',
-			path: '/dsh-dev-git-graph/gg/ai-commit',
+			path: '/dsh-source-control/gg/ai-commit',
 			handler: (req, res) => {
 				if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
 				void (async () => {

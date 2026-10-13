@@ -1,5 +1,5 @@
 /**
- * dsh-dev-git-graph 客户端入口：把 Git Graph 面板注册为内置右侧栏的一个页类型。
+ * dsh-source-control 客户端入口：把源代码管理面板注册为内置右侧栏的一个页类型。
  *
  * 内容面为 sidebar.right.pane.tab（键为该类型 id），chip 标题注册到
  * sidebar.right.pane.tab.title；会话 header 的图标按钮是第二个打开入口。
@@ -17,25 +17,25 @@ import { GitGraphIcon } from './plugin-icon.ts';
 import { STYLES } from './styles.ts';
 
 /** 页类型身份：正文与标题席位都用它当键。 */
-const TAB_ID = 'dsh-dev-git-graph/git-graph';
+const TAB_ID = 'dsh-source-control/panel';
 /** 页类型 kind：`ctx.sidebarRight.openTab` 用它打开。 */
 const TAB_KIND = 'devGitGraph';
 /** 页与引导条目的显示名。 */
-const TAB_TITLE = 'Git Graph';
+const TAB_TITLE = '源代码管理';
 /** 会话 header 入口的席位 id 与位置（-5 位于更多操作菜单左侧）。 */
-const HEADER_ACTION_ID = 'dev-git-graph';
+const HEADER_ACTION_ID = 'source-control';
 const HEADER_ACTION_ORDER = -5;
 
 /** git-diff 页类型身份。 */
-const DIFF_TAB_ID = 'dsh-dev-git-graph/diff';
+const DIFF_TAB_ID = 'dsh-source-control/diff';
 const DIFF_TAB_KIND = 'devGitGraphDiff';
 
 /** 样式只注入一次。 */
 function ensureStyle() {
 	if (typeof document === 'undefined') return;
-	if (document.getElementById('dsh-dev-git-graph-style') !== null) return;
+	if (document.getElementById('dsh-source-control-style') !== null) return;
 	const element = document.createElement('style');
-	element.id = 'dsh-dev-git-graph-style';
+	element.id = 'dsh-source-control-style';
 	element.textContent = STYLES;
 	document.head.appendChild(element);
 }

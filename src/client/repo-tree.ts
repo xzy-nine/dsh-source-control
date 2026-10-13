@@ -5,8 +5,8 @@
  */
 
 /** localStorage 键前缀。 */
-const SELECTION_KEY = 'dsh-git-graph-selection';
-const EXPANDED_KEY = 'dsh-git-graph-expanded';
+const SELECTION_KEY = 'dsh-source-control-selection';
+const EXPANDED_KEY = 'dsh-source-control-expanded';
 
 /** 运行环境是否按大小写不敏感比较路径。 */
 const CASE_INSENSITIVE = typeof navigator !== 'undefined'

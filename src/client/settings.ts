@@ -1,5 +1,5 @@
 /**
- * Git Graph 设置：分区配置、本地持久化与日期格式化。
+ * 源代码管理设置：分区配置、本地持久化与日期格式化。
  *
  * 设置分区覆盖提交图、引用标签、日期格式与仓库配置；User Details、
  * Pull Request Creation 等依赖 VS Code 的条目在 DSH 版本中弱化展示。
@@ -17,7 +17,7 @@ import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.t
 
 /** 用户身份配置位置选项。 */
 /** localStorage 键。 */
-export const SETTINGS_KEY = 'dsh-git-graph-settings';
+export const SETTINGS_KEY = 'dsh-source-control-settings';
 
 /** 提交排序选项，三档与 git 的 `--order` 参数一致。 */
 export const ORDERING = [
@@ -302,7 +302,7 @@ export interface SettingsPanelProps {
 }
 
 /**
- * Git Graph 设置面板。
+ * 源代码管理设置面板。
  *
  * 分「仓库设置」与「全局设置」两个页签：前者作用于当前仓库（身份、远程、导出），后者作用于
  * 界面与生成行为。用户身份在两侧都显示——它既可写入单个仓库，也可写入全局配置。
@@ -448,7 +448,7 @@ export function SettingsPanel({
 		React.createElement('div', { className: 'ggg-settings-backdrop', onClick: onClose }),
 		React.createElement(
 			'div',
-			{ className: 'ggg-settings', role: 'dialog', 'aria-label': 'Git Graph 设置' },
+			{ className: 'ggg-settings', role: 'dialog', 'aria-label': '源代码管理设置' },
 			React.createElement('div', { className: 'ggg-settings-head' },
 				'设置',
 				React.createElement(Button, {

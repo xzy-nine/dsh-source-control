@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseUnifiedDiffHunks } from '../src/git-graph/diff-hunks.ts';
+import { parseUnifiedDiffHunks } from '../src/source-control/diff-hunks.ts';
 
 /** 建一个临时仓库并在其中执行 git。 */
 function makeRepo() {

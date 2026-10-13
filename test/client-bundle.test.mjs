@@ -74,7 +74,7 @@ function loadBundle() {
 
 test('产物包络注册为包名并只请求外部平台模块', () => {
 	const { requested, registrations } = loadBundle();
-	assert.deepEqual(registrations, ['dsh-dev-git-graph']);
+	assert.deepEqual(registrations, ['dsh-source-control']);
 	for (const name of requested) {
 		assert.ok(
 			['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'].includes(name),
@@ -104,8 +104,8 @@ test('apply 注册右侧栏页类型与 header 入口', () => {
 	};
 	client.apply(ctx);
 	assert.ok(effects.length > 0, 'apply 必须通过 ctx.effect 注册');
-	assert.ok(registered.includes('dsh-dev-git-graph/git-graph'), '应注册 git-graph 页类型');
-	assert.ok(registered.includes('dsh-dev-git-graph/diff'), '应注册 git-diff 页类型');
+	assert.ok(registered.includes('dsh-source-control/panel'), '应注册面板页类型');
+	assert.ok(registered.includes('dsh-source-control/diff'), '应注册差异页类型');
 	assert.ok(registered.includes('sidebar.right.pane.tab'), '应注册侧栏正文席位');
 	assert.ok(registered.includes('sidebar.right.pane.tab.title'), '应注册侧栏标题席位');
 	assert.ok(registered.includes('conversation.session.header.utilities'), '应注册 header 入口');

@@ -1,5 +1,5 @@
 /**
- * 宿主 API 客户端：把命令发到 POST /dsh-dev-git-graph/gg/api。
+ * 宿主 API 客户端：把命令发到 POST /dsh-source-control/gg/api。
  *
  * 该路由沿用移植版的命令集（loadCommits / loadRepoInfo 等），并新增工作区变更命令。
  * 所有调用都以 JSON 往返，失败以抛出携带 error 文本的 Error 表示。
@@ -7,7 +7,7 @@
 import type { Commit, Remote, RepoNode, RepoSync, WorkingTreeEntry } from './types.ts';
 
 /** API 路由，与宿主注册的路径一致。 */
-const API_PATH = '/dsh-dev-git-graph/gg/api';
+const API_PATH = '/dsh-source-control/gg/api';
 
 /**
  * 调用一条宿主命令。
@@ -982,9 +982,9 @@ export async function fileDiffContent(cwd: string, hash: string, path: string, s
 }
 
 /** AI 模型目录端点。 */
-const AI_MODELS_PATH = '/dsh-dev-git-graph/gg/ai-models';
+const AI_MODELS_PATH = '/dsh-source-control/gg/ai-models';
 /** AI 提交生成端点。 */
-const AI_COMMIT_PATH = '/dsh-dev-git-graph/gg/ai-commit';
+const AI_COMMIT_PATH = '/dsh-source-control/gg/ai-commit';
 
 /** AI 模型目录。 */
 export interface AiModelCatalog {

@@ -1,6 +1,6 @@
-# dsh-dev-git-graph
+# dsh-source-control
 
-DSH 插件：在 DSH Web GUI 内置右侧 Sidebar 中以「Git Graph」页显示**当前会话工作区**的提交图、变更列表与
+DSH 插件：在 DSH Web GUI 内置右侧 Sidebar 中以「源代码管理」页显示**当前会话工作区**的仓库、提交图、变更列表与
 提交框。界面按 VS Code 的「源代码管理 + 图形」视图排布，控件取自 DSH 内置组件，因此外观与 Harness 本身一致。
 仓库自动绑定当前会话工作区，无需手动选择。
 
@@ -106,7 +106,7 @@ DSH 插件：在 DSH Web GUI 内置右侧 Sidebar 中以「Git Graph」页显示
 
 | 入口 | 行为 |
 |---|---|
-| 引导页入口胶囊 | 右侧栏 tab 条「+」打开引导页后，点「Git Graph」胶囊 |
+| 引导页入口胶囊 | 右侧栏 tab 条「+」打开引导页后，点「源代码管理」胶囊 |
 | 会话 header 图标按钮 | 直接打开该页；已打开时聚焦 |
 
 切到别的侧栏页或工作区再回来时，页面保持原状（不会重新加载，展开状态也不丢失）。
@@ -114,8 +114,8 @@ DSH 插件：在 DSH Web GUI 内置右侧 Sidebar 中以「Git Graph」页显示
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-dev-git-graph
-# 重启 dsh web，页面右侧栏「+」→ 引导页出现「Git Graph」，会话 header 亦有图标按钮
+dsh plugin --profile web add dsh-source-control
+# 重启 dsh web，页面右侧栏「+」→ 引导页出现「源代码管理」，会话 header 亦有图标按钮
 ```
 
 ## 与原版的差异
@@ -126,7 +126,7 @@ dsh plugin --profile web add dsh-dev-git-graph
 |---|---|
 | 界面 | 不再内嵌 VS Code webview，改为 DSH 组件构成的侧栏页 |
 | 提交图 | 自研的泳道布局与 SVG 渲染 |
-| 宿主数据层 | `src/git-graph/` 自研实现：直接调用 git，并在本地解析其机器可读输出 |
+| 宿主数据层 | `src/source-control/` 自研实现：直接调用 git，并在本地解析其机器可读输出 |
 | VS Code 专属命令 | 打开终端、查看 SCM 等在 DSH 版本中不可用或弱化展示；创建 PR 改由 `gh` CLI 实现 |
 | 仓库来源 | 自动绑定当前会话工作区（无工作区时页内显示提示） |
 | 新增能力 | 工作区变更面板、提交图、AI 提交信息、差异页、工作树管理、GitHub 集成 |

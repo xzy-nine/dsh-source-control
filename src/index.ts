@@ -1,18 +1,18 @@
 /**
- * dsh-dev-git-graph host entry：注册 web 路由并注入 AI 依赖。
+ * dsh-source-control host entry：注册 web 路由并注入 AI 依赖。
  *
  * 1) webServer 挂三条路由：
- *    POST /dsh-dev-git-graph/gg/api       -> 面板命令集（host 直跑 git 命令）
- *    GET  /dsh-dev-git-graph/gg/ai-models -> AI 供应商与模型目录
- *    POST /dsh-dev-git-graph/gg/ai-commit -> AI 生成提交信息（SSE 流式）
- * 2) 提交图查询由 src/git-graph/ 下的本地数据层提供（git-query.ts / git-actions.ts）。
- * 3) 工作区变更、工作树与差异同样由 src/git-graph/ 提供。
+ *    POST /dsh-source-control/gg/api       -> 面板命令集（host 直跑 git 命令）
+ *    GET  /dsh-source-control/gg/ai-models -> AI 供应商与模型目录
+ *    POST /dsh-source-control/gg/ai-commit -> AI 生成提交信息（SSE 流式）
+ * 2) 提交图查询由 src/source-control/ 下的本地数据层提供（git-query.ts / git-actions.ts）。
+ * 3) 工作区变更、工作树与差异同样由 src/source-control/ 提供。
  */
 import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
-import { registerGgRoutes } from './git-graph/routes.js';
+import { registerGgRoutes } from './source-control/routes.js';
 
-export const name = 'dev-git-graph';
+export const name = 'source-control';
 export const inject = ['webServer'];
 
 export interface DevGitGraphPluginConfig {}

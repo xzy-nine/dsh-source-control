@@ -29,7 +29,7 @@
 
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
-src/git-graph/      宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
+src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
                     设置面板、样式与图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
@@ -68,7 +68,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 - `jsx: 'automatic'`（复制的 FileDiff 不显式导入 React）；`charset: 'utf8'`（保留中文字面量）。
 - CSS 模块用 esbuild 的 `local-css` loader，**必须配 `outdir`**，否则报
   `Cannot import ... without an output path configured`。`local-css` 只产类名映射，样式文本需脚本单独
-  收集并内联为 `<style id="dsh-dev-git-graph-module-style">`，`lib/` 下不留 CSS 文件。
+  收集并内联为 `<style id="dsh-source-control-module-style">`，`lib/` 下不留 CSS 文件。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
 

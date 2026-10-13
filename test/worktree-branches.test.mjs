@@ -8,7 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseWorktreeList, foreignWorktreeBranches } from '../src/git-graph/worktree-branches.ts';
+import { parseWorktreeList, foreignWorktreeBranches } from '../src/source-control/worktree-branches.ts';
 import { resolve } from 'node:path';
 
 /** 与宿主 nodeId 一致：绝对化、统一 `/` 分隔、小写。 */
