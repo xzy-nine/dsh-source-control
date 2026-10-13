@@ -278,6 +278,113 @@ export async function compareCommits(cwd: string, fromHash: string, toHash: stri
 	});
 }
 
+/** GitHub 账号信息。 */
+export interface GhAccountInfo {
+	readonly loggedIn: boolean;
+	readonly user: string | null;
+	readonly owners: readonly string[];
+	/** 当前 token 的 scope 列表。 */
+	readonly scopes: readonly string[];
+	/** 不可用的功能与原因；前端据此隐藏入口并说明原因。 */
+	readonly unavailable: readonly { readonly feature: string; readonly reason: string; readonly message: string }[];
+}
+
+/** 可发布的属主。 */
+export interface GhOwnerInfo {
+	readonly login: string;
+	readonly isOrg: boolean;
+	readonly name: string;
+}
+
+/** 远程仓库信息（创建 PR 用）。 */
+export interface GhRepoInfoResult {
+	readonly defaultBranch: string | null;
+	readonly branches: readonly string[];
+}
+
+/**
+ * 读取 GitHub 账号与可用的仓库属主。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 账号信息；未安装或未登录时 `loggedIn` 为 false。
+ */
+export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
+	const payload = await callApi(cwd, { command: 'ghAccount' });
+	const account = (payload.account ?? {}) as Record<string, unknown>;
+	const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+	const unavailable = Array.isArray(account.unavailable)
+		? account.unavailable.map((item) => {
+			const entry = item as Record<string, unknown>;
+			return { feature: String(entry.feature ?? ''), reason: String(entry.reason ?? ''), message: String(entry.message ?? '') };
+		})
+		: [];
+	return {
+		loggedIn: account.loggedIn === true,
+		user: typeof account.user === 'string' ? account.user : null,
+		owners: strings(account.owners),
+		scopes: strings(account.scopes),
+		unavailable,
+	};
+}
+
+/**
+ * 列出可作为仓库属主的账号：个人账号在前，随后是其组织。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 属主列表。
+ */
+export async function ghOwners(cwd: string): Promise<GhOwnerInfo[]> {
+	const payload = await callApi(cwd, { command: 'ghOwners' });
+	const owners = Array.isArray(payload.owners) ? payload.owners : [];
+	return owners.map((item) => {
+		const owner = item as Record<string, unknown>;
+		return {
+			login: String(owner.login ?? ''),
+			isOrg: owner.isOrg === true,
+			name: typeof owner.name === 'string' && owner.name !== '' ? owner.name : String(owner.login ?? ''),
+		};
+	}).filter((owner) => owner.login !== '');
+}
+
+/**
+ * 读取远程仓库的默认分支与分支候选。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 默认分支与分支列表。
+ */
+export async function ghRepoInfo(cwd: string): Promise<GhRepoInfoResult> {
+	const payload = await callApi(cwd, { command: 'ghRepoInfo' });
+	const info = (payload.info ?? {}) as Record<string, unknown>;
+	return {
+		defaultBranch: typeof info.defaultBranch === 'string' ? info.defaultBranch : null,
+		branches: Array.isArray(info.branches) ? info.branches.filter((item): item is string => typeof item === 'string') : [],
+	};
+}
+
+/**
+ * 在 GitHub 上新建仓库并设为本地远程后推送。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param options - 仓库名、属主、可见性与简介。
+ * @returns 新仓库地址。
+ */
+export async function ghCreateRepo(cwd: string, options: { name: string; owner: string; private: boolean; description: string }): Promise<string> {
+	const payload = await callApi(cwd, { command: 'ghCreateRepo', ...options, remote: 'origin' });
+	return typeof payload.url === 'string' ? payload.url : '';
+}
+
+/**
+ * 创建 Pull Request。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param options - 源分支、目标分支、标题、正文与是否草稿。
+ * @returns Pull Request 地址。
+ */
+export async function ghCreatePullRequest(cwd: string, options: { head: string; base: string; title: string; body: string; draft: boolean }): Promise<string> {
+	const payload = await callApi(cwd, { command: 'createPullRequest', ...options });
+	return typeof payload.url === 'string' ? payload.url : '';
+}
+
 /**
  * 读取某个提交的完整提交信息。
  *

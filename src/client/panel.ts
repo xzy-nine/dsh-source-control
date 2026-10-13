@@ -8,7 +8,8 @@
 import React from 'react';
 import {
 	addRemote, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
-	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
+	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
+	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
@@ -17,6 +18,7 @@ import { showCheckbox, showForm, showSelect, showText } from './dialog.ts';
 import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
+import { hasGitHubRemote } from './panel/github.ts';
 import { reportError } from './panel/errors.ts';
 import { showToast } from './panel/toast.ts';
 import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
@@ -220,6 +222,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		}
 		throw new Error(error);
 	}, [workingTreePath]);
+
+	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
+	const notify = React.useCallback(async (message: string) => {
+		showToast(message);
+	}, []);
 
 	/** 把当前改动存入贮藏；贮藏信息由用户输入，留空表示不指定。 */
 	const handleStash = React.useCallback(() => {
@@ -439,9 +446,86 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
 
 	/**
+	 * 没有远程时：让用户选「在 GitHub 上新建仓库」或「手工输入远程地址」。
+	 *
+	 * 未安装 gh / 未登录 / 缺 scope 时隐藏 GitHub 选项并说明原因，只保留手工输入，
+	 * 使发布本身始终可用。
+	 *
+	 * @param branch - 当前分支名。
+	 * @returns 选中的方式与建仓参数；取消时返回 null。
+	 */
+	const askRemoteSource = React.useCallback(async (branch: string): Promise<
+		| { kind: 'manual'; name: string; url: string }
+		| { kind: 'github'; owner: string; name: string; private: boolean; description: string }
+		| null
+	> => {
+		const account = await ghAccount(workingTreePath as string).catch(() => null);
+		const ghReady = account !== null && account.loggedIn
+			&& !account.unavailable.some((item) => item.feature === 'create-repo');
+		const repoName = (workingTreePath ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+
+		if (ghReady && account !== null && account.owners.length > 0) {
+			const choice = await showSelect({
+				title: '发布分支',
+				message: `当前仓库还没有远程仓库。为分支 ${branch} 选择发布方式：`,
+				options: [
+					{ value: 'github', label: '在 GitHub 上新建仓库', title: `发布到 ${account.user ?? '当前账号'}` },
+					{ value: 'manual', label: '手动输入远程地址' },
+				],
+			});
+			if (choice === null) return null;
+			if (choice === 'github') {
+				const ownerOptions = account.owners.map((owner) => ({ value: owner, label: owner === account.user ? `${owner}（个人账号）` : `${owner}（组织）` }));
+				const form = await showForm({
+					title: '在 GitHub 上新建仓库',
+					message: '仓库将创建在所选账号下，并把当前分支推送上去。',
+					fields: [
+						{ type: 'select', name: 'owner', label: '所属账号', value: account.user ?? account.owners[0], options: ownerOptions },
+						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
+						{ type: 'select', name: 'visibility', label: '可见性', value: 'private', options: [
+							{ value: 'private', label: '私有仓库' },
+							{ value: 'public', label: '公开仓库' },
+						] },
+						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
+					],
+				});
+				if (form === null) return null;
+				const name = String(form.name ?? '').trim();
+				if (name === '') return null;
+				return {
+					kind: 'github',
+					owner: String(form.owner ?? account.user ?? ''),
+					name,
+					private: String(form.visibility ?? 'private') !== 'public',
+					description: String(form.description ?? '').trim(),
+				};
+			}
+		} else if (account !== null && !ghReady) {
+			// 降级：说明 GitHub 路径为何不可用，然后走手工输入。
+			const reason = account.unavailable.find((item) => item.feature === 'create-repo')?.message
+				?? '未检测到可用的 GitHub 登录。';
+			await notify(`${reason}（可直接输入远程地址发布）`);
+		}
+
+		const input = await showForm({
+			title: '发布到远程仓库',
+			message: '当前仓库还没有远程仓库，请输入地址后发布。',
+			fields: [
+				{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
+				{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git' },
+			],
+		});
+		if (input === null) return null;
+		const name = String(input.name ?? '').trim() === '' ? 'origin' : String(input.name ?? '').trim();
+		const url = String(input.url ?? '').trim();
+		if (url === '') return null;
+		return { kind: 'manual', name, url };
+	}, [workingTreePath, notify]);
+
+	/**
 	 * 发布当前本地分支：推送到选定远程并建立上游。
 	 *
-	 * 单一远程直接推送；多个远程弹窗选择；没有远程时弹窗输入地址后新建。
+	 * 单一远程直接推送；多个远程弹窗选择；没有远程时可选 GitHub 建仓或手工输入地址。
 	 */
 	const handlePublish = React.useCallback(() => {
 		if (state.busy || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
@@ -460,22 +544,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 				if (picked === null || picked === '') return;
 				remote = picked;
 			} else {
-				const input = await showForm({
-					title: '发布到远程仓库',
-					message: '当前仓库还没有远程仓库，请输入地址后发布。',
-					fields: [
-						{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
-						{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git' },
-					],
-				});
-				if (input === null) return;
-				const name = String(input.name ?? '').trim() === '' ? 'origin' : String(input.name ?? '').trim();
-				const url = String(input.url ?? '').trim();
-				if (url === '') return;
+				const source = await askRemoteSource(branch);
+				if (source === null) return;
+				if (source.kind === 'github') {
+					await run(async () => {
+						const url = await ghCreateRepo(path, {
+							name: source.name, owner: source.owner, private: source.private, description: source.description,
+						});
+						await notify(`已发布到 ${url}`);
+					});
+					return;
+				}
 				await run(async () => {
-					const addError = await addRemote(path, name, url, null, false);
+					const addError = await addRemote(path, source.name, source.url, null, false);
 					if (addError !== null) throw new Error(addError);
-					const errors = await pushBranch(path, branch, [name]);
+					const errors = await pushBranch(path, branch, [source.name]);
 					if (errors.length > 0) throw new Error(errors.join('\n'));
 				});
 				return;
@@ -485,7 +568,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 				if (errors.length > 0) throw new Error(errors.join('\n'));
 			});
 		})();
-	}, [state.busy, state.remotes, currentSync, workingTreePath, run]);
+	}, [state.busy, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify]);
 
 	const handleSync = (): void => {
 		if (state.busy || workingTreePath === null) return;
@@ -543,11 +626,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [workingTreePath, run, state.remotes]);
 
-	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
-	const notify = React.useCallback(async (message: string) => {
-		showToast(message);
-	}, []);
-
 	/** 添加远程并刷新。 */
 	const handleAddRemote = React.useCallback((name: string, url: string, pushUrl: string | null) => {
 		void run(async () => { await addRemote(workingTreePath as string, name, url, pushUrl, false); });
@@ -557,6 +635,61 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const handleEditRemote = React.useCallback((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => {
 		void run(async () => { await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew); });
 	}, [workingTreePath, run]);
+
+	/**
+	 * 创建 Pull Request：选目标分支、填标题与正文，交给 gh 创建。
+	 *
+	 * 当前分支没有上游时先说明原因；gh 不可用时给出降级提示而不是静默失败。
+	 */
+	const handleCreatePullRequest = React.useCallback(async () => {
+		if (workingTreePath === null || state.head === null || state.busy) return;
+		const path = workingTreePath;
+		const head = state.head;
+
+		const account = await ghAccount(path).catch(() => null);
+		if (account === null || !account.loggedIn) {
+			await notify('未检测到可用的 GitHub 登录，请先运行 gh auth login。');
+			return;
+		}
+		const blocked = account.unavailable.find((item) => item.feature === 'create-pr');
+		if (blocked !== undefined) {
+			await notify(blocked.message);
+			return;
+		}
+
+		const info = await ghRepoInfo(path).catch(() => null);
+		const branches = (info?.branches ?? []).filter((name) => name !== head);
+		if (branches.length === 0) {
+			await notify('没有可作为目标的分支，请先把分支推送到远程。');
+			return;
+		}
+		const base = info?.defaultBranch !== null && info?.defaultBranch !== undefined && branches.includes(info.defaultBranch)
+			? info.defaultBranch
+			: branches[0];
+		const form = await showForm({
+			title: '创建 Pull Request',
+			message: `把 ${head} 合并到目标分支。`,
+			fields: [
+				{ type: 'select', name: 'base', label: '目标分支', value: base, options: branches.map((name) => ({ value: name, label: name })) },
+				{ type: 'text', name: 'title', label: '标题', value: state.detail !== null && state.detail.commit.hash !== '*' ? (state.detail.commit.message ?? '') : '', placeholder: 'PR 标题' },
+				{ type: 'text', name: 'body', label: '正文（可选）', placeholder: '' },
+				{ type: 'checkbox', name: 'draft', label: '创建为草稿', value: false },
+			],
+		});
+		if (form === null) return;
+		const title = String(form.title ?? '').trim();
+		if (title === '') return;
+		await run(async () => {
+			const url = await ghCreatePullRequest(path, {
+				head,
+				base: String(form.base ?? base),
+				title,
+				body: String(form.body ?? ''),
+				draft: form.draft === true,
+			});
+			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
+		});
+	}, [workingTreePath, state.head, state.busy, state.detail, run, notify]);
 
 	/** 导出仓库配置为 JSON 文件下载。 */
 	const handleExportConfig = React.useCallback(async () => {
@@ -687,11 +820,22 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [state.commits, selectNodeAndReset, run]);
 
+	/**
+	 * 是否可以创建 Pull Request：必须有 GitHub 远程，且当前分支已推送到远程。
+	 *
+	 * 远程列表只含已配置的远程；分支未推送时 gh 也找不到可比较的 head，因此一并隐藏入口。
+	 */
+	const canCreatePullRequest = React.useMemo(
+		() => hasGitHubRemote(state.remotes) && currentSync !== undefined && currentSync.upstream !== null,
+		[state.remotes, currentSync],
+	);
+
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
 		notify, handleTagDetails, setCommitMessage: setMessage,
-	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleTagDetails]);
+		handleCreatePullRequest, canCreatePullRequest,
+	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleTagDetails, handleCreatePullRequest, canCreatePullRequest]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {

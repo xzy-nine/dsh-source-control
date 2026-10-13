@@ -22,6 +22,7 @@ import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
+import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -397,7 +398,38 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 		}
 		case 'createPullRequest':
-			respond({ command: 'createPullRequest', push: bool('push'), errors: ['DSH 版本暂不支持创建 Pull Request'] });
+			// 用 gh CLI 创建 PR：非交互，标题与正文由前端给出。
+			await respondResult('createPullRequest', async () => ({
+				url: await ghCreatePullRequest(repo, {
+					head: str('head'),
+					base: str('base'),
+					title: str('title'),
+					body: str('body'),
+					draft: bool('draft'),
+				}),
+			}));
+			break;
+
+		/* --- GitHub 集成（gh CLI） --- */
+		case 'ghAccount':
+			await respondResult('ghAccount', async () => ({ account: await ghAccount(repo) }));
+			break;
+		case 'ghOwners':
+			await respondResult('ghOwners', async () => ({ owners: await ghOwners(repo) }));
+			break;
+		case 'ghRepoInfo':
+			await respondResult('ghRepoInfo', async () => ({ info: await ghRepoInfo(repo) }));
+			break;
+		case 'ghCreateRepo':
+			await respondResult('ghCreateRepo', async () => ({
+				url: await ghCreateRepo(repo, {
+					name: str('name'),
+					owner: str('owner'),
+					private: bool('private'),
+					description: str('description'),
+					remote: str('remote') === '' ? 'origin' : str('remote'),
+				}),
+			}));
 			break;
 		case 'openExtensionSettings':
 		case 'openExternalDirDiff':

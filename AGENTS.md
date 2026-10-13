@@ -45,6 +45,12 @@ assets/icons/       引用标记用的 SVG
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
 
+`gh-cli.ts` 是 GitHub 集成层：同样以数组参数直接 spawn `gh`（不经 shell），并设
+`GH_PROMPT_DISABLED=1` 避免子进程等待交互输入。`classifyGhFailure` 把 `gh` 输出归类为
+missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / unknown，
+前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
+404 归入无权限。
+
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
@@ -78,6 +84,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
+| `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `worktree-branches.test.mjs` | 工作树占用分支的判定 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |

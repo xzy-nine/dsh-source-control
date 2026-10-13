@@ -42,6 +42,10 @@ export interface GraphMenuDeps {
 	readonly notify: (message: string) => Promise<void>;
 	/** 查看标签详情。 */
 	readonly handleTagDetails: (tagName: string, commitHash: string) => Promise<void>;
+	/** 创建 Pull Request：由面板负责选目标分支、填标题正文并调用 gh。 */
+	readonly handleCreatePullRequest: () => Promise<void>;
+	/** 当前分支是否有可创建 PR 的远程：无 GitHub 远程时该项不显示。 */
+	readonly canCreatePullRequest: boolean;
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
 	readonly setCommitMessage: (message: string) => void;
 }
@@ -236,6 +240,20 @@ const ACTIONS: readonly MenuAction[] = [
 		build: (ctx) => (ctx.ref === null
 			? null
 			: { title: '复制分支名', onClick: async () => { await copyText(ctx.ref!.name); } }),
+	},
+	{
+		id: 'createPullRequest',
+		refTypes: ['head'],
+		build: (ctx) => {
+			// PR 是分支级操作：提交行右键时只在当前分支上有意义，引用右键时针对该分支。
+			const branch = ctx.ref !== null ? ctx.ref.name : ctx.deps.head;
+			if (branch === null || branch !== ctx.deps.head) return null;
+			if (!ctx.deps.canCreatePullRequest) return null;
+			return {
+				title: '创建 Pull Request…',
+				onClick: () => { void ctx.deps.handleCreatePullRequest(); },
+			};
+		},
 	},
 	{
 		id: 'createArchiveFromRef',
