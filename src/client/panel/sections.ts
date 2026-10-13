@@ -194,7 +194,7 @@ export function ChangesSection({
 					` · 输出 ${aiStats.outputTokens}`,
 					` · 缓存读 ${aiStats.cacheReadTokens}`,
 					` · 缓存写 ${aiStats.cacheWriteTokens}`,
-					` · ${aiStats.elapsed}`,
+					` · ${aiStats.elapsed}+${aiStats.ttft}`,
 				),
 				React.createElement('div', { className: 'ggg-commit-actions-row' },
 					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),

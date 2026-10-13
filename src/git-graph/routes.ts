@@ -703,24 +703,43 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					if (warning !== '') sse('warning', warning);
 
 					const startTime = Date.now();
+					/*
+					 * 首个输出增量到达的时刻，作为 tok/s 的计时起点。
+					 *
+					 * 起点不含请求上传与提示词处理时间。`text-delta` 与 `reasoning-delta` 都算
+					 * 输出：`usage.outputTokens` 包含推理 token。
+					 */
+					let firstOutputTime: number | null = null;
 					let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
 					try {
 						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
 						for await (const chunk of stream) {
-							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) sse('chunk', chunk.text);
-							else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
+							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+								if (firstOutputTime === null) firstOutputTime = Date.now();
+								sse('chunk', chunk.text);
+							} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+								if (firstOutputTime === null) firstOutputTime = Date.now();
+							} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
 								const f = chunk.reason.failure;
 								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
 								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 							}
 						}
-						const elapsedSec = (Date.now() - startTime) / 1000;
+						const endTime = Date.now();
+						const totalSec = (endTime - startTime) / 1000;
+						/*
+						 * 时长拆两段：`elapsed` 为解码时长（总时长扣除首 token 延迟），
+						 * `ttft` 为首 token 延迟。全程无输出时 ttft 为 0、elapsed 为总时长。
+						 */
+						const ttftSec = firstOutputTime === null ? 0 : (firstOutputTime - startTime) / 1000;
+						const elapsedSec = totalSec - ttftSec;
 						const outTok = usage?.outputTokens ?? 0;
 						const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
 						sse('stats', {
 							tps,
 							elapsed: elapsedSec.toFixed(1) + 's',
+							ttft: ttftSec.toFixed(1) + 's',
 							inputTokens: usage?.inputTokens ?? 0,
 							outputTokens: outTok,
 							cacheReadTokens: usage?.cacheReadTokens ?? 0,

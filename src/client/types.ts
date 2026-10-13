@@ -186,5 +186,8 @@ export interface AiStats {
 	readonly outputTokens: number;
 	readonly cacheReadTokens: number;
 	readonly cacheWriteTokens: number;
+	/** 解码时长（总时长扣除首 token 延迟）。 */
 	readonly elapsed: string;
+	/** 首 token 延迟。 */
+	readonly ttft: string;
 }
