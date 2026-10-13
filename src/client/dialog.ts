@@ -7,9 +7,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-	Button, Checkbox, Input, Menu, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
-	IconChevronDownOutlineRegular,
+	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Dropdown, type DropdownOption } from './ui/dropdown.ts';
+
+export type { DropdownOption };
 
 /**
  * 在独立 React 根上挂载一个弹窗组件，并在结束时卸载。
@@ -251,13 +253,6 @@ interface FormFieldBase {
 	readonly visibleWhen?: (values: Record<string, unknown>) => boolean;
 }
 
-/** 下拉选项。 */
-export interface DropdownOption {
-	readonly value: string;
-	readonly label: string;
-	readonly title?: string;
-}
-
 /** 表单字段定义。 */
 export type FormField =
 	| (FormFieldBase & { readonly type: 'text'; readonly placeholder?: string; readonly value?: string })
@@ -399,9 +394,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 }
 
 /**
- * 下拉字段：触发器显示当前值，展开后列出全部选项。
- *
- * 选项较多时比分段按钮更合适；与设置面板的 DropdownRow 同一交互。
+ * 下拉字段：字段标签 + 共享下拉控件。
  *
  * @param props.name - 字段名（用于生成 id）。
  * @param props.label - 字段标签。
@@ -417,30 +410,11 @@ function DropdownField({ name, label, options, value, onChange }: {
 	value: string;
 	onChange: (next: string) => void;
 }): React.ReactElement {
-	const [open, setOpen] = React.useState(false);
-	const triggerRef = React.useRef<HTMLButtonElement>(null);
-	const current = options.find((option) => option.value === value);
 	return React.createElement(
 		'div',
 		{ className: 'ggg-field' },
 		label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, label),
-		React.createElement(Menu, {
-			open,
-			portal: true,
-			getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
-			selectedId: value,
-			items: options.map((option) => ({ id: option.value, label: option.label, title: option.title })),
-			onSelect: (id: string) => { setOpen(false); onChange(id); },
-			onClose: () => setOpen(false),
-			anchor: React.createElement('button', {
-				type: 'button', ref: triggerRef, id: `ggg-field-${name}`, className: 'ggg-set-dropdown',
-				'aria-haspopup': 'menu', 'aria-expanded': open,
-				onClick: () => setOpen((previous) => !previous),
-			},
-				React.createElement('span', { className: 'ggg-set-dropdown-text' }, current?.label ?? value),
-				React.createElement(IconChevronDownOutlineRegular, { size: 13 }),
-			),
-		}),
+		React.createElement(Dropdown, { id: `ggg-field-${name}`, options, value, onChange }),
 	);
 }
 

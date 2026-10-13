@@ -6,9 +6,10 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, Input, Menu, SegmentedControl, SegmentedTabs,
+	Button, Checkbox, Input, SegmentedControl, SegmentedTabs,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Dropdown } from './ui/dropdown.ts';
 import { fetchAiModels } from './api.ts';
 import { showConfirmation } from './dialog.ts';
 import type { AiModelCatalog } from './api.ts';
@@ -190,7 +191,7 @@ function SelectRow({ label, options, value, onChange }: {
 }
 
 /**
- * 用 DSH 的 Menu 做一个下拉选择行：触发器显示当前值，展开后列出可选项。
+ * 下拉选择行：行内标签 + 共享下拉控件。
  *
  * @param props.label - 行标签。
  * @param props.options - 选项。
@@ -204,30 +205,11 @@ function DropdownRow({ label, options, value, onChange }: {
 	value: string;
 	onChange: (next: string) => void;
 }): React.ReactElement {
-	const [open, setOpen] = React.useState(false);
-	const triggerRef = React.useRef<HTMLButtonElement>(null);
-	const current = options.find((option) => option.value === value);
 	return React.createElement(
 		'div',
 		{ className: 'ggg-set-row' },
 		React.createElement('span', { className: 'ggg-set-label' }, label),
-		React.createElement(Menu, {
-			open,
-			portal: true,
-			getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
-			selectedId: value,
-			items: options.map((option) => ({ id: option.value, label: option.label })),
-			onSelect: (id: string) => { setOpen(false); onChange(id); },
-			onClose: () => setOpen(false),
-			anchor: React.createElement('button', {
-				type: 'button', ref: triggerRef, className: 'ggg-set-dropdown',
-				'aria-haspopup': 'menu', 'aria-expanded': open,
-				onClick: () => setOpen((previous) => !previous),
-			},
-				React.createElement('span', { className: 'ggg-set-dropdown-text' }, current?.label ?? value),
-				React.createElement(IconChevronDownOutlineRegular, { size: 13 }),
-			),
-		}),
+		React.createElement(Dropdown, { options, value, onChange }),
 	);
 }
 

@@ -463,7 +463,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const ghReady = account !== null && account.loggedIn
 			&& account.owners.length > 0
 			&& !account.unavailable.some((item) => item.feature === 'create-repo');
-		const repoName = (workingTreePath ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+		// 仓库名预填存储库区域显示的名称，即所选节点的末段目录名。
+		const repoName = selectedNode?.name ?? '';
 		const user = account?.user ?? '';
 		const orgs = (account?.owners ?? []).filter((owner) => owner !== user);
 
@@ -542,7 +543,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const url = String(form.url ?? '').trim();
 		if (url === '') return null;
 		return { kind: 'manual', name, url };
-	}, [workingTreePath]);
+	}, [workingTreePath, selectedNode]);
 
 	/**
 	 * 发布当前本地分支：推送到选定远程并建立上游。
