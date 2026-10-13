@@ -155,6 +155,9 @@ function Section({ title, children }: { title: string; children?: React.ReactNod
 /**
  * 一个开关行。
  *
+ * Checkbox 自身携带文案且根元素是 `<label>`，因此这里用 `div` 作行容器、不再另加文案节点：
+ * 再套一层 `<label>` 会形成嵌套，重复显示文案并让点击行为异常。
+ *
  * @param props.label - 文案。
  * @param props.checked - 状态。
  * @param props.onChange - 变更回调。
@@ -162,10 +165,9 @@ function Section({ title, children }: { title: string; children?: React.ReactNod
  */
 function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (next: boolean) => void }): React.ReactElement {
 	return React.createElement(
-		'label',
+		'div',
 		{ className: 'ggg-set-row ggg-set-row-inline' },
 		React.createElement(Checkbox, { checked, onChange, label }),
-		React.createElement('span', { className: 'ggg-set-row-text' }, label),
 	);
 }
 

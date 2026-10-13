@@ -202,12 +202,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	 * 推送某个仓库的当前分支到其上游，失败时报错。
 	 *
 	 * `pushUpstream` 把失败放在返回值里而不抛错，因此这里显式检查，避免静默失败。
+	 * 未配置远程或当前分支没有上游时，git 给出的是多行长文，这里替换为可读提示；
+	 * 这两类提示按 git 的实际措辞匹配，措辞变化时退回原文。
 	 *
 	 * @param repoPath - 目标仓库路径；省略时用当前选中的工作树。
 	 */
 	const pushCurrentBranch = React.useCallback(async (repoPath?: string) => {
 		const error = await pushUpstream(repoPath ?? (workingTreePath as string));
-		if (error !== null) throw new Error(error);
+		if (error === null) return;
+		if (/no configured push destination|no configured remote/i.test(error)) {
+			throw new Error('未配置远程仓库，请先在设置中添加远程。');
+		}
+		if (/has no upstream branch/i.test(error)) {
+			throw new Error('当前分支没有上游分支，请先设置上游后再推送。');
+		}
+		throw new Error(error);
 	}, [workingTreePath]);
 
 	/** 把当前改动存入贮藏；贮藏信息由用户输入，留空表示不指定。 */
@@ -425,9 +434,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [workingTreePath, run, state.remotes]);
 
-	/** 报错提示：依赖 VS Code 的动作在 DSH 中不可用。 */
-	const unsupported = React.useCallback(async (label: string) => {
-		reportError(setState, `${label}：DSH 版本暂不支持，请在对应工具中操作`);
+	/** 一般提示：说明当前条件下操作无法进行的原因。 */
+	const notify = React.useCallback(async (message: string) => {
+		reportError(setState, message);
 		setTimeout(() => reportError(setState, null), 2600);
 	}, [setState]);
 
@@ -574,8 +583,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
-		unsupported, handleTagDetails, setCommitMessage: setMessage,
-	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, unsupported, handleTagDetails]);
+		notify, handleTagDetails, setCommitMessage: setMessage,
+	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleTagDetails]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {

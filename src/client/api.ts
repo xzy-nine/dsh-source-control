@@ -12,22 +12,51 @@ const API_PATH = '/dsh-dev-git-graph/gg/api';
 /**
  * 调用一条宿主命令。
  *
+ * 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数），因此先读响应体再判断
+ * 状态码：能取到文本就用它，取不到才退回状态码。
+ *
  * @param cwd - 会话工作区路径，作为 repo 传给宿主。
  * @param message - 命令载荷，`command` 由调用方给出。
  * @param signal - 取消信号；中止时 fetch 抛 AbortError。
  * @returns 宿主响应。
  */
 export async function callApi(cwd: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+	const payload = await callApiRaw(cwd, message, signal);
+	const { error } = payload;
+	if (typeof error === 'string' && error !== '') throw new Error(error);
+	return payload;
+}
+
+/**
+ * 调用一条宿主命令，把 `error` 原样留在返回值里而不抛错。
+ *
+ * 供需要按错误内容分支的调用方使用（如把 git 的英文长文替换为可读提示）；只关心
+ * 成功/失败的调用方用 {@link callApi}。HTTP 层失败仍抛错，因为此时没有命令级信息。
+ *
+ * @param cwd - 会话工作区路径，作为 repo 传给宿主。
+ * @param message - 命令载荷，`command` 由调用方给出。
+ * @param signal - 取消信号。
+ * @returns 宿主响应，含可能的 `error` 字段。
+ */
+export async function callApiRaw(cwd: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
 	const response = await fetch(API_PATH, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ repo: cwd, ...message }),
 		signal,
 	});
-	if (!response.ok) throw new Error(`宿主返回 ${response.status}`);
-	const payload = await response.json() as Record<string, unknown>;
+	const text = await response.text();
+	let payload: Record<string, unknown> = {};
+	try {
+		const parsed = text === '' ? {} : JSON.parse(text) as unknown;
+		if (parsed !== null && typeof parsed === 'object') payload = parsed as Record<string, unknown>;
+	} catch {
+		/* 非 JSON 响应：保留状态码作为错误信息 */
+	}
+	// 宿主在非 2xx（如未知命令）时同样带 `error` 文本，状态码只在没有该文本时兜底。
 	const { error } = payload;
-	if (typeof error === 'string' && error !== '') throw new Error(error);
+	if (typeof error === 'string' && error !== '') return payload;
+	if (!response.ok) return { ...payload, error: `宿主返回 ${response.status}` };
 	return payload;
 }
 
@@ -280,7 +309,7 @@ export async function fetchRepo(cwd: string, name: string | null, prune = false,
  * @returns 每条远程的结果错误，无错误时为空数组。
  */
 export async function pushBranch(cwd: string, branchName: string, remotes: readonly string[]): Promise<string[]> {
-	const payload = await callApi(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '' });
+	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '' });
 	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
 }
 
@@ -293,7 +322,8 @@ export async function pushBranch(cwd: string, branchName: string, remotes: reado
  * @returns 错误文本，无错误时返回 null。
  */
 export async function pushUpstream(cwd: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'pushUpstream' });
+	// 用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。
+	const payload = await callApiRaw(cwd, { command: 'pushUpstream' });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -361,7 +391,7 @@ export async function deleteBranch(cwd: string, branchName: string, forceDelete 
  * @returns 错误文本，无错误时返回 null。
  */
 export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'renameBranch', oldName, newName });
+	const payload = await callApiRaw(cwd, { command: 'renameBranch', oldName, newName });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -374,7 +404,7 @@ export async function renameBranch(cwd: string, oldName: string, newName: string
  * @returns 错误文本，无错误时返回 null。
  */
 export async function deleteRemoteBranch(cwd: string, branchName: string, remote: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'deleteRemoteBranch', branchName, remote });
+	const payload = await callApiRaw(cwd, { command: 'deleteRemoteBranch', branchName, remote });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -389,7 +419,7 @@ export async function deleteRemoteBranch(cwd: string, branchName: string, remote
  * @returns 错误文本，无错误时返回 null。
  */
 export async function fetchIntoLocalBranch(cwd: string, remote: string, remoteBranch: string, localBranch: string, force = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'fetchIntoLocalBranch', remote, remoteBranch, localBranch, force });
+	const payload = await callApiRaw(cwd, { command: 'fetchIntoLocalBranch', remote, remoteBranch, localBranch, force });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -404,7 +434,7 @@ export async function fetchIntoLocalBranch(cwd: string, remote: string, remoteBr
  * @returns 错误文本，无错误时返回 null。
  */
 export async function pullBranch(cwd: string, branchName: string, remote: string, createNewCommit = false, squash = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'pullBranch', branchName, remote, createNewCommit, squash });
+	const payload = await callApiRaw(cwd, { command: 'pullBranch', branchName, remote, createNewCommit, squash });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -416,7 +446,7 @@ export async function pullBranch(cwd: string, branchName: string, remote: string
  * @returns 错误文本，无错误时返回 null。
  */
 export async function checkoutCommit(cwd: string, commitHash: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'checkoutCommit', commitHash });
+	const payload = await callApiRaw(cwd, { command: 'checkoutCommit', commitHash });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -445,7 +475,7 @@ export async function cherrypickCommit(cwd: string, commitHash: string, parentIn
  * @returns 错误文本，无错误时返回 null。
  */
 export async function resetToCommit(cwd: string, commitHash: string, resetMode = 'mixed'): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'resetToCommit', commit: commitHash, resetMode });
+	const payload = await callApiRaw(cwd, { command: 'resetToCommit', commit: commitHash, resetMode });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -458,7 +488,7 @@ export async function resetToCommit(cwd: string, commitHash: string, resetMode =
  * @returns 错误文本，无错误时返回 null。
  */
 export async function revertCommit(cwd: string, commitHash: string, parentIndex = -1): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'revertCommit', commitHash, parentIndex });
+	const payload = await callApiRaw(cwd, { command: 'revertCommit', commitHash, parentIndex });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -473,7 +503,7 @@ export async function revertCommit(cwd: string, commitHash: string, parentIndex 
  * @returns 错误文本，无错误时返回 null。
  */
 export async function merge(cwd: string, obj: string, createNewCommit = false, squash = false, noCommit = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit });
+	const payload = await callApiRaw(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -502,7 +532,7 @@ export interface MergeIntoBranchResult {
  * @returns 分支名、初始合并信息、冲突标记与错误文本。
  */
 export async function mergeIntoBranch(cwd: string, branchName: string, commitHash: string, message = ''): Promise<MergeIntoBranchResult> {
-	const payload = await callApi(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message });
+	const payload = await callApiRaw(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message });
 	return {
 		error: typeof payload.error === 'string' && payload.error !== '' ? payload.error : null,
 		branchName: typeof payload.branchName === 'string' ? payload.branchName : branchName,
@@ -521,7 +551,7 @@ export async function mergeIntoBranch(cwd: string, branchName: string, commitHas
  * @returns 错误文本，无错误时返回 null。
  */
 export async function rebase(cwd: string, obj: string, ignoreDate = true, interactive = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'rebase', obj, actionOn: 'Branch', ignoreDate, interactive });
+	const payload = await callApiRaw(cwd, { command: 'rebase', obj, actionOn: 'Branch', ignoreDate, interactive });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -552,7 +582,7 @@ export async function addTag(cwd: string, tagName: string, commitHash: string, t
  * @returns 错误文本，无错误时返回 null。
  */
 export async function deleteTag(cwd: string, tagName: string, deleteOnRemote: string | null = null): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'deleteTag', tagName, deleteOnRemote });
+	const payload = await callApiRaw(cwd, { command: 'deleteTag', tagName, deleteOnRemote });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -580,7 +610,7 @@ export async function pushTag(cwd: string, tagName: string, remotes: readonly st
  * @returns 错误文本，无错误时返回 null。
  */
 export async function deleteRemote(cwd: string, name: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'deleteRemote', name });
+	const payload = await callApiRaw(cwd, { command: 'deleteRemote', name });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -596,7 +626,7 @@ export async function deleteRemote(cwd: string, name: string): Promise<string | 
  * @returns 错误列表，无错误时为空数组。
  */
 export async function editUserDetails(cwd: string, name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean): Promise<string[]> {
-	const payload = await callApi(cwd, { command: 'editUserDetails', name, email, location, deleteLocalName, deleteLocalEmail });
+	const payload = await callApiRaw(cwd, { command: 'editUserDetails', name, email, location, deleteLocalName, deleteLocalEmail });
 	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
 }
 
@@ -610,7 +640,7 @@ export async function editUserDetails(cwd: string, name: string, email: string, 
  * @returns 错误列表，无错误时为空数组。
  */
 export async function deleteUserDetails(cwd: string, name: boolean, email: boolean, location: string): Promise<string[]> {
-	const payload = await callApi(cwd, { command: 'deleteUserDetails', name, email, location });
+	const payload = await callApiRaw(cwd, { command: 'deleteUserDetails', name, email, location });
 	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
 }
 
@@ -623,7 +653,7 @@ export async function deleteUserDetails(cwd: string, name: boolean, email: boole
  * @returns 错误文本，无错误时返回 null。
  */
 export async function applyStash(cwd: string, selector: string, reinstateIndex = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'applyStash', selector, reinstateIndex });
+	const payload = await callApiRaw(cwd, { command: 'applyStash', selector, reinstateIndex });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -636,7 +666,7 @@ export async function applyStash(cwd: string, selector: string, reinstateIndex =
  * @returns 错误文本，无错误时返回 null。
  */
 export async function branchFromStash(cwd: string, selector: string, branchName: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'branchFromStash', selector, branchName });
+	const payload = await callApiRaw(cwd, { command: 'branchFromStash', selector, branchName });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -648,7 +678,7 @@ export async function branchFromStash(cwd: string, selector: string, branchName:
  * @returns 错误文本，无错误时返回 null。
  */
 export async function dropStash(cwd: string, selector: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'dropStash', selector });
+	const payload = await callApiRaw(cwd, { command: 'dropStash', selector });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -661,7 +691,7 @@ export async function dropStash(cwd: string, selector: string): Promise<string |
  * @returns 错误文本，无错误时返回 null。
  */
 export async function popStash(cwd: string, selector: string, reinstateIndex = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'popStash', selector, reinstateIndex });
+	const payload = await callApiRaw(cwd, { command: 'popStash', selector, reinstateIndex });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -674,7 +704,7 @@ export async function popStash(cwd: string, selector: string, reinstateIndex = f
  * @returns 错误文本，无错误时返回 null。
  */
 export async function pushStash(cwd: string, message: string, includeUntracked = true): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'pushStash', message, includeUntracked });
+	const payload = await callApiRaw(cwd, { command: 'pushStash', message, includeUntracked });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -686,7 +716,7 @@ export async function pushStash(cwd: string, message: string, includeUntracked =
  * @returns 错误文本，无错误时返回 null。
  */
 export async function cleanUntrackedFiles(cwd: string, directories = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'cleanUntrackedFiles', directories });
+	const payload = await callApiRaw(cwd, { command: 'cleanUntrackedFiles', directories });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -721,7 +751,7 @@ export async function tagDetails(cwd: string, tagName: string, commitHash: strin
  * @returns 错误文本，无错误时返回 null。
  */
 export async function addRemote(cwd: string, name: string, url: string, pushUrl: string | null = null, fetch = false): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'addRemote', name, url, pushUrl, fetch });
+	const payload = await callApiRaw(cwd, { command: 'addRemote', name, url, pushUrl, fetch });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -738,7 +768,7 @@ export async function addRemote(cwd: string, name: string, url: string, pushUrl:
  * @returns 错误文本，无错误时返回 null。
  */
 export async function editRemote(cwd: string, nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'editRemote', nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew });
+	const payload = await callApiRaw(cwd, { command: 'editRemote', nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
@@ -752,7 +782,7 @@ export async function editRemote(cwd: string, nameOld: string, nameNew: string, 
  * @returns 错误文本，无错误时返回 null。
  */
 export async function createArchive(cwd: string, ref: string, format: string, outputPath: string): Promise<string | null> {
-	const payload = await callApi(cwd, { command: 'createArchive', ref, format, outputPath });
+	const payload = await callApiRaw(cwd, { command: 'createArchive', ref, format, outputPath });
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 

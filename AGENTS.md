@@ -77,6 +77,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
+| `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `worktree-branches.test.mjs` | 工作树占用分支的判定 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |

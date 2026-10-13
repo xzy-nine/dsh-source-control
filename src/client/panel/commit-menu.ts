@@ -38,8 +38,8 @@ export interface GraphMenuDeps {
 	readonly handleCreateArchive: (ref: string, refLabel: string) => Promise<void>;
 	/** 当前分支名。 */
 	readonly head: string | null;
-	/** 报错提示：依赖 VS Code 的动作在 DSH 中不可用。 */
-	readonly unsupported: (label: string) => Promise<void>;
+	/** 一般提示：用于说明当前条件下操作无法进行的原因。 */
+	readonly notify: (message: string) => Promise<void>;
 	/** 查看标签详情。 */
 	readonly handleTagDetails: (tagName: string, commitHash: string) => Promise<void>;
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
@@ -392,7 +392,8 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '推送标签到远程…',
 				onClick: async () => {
 					const { remotes } = ctx.deps;
-					if (remotes.length === 0) return ctx.deps.unsupported('推送标签');
+					// 没有远程时该操作无法进行，原因是未配置远程，与 VS Code 专属动作无关。
+					if (remotes.length === 0) return ctx.deps.notify('未配置远程仓库，请先在设置中添加远程。');
 					const remote = remotes.length === 1 ? remotes[0].name : await showSelect({
 						title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })),
 					});
