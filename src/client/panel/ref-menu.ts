@@ -80,7 +80,7 @@ export function openRefMenu(
 				{ type: 'divider' },
 				{ title: '复制分支名', onClick: async () => { await copyText(name); } },
 				{ title: '创建归档…', onClick: () => { void handleCreateArchive(name, `分支 ${name}`); } },
-				{ title: '删除分支…', onClick: async () => {
+				{ title: '删除分支…', danger: true, onClick: async () => {
 					// 当前分支不可删除：直接说明原因，而不是置灰等 git 报错。
 					if (isCurrent) {
 						await showMessage({
@@ -121,7 +121,7 @@ export function openRefMenu(
 					if (ok) void run(async () => { await rebase(repo, name); });
 				} },
 				{ type: 'divider' },
-				{ title: '删除远程分支…', onClick: async () => {
+				{ title: '删除远程分支…', danger: true, onClick: async () => {
 					const ok = await showCheckbox({
 						title: '删除远程分支', message: `确定删除远程分支 ${name}？`, checkboxLabel: '我已知晓并继续', danger: true,
 					});
@@ -153,7 +153,7 @@ export function openRefMenu(
 				{ title: '创建归档…', onClick: () => { void handleCreateArchive(name, `标签 ${name}`); } },
 				{ type: 'divider' },
 				{ title: '复制标签名', onClick: async () => { await copyText(name); } },
-				{ title: '删除标签…', onClick: async () => {
+				{ title: '删除标签…', danger: true, onClick: async () => {
 					const ok = await showCheckbox({
 						title: '删除标签', message: `确定删除标签 ${name}？`, checkboxLabel: '同时删除远程标签', danger: true,
 					});
@@ -175,7 +175,7 @@ export function openRefMenu(
 				if (newName !== null && newName !== '') void run(async () => { await branchFromStash(repo, selector, newName); });
 			} },
 			{ type: 'divider' },
-			{ title: '丢弃贮藏…', onClick: async () => {
+			{ title: '丢弃贮藏…', danger: true, onClick: async () => {
 				const ok = await showCheckbox({
 					title: '丢弃贮藏', message: `确定丢弃贮藏 ${selector}？`, checkboxLabel: '我已知晓并继续', danger: true,
 				});

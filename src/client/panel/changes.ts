@@ -9,6 +9,7 @@ import {
 	IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
+import { showConfirmation } from '../dialog.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { CommitFile, WorkingTreeEntry } from '../types.ts';
 
@@ -268,7 +269,25 @@ export function ChangeGroup({
 	const allPaths = visible.map((entry) => entry.path);
 	const onStage = (paths: readonly string[]): void => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
 	const onUnstage = (paths: readonly string[]): void => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
-	const onDiscard = (paths: readonly string[], untracked: boolean): void => { void run(async () => { await discardPaths(workingTreePath, paths, untracked); }); };
+	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
+		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
+		void (async () => {
+			const ok = await showConfirmation({
+				title: '丢弃改动',
+				// 未跟踪文件是被真正删除，而不是还原到某个版本，措辞需说清。
+				message: untracked
+					? (paths.length === 1
+						? `确定删除未跟踪文件 ${paths[0]}？删除后无法恢复。`
+						: `确定删除这 ${paths.length} 个未跟踪文件？删除后无法恢复。`)
+					: (paths.length === 1
+						? `确定丢弃 ${paths[0]} 的改动？未提交的改动会丢失，且无法恢复。`
+						: `确定丢弃这 ${paths.length} 个文件的改动？未提交的改动会丢失，且无法恢复。`),
+				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
+			});
+			if (!ok) return;
+			await run(async () => { await discardPaths(workingTreePath, paths, untracked); });
+		})();
+	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;

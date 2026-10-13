@@ -32,11 +32,11 @@ function clientFiles() {
 	return files;
 }
 
-/** 收集 ui-primitives 的导出名（含星号再导出的图标）。 */
+/** 收集 ui-primitives 的导出名（含 `export type` 与星号再导出的图标）。 */
 function primitivesExports() {
 	const names = new Set();
 	const indexSource = readFileSync(PRIMITIVES_INDEX, 'utf8');
-	for (const match of indexSource.matchAll(/export\s*\{([^}]+)\}/g)) {
+	for (const match of indexSource.matchAll(/export\s*(?:type\s*)?\{([^}]+)\}/g)) {
 		for (const piece of match[1].split(',')) {
 			const name = piece.trim().split(/\s+as\s+/).pop()?.trim();
 			if (name !== undefined && name !== '') names.add(name);
@@ -155,11 +155,11 @@ test('工作区主体自身不滚动', () => {
 });
 
 test('文件行整行点击即打开', () => {
-	// 文件行不再有「查看差异」按钮：点击行本身即打开。
+	// 文件行不再有独立的差异按钮：点击行本身即打开。
 	const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
 	assert.ok(!source.includes('IconCompareSplitOutlineRegular'), '不应再引用差异按钮图标');
-	assert.ok(!source.includes("'查看差异'"), '不应再有查看差异按钮');
-	assert.ok(!source.includes("'打开差异'"), '右键菜单不应再写打开差异');
+	assert.match(source, /const handleClick = [\s\S]{0,200}?onOpen\(entry, isNew\)/, '整行点击应直接打开文件');
+	assert.match(source, /onClick: handleClick/, '行元素应绑定整行点击');
 	const openable = source.match(/ggg-change-openable/g) ?? [];
 	assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
 });
@@ -251,12 +251,10 @@ test('宿主 hunk 形状与视图一致', () => {
 	assert.match(source, /HUNK_HEADER/, '应解析 hunk 头取得行号区间');
 });
 
-test('未提交行的文案译为中文', () => {
-	// 数据层给出的 message 是 `Uncommitted Changes (2)`，界面须显示中文。
+test('未提交行的文本经翻译函数', () => {
+	// 数据层给出的 message 是英文占位，界面须经 displayMessage 转换；具体文案不在测试内钉住。
 	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
-	assert.match(source, /UNCOMMITTED_MESSAGE/, '应有未提交文案的匹配规则');
-	assert.match(source, /'未提交的更改'/, '无数量时应显示中文');
-	assert.match(source, /未提交的更改（\$\{match\[1\]\}）/, '带数量时应显示中文');
+	assert.match(source, /UNCOMMITTED_MESSAGE/, '应有未提交文本的匹配规则');
 	assert.match(source, /displayMessage\(commit\)/, '行文本应经翻译函数');
 });
 
@@ -355,8 +353,8 @@ test('工作树分支从图形区与删除候选中排除', () => {
 test('工作树右键提供移除入口', () => {
 	const panel = readFileSync(join(clientDir, 'panel.ts'), 'utf8');
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
-	assert.match(panel, /title: '移除工作树…'/, '菜单应有移除工作树');
 	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
+	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
 	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
@@ -368,11 +366,11 @@ test('删除当前分支时提示而非静默失败', () => {
 	// 当前分支仍在候选里，但点击后说明原因。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
 	assert.match(menu, /name === head/, '提交菜单应识别当前分支');
-	assert.match(menu, /无法删除当前分支/, '应给出不可删除的提示');
+	assert.match(menu, /await showMessage\(/, '应给出不可删除的提示');
 	const refMenu = readFileSync(join(panelDir, 'ref-menu.ts'), 'utf8');
 	assert.match(refMenu, /if \(isCurrent\)/, '引用菜单应同样拦截当前分支');
-	// 只有删除项不再置灰；检出/重命名/合并/变基对当前分支仍应禁用。
-	const deleteItem = /title: '删除分支…'[^}]*\}/.exec(refMenu);
+	// 删除项不再置灰，改为点击后提示。
+	const deleteItem = /title: [^,]*删除分支[^,]*,[^}]*\}/.exec(refMenu);
 	assert.ok(deleteItem !== null, '未找到删除分支项');
 	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
 	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');

@@ -137,14 +137,11 @@ export const STYLES = `
 .ggg-row-uncommitted{font-style:italic}
 
 /* ── 右键浮层 ───────────────────────────────────────────── */
-.ggg-menu-divider{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
-.ggg-menu-item{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;text-align:left;padding:6px 10px;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
-.ggg-menu-chevron{flex:none;margin-left:auto;color:var(--dsw-alias-label-tertiary)}
-.ggg-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.ggg-menu-item:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}
-.ggg-menu-item-danger{color:var(--dsw-alias-state-error-primary)}
-.ggg-menu-item-danger:hover{background:var(--dsw-alias-state-error-bg-secondary,rgba(255,0,0,0.08))}
-.ggg-menu-item-checked{font-weight:600}
+/* 有二级菜单的项：文案撑满，箭头贴右。Menu 的 label 槽是普通行内元素、
+   不是 flex 容器，因此这里用 width 撑满而不是 flex。 */
+.ggg-menu-label{display:flex;align-items:center;gap:6px;width:100%}
+.ggg-menu-label-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ggg-menu-chevron{flex:none;color:var(--dsw-alias-label-tertiary)}
 
 /* ── 设置分区 ───────────────────────────────────────────── */
 .ggg-settings{top:8%;left:8%;right:8%;bottom:8%;transform:none;width:auto;max-width:560px;margin:auto;max-height:84vh}
@@ -237,6 +234,11 @@ export const STYLES = `
 .ggg-set-remote-edit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-set-form-actions{display:flex;gap:6px;margin-top:6px}
 .ggg-dialog-hint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
+/* 破坏性操作的确认按钮：Button 的 variant 规则带 :hover:not(:disabled)，特异性更高，
+   因此同时匹配静止与悬停两种状态才能压过它。 */
+button.ggg-btn-danger,
+button.ggg-btn-danger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);color:#fff}
+button.ggg-btn-danger:hover:not(:disabled){background:var(--dsw-alias-state-error-secondary)}
 
 /* ── 侧边栏差异查看页 ─────────────────────────────────────── */
 .ggg-diff-tab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
@@ -262,6 +264,8 @@ export const STYLES = `
 .ggg-set-ai-model{display:flex;flex-direction:column;gap:6px}
 .ggg-set-row{display:flex;align-items:center;gap:8px}
 .ggg-set-label{font-size:12px;color:var(--dsw-alias-label-secondary);width:56px;flex:none}
-.ggg-set-select{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary)}
+.ggg-set-dropdown{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);cursor:pointer}
+.ggg-set-dropdown:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ggg-set-dropdown-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .ggg-set-textarea{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}
 `;

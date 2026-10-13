@@ -1,19 +1,15 @@
 /**
- * 自建右键浮层：MenuSurface 挂到 document.body，按指针坐标固定定位。
+ * 自建右键浮层：把菜单项交给 DSH 的 Menu 渲染，按指针坐标定位。
  *
- * 承载提交、分支、远程、标签、贮藏等目标的右键菜单项；带 children 的项在右侧
- * 弹出二级菜单。不依赖浏览器原生 contextmenu 的默认外观，统一走 DSH 的浮层外观。
- * 菜单尺寸在挂载后实测，再按视口边缘避让（见 ./menu-placement.ts）。
+ * 承载提交、分支、远程、标签、贮藏等目标的右键菜单项；带 children 的项成为二级菜单。
+ * 菜单项的圆角、悬停填充、键盘导航与视口夹取都由 Menu 提供，本模块只负责把自建的
+ * 菜单项定义转成 Menu 的条目，并把指针坐标当作锚点矩形喂给它。
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-	IconChevronRightOutlineRegular, MenuSurface, useDismissOnOutsidePointer,
+	IconChevronRightOutlineRegular, Menu, type MenuEntry, type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { placeMenu, placeSubmenu } from './menu-placement.ts';
-
-/** 菜单宽度（一级与二级一致）。 */
-const MENU_WIDTH = 220;
 
 /**
  * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
@@ -93,11 +89,91 @@ export interface ShowContextMenuOptions {
 	readonly onClose?: () => void;
 }
 
-/** 菜单项类名。 */
-function itemClass(item: ContextMenuItem, extra = ''): string {
-	return `ggg-menu-item${item.danger ? ' ggg-menu-item-danger' : ''}`
-		+ `${item.checked ? ' ggg-menu-item-checked' : ''}`
-		+ `${extra === '' ? '' : ` ${extra}`}`;
+/**
+ * 菜单项文案：有二级菜单时在右侧补一个箭头标识。
+ *
+ * Menu 的 label 接受任意节点，箭头由这里提供——组件本身不画。
+ *
+ * @param title - 显示文案。
+ * @param hasChildren - 是否带二级菜单。
+ * @returns 文案节点。
+ */
+function labelOf(title: string, hasChildren: boolean): React.ReactNode {
+	if (!hasChildren) return title;
+	return React.createElement(
+		'span',
+		{ className: 'ggg-menu-label' },
+		React.createElement('span', { className: 'ggg-menu-label-text' }, title),
+		React.createElement(IconChevronRightOutlineRegular, { size: 13, className: 'ggg-menu-chevron' }),
+	);
+}
+
+/**
+ * 把自建菜单项转成 Menu 的一级条目，并把可点击项的 id 收集进 handlers。
+ *
+ * @param items - 自建菜单项。
+ * @param handlers - 收集 id 到点击回调的映射。
+ * @param selectedIds - 收集需要显示勾选的 id。
+ * @returns Menu 条目序列。
+ */
+function toEntries(
+	items: readonly ContextMenuItem[],
+	handlers: Map<string, () => void>,
+	selectedIds: string[],
+): MenuEntry[] {
+	const entries: MenuEntry[] = [];
+	items.forEach((item, index) => {
+		const id = `i${index}`;
+		if (item.type === 'divider') {
+			entries.push({ type: 'separator', id: `sep-${id}` });
+			return;
+		}
+		const children = (item.children ?? []).filter((child) => child.visible !== false);
+		if (item.onClick !== undefined) handlers.set(id, item.onClick);
+		if (item.checked === true) selectedIds.push(id);
+		entries.push({
+			id,
+			label: labelOf(item.title ?? '', children.length > 0),
+			disabled: item.disabled === true,
+			danger: item.danger === true,
+			// 二级菜单只接受普通项，分隔线在 Menu 的 submenu 里没有对应类型。
+			...(children.length > 0 ? { submenu: toSubItems(children, `${id}.`, handlers, selectedIds) } : {}),
+		});
+	});
+	return entries;
+}
+
+/**
+ * 把自建菜单项转成二级菜单项。
+ *
+ * @param items - 自建菜单项。
+ * @param prefix - id 前缀，保证层级间唯一。
+ * @param handlers - 收集 id 到点击回调的映射。
+ * @param selectedIds - 收集需要显示勾选的 id。
+ * @returns 二级菜单项序列。
+ */
+function toSubItems(
+	items: readonly ContextMenuItem[],
+	prefix: string,
+	handlers: Map<string, () => void>,
+	selectedIds: string[],
+): MenuItem[] {
+	const entries: MenuItem[] = [];
+	items.forEach((item, index) => {
+		if (item.type === 'divider') return;
+		const id = `${prefix}${index}`;
+		const children = (item.children ?? []).filter((child) => child.visible !== false);
+		if (item.onClick !== undefined) handlers.set(id, item.onClick);
+		if (item.checked === true) selectedIds.push(id);
+		entries.push({
+			id,
+			label: item.title ?? '',
+			disabled: item.disabled === true,
+			danger: item.danger === true,
+			...(children.length > 0 ? { submenu: toSubItems(children, `${id}.`, handlers, selectedIds) } : {}),
+		});
+	});
+	return entries;
 }
 
 /**
@@ -109,6 +185,9 @@ function itemClass(item: ContextMenuItem, extra = ''): string {
 export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions): void {
 	const visibleItems = items.filter((item) => item.visible !== false);
 	if (visibleItems.length === 0) return;
+	const handlers = new Map<string, () => void>();
+	const selectedIds: string[] = [];
+	const entries = toEntries(visibleItems, handlers, selectedIds);
 	const mount = document.createElement('div');
 	document.body.appendChild(mount);
 	const root = createRoot(mount);
@@ -117,135 +196,27 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 		mount.remove();
 		onClose?.();
 	};
+	// 指针位置当作零宽锚点：Menu 在锚点下方 4px 展开，故把矩形上移 4px 抵消，
+	// 使菜单左上角正好落在指针处。视口夹取由 Menu 负责。
+	const anchorRect = (): DOMRect => new DOMRect(x, y - 4, 0, 0);
 	function MenuContent(): React.ReactElement {
-		const anchor = React.useRef<HTMLDivElement>(mount);
-		const panel = React.useRef<HTMLDivElement>(null);
-		const submenuRef = React.useRef<HTMLDivElement>(null);
 		const [open, setOpen] = React.useState(true);
-		/** 展开的二级菜单：{ children, top }，top 为触发项在菜单内的纵向偏移。 */
-		const [submenu, setSubmenu] = React.useState<{ children: readonly ContextMenuItem[]; top: number } | null>(null);
-		/** 实测尺寸；挂载前为 null，此时先按估算值定位以免闪出屏幕外。 */
-		const [panelSize, setPanelSize] = React.useState<{ width: number; height: number } | null>(null);
-		const [submenuSize, setSubmenuSize] = React.useState<{ width: number; height: number } | null>(null);
-		useDismissOnOutsidePointer(anchor, open, setOpen);
 		React.useEffect(() => {
 			if (open === false) close();
 		}, [open]);
-		// 挂载后量一次实际尺寸：菜单高度取决于项数与换行，只能实测。
-		React.useLayoutEffect(() => {
-			const element = panel.current;
-			if (element === null) return;
-			const rect = element.getBoundingClientRect();
-			setPanelSize({ width: rect.width, height: rect.height });
-		}, []);
-		React.useLayoutEffect(() => {
-			const element = submenuRef.current;
-			if (element === null) return;
-			const rect = element.getBoundingClientRect();
-			setSubmenuSize({ width: rect.width, height: rect.height });
-		}, [submenu]);
-		// 二级菜单收起后清掉旧尺寸，避免下次按旧高度定位。
-		React.useEffect(() => {
-			if (submenu === null) setSubmenuSize(null);
-		}, [submenu]);
-
-		/** 一级菜单落点：实测优先，未量到时用项数估算高度。 */
-		const estimatedHeight = visibleItems.reduce(
-			(total, item) => total + (item.type === 'divider' ? 9 : 30), 16,
-		);
-		const placed = placeMenu(
-			{ x, y },
-			panelSize ?? { width: MENU_WIDTH, height: estimatedHeight },
-			{ width: window.innerWidth, height: window.innerHeight },
-		);
-		const top = placed.top;
-		const left = placed.left;
-		return React.createElement(
-			React.Fragment,
-			null,
-			React.createElement(
-				MenuSurface,
-				{
-					ref: panel,
-					style: {
-						position: 'fixed', left, top, width: MENU_WIDTH, zIndex: 1100,
-						// 量到尺寸前先隐藏，避免用估算位置闪一下再跳。
-						visibility: panelSize === null ? 'hidden' : undefined,
-					},
-				},
-				visibleItems.map((item, index) => {
-					if (item.type === 'divider') {
-						return React.createElement('div', { key: `divider-${index}`, className: 'ggg-menu-divider' });
-					}
-					const children = Array.isArray(item.children)
-						? item.children.filter((child) => child.visible !== false)
-						: [];
-					const hasChildren = item.disabled !== true && children.length > 0;
-					return React.createElement(
-						'button',
-						{
-							key: `item-${index}`,
-							type: 'button',
-							role: 'menuitem',
-							className: itemClass(item, hasChildren ? 'ggg-menu-item-parent' : ''),
-							disabled: item.disabled === true,
-							onPointerEnter: (event: React.PointerEvent<HTMLButtonElement>) => {
-								if (!hasChildren) {
-									setSubmenu(null);
-									return;
-								}
-								setSubmenu({ children, top: event.currentTarget.offsetTop });
-							},
-							onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
-								if (hasChildren) {
-									// 触屏没有悬停：点击同样展开二级菜单。
-									setSubmenu({ children, top: event.currentTarget.offsetTop });
-									return;
-								}
-								setOpen(false);
-								item.onClick?.();
-							},
-						},
-						item.title,
-						hasChildren && React.createElement(IconChevronRightOutlineRegular, { size: 13, className: 'ggg-menu-chevron' }),
-					);
-				}),
-			),
-			submenu !== null && (() => {
-				const submenuPlaced = placeSubmenu(
-					{ left, top, width: MENU_WIDTH },
-					submenu.top,
-					submenuSize ?? { width: MENU_WIDTH, height: submenu.children.length * 30 + 16 },
-					{ width: window.innerWidth, height: window.innerHeight },
-				);
-				return React.createElement(
-					MenuSurface,
-					{
-						ref: submenuRef,
-						style: {
-							position: 'fixed', left: submenuPlaced.left, top: submenuPlaced.top,
-							width: MENU_WIDTH, zIndex: 1101,
-							visibility: submenuSize === null ? 'hidden' : undefined,
-						},
-					},
-					submenu.children.map((child, index) => React.createElement(
-						'button',
-						{
-							key: `submenu-${index}`,
-							type: 'button',
-							role: 'menuitem',
-							className: itemClass(child),
-							disabled: child.disabled === true,
-							onClick: () => {
-								setOpen(false);
-								child.onClick?.();
-							},
-						},
-						child.title,
-					)),
-				);
-			})(),
-		);
+		return React.createElement(Menu, {
+			open,
+			anchor: null,
+			items: entries,
+			selectedIds,
+			portal: true,
+			getAnchorRect: anchorRect,
+			onSelect: (id: string) => {
+				setOpen(false);
+				handlers.get(id)?.();
+			},
+			onClose: () => setOpen(false),
+		});
 	}
 	root.render(React.createElement(MenuContent));
 }

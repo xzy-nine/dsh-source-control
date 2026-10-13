@@ -540,9 +540,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
 		void openCommitMenu({
-			workingTreePath, run, selectCommit, remotes: state.remotes, handleCreateArchive, head: state.head,
+			workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
 		}, { commit, event });
-	}, [workingTreePath, run, selectCommit, state.remotes, handleCreateArchive, state.head]);
+	}, [workingTreePath, run, state.remotes, handleCreateArchive, state.head]);
 
 	/** 分支标签（head / remote / tag / stash）右键菜单。 */
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {

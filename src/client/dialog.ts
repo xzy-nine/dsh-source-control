@@ -47,7 +47,7 @@ export interface ConfirmationOptions {
  * @param options - 见 {@link ConfirmationOptions}。
  * @returns 用户点确认返回 true，否则 false。
  */
-export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消' }: ConfirmationOptions): Promise<boolean> {
+export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消', danger = false }: ConfirmationOptions): Promise<boolean> {
 	return runDialog<boolean>((finish) => {
 		function Content(): React.ReactElement {
 			return React.createElement(Modal, {
@@ -61,7 +61,8 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(false) }, cancelLabel),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', onClick: () => finish(true),
+						variant: 'primary', size: 'sm', className: danger ? 'ggg-btn-danger' : undefined,
+						onClick: () => finish(true),
 					}, confirmLabel),
 				),
 			});

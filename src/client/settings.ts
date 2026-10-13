@@ -6,10 +6,11 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, Input, SegmentedControl,
+	Button, Checkbox, Input, Menu, SegmentedControl,
 	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { fetchAiModels } from './api.ts';
+import { showConfirmation } from './dialog.ts';
 import type { AiModelCatalog } from './api.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
 
@@ -213,6 +214,48 @@ function SelectRow({ label, options, value, onChange }: {
 }
 
 /**
+ * 用 DSH 的 Menu 做一个下拉选择行：触发器显示当前值，展开后列出可选项。
+ *
+ * @param props.label - 行标签。
+ * @param props.options - 选项。
+ * @param props.value - 当前值。
+ * @param props.onChange - 变更回调。
+ * @returns 行元素。
+ */
+function DropdownRow({ label, options, value, onChange }: {
+	label: string;
+	options: ReadonlyArray<{ value: string; label: string }>;
+	value: string;
+	onChange: (next: string) => void;
+}): React.ReactElement {
+	const [open, setOpen] = React.useState(false);
+	const triggerRef = React.useRef<HTMLButtonElement>(null);
+	const current = options.find((option) => option.value === value);
+	return React.createElement(
+		'div',
+		{ className: 'ggg-set-row' },
+		React.createElement('span', { className: 'ggg-set-label' }, label),
+		React.createElement(Menu, {
+			open,
+			portal: true,
+			getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
+			selectedId: value,
+			items: options.map((option) => ({ id: option.value, label: option.label })),
+			onSelect: (id: string) => { setOpen(false); onChange(id); },
+			onClose: () => setOpen(false),
+			anchor: React.createElement('button', {
+				type: 'button', ref: triggerRef, className: 'ggg-set-dropdown',
+				'aria-haspopup': 'menu', 'aria-expanded': open,
+				onClick: () => setOpen((previous) => !previous),
+			},
+				React.createElement('span', { className: 'ggg-set-dropdown-text' }, current?.label ?? value),
+				React.createElement(IconChevronDownOutlineRegular, { size: 13 }),
+			),
+		}),
+	);
+}
+
+/**
  * AI 提交信息生成的模型配置区。
  *
  * @param props.provider - 当前保存的供应商 id（空串 = 未配置）。
@@ -247,27 +290,21 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 			: provider === ''
 				? React.createElement('div', { className: 'ggg-set-note' }, '未配置专用模型，且无法获取当前会话模型。')
 				: null,
-		React.createElement('div', { className: 'ggg-set-row' },
-			React.createElement('label', { className: 'ggg-set-label' }, '供应商'),
-			React.createElement('select', {
-				className: 'ggg-set-select',
-				value: provider,
-				onChange: (e: React.ChangeEvent<HTMLSelectElement>) => onChange(e.currentTarget.value, ''),
-			},
-				React.createElement('option', { value: '' }, '（使用当前会话模型）'),
-				...providers.map((p) => React.createElement('option', { key: p.id, value: p.id }, p.name || p.id)),
-			),
-		),
-		provider !== '' && React.createElement('div', { className: 'ggg-set-row' },
-			React.createElement('label', { className: 'ggg-set-label' }, '模型'),
-			React.createElement('select', {
-				className: 'ggg-set-select',
-				value: model,
-				onChange: (e: React.ChangeEvent<HTMLSelectElement>) => onChange(provider, e.currentTarget.value),
-			},
-				...models.map((m) => React.createElement('option', { key: m, value: m }, m)),
-			),
-		),
+		React.createElement(DropdownRow, {
+			label: '供应商',
+			value: provider,
+			options: [
+				{ value: '', label: '（使用当前会话模型）' },
+				...providers.map((p) => ({ value: p.id, label: p.name || p.id })),
+			],
+			onChange: (next: string) => onChange(next, ''),
+		}),
+		provider !== '' && React.createElement(DropdownRow, {
+			label: '模型',
+			value: model,
+			options: models.map((m) => ({ value: m, label: m })),
+			onChange: (next: string) => onChange(provider, next),
+		}),
 		React.createElement('div', { className: 'ggg-set-row' },
 			React.createElement('label', { className: 'ggg-set-label' }, '规则'),
 			React.createElement('textarea', {
@@ -526,7 +563,14 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 					}, React.createElement(IconChevronDownOutlineRegular, { size: 13 })),
 					React.createElement('button', {
 						type: 'button', className: 'ggg-set-remote-del', title: '删除远程',
-						onClick: () => onDeleteRemote?.(remote.name),
+						// 删除远程会改动仓库配置，先确认。
+						onClick: async () => {
+							const ok = await showConfirmation({
+								title: '删除远程', message: `确定删除远程仓库 ${remote.name}？`,
+								confirmLabel: '删除', danger: true,
+							});
+							if (ok) onDeleteRemote?.(remote.name);
+						},
 					}, React.createElement(IconTrashOutlineRegular, { size: 13 })),
 				)),
 			)
