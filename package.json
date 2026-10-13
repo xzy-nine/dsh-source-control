@@ -41,8 +41,7 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
-    "LICENSE",
-    "vendor/git-graph/LICENSE"
+    "LICENSE"
   ],
   "scripts": {
     "build": "pnpm run build:host && pnpm run build:client",
@@ -54,7 +53,7 @@
     "typecheck:host": "tsc -p tsconfig.json --noEmit",
     "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
-    "pretest": "pnpm run build:client",
+    "pretest": "pnpm run build",
     "test": "node --test test/*.test.mjs"
   },
   "dsh": {
@@ -71,9 +70,7 @@
       ]
     }
   },
-  "dependencies": {
-    "iconv-lite": "^0.6.3"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-alpha.2",

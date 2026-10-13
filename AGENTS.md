@@ -29,7 +29,7 @@
 
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
-src/git-graph/      宿主侧：git 命令路由、工作区与工作树操作、差异收集与解析、仓库发现
+src/git-graph/      宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
                     设置面板、样式与图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
@@ -37,6 +37,13 @@ test/               单元测试（`node --test test/*.test.mjs`）
 scripts/            客户端打包脚本
 assets/icons/       引用标记用的 SVG
 ```
+
+宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
+`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，无 git 调用，可被测试直接导入；
+`git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
+数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
+记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
+`git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
 
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
@@ -47,7 +54,7 @@ assets/icons/       引用标记用的 SVG
 pnpm install
 pnpm build        # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
 pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
-pnpm test         # pretest 先重建客户端产物，再 node --test test/*.test.mjs
+pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
 ```
 
 - 客户端外部化模块固定为 `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
@@ -69,11 +76,15 @@ pnpm test         # pretest 先重建客户端产物，再 node --test test/*.te
 | `lanes.test.mjs` | 泳道布局：连线连续性、压实、节点半径、越界重叠、无贝塞尔 |
 | `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
+| `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `worktree-branches.test.mjs` | 工作树占用分支的判定 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
+| `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |
 | `ordering.test.mjs` | 三种提交排序 |
+
+`api-commands.test.mjs` 从 `lib/` 宿主产物导入，因此 `pretest` 跑完整 `build`。
 
 `primitives.test.mjs` 断言「客户端从 ui-primitives 导入的每个名字都真实存在」：产品图标导出名带
 `Regular` / `Medium` 权重后缀，写成裸名会得到 `undefined`，React 渲染时不报编译错误、只在运行时抛

@@ -101,12 +101,17 @@ dsh plugin --profile web add dsh-dev-git-graph
 
 ## Differences from the original
 
+The UI, the commit graph, and the host-side data layer are this project's own:
+
 | Area | Behaviour |
 |---|---|
 | UI | No embedded VS Code webview; a Sidebar page built from DSH components |
-| Commit graph | Own lane layout and SVG rendering, unrelated to the upstream frontend |
+| Commit graph | Own lane layout and SVG rendering |
+| Host data layer | Own `src/git-graph/` implementation; git is invoked directly and its machine-readable output parsed locally |
 | VS Code-only commands | Open terminal, create pull request, view SCM, and similar are unavailable or reduced |
 | Repo source | Auto-bound to the current session's workspace (the page says so when there is none) |
 | Added | Working-tree changes panel, commit graph, AI commit message, diff page, worktree management |
 
 ## License
+
+This project's own code is MIT. See [LICENSE](LICENSE).

@@ -14,6 +14,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["src/**/*.ts", "vendor/git-graph/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "src/client"]
 }
