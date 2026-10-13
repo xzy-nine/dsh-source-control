@@ -1,7 +1,7 @@
 /**
  * 宿主 API 客户端：把命令发到 POST /dsh-source-control/gg/api。
  *
- * 该路由沿用移植版的命令集（loadCommits / loadRepoInfo 等），并新增工作区变更命令。
+ * 命令集覆盖提交图查询、分支/标签/贮藏操作、仓库配置与工作区变更。
  * 所有调用都以 JSON 往返，失败以抛出携带 error 文本的 Error 表示。
  */
 import type { Commit, Remote, RepoNode, RepoSync, WorkingTreeEntry } from './types.ts';

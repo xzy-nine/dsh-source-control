@@ -293,7 +293,7 @@ export async function pushBranchToMultipleRemotes(repo: string, branchName: stri
  * 把标签推送到多个远程仓库。
  *
  * 未跳过远程检查时，先用 `git branch -r --contains` 判定各远程是否已包含标签所在提交；
- * 有远程未包含时返回 `VSCODE_GIT_GRAPH:PUSH_TAG:COMMIT_NOT_ON_REMOTE:` 前缀加缺失远程名数组。
+ * 有远程未包含时返回可读错误，并列出缺失标签提交的远程名。
  *
  * @param repo - 仓库路径。
  * @param tagName - 标签名。
@@ -311,7 +311,7 @@ export async function pushTag(repo: string, tagName: string, remotes: readonly s
 		const containing = await remotesContainingCommit(repo, commitHash, remotes);
 		const missing = remotes.filter((remote) => !containing.includes(remote));
 		if (missing.length > 0) {
-			return ['VSCODE_GIT_GRAPH:PUSH_TAG:COMMIT_NOT_ON_REMOTE:' + JSON.stringify(missing)];
+			return ['标签指向的提交尚未推送到这些远程仓库：' + missing.join('、') + '。'];
 		}
 	}
 

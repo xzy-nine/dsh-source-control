@@ -445,10 +445,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'openTerminal':
 		case 'viewFileAtRevision':
 		case 'viewScm':
-			respond({ command: msg.command, error: '该操作依赖 VS Code，DSH 版本暂不支持' });
+			respond({ command: msg.command, error: '该操作在当前版本中暂不支持' });
 			break;
 
-		/* --- Diff：DSH 右侧栏无通用 git diff 页类型，与其它 VS Code 专属命令一致回错误，
+		/* --- Diff：DSH 右侧栏无通用 git diff 页类型，与其它专属命令一致回错误，
 		       前端收到 error 后弹提示。 --- */
 		case 'viewDiff':
 		case 'viewDiffWithWorkingFile':

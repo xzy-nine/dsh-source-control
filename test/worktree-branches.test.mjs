@@ -14,15 +14,15 @@ import { resolve } from 'node:path';
 /** 与宿主 nodeId 一致：绝对化、统一 `/` 分隔、小写。 */
 const lower = (path) => resolve(path).split('\\').join('/').toLowerCase();
 
-/** 本仓库真实结构：主工作树在 dsh原生仿vscode，链接工作树在 main-worktree。 */
+/** 列表固件：主工作树在 feature 分支，链接工作树在 review 分支。 */
 const PORCELAIN = [
 	'worktree E:/repo/main',
 	'HEAD b30f0aea1152c21ace799c3428f922f8e069c834',
-	'branch refs/heads/dsh原生仿vscode',
+	'branch refs/heads/feature',
 	'',
-	'worktree E:/repo/main/.agents/worktrees/main-worktree',
+	'worktree E:/repo/main/.agents/worktrees/review',
 	'HEAD 2646a501c52d07bab7b1161cca2f3ea7d99ab0d4',
-	'branch refs/heads/main-worktree',
+	'branch refs/heads/review',
 	'',
 ].join('\n');
 
@@ -30,9 +30,9 @@ test('解析工作树列表的路径、分支与短哈希', () => {
 	const entries = parseWorktreeList(PORCELAIN);
 	assert.equal(entries.length, 2);
 	assert.equal(entries[0].path, 'E:/repo/main');
-	assert.equal(entries[0].branch, 'dsh原生仿vscode', 'branch 应去掉 refs/heads/ 前缀');
+	assert.equal(entries[0].branch, 'feature', 'branch 应去掉 refs/heads/ 前缀');
 	assert.equal(entries[0].head, 'b30f0ae', 'HEAD 应取短哈希');
-	assert.equal(entries[1].branch, 'main-worktree');
+	assert.equal(entries[1].branch, 'review');
 });
 
 test('裸仓库被标记出来', () => {
@@ -42,18 +42,18 @@ test('裸仓库被标记出来', () => {
 
 test('查看主工作树时排除链接工作树的分支', () => {
 	const foreign = foreignWorktreeBranches(parseWorktreeList(PORCELAIN), 'E:/repo/main', lower);
-	assert.deepEqual([...foreign], ['main-worktree'], '应排除 main-worktree，保留当前分支');
+	assert.deepEqual([...foreign], ['review'], '应排除 review，保留当前分支');
 });
 
 test('查看链接工作树时排除其它工作树的分支', () => {
-	const path = 'E:/repo/main/.agents/worktrees/main-worktree';
+	const path = 'E:/repo/main/.agents/worktrees/review';
 	const foreign = foreignWorktreeBranches(parseWorktreeList(PORCELAIN), path, lower);
-	assert.deepEqual([...foreign], ['dsh原生仿vscode']);
+	assert.deepEqual([...foreign], ['feature']);
 });
 
 test('路径大小写与分隔符不同也认定为同一工作树', () => {
 	const foreign = foreignWorktreeBranches(parseWorktreeList(PORCELAIN), 'e:\\REPO\\MAIN\\', lower);
-	assert.deepEqual([...foreign], ['main-worktree'], '规范化后主工作树不应排除自己的分支');
+	assert.deepEqual([...foreign], ['review'], '规范化后主工作树不应排除自己的分支');
 });
 
 test('分离头指针的工作树不贡献分支名', () => {

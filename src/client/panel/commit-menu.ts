@@ -407,7 +407,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '推送标签到远程…',
 				onClick: async () => {
 					const { remotes } = ctx.deps;
-					// 没有远程时该操作无法进行，原因是未配置远程，与 VS Code 专属动作无关。
+					// 没有远程时该操作无法进行，原因是未配置远程。
 					if (remotes.length === 0) return ctx.deps.notify('未配置远程仓库，请先在设置中添加远程。');
 					const remote = remotes.length === 1 ? remotes[0].name : await showSelect({
 						title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })),

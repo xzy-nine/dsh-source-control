@@ -1,6 +1,6 @@
 # dsh-source-control
 
-A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plugin that adds a **Source Control page** to the DSH Web GUI's built-in right Sidebar: the commit graph, the working-tree changes list, and a commit box, arranged like VS Code's Source Control + Graph view. Its controls come from DSH's own components, so it looks and behaves like the rest of the Harness. The repository is bound automatically to the current session's workspace; no manual repo selection is needed.
+A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plugin that adds a **Source Control page** to the DSH Web GUI's built-in right Sidebar: the commit graph, the working-tree changes list, and a commit box. Its controls come from DSH's own components, so it looks and behaves like the rest of the Harness. The repository is bound automatically to the current session's workspace; no manual repo selection is needed.
 
 [中文文档](README.zh.md)
 
@@ -98,19 +98,6 @@ Switching to another sidebar page or workspace and coming back leaves the page a
 dsh plugin --profile web add dsh-source-control
 # restart `dsh web`; the right Sidebar's `+` → guide page shows Source Control, and the session header gains an icon
 ```
-
-## Differences from the original
-
-The UI, the commit graph, and the host-side data layer are this project's own:
-
-| Area | Behaviour |
-|---|---|
-| UI | No embedded VS Code webview; a Sidebar page built from DSH components |
-| Commit graph | Own lane layout and SVG rendering |
-| Host data layer | Own `src/source-control/` implementation; git is invoked directly and its machine-readable output parsed locally |
-| VS Code-only commands | Open terminal, create pull request, view SCM, and similar are unavailable or reduced |
-| Repo source | Auto-bound to the current session's workspace (the page says so when there is none) |
-| Added | Working-tree changes panel, commit graph, AI commit message, diff page, worktree management |
 
 ## License
 

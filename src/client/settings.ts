@@ -2,7 +2,7 @@
  * 源代码管理设置：分区配置、本地持久化与日期格式化。
  *
  * 设置分区覆盖提交图、引用标签、日期格式与仓库配置；User Details、
- * Pull Request Creation 等依赖 VS Code 的条目在 DSH 版本中弱化展示。
+ * Pull Request Creation 等在 DSH 版本中弱化展示。
  */
 import React from 'react';
 import {
