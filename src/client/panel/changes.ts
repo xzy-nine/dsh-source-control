@@ -9,6 +9,7 @@ import {
 	IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
+import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { CommitFile, WorkingTreeEntry } from '../types.ts';
 
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
@@ -38,64 +39,6 @@ export function changeOf(entry: WorkingTreeEntry): ChangeInfo {
 export function splitPath(path: string): { dir: string; name: string } {
 	const at = path.lastIndexOf('/');
 	return at === -1 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) };
-}
-
-/** 带路径的树条目：工作区条目与提交改动文件都满足。 */
-type TreeEntry = { readonly path: string };
-
-/** 变更树节点。 */
-interface ChangeTreeNode<Entry extends TreeEntry> {
-	readonly folders: Map<string, ChangeTreeNode<Entry>>;
-	readonly files: Entry[];
-}
-
-/** 空树节点：文件夹挂在 folders，文件挂在 files。 */
-function emptyTree<Entry extends TreeEntry>(): ChangeTreeNode<Entry> {
-	return { folders: new Map(), files: [] };
-}
-
-/** 把变更条目按「目录/文件」拆成可折叠的文件夹树。 */
-function buildChangeTree<Entry extends TreeEntry>(entries: readonly Entry[]): ChangeTreeNode<Entry> {
-	const root = emptyTree<Entry>();
-	for (const entry of entries) {
-		const parts = entry.path.split('/');
-		let node = root;
-		for (let i = 0; i < parts.length - 1; i++) {
-			const part = parts[i];
-			if (!node.folders.has(part)) node.folders.set(part, emptyTree<Entry>());
-			node = node.folders.get(part) as ChangeTreeNode<Entry>;
-		}
-		node.files.push(entry);
-	}
-	return root;
-}
-
-/** 统计一个子树（含子文件夹）下的文件总数。 */
-function countLeaves<Entry extends TreeEntry>(node: ChangeTreeNode<Entry>): number {
-	let total = node.files.length;
-	for (const child of node.folders.values()) total += countLeaves(child);
-	return total;
-}
-
-/** 变更树的一行：文件夹行或文件行。 */
-export type ChangeRow<Entry extends TreeEntry = WorkingTreeEntry> =
-	| { readonly kind: 'folder'; readonly name: string; readonly path: string; readonly depth: number; readonly open: boolean; readonly count: number }
-	| { readonly kind: 'file'; readonly entry: Entry; readonly depth: number };
-
-/** 把文件夹树拍平成可见行；出现在 collapsed 里的文件夹不展开其子节点。 */
-function flattenChangeTree<Entry extends TreeEntry>(
-	node: ChangeTreeNode<Entry>, prefix: string, depth: number, collapsed: ReadonlySet<string>, out: ChangeRow<Entry>[],
-): void {
-	const folderNames = [...node.folders.keys()].sort();
-	for (const name of folderNames) {
-		const child = node.folders.get(name) as ChangeTreeNode<Entry>;
-		const path = prefix === '' ? name : `${prefix}/${name}`;
-		const open = !collapsed.has(path);
-		out.push({ kind: 'folder', name, path, depth, open, count: countLeaves(child) });
-		if (open) flattenChangeTree(child, path, depth + 1, collapsed, out);
-	}
-	const files = node.files.slice().sort((a, b) => a.path.localeCompare(b.path));
-	for (const entry of files) out.push({ kind: 'file', entry, depth });
 }
 
 /** 按 depth 生成的竖线层级占位。 */
@@ -240,8 +183,7 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 	if (files.length === 0) {
 		return React.createElement('div', { className: 'ggg-hint' }, '正在加载改动文件…');
 	}
-	const rows: ChangeRow<CommitFile>[] = [];
-	flattenChangeTree(buildChangeTree(files), '', 1, collapsed, rows);
+	const rows: ChangeRow<CommitFile>[] = changeRowsOf(files, collapsed);
 	return React.createElement(
 		'div',
 		{ className: 'ggg-changes ggg-detail-changes' },
@@ -321,9 +263,7 @@ export function ChangeGroup({
 		? (entry.index !== ' ' && entry.index !== '?')
 		: (entry.worktree !== ' '));
 	if (visible.length === 0 && !forceShow) return [];
-	const tree = buildChangeTree(visible);
-	const rows: ChangeRow<WorkingTreeEntry>[] = [];
-	flattenChangeTree(tree, '', 1, collapsed, rows);
+	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
 	const onStage = (paths: readonly string[]): void => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
