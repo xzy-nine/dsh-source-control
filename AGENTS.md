@@ -54,6 +54,18 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
+## 状态持久化的三级
+
+按存活范围分三级，取值刻意不同，不可统一：选级别看该状态「丢了会不会烦」与「跨会话是否仍有意义」。
+
+| 级别 | 载体 | 存活范围 | 适用 |
+|---|---|---|---|
+| 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
+| 会话级 | `sessionStorage`（`panel/storage.ts` 的 `loadSession` / `saveSession`） | 刷新保留，关闭标签页清除 | 与当前工作区绑定、换标签页重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`） |
+| 持久化 | `localStorage`（`loadPersistent` / `savePersistent`，`settings.ts`、`repo-tree.ts`） | 跨标签页与浏览器重启 | 用户偏好与布局：设置项、分区高度与展开态、仓库树展开与选中 |
+
+新状态先在此表定位，再选载体；不要为省事一律用 `localStorage`。
+
 ## 构建
 
 ```bash

@@ -36,12 +36,13 @@ export const STYLES = `
 .ggg-repo-kind{flex:none;padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px}
 .ggg-repo-sync{flex:none;display:inline-flex;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ggg-sec-note{color:var(--dsw-alias-state-warn-primary);cursor:default}
-.ggg-sec.ggg-workspace{flex:1 1 auto;min-height:0}
+/* 基准为 0：分区高度只由剩余空间决定，不受提交信息行数与变更文件数影响。 */
+.ggg-sec.ggg-workspace{flex:1 1 0;min-height:0}
 .ggg-sec.ggg-graph-sec{flex:0 0 auto}
 /* 提交框固定在分区顶部，不随变更列表滚动；只有 .ggg-changes-scroll 滚动。 */
-.ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+.ggg-workspace-body{display:flex;flex-direction:column;flex:1 1 0;min-height:0;overflow:hidden}
 .ggg-workspace-body .ggg-commit-box{border-top:none;flex:none}
-.ggg-changes-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
+.ggg-changes-scroll{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden}
 /* 可拖拽的分界线：4px 命中区骑在分界线上（上下各溢出 2px，不占布局高度），
  * 拖动时显示一条高亮线。 */
 .ggg-sec-resize{flex:none;position:relative;height:4px;margin-top:-2px;margin-bottom:-2px;cursor:row-resize;-webkit-user-select:none;user-select:none;touch-action:none}
@@ -187,7 +188,8 @@ export const STYLES = `
 
 /* ── 提交输入框 ───────────────────────────────────────────── */
 .ggg-commit-input-wrap{position:relative;display:flex;align-items:stretch}
-.ggg-commit-input{flex:1;min-height:52px;max-height:160px;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
+/* 固定高度：内容超出时输入框自身滚动，提交框高度恒定。 */
+.ggg-commit-input{flex:1;height:52px;overflow-y:auto;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
 .ggg-commit-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .ggg-commit-input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .ggg-commit-input-actions{position:absolute;right:4px;top:0;bottom:0;display:flex;align-items:center;gap:2px}

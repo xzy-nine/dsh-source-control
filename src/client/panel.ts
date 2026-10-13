@@ -25,7 +25,7 @@ import { reportError } from './panel/errors.ts';
 import { showToast } from './panel/toast.ts';
 import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
-import { loadSession, saveSession } from './panel/storage.ts';
+import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
 import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
@@ -87,31 +87,31 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const [filterSearch, setFilterSearch] = React.useState('');
 	const [filterSelected, setFilterSelected] = React.useState<Set<string>>(() => new Set());
 	const [filterAuto, setFilterAuto] = React.useState(false);
-	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；会话级、不持久化。
+	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；窗口级、不持久化。
 	// detail 是图形区内展开块的文件夹集合。
 	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; detail: Set<string> }>(
 		() => ({ staged: new Set(), unstaged: new Set(), detail: new Set() }),
 	);
 	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
-	// 存储库、图形两区可收起（默认展开）；会话级持久化。
-	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadSession('dsh-source-control-repo-open', true));
-	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadSession('dsh-source-control-graph-open', true));
-	// 图形区高度（像素）；会话级持久化，默认 320。
-	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadSession('dsh-source-control-graph-height', 320));
-	// 存储库区高度（像素）；会话级持久化，默认 200。
-	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadSession('dsh-source-control-repo-height', 200));
+	// 存储库、图形两区可收起（默认展开）；跨会话持久化。
+	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-repo-open', true));
+	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-graph-open', true));
+	// 图形区高度（像素）；跨会话持久化，默认 320。
+	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-graph-height', 320));
+	// 存储库区高度（像素）；跨会话持久化，默认 200。
+	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-repo-height', 200));
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
 
 	const toggleRepoSec = React.useCallback(() => {
-		setRepoSecOpen((previous) => { const next = !previous; saveSession('dsh-source-control-repo-open', next); return next; });
+		setRepoSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-repo-open', next); return next; });
 	}, []);
 	const toggleGraphSec = React.useCallback(() => {
-		setGraphSecOpen((previous) => { const next = !previous; saveSession('dsh-source-control-graph-open', next); return next; });
+		setGraphSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-graph-open', next); return next; });
 	}, []);
 	const commitGraphHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(120, Math.min(value, 720));
 		setGraphHeight(clamped);
-		saveSession('dsh-source-control-graph-height', clamped);
+		savePersistent('dsh-source-control-graph-height', clamped);
 	}, []);
 	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
 	const startGraphResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -135,7 +135,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const commitRepoHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(80, Math.min(value, 600));
 		setRepoHeight(clamped);
-		saveSession('dsh-source-control-repo-height', clamped);
+		savePersistent('dsh-source-control-repo-height', clamped);
 	}, []);
 	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
 	const startRepoResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -180,17 +180,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
-	// 会话级持久化：按仓库/子模块/工作树路径存 sessionStorage，切换页面或工作区后恢复。
+	// 会话级：按仓库/子模块/工作树路径存草稿，刷新保留、关闭标签页清除。
 	React.useEffect(() => {
 		if (workingTreePath === null) return;
-		try {
-			const saved = sessionStorage.getItem('ggg-commit-msg:' + workingTreePath);
-			if (saved !== null) setMessage(saved);
-		} catch { /* sessionStorage 不可用 */ }
+		const saved = loadSession<string | null>('ggg-commit-msg:' + workingTreePath, null);
+		if (saved !== null) setMessage(saved);
 	}, [workingTreePath]);
 	React.useEffect(() => {
 		if (workingTreePath === null || aiBusy) return;
-		try { sessionStorage.setItem('ggg-commit-msg:' + workingTreePath, message); } catch { /* 忽略写入失败 */ }
+		saveSession('ggg-commit-msg:' + workingTreePath, message);
 	}, [workingTreePath, message, aiBusy]);
 
 	/** 选中一个仓库节点并重置面板状态。 */

@@ -28,7 +28,7 @@ The working-tree change list, grouped into **Staged Changes** and **Changes**.
 
 ### Graph
 
-The commit lane graph; its section header collapses on click. The divider above that header is the drag handle — dragging up grows the graph (120–720px, saved per session).
+The commit lane graph; its section header collapses on click. The divider above that header is the drag handle — dragging up grows the graph (120–720px, saved persistently).
 
 - Each row is the lanes, then the commit subject with the author beside it (ellipsis-truncated when space runs short), then right-aligned ref markers.
 - Ref markers: icon-and-name pills for the current and other local branches, circular badges for remotes, tags, and stashes, with names in the tooltip and the context menu. Remote HEAD is never listed, and neither are branches checked out in another worktree.
