@@ -464,6 +464,40 @@ export async function merge(cwd: string, obj: string, createNewCommit = false, s
 	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
 }
 
+/** 合并到选中分支的结果。 */
+export interface MergeIntoBranchResult {
+	/** 错误文本，无错误时为 null。 */
+	readonly error: string | null;
+	/** 检出并合并后所在的分支名。 */
+	readonly branchName: string;
+	/** git 生成的初始合并提交信息；无待合并状态时为 null。 */
+	readonly mergeMessage: string | null;
+	/** 是否因冲突而停下。 */
+	readonly conflicted: boolean;
+}
+
+/**
+ * 检出选中分支，并把检出前的当前分支合并过去，停在未提交状态。
+ *
+ * 宿主固定使用 `--no-ff --no-commit`，因此目标分支即使是当前分支的祖先也会建立待合并
+ * 状态并生成提交信息。冲突时同样保持待合并状态，`mergeMessage` 仍会给出。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param branchName - 要检出并合并到的分支名。
+ * @param commitHash - 该分支的尖端提交哈希；宿主据此校验合并目标。
+ * @param message - 合并提交信息；空串表示使用 git 生成的初始信息。
+ * @returns 分支名、初始合并信息、冲突标记与错误文本。
+ */
+export async function mergeIntoBranch(cwd: string, branchName: string, commitHash: string, message = ''): Promise<MergeIntoBranchResult> {
+	const payload = await callApi(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message });
+	return {
+		error: typeof payload.error === 'string' && payload.error !== '' ? payload.error : null,
+		branchName: typeof payload.branchName === 'string' ? payload.branchName : branchName,
+		mergeMessage: typeof payload.mergeMessage === 'string' ? payload.mergeMessage : null,
+		conflicted: payload.conflicted === true,
+	};
+}
+
 /**
  * 把当前分支变基到目标。
  *

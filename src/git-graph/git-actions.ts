@@ -4,6 +4,8 @@
  * 每个导出函数以数组参数跑一次或多次 git，返回 `ErrorInfo`：成功为 null，失败为 git 的
  * stderr 文本。多步操作按顺序执行，任一步失败即返回该步错误，后续步骤不再执行。
  */
+import fs from 'node:fs/promises';
+import nodePath from 'node:path';
 import type { ConfigLocation, ErrorInfo, PushMode, ResetMode } from './git-types.js';
 import type { GitResult } from './working-tree.js';
 import { runGit } from './working-tree.js';
@@ -669,4 +671,81 @@ export function pushStash(repo: string, message: string, includeUntracked: boole
 	if (includeUntracked) args.push('--include-untracked');
 	if (message !== '') args.push('--message', message);
 	return gitErrorInfo(args, repo);
+}
+
+/** 合并到选中分支的结果。 */
+export interface MergeIntoBranchResult {
+	/** 失败时的错误文本；成功为 null。 */
+	readonly error: ErrorInfo;
+	/** 检出并合并后所在的分支名。 */
+	readonly branchName: string;
+	/** git 生成的初始合并提交信息；无待合并状态时为 null。 */
+	readonly mergeMessage: string | null;
+	/** 合并是否因冲突而停下；停下时仍有待合并状态。 */
+	readonly conflicted: boolean;
+}
+
+/**
+ * 读出待合并状态下 git 生成的提交信息。
+ *
+ * `MERGE_MSG` 的位置随工作树而变（链接工作树在 `.git/worktrees/<name>/` 下），
+ * 因此经 `git rev-parse --git-path MERGE_MSG` 取路径。无待合并状态时该文件不存在。
+ *
+ * @param repo - 仓库路径。
+ * @returns 提交信息；无待合并状态时返回 null。
+ */
+async function readMergeMessage(repo: string): Promise<string | null> {
+	const result = await runGit(['rev-parse', '--git-path', 'MERGE_MSG'], repo);
+	if (result.code !== 0) return null;
+	const relative = result.stdout.trim();
+	if (relative === '') return null;
+	const absolute = nodePath.isAbsolute(relative) ? relative : nodePath.resolve(repo, relative);
+	try {
+		const text = await fs.readFile(absolute, 'utf8');
+		return text.replace(/[\r\n]+$/, '');
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 检出选中的分支，并把检出前的当前分支合并过去，停在未提交状态。
+ *
+ * 合并固定带 `--no-ff`：目标分支若是当前分支的祖先，不加该选项会直接快进、不产生
+ * 待合并状态与提交信息。合并成功与冲突都保留 `MERGE_HEAD`，冲突时 git 以非零退出，
+ * 但初始提交信息仍已写入 `MERGE_MSG`，因此两种情况都回传该信息。
+ *
+ * @param repo - 仓库路径。
+ * @param branchName - 要检出并合并到的分支名。
+ * @param message - 合并提交信息；空串表示使用 git 生成的初始信息。
+ * @returns 分支名、初始合并信息与冲突标记；检出或合并失败时 `error` 为错误文本。
+ */
+export async function mergeCurrentIntoBranch(repo: string, branchName: string, message: string): Promise<MergeIntoBranchResult> {
+	const empty: MergeIntoBranchResult = { error: null, branchName, mergeMessage: null, conflicted: false };
+
+	/* 检出前的当前分支名；分离头指针时为空，此时没有可合并回去的分支。 */
+	const current = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
+	const source = current.code === 0 ? current.stdout.trim() : '';
+	if (source === '') {
+		return { ...empty, error: '当前处于分离头指针状态，没有可合并到选中分支的分支。' };
+	}
+	if (source === branchName) {
+		return { ...empty, error: '选中的就是当前分支。' };
+	}
+
+	const checkoutError = await gitErrorInfo(['checkout', branchName], repo);
+	if (checkoutError !== null) return { ...empty, error: checkoutError };
+
+	const args = ['merge', '--no-ff', '--no-commit'];
+	if (message !== '') args.push('--message', message);
+	args.push(source);
+	const mergeError = await gitErrorInfo(args, repo);
+	const mergeMessage = await readMergeMessage(repo);
+	/* 非零退出可能是冲突（仍处待合并状态），也可能是真正的失败；以 MERGE_HEAD 区分。 */
+	if (mergeError !== null) {
+		const mergeHead = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
+		if (mergeHead.code !== 0) return { ...empty, error: mergeError };
+		return { error: null, branchName, mergeMessage, conflicted: true };
+	}
+	return { error: null, branchName, mergeMessage, conflicted: false };
 }

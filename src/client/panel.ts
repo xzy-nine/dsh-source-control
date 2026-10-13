@@ -548,6 +548,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {
 		openRefMenu({
 			workingTreePath, run, head: state.head, remotes: state.remotes, unsupported, handleTagDetails, handleCreateArchive,
+			setCommitMessage: setMessage,
 		}, { commit, refInfo, event });
 	}, [workingTreePath, run, state.head, state.remotes, unsupported, handleTagDetails, handleCreateArchive]);
 

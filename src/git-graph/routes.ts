@@ -14,8 +14,8 @@ import {
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
 	cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
-	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, popStash, pruneRemote,
-	pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, rebase, renameBranch,
+	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash,
+	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
@@ -286,6 +286,26 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
 			});
 			break;
+		case 'mergeIntoBranch': {
+			const branchName = str('branchName');
+			const commitHash = str('commitHash');
+			// 选中分支必须存在，且被右键的提交就是它的尖端：否则合并的目标不是用户所指的位置。
+			const tip = await runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`], repo);
+			const tipHash = tip.code === 0 ? tip.stdout.trim() : '';
+			if (tipHash === '') {
+				respond({ command: 'mergeIntoBranch', error: '选中的分支不存在。', branchName, mergeMessage: null, conflicted: false });
+				break;
+			}
+			if (commitHash !== '' && tipHash !== commitHash) {
+				respond({
+					command: 'mergeIntoBranch', branchName, mergeMessage: null, conflicted: false,
+					error: '该提交不是选中分支的尖端，无法执行合并。',
+				});
+				break;
+			}
+			respond({ command: 'mergeIntoBranch', ...(await mergeCurrentIntoBranch(repo, branchName, str('message'))) });
+			break;
+		}
 		case 'rebase':
 			respond({
 				command: 'rebase',

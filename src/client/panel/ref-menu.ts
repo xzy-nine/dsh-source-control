@@ -3,7 +3,8 @@
  */
 import {
 	applyStash, branchFromStash, checkoutBranch, checkoutCommit, createBranch, deleteBranch,
-	deleteRemoteBranch, deleteTag, dropStash, fetchIntoLocalBranch, merge, popStash, pushTag, rebase, renameBranch,
+	deleteRemoteBranch, deleteTag, dropStash, fetchIntoLocalBranch, merge, mergeIntoBranch, popStash,
+	pushTag, rebase, renameBranch,
 } from '../api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
 import { showCheckbox, showConfirmation, showMessage, showSelect, showText } from '../dialog.ts';
@@ -35,6 +36,8 @@ export interface RefMenuDeps {
 	readonly handleTagDetails: (tagName: string, commitHash: string) => Promise<void>;
 	/** 创建归档。 */
 	readonly handleCreateArchive: (ref: string, refLabel: string) => Promise<void>;
+	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
+	readonly setCommitMessage: (message: string) => void;
 }
 
 /**
@@ -48,7 +51,7 @@ export function openRefMenu(
 	deps: RefMenuDeps,
 	{ commit, refInfo, event }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement> },
 ): void {
-	const { workingTreePath, run, head, remotes, unsupported, handleTagDetails, handleCreateArchive } = deps;
+	const { workingTreePath, run, head, remotes, unsupported, handleTagDetails, handleCreateArchive, setCommitMessage } = deps;
 	const repo = workingTreePath as string;
 	const x = event.clientX, y = event.clientY;
 	const target = event.currentTarget;
@@ -57,6 +60,8 @@ export function openRefMenu(
 	if (refInfo.type === 'head') {
 		const name = refInfo.name;
 		const isCurrent = name === head;
+		// 该提交就是该分支的尖端时才提供合并入口：合并目标由右键所在位置决定，非尖端时无法确定。
+		const isTip = (commit.heads ?? []).includes(name);
 		showContextMenu({
 			x, y, onClose,
 			items: [
@@ -69,9 +74,24 @@ export function openRefMenu(
 					const newName = await showText({ title: '重命名分支', label: '新分支名', value: name });
 					if (newName !== null && newName !== '' && newName !== name) void run(async () => { await renameBranch(repo, name, newName); });
 				} },
-				{ title: '合并到当前分支…', disabled: isCurrent, onClick: async () => {
-					const ok = await showConfirmation({ title: '合并分支', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true });
-					if (ok) void run(async () => { await merge(repo, name); });
+				{ title: '合并到选中分支…', visible: !isCurrent && isTip, onClick: async () => {
+					const ok = await showConfirmation({
+						title: '合并到选中分支',
+						message: `检出 ${name}，并把当前分支合并过去，保持未提交状态？`,
+						confirmLabel: '合并', danger: true,
+					});
+					if (!ok) return;
+					// 冲突提示放在刷新之后：run 内部先刷新面板，提示框不应挡住刷新。
+					let conflicted = false;
+					await run(async () => {
+						const result = await mergeIntoBranch(repo, name, commit.hash);
+						if (result.error !== null) throw new Error(result.error);
+						if (result.mergeMessage !== null) setCommitMessage(result.mergeMessage);
+						conflicted = result.conflicted;
+					});
+					if (conflicted) {
+						await showMessage({ title: '合并存在冲突', message: '已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。' });
+					}
 				} },
 				{ title: '变基当前分支到此处…', disabled: isCurrent, onClick: async () => {
 					const ok = await showConfirmation({ title: '变基', message: `把当前分支变基到 ${name}？`, confirmLabel: '变基', danger: true });

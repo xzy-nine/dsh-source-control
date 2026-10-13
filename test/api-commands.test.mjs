@@ -194,6 +194,100 @@ test('分支、标签、贮藏与远程的写操作', { skip: !built && '未找�
 	}
 });
 
+test('合并到选中分支：检出、待合并、初始提交信息', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git } = makeRepo();
+	try {
+		/* 旧分支停在公共基础，新分支在其上多出提交：这是「合并到选中分支」的典型场景。 */
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		for (const name of ['w1', 'w2']) {
+			writeFileSync(join(repo, `${name}.txt`), name);
+			git('add', '-A');
+			git('commit', '-q', '-m', `work ${name}`);
+		}
+		const targetTip = git('rev-parse', 'target-branch').trim();
+
+		const call = await makeCaller(repo);
+		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
+		assert.equal(result.error, null);
+		assert.equal(result.branchName, 'target-branch');
+		assert.equal(result.conflicted, false);
+		assert.match(result.mergeMessage, /^Merge branch 'work-branch' into target-branch$/);
+
+		// 已检出到目标分支，且停在待合并状态：目标分支尖端未移动。
+		assert.equal(git('branch', '--show-current').trim(), 'target-branch');
+		assert.equal(git('rev-parse', 'target-branch').trim(), targetTip);
+		assert.notEqual(git('rev-parse', '-q', '--verify', 'MERGE_HEAD').trim(), '');
+
+		// 合并改动进入暂存区，提交按钮因此可用。
+		const staged = git('status', '--short');
+		assert.match(staged, /^A  w1\.txt$/m);
+		assert.match(staged, /^A  w2\.txt$/m);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并到选中分支：冲突仍保持待合并并给出信息', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git } = makeRepo();
+	try {
+		writeFileSync(join(repo, 'conflict.txt'), 'base');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'conflict base');
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		writeFileSync(join(repo, 'conflict.txt'), 'from work');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'work side');
+		git('checkout', '-q', 'target-branch');
+		writeFileSync(join(repo, 'conflict.txt'), 'from target');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'target side');
+		git('checkout', '-q', 'work-branch');
+		const targetTip = git('rev-parse', 'target-branch').trim();
+
+		const call = await makeCaller(repo);
+		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
+		// 冲突不是失败：检出与待合并状态都已建立。
+		assert.equal(result.error, null);
+		assert.equal(result.conflicted, true);
+		assert.match(result.mergeMessage, /# Conflicts:/);
+		assert.equal(git('branch', '--show-current').trim(), 'target-branch');
+		assert.notEqual(git('rev-parse', '-q', '--verify', 'MERGE_HEAD').trim(), '');
+		assert.match(git('status', '--short'), /^UU conflict\.txt$/m);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并到选中分支：非尖端与不存在的分支被拒绝且不检出', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git } = makeRepo();
+	try {
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		writeFileSync(join(repo, 'w.txt'), 'w');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'work');
+		const targetTip = git('rev-parse', 'target-branch').trim();
+		// work 分支的尖端不在 target-branch 上，用它触发尖端校验失败。
+		const notTip = git('rev-parse', 'HEAD').trim();
+		assert.notEqual(notTip, targetTip);
+
+		const call = await makeCaller(repo);
+		const mismatch = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: notTip, message: '' });
+		assert.match(mismatch.error, /尖端/);
+		assert.equal(git('branch', '--show-current').trim(), 'work-branch', '校验失败不得检出');
+
+		const absent = await call({ command: 'mergeIntoBranch', branchName: 'no-such-branch', commitHash: targetTip, message: '' });
+		assert.match(absent.error, /不存在/);
+
+		const same = await call({ command: 'mergeIntoBranch', branchName: 'work-branch', commitHash: git('rev-parse', 'HEAD').trim(), message: '' });
+		assert.match(same.error, /当前分支/);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('用户身份读写与文件差异内容', { skip: !built && '未找到宿主产物' }, async () => {
 	const { repo } = makeRepo();
 	try {
