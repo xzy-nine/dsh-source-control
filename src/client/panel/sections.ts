@@ -18,6 +18,11 @@ import type {
 	AiStats, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../types.ts';
 
+/** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
+const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '')
+	? '⌘'
+	: 'Ctrl';
+
 /** 存储库分区。 */
 export interface RepoSectionProps {
 	readonly open: boolean;
@@ -254,13 +259,13 @@ export interface GraphSectionProps {
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
-	readonly detail: { commit: Commit; files: CommitFile[] } | null;
+	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
 	readonly onToggleSection: () => void;
 	readonly onToggleChange: (key: string, path: string) => void;
-	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
-	readonly onToggleCommit: (hash: string) => void;
+	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string) => Promise<void>;
+	readonly onToggleCommit: (hash: string, additive?: boolean) => void;
 	readonly onLoadMore: () => void;
 	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
 	readonly onHoverCommit: (hash: string | null) => void;
@@ -336,7 +341,7 @@ export function GraphSection({
 					selectedHash,
 					aheadHashes,
 					behindHashes,
-					onSelect: (hash: string) => { onToggleCommit(hash); },
+					onSelect: (hash: string, additive?: boolean) => { onToggleCommit(hash, additive); },
 					onLoadMore,
 					moreCommitsAvailable,
 					onContextMenu,
@@ -352,13 +357,25 @@ export function GraphSection({
 					commitMessages: messageByHash,
 					onHoverCommit,
 					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
-						? React.createElement(CommitDetail, {
-							files: detail.files,
-							busy,
-							collapsed: detailCollapsed,
-							onToggle: (path: string) => onToggleChange('detail', path),
-							onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, isNew); },
-						})
+						? React.createElement(
+							React.Fragment,
+							null,
+							// 对比模式在文件列表前标出方向：旧 → 新。
+							detail.compareWith !== null
+								? React.createElement('div', { className: 'ggg-detail-compare' },
+									`对比 ${detail.compareWith.hash.slice(0, 7)} → ${commit.hash.slice(0, 7)}`)
+								// 未进入对比时提示入口：按住修饰键点击另一提交即可对比。
+								: React.createElement('div', { className: 'ggg-detail-compare-hint' },
+									`按住 ${COMPARE_MODIFIER} 点击另一个提交可对比两者`),
+							React.createElement(CommitDetail, {
+								files: detail.files,
+								busy,
+								collapsed: detailCollapsed,
+								onToggle: (path: string) => onToggleChange('detail', path),
+								// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
+								onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash); },
+							}),
+						)
 						: null),
 				}))
 		),

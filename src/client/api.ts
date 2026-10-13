@@ -253,6 +253,32 @@ export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortS
 }
 
 /**
+ * 比较两个提交之间的改动文件。
+ *
+ * 方向为 `fromHash → toHash`；`toHash` 传 `*` 表示对比到工作区。后端按名称状态与
+ * 行数统计给出改动列表，形状与提交详情一致。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param fromHash - 旧侧提交哈希。
+ * @param toHash - 新侧提交哈希；`*` 表示工作区。
+ * @param signal - 取消信号。
+ * @returns 改动文件列表。
+ */
+export async function compareCommits(cwd: string, fromHash: string, toHash: string, signal?: AbortSignal): Promise<CommitFileEntry[]> {
+	const payload = await callApi(cwd, { command: 'compareCommits', commitHash: toHash, compareWithHash: fromHash, fromHash, toHash, refresh: false }, signal);
+	const changes = Array.isArray(payload.fileChanges) ? payload.fileChanges : [];
+	return changes.map((change) => {
+		const item = change as Record<string, unknown>;
+		return {
+			path: String(item.newFilePath),
+			type: String(item.type),
+			additions: typeof item.additions === 'number' ? item.additions : null,
+			deletions: typeof item.deletions === 'number' ? item.deletions : null,
+		};
+	});
+}
+
+/**
  * 读取某个提交的完整提交信息。
  *
  * 提交列表里的 message 来自 `git log --format=%s`，只有标题一行；悬停卡片要显示完整
@@ -822,10 +848,11 @@ export interface FileDiffContent {
  * @param hash - 提交哈希；'*' 表示工作区。
  * @param path - 文件路径（相对仓库根）。
  * @param staged - 工作区时是否取暂存区内容。
+ * @param baseHash - 旧侧提交哈希；非空时按 `baseHash → hash` 对比。
  * @returns 前后内容与逐块差异。
  */
-export async function fileDiffContent(cwd: string, hash: string, path: string, staged = false): Promise<FileDiffContent> {
-	const payload = await callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged });
+export async function fileDiffContent(cwd: string, hash: string, path: string, staged = false, baseHash = ''): Promise<FileDiffContent> {
+	const payload = await callApi(cwd, { command: 'fileDiffContent', commitHash: hash, filePath: path, staged, baseHash });
 	const raw = Array.isArray(payload.hunks) ? payload.hunks : [];
 	const hunks: FileDiffContent['hunks'] = raw.flatMap((item) => {
 		const hunk = item as { oldStart?: unknown; oldLines?: unknown; newStart?: unknown; newLines?: unknown; lines?: unknown };

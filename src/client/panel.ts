@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {
-	addRemote, checkoutBranch, commitStaged, createArchive, deleteRemote, deleteUserDetails, discardPaths,
+	addRemote, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
 	merge, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
@@ -256,29 +256,44 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	 * @param path - 文件路径（相对仓库根）。
 	 * @param staged - 工作区时是否取暂存区内容。
 	 * @param isNew - 是否是新增文件。
+	 * @param baseHash - 旧侧提交哈希；非空时按两提交对比打开。
 	 */
-	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, isNew = false) => {
+	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, isNew = false, baseHash?: string) => {
 		const kind = isNew ? 'file' : (hash === '*' ? 'worktree' : 'commit');
 		const diff = kind === 'file'
 			? { kind, path, repoRoot: workingTreePath }
 			: kind === 'worktree'
 				? { kind, path, staged, untracked: false, repoRoot: workingTreePath }
-				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath };
+				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath, baseHash: baseHash ?? null };
 		if (typeof onOpenDiff === 'function') {
-			onOpenDiff({ id: `gg-diff:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
+			// 对比时 id 带上旧侧哈希：同一文件的不同对比组合各自成页。
+			onOpenDiff({ id: `gg-diff:${baseHash ?? ''}:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
 		}
 	}, [onOpenDiff, workingTreePath]);
 
-	/** 选中一个提交，并加载其改动文件。 */
-	const selectCommit = React.useCallback(async (hash: string) => {
+	/**
+	 * 选中一个提交，并加载其改动文件。
+	 *
+	 * @param hash - 目标提交哈希。
+	 * @param baseHash - 旧侧提交哈希；非空时加载两个提交之间的改动。
+	 */
+	const selectCommit = React.useCallback(async (hash: string, baseHash?: string) => {
 		setState((previous) => ({ ...previous, selectedHash: hash, detail: null }));
 		if (workingTreePath === null) return;
 		try {
 			const commit = state.commits.find((item) => item.hash === hash);
+			const compareWith = baseHash === undefined ? null : state.commits.find((item) => item.hash === baseHash) ?? null;
 			setState((previous) => ({
 				...previous,
-				detail: commit === undefined ? null : { commit, files: [] },
+				detail: commit === undefined ? null : { commit, files: [], compareWith },
 			}));
+			if (baseHash !== undefined) {
+				const files = await compareCommits(workingTreePath, baseHash, hash);
+				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
+					? { ...previous, detail: { ...previous.detail, files } }
+					: previous));
+				return;
+			}
 			if (hash === '*') {
 				const files: CommitFile[] = state.entries.map((entry) => ({ path: entry.path, type: changeOf(entry).type, additions: null, deletions: null }));
 				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
@@ -295,14 +310,36 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		}
 	}, [workingTreePath, state.commits, state.entries, setState]);
 
-	/** 点击提交行：展开改动文件；再次点击同一行收起。 */
-	const toggleCommit = React.useCallback((hash: string) => {
+	/**
+	 * 点击提交行。
+	 *
+	 * 已有展开项时按住 Ctrl/Cmd 点击其他提交进入对比：方向取列表中靠后的（较旧）为 `from`，
+	 * 靠前的（较新）为 `to`，与改动方向一致。再次点击同一对组合取消对比。
+	 *
+	 * @param hash - 被点击的提交哈希。
+	 * @param additive - 是否按住了 Ctrl/Cmd。
+	 */
+	const toggleCommit = React.useCallback((hash: string, additive = false) => {
+		const current = state.detail;
+		if (additive && current !== null && current.commit.hash !== hash) {
+			// 已在对比同一组合时取消，回到单个提交详情。
+			if (current.compareWith !== null && current.compareWith.hash === hash) {
+				void selectCommit(current.commit.hash);
+				return;
+			}
+			const order = new Map(state.commits.map((item, index) => [item.hash, index]));
+			const fromFirst = (order.get(current.commit.hash) ?? 0) > (order.get(hash) ?? 0);
+			const from = fromFirst ? current.commit.hash : hash;
+			const to = fromFirst ? hash : current.commit.hash;
+			void selectCommit(to, from);
+			return;
+		}
 		if (state.selectedHash === hash) {
 			setState((previous) => ({ ...previous, selectedHash: null, detail: null }));
 			return;
 		}
 		void selectCommit(hash);
-	}, [state.selectedHash, selectCommit, setState]);
+	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
 
 	/** 转到当前 HEAD 提交：选中并展开其改动文件。 */
 	const goToHead = React.useCallback(() => {

@@ -449,11 +449,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'fileDiffContent': {
 			const filePath = str('filePath');
 			const commitHash = str('commitHash');
+			const baseHash = str('baseHash');
 			const staged = bool('staged');
 			try {
 				let oldText: string | null = null;
 				let newText: string | null = null;
-				if (commitHash === '*') {
+				if (baseHash !== '') {
+					// 两提交对比：旧侧取 baseHash，新侧取 commitHash（'*' 表示工作区文件）。
+					try { oldText = await gitOrThrow(['show', `${baseHash}:${filePath}`], repo); } catch { oldText = null; }
+					if (commitHash === '*') {
+						try { newText = await fs.readFile(nodePath.resolve(repo, filePath), 'utf8'); } catch { newText = null; }
+					} else {
+						try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
+					}
+				} else if (commitHash === '*') {
 					if (staged) {
 						// 暂存区 vs HEAD
 						try { oldText = await gitOrThrow(['show', `HEAD:${filePath}`], repo); } catch { oldText = null; }
@@ -473,7 +482,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
-				const hunks = await diffHunksOf(repo, commitHash, filePath, staged);
+				const hunks = await diffHunksOf(repo, commitHash, filePath, staged, baseHash);
 				respond({ command: 'fileDiffContent', path: filePath, oldText, newText, hunks });
 			} catch (e) {
 				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], error: e instanceof Error ? e.message : String(e) });
@@ -581,12 +590,24 @@ function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provi
  * @param staged - 工作区时是否比较暂存区。
  * @returns 逐块的新旧内容。
  */
-async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean): Promise<DiffHunkText[]> {
-	const args = commitHash === '*'
-		? (staged
-			? ['diff', '--no-color', '--unified=3', '--cached', '--', filePath]
-			: ['diff', '--no-color', '--unified=3', '--', filePath])
-		: ['diff', '--no-color', '--unified=3', `${commitHash}~1`, commitHash, '--', filePath];
+/**
+ * 取某个文件的逐块差异。
+ *
+ * @param repo - 仓库路径。
+ * @param commitHash - 目标提交；`*` 表示工作区。
+ * @param filePath - 文件路径（相对仓库根）。
+ * @param staged - 工作区时是否取暂存区内容。
+ * @param baseHash - 旧侧提交；非空时按 `baseHash → commitHash` 对比。
+ * @returns 逐块差异；取不到时为空数组。
+ */
+async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean, baseHash = ''): Promise<DiffHunkText[]> {
+	const args = baseHash !== ''
+		? ['diff', '--no-color', '--unified=3', baseHash, commitHash === '*' ? '' : commitHash, '--', filePath].filter((part) => part !== '')
+		: commitHash === '*'
+			? (staged
+				? ['diff', '--no-color', '--unified=3', '--cached', '--', filePath]
+				: ['diff', '--no-color', '--unified=3', '--', filePath])
+			: ['diff', '--no-color', '--unified=3', `${commitHash}~1`, commitHash, '--', filePath];
 	try {
 		return parseUnifiedDiffHunks(await gitOrThrow(args, repo));
 	} catch {

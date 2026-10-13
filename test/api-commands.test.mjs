@@ -434,6 +434,44 @@ test('贮藏改动与推送上游', { skip: !built && '未找到宿主产物' },
 	}
 });
 
+test('提交对比与两提交文件差异', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+		const first = git('rev-parse', 'HEAD~1').trim();
+		const head = git('rev-parse', 'HEAD').trim();
+
+		// 对比跨过一个提交：改动文件含该区间的全部结果。
+		const comparison = await call({ command: 'compareCommits', commitHash: head, compareWithHash: first, fromHash: first, toHash: head, refresh: false });
+		assert.equal(comparison.error, null);
+		const paths = comparison.fileChanges.map((change) => change.newFilePath);
+		assert.ok(paths.includes('renamed.txt'), '对比应含重命名后的路径');
+		const renamed = comparison.fileChanges.find((change) => change.newFilePath === 'renamed.txt');
+		assert.equal(typeof renamed.additions, 'number');
+
+		// 两提交模式的单文件差异取 `baseHash → commitHash`，而非父提交。
+		const diff = await call({ command: 'fileDiffContent', commitHash: head, filePath: 'renamed.txt', staged: false, baseHash: first });
+		assert.ok(Array.isArray(diff.hunks) && diff.hunks.length > 0, '两提交差异应有 hunk');
+		const added = diff.hunks.flatMap((hunk) => hunk.lines).filter((line) => line.startsWith('+')).join('\n');
+		assert.match(added, /three/, '新侧应含区间内新增的行');
+
+		// 中文路径在对比模式下同样可读。
+		write('中文文件.md', 'cn\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'add chinese file');
+		const chineseHead = git('rev-parse', 'HEAD').trim();
+		const chinese = await call({ command: 'fileDiffContent', commitHash: chineseHead, filePath: '中文文件.md', staged: false, baseHash: head });
+		assert.equal(chinese.oldText, null, '新增文件的旧侧应为空');
+		assert.match(chinese.newText, /cn/, '新增文件的新侧应有内容');
+
+		// 单提交模式不受影响：仍与父提交比较。
+		const single = await call({ command: 'fileDiffContent', commitHash: head, filePath: 'renamed.txt', staged: false });
+		assert.ok(Array.isArray(single.hunks) && single.hunks.length > 0, '单提交差异应仍可用');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('未知命令被拒绝且非仓库路径不抛错', { skip: !built && '未找到宿主产物' }, async () => {
 	const { repo } = makeRepo();
 	try {

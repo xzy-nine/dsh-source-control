@@ -400,7 +400,8 @@ function CommitRow({
 		{
 			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}${isMuted ? ' ggg-row-muted' : ''}`,
 			'data-hash': commit.hash,
-			onClick: () => onSelect(commit.hash),
+			// Ctrl/Cmd 点击进入与已展开提交的对比；普通点击展开自身详情。
+			onClick: (event: React.MouseEvent<HTMLDivElement>) => onSelect(commit.hash, event.ctrlKey || event.metaKey),
 			// 未提交行不对应真实提交：不给右键菜单，也不触发悬停卡片。
 			onContextMenu: isUncommitted ? undefined : (event: React.MouseEvent<HTMLDivElement>) => {
 				event.preventDefault();
@@ -469,7 +470,7 @@ function DetailGutter({ row }) {
  * @param props.commits - 提交序列。
  * @param props.head - 当前分支。
  * @param props.selectedHash - 选中的提交。
- * @param props.onSelect - 选中回调。
+ * @param props.onSelect - 选中回调；第二参数为是否按住 Ctrl/Cmd（请求对比）。
  * @param props.onLoadMore - 加载更多。
  * @param props.moreCommitsAvailable - 是否还有更多提交。
  * @param props.onContextMenu - 右键回调。

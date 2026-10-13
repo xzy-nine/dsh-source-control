@@ -174,7 +174,12 @@ export interface PanelState {
 	more: boolean;
 	entries: WorkingTreeEntry[];
 	selectedHash: string | null;
-	detail: { commit: Commit; files: CommitFile[] } | null;
+	/**
+	 * 展开的提交详情。
+	 *
+	 * `compareWith` 非空时 `files` 是两个提交之间的改动，方向为 `compareWith → commit`。
+	 */
+	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null } | null;
 	busy: boolean;
 	remotes: Remote[];
 }

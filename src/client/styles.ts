@@ -131,6 +131,10 @@ export const STYLES = `
 .ggg-card-copy{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-card-copy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* 提交对比：文件列表前的方向标识。 */
+.ggg-detail-compare{padding:4px 10px 2px;color:var(--dsw-alias-brand-primary);font-size:11px;font-family:var(--dsw-alias-font-mono,monospace)}
+/* 对比入口提示：未进入对比时说明修饰键用法。 */
+.ggg-detail-compare-hint{padding:4px 10px 2px;color:var(--dsw-alias-label-tertiary);font-size:11px}
 /* 错误与提示改由顶部轻量横幅呈现（见 panel/toast.ts），面板内不再有错误条。 */
 .ggg-issue-link{color:var(--dsw-alias-brand-primary);text-decoration:none}
 .ggg-issue-link:hover{text-decoration:underline}

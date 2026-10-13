@@ -79,8 +79,10 @@ function GitGraphTab(props) {
 		const address = gitDiffAddress(sessionId, hash, path);
 		const staged = diff.kind === 'worktree' && diff.staged === true;
 		const repoRoot = typeof diff.repoRoot === 'string' ? diff.repoRoot : null;
+		// 两提交对比：旧侧哈希随参数传递，差异页据此取 `baseHash → hash` 的内容。
+		const baseHash = typeof diff.baseHash === 'string' && diff.baseHash !== '' ? diff.baseHash : undefined;
 		try {
-			tabActions.openResource(address, { params: { staged, repoRoot } });
+			tabActions.openResource(address, { params: { staged, repoRoot, baseHash } });
 		} catch (error) {
 			void error;
 		}
@@ -130,6 +132,8 @@ function GitDiffTab(props) {
 	const parsed = React.useMemo(() => parseGitDiffAddress(address), [address]);
 	const staged = navParams?.staged === true;
 	const repoRoot = typeof navParams?.repoRoot === 'string' ? navParams.repoRoot : null;
+	// 两提交对比的旧侧哈希；无此项时按单提交（与其父提交）差异处理。
+	const baseHash = typeof navParams?.baseHash === 'string' ? navParams.baseHash : '';
 	const cwd = hook((sessions) => {
 		if (parsed === null) return null;
 		const entry = sessions?.byId?.[parsed.sessionId];
@@ -146,10 +150,10 @@ function GitDiffTab(props) {
 		if (parsed === null || typeof gitCwd !== 'string') return;
 		setLoading(true);
 		setDiffData(null);
-		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged)
+		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged, baseHash)
 			.then((data) => { setDiffData(data); setLoading(false); })
 			.catch(() => { setDiffData(null); setLoading(false); });
-	}, [parsed, gitCwd, staged]);
+	}, [parsed, gitCwd, staged, baseHash]);
 	React.useEffect(() => {
 		load();
 	}, [load]);
@@ -171,7 +175,10 @@ function GitDiffTab(props) {
 		{ className: 'ggg-diff-tab' },
 		React.createElement('div', { className: 'ggg-diff-tab-head' },
 			React.createElement('span', { className: 'ggg-diff-tab-path' }, parsed.path),
-			React.createElement('span', { className: 'ggg-diff-tab-hash' }, parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
+			React.createElement('span', { className: 'ggg-diff-tab-hash' },
+				baseHash !== ''
+					? `${baseHash.slice(0, 7)} → ${parsed.hash.slice(0, 7)}`
+					: parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
 			React.createElement('button', {
 				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
