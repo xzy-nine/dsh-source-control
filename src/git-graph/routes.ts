@@ -1,26 +1,27 @@
 /**
- * dsh-dev-git-graph 宿主路由：以 POST /dsh-dev-git-graph/gg/api 暴露 git 命令集，
- * 数据层复用 vendor/git-graph/dataSource.ts（源码级移植，见 vendor/git-graph/LICENSE），
- * 工作区变更命令见 ./working-tree.ts。前端是主文档内的 React 面板，不再有静态页。
+ * dsh-dev-git-graph 宿主路由：以 POST /dsh-dev-git-graph/gg/api 暴露 git 命令集。
+ *
+ * 数据层由本目录的本地实现提供：提交图与仓库信息见 ./git-query.ts，各类操作见
+ * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
  */
 import type http from 'node:http';
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
-import { DataSource } from '../../vendor/git-graph/dataSource.js';
-import { findGitExecutable } from '../../vendor/git-graph/gg-shims/utilsShim.js';
+import {
+	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
+	getTagDetails, getUncommittedDetails, repoRoot,
+} from './git-query.js';
+import {
+	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
+	cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
+	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, popStash, pruneRemote,
+	pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, rebase, renameBranch,
+	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
+} from './git-actions.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
-
-let dataSourcePromise: Promise<DataSource> | null = null;
-
-function getDataSource(): Promise<DataSource> {
-	if (dataSourcePromise === null) {
-		dataSourcePromise = findGitExecutable().then((git) => new DataSource(git));
-	}
-	return dataSourcePromise;
-}
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -47,7 +48,6 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-	const ds = await getDataSource();
 	let msg: Record<string, unknown>;
 	try {
 		msg = await readBody(req);
@@ -146,18 +146,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
-			const repoInfo = await ds.getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
+			let repoInfo = await getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
 			let isRepo = true;
 			if (repoInfo.error) {
-				isRepo = (await ds.repoRoot(repo)) !== null;
-				if (!isRepo) repoInfo.error = null;
+				isRepo = (await repoRoot(repo)) !== null;
+				if (!isRepo) repoInfo = { ...repoInfo, error: null };
 			}
 			respond({ command: 'loadRepoInfo', refreshId: num('refreshId'), ...repoInfo, isRepo });
 			break;
 		}
 		case 'loadCommits':
 			{
-				const data = await ds.getCommits(
+				// 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
+				// 直接传字符串数组的调用方同样接受。
+				const remoteNames = arr<unknown>('remotes')
+					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
+					.filter((name): name is string => typeof name === 'string' && name !== '');
+				const data = await getCommits(
 					repo,
 					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
 					num('maxCommits', 300),
@@ -166,7 +171,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 					bool('includeCommitsMentionedByReflogs'),
 					bool('onlyFollowFirstParent'),
 					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'date') as never,
-					arr('remotes'),
+					remoteNames,
 					arr('hideRemotes'),
 					arr('stashes'),
 				);
@@ -190,14 +195,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			}
 			break;
 		case 'loadConfig':
-			respond({ command: 'loadConfig', repo, ...(await ds.getConfig(repo, arr('remotes'))) });
+			respond({ command: 'loadConfig', repo, ...(await getConfig(repo, arr('remotes'))) });
 			break;
 		case 'commitDetails': {
 			const data = msg.commitHash === '*'
-				? await ds.getUncommittedDetails(repo)
+				? await getUncommittedDetails(repo)
 				: msg.stash === null || msg.stash === undefined
-					? await ds.getCommitDetails(repo, str('commitHash'), bool('hasParents'))
-					: await ds.getStashDetails(repo, str('commitHash'), msg.stash as never);
+					? await getCommitDetails(repo, str('commitHash'), bool('hasParents'))
+					: await getStashDetails(repo, str('commitHash'), msg.stash as never);
 			respond({ command: 'commitDetails', ...data, avatar: null, codeReview: null, refresh: bool('refresh') });
 			break;
 		}
@@ -206,79 +211,79 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				command: 'compareCommits',
 				commitHash: str('commitHash'),
 				compareWithHash: str('compareWithHash'),
-				...(await ds.getCommitComparison(repo, str('fromHash'), str('toHash'))),
+				...(await getCommitComparison(repo, str('fromHash'), str('toHash'))),
 				codeReview: null,
 				refresh: bool('refresh'),
 			});
 			break;
 		case 'tagDetails':
-			respond({ command: 'tagDetails', tagName: str('tagName'), commitHash: str('commitHash'), ...(await ds.getTagDetails(repo, str('tagName'))) });
+			respond({ command: 'tagDetails', tagName: str('tagName'), commitHash: str('commitHash'), ...(await getTagDetails(repo, str('tagName'))) });
 			break;
 
 		/* --- 分支操作 --- */
 		case 'checkoutBranch': {
-			const errors: unknown[] = [await ds.checkoutBranch(repo, str('branchName'), strOrNull('remoteBranch'))];
+			const errors: unknown[] = [await checkoutBranch(repo, str('branchName'), strOrNull('remoteBranch'))];
 			const pull = msg.pullAfterwards as Record<string, unknown> | null;
 			if (errors[0] === null && pull) {
-				errors.push(await ds.pullBranch(repo, String(pull.branchName), String(pull.remote), Boolean(pull.createNewCommit), Boolean(pull.squash)));
+				errors.push(await pullBranch(repo, String(pull.branchName), String(pull.remote), Boolean(pull.createNewCommit), Boolean(pull.squash)));
 			}
 			respond({ command: 'checkoutBranch', pullAfterwards: msg.pullAfterwards ?? null, errors });
 			break;
 		}
 		case 'createBranch':
-			respond({ command: 'createBranch', errors: await ds.createBranch(repo, str('branchName'), str('commitHash'), bool('checkout'), bool('force')) });
+			respond({ command: 'createBranch', errors: await createBranch(repo, str('branchName'), str('commitHash'), bool('checkout'), bool('force')) });
 			break;
 		case 'deleteBranch': {
-			const errors: unknown[] = [await ds.deleteBranch(repo, str('branchName'), bool('forceDelete'))];
+			const errors: unknown[] = [await deleteBranch(repo, str('branchName'), bool('forceDelete'))];
 			if (errors[0] === null) {
 				for (const remote of arr<string>('deleteOnRemotes')) {
-					errors.push(await ds.deleteRemoteBranch(repo, str('branchName'), remote));
+					errors.push(await deleteRemoteBranch(repo, str('branchName'), remote));
 				}
 			}
 			respond({ command: 'deleteBranch', repo, branchName: str('branchName'), deleteOnRemotes: arr('deleteOnRemotes'), errors });
 			break;
 		}
 		case 'deleteRemoteBranch':
-			await respondError('deleteRemoteBranch', () => ds.deleteRemoteBranch(repo, str('branchName'), str('remote')));
+			await respondError('deleteRemoteBranch', () => deleteRemoteBranch(repo, str('branchName'), str('remote')));
 			break;
 		case 'renameBranch':
-			await respondError('renameBranch', () => ds.renameBranch(repo, str('oldName'), str('newName')));
+			await respondError('renameBranch', () => renameBranch(repo, str('oldName'), str('newName')));
 			break;
 		case 'fetchIntoLocalBranch':
-			await respondError('fetchIntoLocalBranch', () => ds.fetchIntoLocalBranch(repo, str('remote'), str('remoteBranch'), str('localBranch'), bool('force')));
+			await respondError('fetchIntoLocalBranch', () => fetchIntoLocalBranch(repo, str('remote'), str('remoteBranch'), str('localBranch'), bool('force')));
 			break;
 		case 'pullBranch':
-			await respondError('pullBranch', () => ds.pullBranch(repo, str('branchName'), str('remote'), bool('createNewCommit'), bool('squash')));
+			await respondError('pullBranch', () => pullBranch(repo, str('branchName'), str('remote'), bool('createNewCommit'), bool('squash')));
 			break;
 		case 'pushBranch':
 			respond({
 				command: 'pushBranch',
 				willUpdateBranchConfig: bool('willUpdateBranchConfig'),
-				errors: await ds.pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never),
+				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never),
 			});
 			break;
 
 		/* --- 提交操作 --- */
 		case 'checkoutCommit':
-			await respondError('checkoutCommit', () => ds.checkoutCommit(repo, str('commitHash')));
+			await respondError('checkoutCommit', () => checkoutCommit(repo, str('commitHash')));
 			break;
 		case 'cherrypickCommit':
-			respond({ command: 'cherrypickCommit', errors: [await ds.cherrypickCommit(repo, str('commitHash'), num('parentIndex'), bool('recordOrigin'), bool('noCommit'))] });
+			respond({ command: 'cherrypickCommit', errors: [await cherrypickCommit(repo, str('commitHash'), num('parentIndex'), bool('recordOrigin'), bool('noCommit'))] });
 			break;
 		case 'dropCommit':
-			await respondError('dropCommit', () => ds.dropCommit(repo, str('commitHash')));
+			await respondError('dropCommit', () => dropCommit(repo, str('commitHash')));
 			break;
 		case 'resetToCommit':
-			await respondError('resetToCommit', () => ds.resetToCommit(repo, str('commit'), (typeof msg.resetMode === 'string' ? msg.resetMode : 'mixed') as never));
+			await respondError('resetToCommit', () => resetToCommit(repo, str('commit'), (typeof msg.resetMode === 'string' ? msg.resetMode : 'mixed') as never));
 			break;
 		case 'revertCommit':
-			await respondError('revertCommit', () => ds.revertCommit(repo, str('commitHash'), num('parentIndex')));
+			await respondError('revertCommit', () => revertCommit(repo, str('commitHash'), num('parentIndex')));
 			break;
 		case 'merge':
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await ds.merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
 			});
 			break;
 		case 'rebase':
@@ -286,21 +291,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				command: 'rebase',
 				actionOn: msg.actionOn,
 				interactive: bool('interactive'),
-				error: await ds.rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
+				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
 			});
 			break;
 
 		/* --- 标签 --- */
 		case 'addTag': {
-			const errors: unknown[] = [await ds.addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
+			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
 			if (errors[0] === null && strOrNull('pushToRemote') !== null) {
-				errors.push(...(await ds.pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
+				errors.push(...(await pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
 			}
 			respond({ command: 'addTag', repo, tagName: str('tagName'), pushToRemote: strOrNull('pushToRemote'), commitHash: str('commitHash'), errors });
 			break;
 		}
 		case 'deleteTag':
-			await respondError('deleteTag', () => ds.deleteTag(repo, str('tagName'), strOrNull('deleteOnRemote')));
+			await respondError('deleteTag', () => deleteTag(repo, str('tagName'), strOrNull('deleteOnRemote')));
 			break;
 		case 'pushTag':
 			respond({
@@ -309,50 +314,50 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				tagName: str('tagName'),
 				remotes: arr('remotes'),
 				commitHash: str('commitHash'),
-				errors: await ds.pushTag(repo, str('tagName'), arr('remotes'), str('commitHash'), bool('skipRemoteCheck')),
+				errors: await pushTag(repo, str('tagName'), arr('remotes'), str('commitHash'), bool('skipRemoteCheck')),
 			});
 			break;
 
 		/* --- 远程 --- */
 		case 'fetch':
-			await respondError('fetch', () => ds.fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags')));
+			await respondError('fetch', () => fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags')));
 			break;
 		case 'addRemote':
-			await respondError('addRemote', () => ds.addRemote(repo, str('name'), str('url'), strOrNull('pushUrl'), bool('fetch')));
+			await respondError('addRemote', () => addRemote(repo, str('name'), str('url'), strOrNull('pushUrl'), bool('fetch')));
 			break;
 		case 'deleteRemote':
-			await respondError('deleteRemote', () => ds.deleteRemote(repo, str('name')));
+			await respondError('deleteRemote', () => deleteRemote(repo, str('name')));
 			break;
 		case 'editRemote':
-			await respondError('editRemote', () => ds.editRemote(repo, str('nameOld'), str('nameNew'), strOrNull('urlOld'), strOrNull('urlNew'), strOrNull('pushUrlOld'), strOrNull('pushUrlNew')));
+			await respondError('editRemote', () => editRemote(repo, str('nameOld'), str('nameNew'), strOrNull('urlOld'), strOrNull('urlNew'), strOrNull('pushUrlOld'), strOrNull('pushUrlNew')));
 			break;
 		case 'pruneRemote':
-			await respondError('pruneRemote', () => ds.pruneRemote(repo, str('name')));
+			await respondError('pruneRemote', () => pruneRemote(repo, str('name')));
 			break;
 
 		/* --- Stash --- */
 		case 'applyStash':
-			await respondError('applyStash', () => ds.applyStash(repo, str('selector'), bool('reinstateIndex')));
+			await respondError('applyStash', () => applyStash(repo, str('selector'), bool('reinstateIndex')));
 			break;
 		case 'branchFromStash':
-			await respondError('branchFromStash', () => ds.branchFromStash(repo, str('selector'), str('branchName')));
+			await respondError('branchFromStash', () => branchFromStash(repo, str('selector'), str('branchName')));
 			break;
 		case 'dropStash':
-			await respondError('dropStash', () => ds.dropStash(repo, str('selector')));
+			await respondError('dropStash', () => dropStash(repo, str('selector')));
 			break;
 		case 'popStash':
-			await respondError('popStash', () => ds.popStash(repo, str('selector'), bool('reinstateIndex')));
+			await respondError('popStash', () => popStash(repo, str('selector'), bool('reinstateIndex')));
 			break;
 		case 'pushStash':
-			await respondError('pushStash', () => ds.pushStash(repo, str('message'), bool('includeUntracked', true)));
+			await respondError('pushStash', () => pushStash(repo, str('message'), bool('includeUntracked', true)));
 			break;
 
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
-			await respondError('cleanUntrackedFiles', () => ds.cleanUntrackedFiles(repo, bool('directories')));
+			await respondError('cleanUntrackedFiles', () => cleanUntrackedFiles(repo, bool('directories')));
 			break;
 		case 'resetFileToRevision':
-			await respondError('resetFileToRevision', () => ds.resetFileToRevision(repo, str('commitHash'), str('filePath')));
+			await respondError('resetFileToRevision', () => resetFileToRevision(repo, str('commitHash'), str('filePath')));
 			break;
 		case 'createArchive': {
 			const ref = str('ref');
@@ -382,7 +387,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 
 		/* --- Diff：DSH 右侧栏无通用 git diff 页类型，与其它 VS Code 专属命令一致回错误，
-		       前端收到 error 后弹提示（vendor/git-graph/web/main.ts 的 viewDiff 分支）。 --- */
+		       前端收到 error 后弹提示。 --- */
 		case 'viewDiff':
 		case 'viewDiffWithWorkingFile':
 			respond({ command: msg.command, error: 'DSH 版本暂不支持打开 Git diff，请用 git 命令或外部 diff 工具' });
@@ -410,8 +415,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			break;
 		case 'exportRepoConfig': {
 			try {
-				const config = await ds.getConfig(repo, []);
-				const repoInfo = await ds.getRepoInfo(repo, true, true, []);
+				const config = await getConfig(repo, []);
+				const repoInfo = await getRepoInfo(repo, true, true, []);
 				respond({ command: 'exportRepoConfig', error: null, config: { repo, config, repoInfo } });
 			} catch (e) {
 				respond({ command: 'exportRepoConfig', error: e instanceof Error ? e.message : String(e), config: null });
@@ -458,8 +463,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'deleteUserDetails': {
 			const location = str('location') as 'local' | 'global';
 			const errors: string[] = [];
-			if (bool('name')) { try { await ds.unsetConfigValue(repo, 'user.name' as any, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('email')) { try { await ds.unsetConfigValue(repo, 'user.email' as any, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			if (bool('name')) { try { await unsetConfigValue(repo, 'user.name', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			if (bool('email')) { try { await unsetConfigValue(repo, 'user.email', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
 			respond({ command: 'deleteUserDetails', errors });
 			break;
 		}
@@ -468,10 +473,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 			const errors: string[] = [];
 			const name = str('name');
 			const email = str('email');
-			try { await ds.setConfigValue(repo, 'user.name' as any, name, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			try { await ds.setConfigValue(repo, 'user.email' as any, email, location as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			if (bool('deleteLocalName')) { try { await ds.unsetConfigValue(repo, 'user.name' as any, 'local' as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('deleteLocalEmail')) { try { await ds.unsetConfigValue(repo, 'user.email' as any, 'local' as any); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			try { await setConfigValue(repo, 'user.name', name, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
+			try { await setConfigValue(repo, 'user.email', email, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
+			if (bool('deleteLocalName')) { try { await unsetConfigValue(repo, 'user.name', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
+			if (bool('deleteLocalEmail')) { try { await unsetConfigValue(repo, 'user.email', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
 			respond({ command: 'editUserDetails', errors });
 			break;
 		}

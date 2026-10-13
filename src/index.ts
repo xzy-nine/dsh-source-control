@@ -5,9 +5,8 @@
  *    POST /dsh-dev-git-graph/gg/api       -> 面板命令集（host 直跑 git 命令）
  *    GET  /dsh-dev-git-graph/gg/ai-models -> AI 供应商与模型目录
  *    POST /dsh-dev-git-graph/gg/ai-commit -> AI 生成提交信息（SSE 流式）
- * 2) 提交图查询复用 vendor/git-graph/dataSource.ts（mhutchie/vscode-git-graph，
- *    许可与本源文件不同，原文见 vendor/git-graph/LICENSE）。
- * 3) 工作区变更、工作树与差异由 src/git-graph/ 下的本地 git 层提供。
+ * 2) 提交图查询由 src/git-graph/ 下的本地数据层提供（git-query.ts / git-actions.ts）。
+ * 3) 工作区变更、工作树与差异同样由 src/git-graph/ 提供。
  */
 import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';

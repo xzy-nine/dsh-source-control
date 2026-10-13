@@ -1,8 +1,8 @@
 /**
  * DSH 版 Git Graph 的 git 执行层：在指定仓库中以数组参数跑 git，无 shell。
  *
- * 与 vendor 的 DataSource 分开：DataSource 负责提交图查询，这里补上变更面板需要的
- * 工作区状态、暂存与提交，避免继续改动 vendor 副本。
+ * 工作区变更（状态、暂存、提交、工作树）在此实现；提交图查询与各类操作见
+ * `git-query.ts` 与 `git-actions.ts`，两者共用这里的执行与错误处理。
  */
 import { spawn } from 'node:child_process';
 
@@ -19,6 +19,23 @@ export interface GitResult {
 /** 仓库尚无提交时 `git restore --staged` 的报错；git 会给出带引号的 HEAD。 */
 const NO_HEAD_PATTERN = /could not resolve ['"]?HEAD['"]?|unknown revision|ambiguous argument ['"]?HEAD['"]?/i;
 
+/**
+ * 子进程环境：在父进程环境上禁用凭据交互与分页。
+ *
+ * `GIT_TERMINAL_PROMPT=0` 让缺凭据的远程操作直接失败，而不是挂在等待输入上；
+ * `GIT_PAGER` 兜住 git 误判为交互终端的场合。
+ *
+ * @returns 传给子进程的环境变量。
+ */
+export function gitEnvironment(): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		GIT_TERMINAL_PROMPT: '0',
+		GIT_PAGER: 'cat',
+		GIT_EDITOR: 'true',
+	};
+}
+
 /** 一条工作区变更：索引与工作区各自的状态码。 */
 export interface WorkingTreeEntry {
 	/** 当前路径，相对仓库根，使用 `/` 分隔。 */
@@ -34,21 +51,33 @@ export interface WorkingTreeEntry {
 /**
  * 运行一次 git。
  *
+ * 子进程无法启动（git 不在 PATH、工作目录不存在）时不抛错，而是以退出码 -1 与
+ * stderr 为异常文本返回，使调用方的错误处理与 git 自身失败走同一条路径。
+ *
  * @param args - 参数数组，按原样传给 git（不经过 shell）。
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 退出码与输出。
  */
 export function runGit(args: readonly string[], cwd: string): Promise<GitResult> {
-	return new Promise((resolve, reject) => {
-		const child = spawn('git', [...args], { cwd, windowsHide: true });
+	return new Promise((resolve) => {
+		const child = spawn('git', [...args], { cwd, windowsHide: true, env: gitEnvironment() });
 		let stdout = '';
 		let stderr = '';
+		let settled = false;
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
 		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-		child.on('error', reject);
-		child.on('close', (code) => resolve({ code: code === null ? -1 : code, stdout, stderr }));
+		child.on('error', (error: Error) => {
+			if (settled) return;
+			settled = true;
+			resolve({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message });
+		});
+		child.on('close', (code) => {
+			if (settled) return;
+			settled = true;
+			resolve({ code: code === null ? -1 : code, stdout, stderr });
+		});
 	});
 }
 
