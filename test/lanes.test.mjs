@@ -138,8 +138,9 @@ test('压实后行间的泳道与颜色仍然连续', () => {
 	}
 });
 
-test('压实把空洞右侧的泳道左移', () => {
-	// 行内释放出的空洞由其右侧泳道左移填补：压实只向左，且留下 S 形平移段。
+test('泳道位置保持稳定不左移', () => {
+	// 泳道一次分配后原位延续：中间泳道消亡时，其右侧泳道不左移填补，
+	// 因此不产生 S 形平移段。
 	const layout = layoutCommits([
 		commit('m', 'a', 'b', 'd'),
 		commit('a', 'r'),
@@ -150,12 +151,13 @@ test('压实把空洞右侧的泳道左移', () => {
 	const shifted = layout.rows.flatMap((row) => row.segments).filter(
 		(segment) => segment.fromTop && segment.toBottom && segment.lane !== segment.toLane,
 	);
-	assert.ok(shifted.length > 0, '应有随压实左移的贯穿段');
-	for (const segment of shifted) assert.ok(segment.toLane < segment.lane, '压实只向左移动');
-	// 左移段必须是 S 形曲线，不是竖直直线。
-	const geometry = segmentGeometry(shifted[0]);
-	assert.equal(geometry.kind, 'path');
-	assert.match(geometry.d, / V /, 'S 形曲线含竖直段');
+	assert.equal(shifted.length, 0, '泳道不应随压实平移');
+	// 贯穿段始终留在原泳道。
+	for (const row of layout.rows) {
+		for (const segment of row.segments) {
+			if (segment.fromTop && segment.toBottom) assert.equal(segment.lane, segment.toLane, '贯穿段不改变泳道');
+		}
+	}
 });
 
 test('分页加载后已加载部分的行不变', () => {

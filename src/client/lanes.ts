@@ -90,6 +90,10 @@ export interface LaneRow {
 	readonly segments: readonly LaneSegment[];
 	/** 本行需要的泳道数。 */
 	readonly width: number;
+	/** 本行提交哈希；领先/落后指示行为 null。 */
+	readonly hash: string | null;
+	/** 指示行种类；普通提交行为 undefined。 */
+	readonly indicator?: 'incoming' | 'outgoing';
 }
 
 /** 布局结果。 */
@@ -100,45 +104,53 @@ export interface LaneLayout {
 	readonly laneCount: number;
 }
 
-/** 决定引用色的分支名：本地当前分支与它的上游。 */
+/** 决定引用色的分支名与领先/落后尖端。 */
 export interface LaneRefs {
 	/** 本地当前分支名。 */
 	readonly head?: string | null;
 	/** 上游远程跟踪分支名（如 origin/main）。 */
 	readonly upstream?: string | null;
+	/** 本地领先时的 HEAD 尖端哈希；无领先为 null。 */
+	readonly localTip?: string | null;
+	/** 云端领先时的上游尖端哈希；无落后为 null。 */
+	readonly remoteTip?: string | null;
+}
+
+/** 一条等待中的泳道。 */
+interface Lane {
+	/** 该泳道正在等待的提交哈希；null 表示尚无归属。 */
+	hash: string | null;
+	/** 泳道颜色。 */
+	colour: string;
 }
 
 /**
  * 计算提交序列的泳道布局。
  *
- * 每条泳道持有一个「正在等待的提交」与它所属分支的颜色。扫描分五步：
+ * 泳道位置一次分配后保持稳定：本行提交所在泳道原位让给第一父提交，其余泳道原样延续，
+ * 合并的其余父提交追加到最右侧新泳道。行间不重排、不左移压实。
  *
- * 1. 收集所有正在等待本行提交的泳道；最左的一条是它的落点，其余是本行汇入的
- *    分支（画曲线并入后立即释放，否则会永久占用一条泳道）。
- * 2. 仍在等待其它提交的泳道，整行画贯穿线——漏掉这一步分支线会在行间断开。
- * 3. 本行提交若来自上方（被某条泳道等待），画入线；否则它是分支的头。
- * 4. 第一个父提交继承本泳道与颜色；其余父提交是在本行分出的分支，各占一条泳道。
- * 5. 压实：行内释放出的空洞由其右侧泳道左移填补，这些泳道因此画 S 形平移曲线。
+ * 领先/落后以虚拟行插入：云端领先插在远端尖端之前，本地领先插在 HEAD 之前，
+ * 原有行依次下移。
  *
  * 分页加载只给出窗口内的提交：父提交落在窗口外时仍算有父提交，泳道继续被占住、
- * 线画到行底，下一次加载由同一泳道接续。压实只依赖本行之前的输入，因此窗口变长时
+ * 线画到行底，下一次加载由同一泳道接续。布局只依赖本行之前的输入，因此窗口变长时
  * 已加载部分的行不变。
  *
  * @param commits - 提交序列，按图上的从上到下顺序。
- * @param refs - 决定引用色的本地分支与上游。
+ * @param refs - 决定引用色的本地分支与上游，以及领先/落后的两侧尖端。
  * @returns 每行布局与泳道总数。
  */
 export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs = {}): LaneLayout {
-	/** 泳道 -> 正在等待的提交及颜色；null 表示空闲。 */
-	const lanes: Array<{ hash: string; colour: string } | null> = [];
-	const rows: LaneRow[] = [];
 	const commitByHash = new Map<string, LayoutCommit>();
 	for (const commit of commits) commitByHash.set(commit.hash, commit);
 	let nextColour = 0;
-	let laneCount = 0;
 
-	/** 引用色：本地 HEAD 蓝、上游紫；提交不承载引用时为 null。 */
-	const refColour = (hash: string): string | null => {
+	/** 无引用的泳道按 5 色池轮转分配。 */
+	const poolColour = (): string => LANE_COLOURS[nextColour++ % LANE_COLOURS.length];
+	/** 引用色优先级：本地 HEAD 蓝 → 上游紫；提交不承载引用时为 null。 */
+	const refColour = (hash: string | null): string | null => {
+		if (hash === null) return null;
 		const commit = commitByHash.get(hash);
 		if (commit === undefined) return null;
 		if (refs.head !== undefined && refs.head !== null && (commit.heads ?? []).includes(refs.head)) {
@@ -150,131 +162,114 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 		}
 		return null;
 	};
-	/** 无引用的泳道按 5 色池轮转分配。 */
-	const poolColour = (): string => LANE_COLOURS[nextColour++ % LANE_COLOURS.length];
-	/** 颜色优先级：本提交的引用色 → 继承的泳道色 → 色池轮转。 */
-	const colourOf = (hash: string, inherited: string | null): string => refColour(hash) ?? inherited ?? poolColour();
 
-	/** 找一条空闲泳道；没有则新开一条。 */
-	const takeLane = (): number => {
-		for (let index = 0; index < lanes.length; index++) {
-			if (lanes[index] === null) return index;
+	let lanes: Array<Lane | null> = [];
+	let laneCount = 0;
+	const baseRows: LaneRow[] = [];
+
+	for (const commit of commits) {
+		const input = lanes.map((lane) => (lane === null ? null : { ...lane }));
+		const parentIds = commit.parents ?? [];
+		const commitColour = refColour(commit.hash);
+
+		// 第一遍：消费与继承。等待本提交的泳道中，最左的一条原位让给第一父提交，
+		// 其余汇入它后释放（否则这些泳道会永远等待一个已经出现过的提交，成为幽灵泳道）。
+		const output: Array<Lane | null> = [];
+		let nodeLane = -1;
+		for (const [index, lane] of input.entries()) {
+			if (lane === null || lane.hash !== commit.hash) { output.push(lane === null ? null : { ...lane }); continue; }
+			if (nodeLane === -1) {
+				nodeLane = index;
+				output.push({ hash: parentIds[0] ?? null, colour: commitColour ?? lane.colour });
+			} else {
+				output.push(null);
+			}
 		}
-		lanes.push(null);
-		return lanes.length - 1;
+		// 未被任何泳道等待：本行是分支的头，节点放进最左空位，没有空位则追加到最右。
+		const inbound = nodeLane !== -1;
+		if (!inbound) {
+			nodeLane = output.findIndex((lane) => lane === null);
+			if (nodeLane === -1) {
+				output.push({ hash: parentIds[0] ?? null, colour: commitColour ?? poolColour() });
+				nodeLane = output.length - 1;
+			} else {
+				output[nodeLane] = { hash: parentIds[0] ?? null, colour: commitColour ?? poolColour() };
+			}
+		}
+
+		// 其余父提交并入已在等待它的泳道，否则放进空位或追加到最右；
+		// 同一提交被两条泳道等待会让它在后续行画出多余的交汇弧。
+		const parentColour = (parent: string): string => refColour(parent) ?? poolColour();
+		const placeLane = (hash: string, colour: string): number => {
+			const existing = output.findIndex((lane) => lane !== null && lane.hash === hash);
+			if (existing !== -1) return existing;
+			const free = output.findIndex((lane) => lane === null);
+			if (free !== -1) { output[free] = { hash, colour }; return free; }
+			output.push({ hash, colour });
+			return output.length - 1;
+		};
+		const forkLanes: Array<{ lane: number; colour: string }> = [];
+		for (let w = inbound ? 1 : 0; w < parentIds.length; w++) {
+			const parent = parentIds[w];
+			const lane = placeLane(parent, parentColour(parent));
+			const colour = (output[lane] as Lane).colour;
+			forkLanes.push({ lane, colour });
+		}
+
+		// 节点颜色：本提交的引用色优先，否则取所在泳道的颜色。
+		const nodeColour = commitColour ?? (inbound ? input[nodeLane]?.colour : output[nodeLane]?.colour) ?? poolColour();
+		// 线段：泳道下标即横向位置，不因泳道消亡而左移。
+		const segments: LaneSegment[] = [];
+		for (const [index, lane] of input.entries()) {
+			if (lane === null || index === nodeLane) continue;
+			// 其余等待本提交的泳道汇入节点后释放。
+			if (lane.hash === commit.hash) {
+				segments.push({ lane: index, toLane: nodeLane, fromTop: true, toBottom: false, colour: lane.colour });
+			} else if (lane.hash !== null) {
+				segments.push({ lane: index, toLane: index, fromTop: true, toBottom: true, colour: lane.colour });
+			}
+		}
+		// 节点泳道：入线自行顶到节点，出线自节点到行底；两者并存时合成贯穿线。
+		const outboundColour = output[nodeLane]?.colour ?? nodeColour;
+		const hasOutbound = parentIds.length > 0;
+		if (inbound && hasOutbound) {
+			segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: true, colour: nodeColour });
+		} else {
+			if (inbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: false, colour: nodeColour });
+			if (hasOutbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: false, toBottom: true, colour: outboundColour });
+		}
+		for (const fork of forkLanes) {
+			if (fork.lane === nodeLane) continue;
+			segments.push({ lane: nodeLane, toLane: fork.lane, fromTop: false, toBottom: true, colour: fork.colour });
+		}
+
+		const width = Math.max(input.length, output.length, nodeLane + 1, 1);
+		laneCount = Math.max(laneCount, width);
+		baseRows.push({ lane: nodeLane, colour: nodeColour, segments, width, hash: commit.hash });
+		lanes = output;
+	}
+
+	// 领先/落后：以虚拟行插入，原有行下移。
+	const rows = baseRows.slice();
+	const insertIndicator = (index: number, indicator: 'incoming' | 'outgoing'): void => {
+		if (index < 0) return;
+		const target = rows[index];
+		const segments: LaneSegment[] = [];
+		for (let lane = 0; lane < target.width; lane++) {
+			if (lane === target.lane) continue;
+			segments.push({ lane, toLane: lane, fromTop: true, toBottom: true, colour: LANE_COLOURS[lane % LANE_COLOURS.length] });
+		}
+		rows.splice(index, 0, {
+			lane: target.lane, colour: indicator === 'incoming' ? REMOTE_REF_COLOUR : HEAD_REF_COLOUR,
+			segments, width: target.width, hash: null, indicator,
+		});
 	};
 
-	for (let row = 0; row < commits.length; row++) {
-		const commit = commits[row];
-		/** 进入本行时各泳道在等谁：贯穿线按这份快照画。 */
-		const awaited = lanes.slice();
-
-		/** 正在等待本行提交的泳道，从左到右。 */
-		const waiting: number[] = [];
-		for (let index = 0; index < lanes.length; index++) {
-			const entry = lanes[index];
-			if (entry !== null && entry !== undefined && entry.hash === commit.hash) waiting.push(index);
-		}
-
-		// 落点：最左的等待泳道，或新开一条（本行是分支的头）。
-		const lane = waiting.length > 0 ? waiting[0] : takeLane();
-		const awaitedLane = awaited[lane] ?? null;
-		const inbound = awaitedLane !== null && awaitedLane.hash === commit.hash;
-		const colour = colourOf(commit.hash, inbound && awaitedLane !== null ? awaitedLane.colour : null);
-
-		const [firstParent, ...otherParents] = commit.parents ?? [];
-		// 父提交可能尚未加载：仍算有父提交，泳道继续等它。
-		const hasFirstParent = firstParent !== undefined;
-
-		// 1) 更新泳道占用：汇入本行提交的泳道释放，落点接管第一个父提交。
-		for (let index = 0; index < awaited.length; index++) {
-			const entry = awaited[index];
-			if (entry === null || entry === undefined || index === lane) continue;
-			if (entry.hash === commit.hash) lanes[index] = null;
-		}
-		lanes[lane] = hasFirstParent ? { hash: firstParent, colour: refColour(firstParent) ?? colour } : null;
-
-		// 2) 其余父提交：已在等待则并入，否则各占一条泳道。
-		const parentLanes: Array<{ lane: number; colour: string }> = [];
-		for (const parent of otherParents) {
-			let parentLane = -1;
-			for (let index = 0; index < lanes.length; index++) {
-				const entry = lanes[index];
-				if (entry !== null && entry !== undefined && entry.hash === parent) { parentLane = index; break; }
-			}
-			if (parentLane === -1) {
-				parentLane = takeLane();
-				lanes[parentLane] = { hash: parent, colour: refColour(parent) ?? poolColour() };
-			} else {
-				// 已占用的泳道保持原色，行间不因压实变色；父提交自身带引用色时改用它。
-				const parentColour = refColour(parent);
-				if (parentColour !== null) lanes[parentLane] = { hash: parent, colour: parentColour };
-			}
-			// 颜色必须在压实前取：压实后泳道下标已移位。
-			const entry = lanes[parentLane];
-			parentLanes.push({ lane: parentLane, colour: entry === null || entry === undefined ? LANE_COLOURS[0] : entry.colour });
-		}
-
-		// 3) 压实：空洞右侧的泳道左移填补，记下输入索引到输出索引的映射。
-		const outIndex = new Map<number, number>();
-		let write = 0;
-		for (let read = 0; read < lanes.length; read++) {
-			const entry = lanes[read];
-			if (entry === null || entry === undefined) continue;
-			if (read !== write) {
-				lanes[write] = entry;
-				lanes[read] = null;
-			}
-			outIndex.set(read, write);
-			write++;
-		}
-		lanes.length = write;
-
-		// 4) 线段：lane 是行顶的泳道，toLane 是行底的泳道。
-		const segments: LaneSegment[] = [];
-		// 本行提交的落点泳道在压实后的位置。
-		const nodeOut = outIndex.get(lane) ?? lane;
-
-		// 4a) 其它泳道：仍在等别的提交的整行贯穿（位置随压实平移）；
-		//     也在等本提交的汇入节点后释放。
-		for (let index = 0; index < awaited.length; index++) {
-			const entry = awaited[index];
-			if (entry === null || entry === undefined || index === lane) continue;
-			if (entry.hash === commit.hash) {
-				segments.push({ lane: index, toLane: lane, fromTop: true, toBottom: false, colour: entry.colour });
-			} else {
-				segments.push({ lane: index, toLane: outIndex.get(index) ?? index, fromTop: true, toBottom: true, colour: entry.colour });
-			}
-		}
-
-		// 4b) 落点泳道：入线自行顶到节点，第一个父提交的出线自节点到行底。
-		//     两者泳道一致时合并成一条贯穿线，由几何层在节点外沿断开。
-		const inboundAtNode = inbound;
-		const outboundAtNode = hasFirstParent && nodeOut === lane;
-		if (inboundAtNode && outboundAtNode) {
-			segments.push({ lane, toLane: lane, fromTop: true, toBottom: true, colour });
-		} else {
-			if (inboundAtNode) {
-				segments.push({ lane, toLane: lane, fromTop: true, toBottom: false, colour });
-			}
-			if (hasFirstParent) {
-				segments.push({ lane, toLane: nodeOut, fromTop: false, toBottom: true, colour });
-			}
-		}
-
-		// 4c) 其余父提交：自节点分叉到各自的泳道。
-		for (const parent of parentLanes) {
-			segments.push({
-				lane, toLane: outIndex.get(parent.lane) ?? parent.lane, fromTop: false, toBottom: true,
-				colour: parent.colour,
-			});
-		}
-
-		// 本行需要的宽度：输入与输出泳道数的较大者。
-		const width = Math.max(awaited.length, lanes.length, lane + 1, 1);
-		laneCount = Math.max(laneCount, width);
-		rows.push({ lane, colour, segments, width });
-	}
+	// 云端领先插在远端尖端之前；本地领先插在 HEAD 之前。
+	const remoteTip = refs.remoteTip ?? null;
+	if (remoteTip !== null) insertIndicator(rows.findIndex((row) => row.hash === remoteTip), 'incoming');
+	const localTip = refs.localTip ?? null;
+	if (localTip !== null) insertIndicator(rows.findIndex((row) => row.hash === localTip), 'outgoing');
 
 	return { rows, laneCount };
 }

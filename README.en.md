@@ -35,6 +35,7 @@ The commit lane graph; its section header collapses on click. The divider above 
 - Node shape names the kind: two concentric rings for the current branch, a ring with a core for merges, a filled dot otherwise. Lane lines stop at the node's outer edge instead of running through it.
 - The uncommitted row is drawn dashed with no node, and triggers neither the hover card nor the context menu.
 - When paging, a parent outside the loaded window still holds its lane and keeps its line running to the row bottom, so loading more never changes the lanes or colours already on screen.
+- Scrolling near the bottom loads the next page automatically, with no button to click; if a page still does not fill the graph area, it keeps loading until no commits remain.
 - Hovering a row floats a card with the author, the time, the full commit message, the changed-file and line counts, the ref markers, and the short hash with a copy button.
 - Clicking a commit expands its changed-file region in place, directly below that row, showing per-file +/− and status; clicking a file opens its diff, and clicking the row again collapses it.
 

@@ -23,7 +23,7 @@ import { hasGitHubRemote } from './panel/github.ts';
 import { needsTranslation, splitCommitPrefix } from './language.ts';
 import { reportError } from './panel/errors.ts';
 import { showToast } from './panel/toast.ts';
-import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
+import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
@@ -1004,7 +1004,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
-			refs: collectRefs(state.commits),
+			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null),
 			selected: filterSelected, search: filterSearch,
 			onSearch: setFilterSearch,
 			onToggle: (name: string) => { setFilterAuto(false); setFilterSelected((previous) => {
@@ -1020,7 +1020,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			autoChecked: filterAuto,
 			onToggleAuto: (checked: boolean) => {
 				setFilterAuto(checked);
-				if (checked) setFilterSelected(() => computeAutoRefs(state.commits, state.head));
+				if (checked) setFilterSelected(() => computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null));
 				else setFilterSelected(new Set());
 			},
 			onClose: () => setFilterOpen(false),

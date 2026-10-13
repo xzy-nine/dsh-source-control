@@ -27,6 +27,12 @@ import { copyText } from './context-menu.ts';
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
 
+/** 距底部不足该像素数时自动取下一页。 */
+const AUTO_LOAD_THRESHOLD = 120;
+
+/** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
+const LOAD_MORE_SETTLE_MS = 10000;
+
 /**
  * 计算字符串的 MD5 哈希（用于 Gravatar 头像 URL）。
  *
@@ -89,18 +95,18 @@ function avatarUrl(email, size = 40) {
  * 线段按本行节点的外沿断开，节点内部不画线。列宽取本行实际用到的泳道数，
  * 提交信息因此紧贴本行泳道；泳道横向位置由 LANE_WIDTH 决定，逐行对齐。
  *
- * @param props.row - 该行的布局。
+ * @param props.row - 该行的布局；`row.indicator` 给出领先/落后指示节点。
  * @param props.isHead - 是否是当前分支指向的提交。
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
- * @param props.indicator - 领先/落后指示节点：'incoming' 云端领先、'outgoing' 本地领先。
  * @param props.isUncommitted - 是否是工作区未提交行。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge, indicator, isUncommitted }) {
+function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
 	const colour = row.colour;
 	const cx = laneCentre(row.lane);
+	const indicator = row.indicator;
 	const nodeKind = indicator ?? (isHead ? 'head' : isMerge ? 'merge' : 'plain');
 	// 未提交行没有对应提交：不画节点，线因此贯穿整行（不留断口）。
 	const node = isUncommitted ? null : { x: cx, radius: nodeOuterRadius(nodeKind) };
@@ -398,7 +404,7 @@ function renderSubject(message, issueLinking) {
  * @returns 行元素。
  */
 function CommitRow({
-	commit, row, head, selected, indicator, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
 	stats, message, onHover, widthAnchorRef,
 }) {
@@ -431,7 +437,7 @@ function CommitRow({
 			onPointerEnter: () => { if (!isUncommitted && stashSelector === null) onHover?.(commit.hash); },
 			onPointerLeave: () => { if (!isUncommitted && stashSelector === null) onHover?.(null); },
 		},
-		React.createElement(LaneCell, { row, isHead, isMerge, indicator, isUncommitted }),
+		React.createElement(LaneCell, { row, isHead, isMerge, isUncommitted }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
@@ -453,6 +459,23 @@ function CommitRow({
 		variant: 'preview',
 		widthAnchorRef,
 	});
+}
+
+/**
+ * 领先/落后指示行：虚拟行，没有对应提交。
+ *
+ * @param props.row - 该行的布局。
+ * @param props.indicator - 'incoming' 云端领先、'outgoing' 本地领先。
+ * @returns 行元素。
+ */
+function IndicatorRow({ row, indicator }) {
+	return React.createElement(
+		'div',
+		{ className: 'ggg-row ggg-row-indicator' },
+		React.createElement(LaneCell, { row, isUncommitted: false, isHead: false, isMerge: false }),
+		React.createElement('span', { className: 'ggg-subject ggg-indicator-label' },
+			indicator === 'incoming' ? '云端领先' : '本地领先'),
+	);
 }
 
 /**
@@ -505,29 +528,79 @@ export function CommitGraph({
 	localTip, remoteTip, upstream,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
 }) {
-	const layout = React.useMemo(() => layoutCommits(commits, { head, upstream }), [commits, head, upstream]);
+	const layout = React.useMemo(
+		() => layoutCommits(commits, { head, upstream, localTip, remoteTip }),
+		[commits, head, upstream, localTip, remoteTip],
+	);
 	const graphRef = React.useRef(null);
+	/** 一次加载完成前不重复请求下一页。 */
+	const loadPendingRef = React.useRef(false);
+	/** 兜底解除占用的定时器：失败时提交列表不变，靠它恢复可重试。 */
+	const settleTimerRef = React.useRef(null);
+	/** 上次请求时的提交列表：引用变化说明确实取回了新数据。 */
+	const requestedForRef = React.useRef(commits);
+	const [loadingMore, setLoadingMore] = React.useState(false);
+	// 回调与标志经 ref 读取：调用方每次渲染都会传新的函数，直接进依赖会让下方 effect 每帧重跑。
+	const moreRef = React.useRef(moreCommitsAvailable);
+	moreRef.current = moreCommitsAvailable;
+	const onLoadMoreRef = React.useRef(onLoadMore);
+	onLoadMoreRef.current = onLoadMore;
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
+
+	/** 解除占用，允许下一次滚动再取。 */
+	const releasePending = React.useCallback(() => {
+		if (settleTimerRef.current !== null) {
+			clearTimeout(settleTimerRef.current);
+			settleTimerRef.current = null;
+		}
+		loadPendingRef.current = false;
+		setLoadingMore(false);
+	}, []);
+
+	/** 滚动到距底部 AUTO_LOAD_THRESHOLD 以内时取下一页。 */
+	const maybeLoadMore = React.useCallback(() => {
+		const element = graphRef.current;
+		if (element === null || !moreRef.current || loadPendingRef.current) return;
+		const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+		if (remaining > AUTO_LOAD_THRESHOLD) return;
+		loadPendingRef.current = true;
+		setLoadingMore(true);
+		// 失败时提交列表不变，超时兜底解除，避免一次失败后自动加载永久停摆。
+		settleTimerRef.current = setTimeout(releasePending, LOAD_MORE_SETTLE_MS);
+		onLoadMoreRef.current();
+	}, [releasePending]);
+
+	// 取回新数据后解除占用，并补取：内容仍未填满容器时继续取下一页。
+	React.useEffect(() => {
+		if (commits === requestedForRef.current) return;
+		requestedForRef.current = commits;
+		releasePending();
+		maybeLoadMore();
+	}, [commits, releasePending, maybeLoadMore]);
+
+	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
+
 	if (commits.length === 0) {
 		return React.createElement('div', { className: 'ggg-empty' }, '这个仓库还没有提交');
 	}
+	const commitByHash = new Map();
+	for (const commit of commits) commitByHash.set(commit.hash, commit);
 	const items = [];
-	for (const [index, commit] of commits.entries()) {
-		const row = layout.rows[index];
-		// 云端领先：上游尖端行标 incoming；本地领先：HEAD 行标 outgoing。
-		const indicator = remoteTip !== null && remoteTip !== undefined && commit.hash === remoteTip
-			? 'incoming'
-			: localTip !== null && localTip !== undefined && commit.hash === localTip
-				? 'outgoing'
-				: null;
+	for (const [index, row] of layout.rows.entries()) {
+		// 领先/落后为虚拟行：没有对应提交，只画指示节点。
+		if (row.indicator !== undefined) {
+			items.push(React.createElement(IndicatorRow, { key: `indicator:${index}`, row, indicator: row.indicator }));
+			continue;
+		}
+		const commit = commitByHash.get(row.hash);
+		if (commit === undefined) continue;
 		items.push(React.createElement(CommitRow, {
 			key: commit.hash,
 			commit,
 			row,
 			head,
 			selected: commit.hash === selectedHash,
-			indicator,
 			onSelect,
 			onContextMenu,
 			formatDate: dateFmt,
@@ -555,12 +628,12 @@ export function CommitGraph({
 	}
 	return React.createElement(
 		'div',
-		{ className: 'ggg-graph', ref: graphRef },
+		{ className: 'ggg-graph', ref: graphRef, onScroll: maybeLoadMore },
 		...items,
 		moreCommitsAvailable && React.createElement(
 			'div',
 			{ className: 'ggg-pager' },
-			React.createElement('button', { type: 'button', className: 'ggg-bar-item', onClick: onLoadMore }, '加载更多提交'),
+			loadingMore ? '正在加载更多提交…' : '滚动到底部自动加载更多',
 		),
 	);
 }

@@ -30,37 +30,39 @@ export function collectRefs(commits: readonly Commit[]): RefItem[] {
 }
 
 /**
- * 计算「自动」模式应显示的分支：当前分支及向其合并的分支（祖先提交上的分支）。
+ * 计算「自动」模式应显示的分支：当前分支、它的上游，以及两者的合并基。
+ *
+ * 与「全部」模式的差别是只遍历当前历史，不包含无关分支。
  *
  * @param commits - 提交列表。
  * @param head - 当前分支名。
- * @returns 分支名称集合。
+ * @param upstream - 上游远程跟踪分支名（如 origin/main）。
+ * @returns 引用名称集合；无法确定当前分支时为空集。
  */
-export function computeAutoRefs(commits: readonly Commit[], head: string | null): Set<string> {
+export function computeAutoRefs(commits: readonly Commit[], head: string | null, upstream: string | null = null): Set<string> {
 	if (head === null) return new Set();
-	const commitByHash = new Map<string, Commit>();
-	for (const commit of commits) {
-		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
-	}
-	let headHash: string | null = null;
-	for (const commit of commits) {
-		if ((commit.heads ?? []).includes(head)) { headHash = commit.hash; break; }
-	}
-	if (headHash === null) return new Set();
-	// 祖先提交（含 HEAD 自身）
-	const ancestorHashes = new Set<string>();
-	const queue = [headHash];
-	while (queue.length > 0) {
-		const hash = queue.shift() as string;
-		if (ancestorHashes.has(hash)) continue;
-		ancestorHashes.add(hash);
-		const commit = commitByHash.get(hash);
-		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
-	}
-	// 收集祖先提交上的分支名
-	const result = new Set<string>();
-	for (const hash of ancestorHashes) for (const name of commitByHash.get(hash)?.heads ?? []) result.add(name);
+	const result = new Set<string>([head]);
+	if (upstream !== null) result.add(upstream);
 	return result;
+}
+
+/**
+ * 按引用优先级排序：HEAD(1) < 上游(2) < 合并基(3) < 有色(4) < 其他(99)。
+ *
+ * 多引用提交据此取排序最前的引用色。
+ *
+ * @param refs - 引用列表。
+ * @param head - 当前分支名。
+ * @param upstream - 上游远程跟踪分支名。
+ * @returns 排序后的新数组。
+ */
+export function sortRefs(refs: readonly RefItem[], head: string | null, upstream: string | null): RefItem[] {
+	const rank = (ref: RefItem): number => {
+		if (head !== null && ref.name === head) return 1;
+		if (upstream !== null && ref.name === upstream) return 2;
+		return ref.type === 'branch' || ref.type === 'remote' ? 4 : 99;
+	};
+	return [...refs].sort((a, b) => rank(a) - rank(b));
 }
 
 /**

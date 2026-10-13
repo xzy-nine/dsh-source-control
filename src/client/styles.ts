@@ -110,7 +110,7 @@ export const STYLES = `
 .ggg-ref-tag{width:17px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
 .ggg-ref-stash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
 .ggg-ref-wide{width:auto;padding:0 8px}
-.ggg-pager{display:flex;justify-content:center;padding:8px}
+.ggg-pager{display:flex;justify-content:center;padding:8px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* ── 悬停卡片（浮窗外观由 HoverCard 提供，这里只排内容） ── */
 .ggg-card{display:flex;flex-direction:column;padding:12px 0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.6}
 .ggg-card-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 14px}
@@ -140,6 +140,7 @@ export const STYLES = `
 .ggg-issue-link{color:var(--dsw-alias-brand-primary);text-decoration:none}
 .ggg-issue-link:hover{text-decoration:underline}
 .ggg-row-uncommitted{font-style:italic}
+.ggg-row-indicator{color:var(--dsw-alias-label-tertiary);font-size:11px;cursor:default}
 
 /* ── 右键浮层 ───────────────────────────────────────────── */
 /* 有二级菜单的项：文案撑满，箭头贴右。Menu 的 label 槽是普通行内元素、
