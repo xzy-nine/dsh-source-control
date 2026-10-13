@@ -7,7 +7,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl,
+	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /**
@@ -284,6 +284,88 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 					null,
 					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
 					...fields.map((field) => buildField(field, values, setField)),
+				),
+				footer: React.createElement(
+					React.Fragment,
+					null,
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
+					React.createElement(Button, {
+						variant: 'primary', size: 'sm', onClick: () => finish(values),
+					}, confirmLabel),
+				),
+			});
+		}
+		return React.createElement(Content);
+	});
+}
+
+/** 分页表单的一页。 */
+export interface FormPage {
+	/** 页签值，需唯一。 */
+	readonly value: string;
+	/** 页签文案。 */
+	readonly label: string;
+	/** 该页的说明文字。 */
+	readonly message?: string;
+	/** 该页字段。 */
+	readonly fields: readonly FormField[];
+}
+
+/** 分页表单选项。 */
+export interface TabbedFormOptions {
+	readonly title: string;
+	/** 页列表，非空。 */
+	readonly pages: readonly [FormPage, ...FormPage[]];
+	readonly confirmLabel?: string;
+}
+
+/**
+ * 分页表单：顶部页签切换页面，底部确认返回全部页的字段值。
+ *
+ * 各页字段共享一份值对象，切换页签不丢失已填内容；返回结果用 `page` 键附带所选页签值，
+ * 便于调用方按当前页决定后续动作。
+ *
+ * @param options - 见 {@link TabbedFormOptions}。
+ * @returns 用户确认返回字段值对象（含 `page`），取消返回 null。
+ */
+export function showTabbedForm({ title, pages, confirmLabel = '确定' }: TabbedFormOptions): Promise<Record<string, unknown> | null> {
+	return runDialog<Record<string, unknown> | null>((finish) => {
+		function Content(): React.ReactElement {
+			const initial: Record<string, unknown> = { page: pages[0].value };
+			for (const page of pages) {
+				for (const field of page.fields) {
+					if (field.type === 'checkbox') initial[field.name] = field.value === true;
+					else if (field.type === 'multiselect') initial[field.name] = Array.isArray(field.value) ? [...field.value] : [];
+					else initial[field.name] = field.value ?? '';
+				}
+			}
+			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
+			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
+			const active = pages.find((page) => page.value === values.page) ?? pages[0];
+			// SegmentedTabs 要求非空元组：首项单独取，其余展开。
+			const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
+				{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
+				...pages.slice(1).map((page) => ({
+					value: page.value, label: page.label,
+					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
+				})),
+			];
+			return React.createElement(Modal, {
+				open: true,
+				onClose: () => finish(null),
+				title,
+				closeLabel: '关闭',
+				children: React.createElement(
+					React.Fragment,
+					null,
+					pages.length > 1 && React.createElement(SegmentedTabs, {
+						label: title,
+						value: active.value,
+						onChange: (next: string) => setField('page', next),
+						items: tabItems,
+					}),
+					active.message !== undefined && active.message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, active.message),
+					...active.fields.map((field) => buildField(field, values, setField)),
 				),
 				footer: React.createElement(
 					React.Fragment,

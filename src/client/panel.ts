@@ -14,7 +14,7 @@ import {
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
-import { showCheckbox, showForm, showSelect, showText } from './dialog.ts';
+import { showCheckbox, showForm, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
 import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
@@ -446,13 +446,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
 
 	/**
-	 * 没有远程时：让用户选「在 GitHub 上新建仓库」或「手工输入远程地址」。
+	 * 没有远程时：在同一个对话框里用页签选择发布方式。
 	 *
-	 * 未安装 gh / 未登录 / 缺 scope 时隐藏 GitHub 选项并说明原因，只保留手工输入，
-	 * 使发布本身始终可用。
+	 * GitHub 页签与手工页签一并列出，切换页签不丢失已填内容；未安装 gh / 未登录 / 缺 scope
+	 * 时不显示 GitHub 页签，改为在对话框内说明原因，手工页签始终可用。
 	 *
 	 * @param branch - 当前分支名。
-	 * @returns 选中的方式与建仓参数；取消时返回 null。
+	 * @returns 选中的方式与参数；取消时返回 null。
 	 */
 	const askRemoteSource = React.useCallback(async (branch: string): Promise<
 		| { kind: 'manual'; name: string; url: string }
@@ -461,66 +461,71 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	> => {
 		const account = await ghAccount(workingTreePath as string).catch(() => null);
 		const ghReady = account !== null && account.loggedIn
+			&& account.owners.length > 0
 			&& !account.unavailable.some((item) => item.feature === 'create-repo');
 		const repoName = (workingTreePath ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
 
-		if (ghReady && account !== null && account.owners.length > 0) {
-			const choice = await showSelect({
-				title: '发布分支',
-				message: `当前仓库还没有远程仓库。为分支 ${branch} 选择发布方式：`,
-				options: [
-					{ value: 'github', label: '在 GitHub 上新建仓库', title: `发布到 ${account.user ?? '当前账号'}` },
-					{ value: 'manual', label: '手动输入远程地址' },
-				],
-			});
-			if (choice === null) return null;
-			if (choice === 'github') {
-				const ownerOptions = account.owners.map((owner) => ({ value: owner, label: owner === account.user ? `${owner}（个人账号）` : `${owner}（组织）` }));
-				const form = await showForm({
-					title: '在 GitHub 上新建仓库',
-					message: '仓库将创建在所选账号下，并把当前分支推送上去。',
-					fields: [
-						{ type: 'select', name: 'owner', label: '所属账号', value: account.user ?? account.owners[0], options: ownerOptions },
-						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
-						{ type: 'select', name: 'visibility', label: '可见性', value: 'private', options: [
-							{ value: 'private', label: '私有仓库' },
-							{ value: 'public', label: '公开仓库' },
-						] },
-						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
-					],
-				});
-				if (form === null) return null;
-				const name = String(form.name ?? '').trim();
-				if (name === '') return null;
-				return {
-					kind: 'github',
-					owner: String(form.owner ?? account.user ?? ''),
-					name,
-					private: String(form.visibility ?? 'private') !== 'public',
-					description: String(form.description ?? '').trim(),
-				};
-			}
-		} else if (account !== null && !ghReady) {
-			// 降级：说明 GitHub 路径为何不可用，然后走手工输入。
-			const reason = account.unavailable.find((item) => item.feature === 'create-repo')?.message
-				?? '未检测到可用的 GitHub 登录。';
-			await notify(`${reason}（可直接输入远程地址发布）`);
-		}
-
-		const input = await showForm({
-			title: '发布到远程仓库',
-			message: '当前仓库还没有远程仓库，请输入地址后发布。',
+		const manualPage: FormPage = {
+			value: 'manual',
+			label: '手动输入地址',
+			message: '填写已有远程仓库的地址。',
 			fields: [
 				{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
 				{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git' },
 			],
-		});
-		if (input === null) return null;
-		const name = String(input.name ?? '').trim() === '' ? 'origin' : String(input.name ?? '').trim();
-		const url = String(input.url ?? '').trim();
+		};
+		const unavailableNote = account !== null && account.loggedIn
+			? account.unavailable.find((item) => item.feature === 'create-repo')?.message ?? ''
+			: '未检测到可用的 GitHub 登录，请先运行 gh auth login。';
+
+		const pages: [FormPage, ...FormPage[]] = ghReady && account !== null
+			? [
+				{
+					value: 'github',
+					label: '新建 GitHub 仓库',
+					message: `仓库将创建在所选账号下，并把分支 ${branch} 推送上去。`,
+					fields: [
+						{
+							type: 'select', name: 'owner', label: '所属账号', value: account.user ?? account.owners[0],
+							options: account.owners.map((owner) => ({ value: owner, label: owner === account.user ? `${owner}（个人账号）` : `${owner}（组织）` })),
+						},
+						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
+						{
+							type: 'select', name: 'visibility', label: '可见性', value: 'private', options: [
+								{ value: 'private', label: '私有仓库' },
+								{ value: 'public', label: '公开仓库' },
+							],
+						},
+						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
+					],
+				},
+				manualPage,
+			]
+			: [
+				{
+					...manualPage,
+					message: `当前仓库还没有远程仓库，请输入地址后发布。\n${unavailableNote}`.trim(),
+				},
+			];
+
+		const form = await showTabbedForm({ title: '发布分支', pages, confirmLabel: '发布' });
+		if (form === null) return null;
+		if (form.page === 'github') {
+			const name = String(form.name ?? '').trim();
+			if (name === '') return null;
+			return {
+				kind: 'github',
+				owner: String(form.owner ?? account?.user ?? ''),
+				name,
+				private: String(form.visibility ?? 'private') !== 'public',
+				description: String(form.description ?? '').trim(),
+			};
+		}
+		const name = String(form.name ?? '').trim() === '' ? 'origin' : String(form.name ?? '').trim();
+		const url = String(form.url ?? '').trim();
 		if (url === '') return null;
 		return { kind: 'manual', name, url };
-	}, [workingTreePath, notify]);
+	}, [workingTreePath]);
 
 	/**
 	 * 发布当前本地分支：推送到选定远程并建立上游。
