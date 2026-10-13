@@ -262,8 +262,17 @@ test('未提交行不触发浮窗与右键', () => {
 	// 未提交行不对应真实提交：不给右键菜单，也不套悬停卡片。
 	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
 	assert.match(source, /onContextMenu: isUncommitted \? undefined/, '未提交行不给右键菜单');
-	assert.match(source, /if \(!isUncommitted\) onHover\?\.\(commit\.hash\)/, '未提交行不预取悬停数据');
-	assert.match(source, /if \(isUncommitted\) return anchor;/, '未提交行不套 HoverCard');
+	assert.match(source, /if \(!isUncommitted && stashSelector === null\) onHover\?\.\(commit\.hash\)/, '未提交行不预取悬停数据');
+	assert.match(source, /if \(isUncommitted \|\| stashSelector !== null\) return anchor;/, '未提交行不套 HoverCard');
+});
+
+test('贮藏行不套提交浮窗，右键等同于其贮藏标记', () => {
+	// 贮藏是标记而不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
+	const source = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
+	assert.match(source, /const stashSelector = commit\.stash\?\.selector \?\? null/, '应识别该行是否是贮藏');
+	assert.match(source, /\{ type: 'stash', name: stashSelector \}/, '储藏行右键应等价于其贮藏标记');
+	// 未点在标记上时回退为该行的贮藏选择器，两条路径因此产出同一份菜单。
+	assert.match(source, /refElement\.getAttribute\('data-ref-name'\)[\s\S]{0,80}stashSelector/, '点在标记上取标记，否则取该行贮藏');
 });
 
 test('未提交行用虚线且不画节点', () => {

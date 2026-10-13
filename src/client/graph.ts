@@ -391,6 +391,8 @@ function CommitRow({
 	stats, message, onHover, widthAnchorRef,
 }) {
 	const isUncommitted = commit.hash === '*';
+	// 贮藏标记行不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
+	const stashSelector = commit.stash?.selector ?? null;
 	const labels = refLabels(commit, head, combineLocalAndRemoteBranchLabels);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
@@ -407,13 +409,15 @@ function CommitRow({
 				event.preventDefault();
 				const target = event.target as HTMLElement;
 				const refElement = target.closest('[data-ref-type]');
+				// 点在引用标记上取该标记；点在贮藏行的其他位置时等价于它的贮藏标记。
 				const refInfo = refElement !== null && refElement !== undefined
 					? { type: refElement.getAttribute('data-ref-type'), name: refElement.getAttribute('data-ref-name') }
-					: null;
+					: (stashSelector === null ? null : { type: 'stash', name: stashSelector });
 				onContextMenu?.({ commit, refInfo, event });
 			},
-			onPointerEnter: () => { if (!isUncommitted) onHover?.(commit.hash); },
-			onPointerLeave: () => { if (!isUncommitted) onHover?.(null); },
+			// 贮藏行与未提交行没有浮动卡片，不必预取统计与完整信息。
+			onPointerEnter: () => { if (!isUncommitted && stashSelector === null) onHover?.(commit.hash); },
+			onPointerLeave: () => { if (!isUncommitted && stashSelector === null) onHover?.(null); },
 		},
 		React.createElement(LaneCell, { row, isHead, isMerge, isBehind, isUncommitted }),
 		React.createElement(
@@ -429,7 +433,8 @@ function CommitRow({
 		),
 	);
 	// 未提交行没有可展示的提交信息，直接用行本身，不套悬停卡片。
-	if (isUncommitted) return anchor;
+	// 贮藏行同理：它不是提交，不显示提交浮动卡片。
+	if (isUncommitted || stashSelector !== null) return anchor;
 	return React.createElement(HoverCard, {
 		anchor,
 		content: React.createElement(CommitCard, { commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars }),
