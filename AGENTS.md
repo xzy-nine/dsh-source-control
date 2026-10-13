@@ -1,7 +1,7 @@
 # AGENTS.md
 
-本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 [README.zh.md](README.zh.md) /
-[README.md](README.md)，本文件不重复。
+本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 [README.md](README.md) /
+[README.en.md](README.en.md)，本文件不重复。
 
 ## 工作约定
 
