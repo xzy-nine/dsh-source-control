@@ -346,6 +346,94 @@ test('远程分支标注与 hideRemotes', { skip: !built && '未找到宿主产�
 	}
 });
 
+test('重置三种模式与丢弃全部', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+		const head = git('rev-parse', 'HEAD').trim();
+		const reset = async (mode) => {
+			const result = await call({ command: 'resetToCommit', commit: head, resetMode: mode });
+			assert.equal(result.error, null);
+		};
+		const restore = () => {
+			git('checkout', '-q', '--', '.');
+			git('clean', '-qfd');
+			writeFileSync(join(repo, 'renamed.txt'), 'changed');
+			writeFileSync(join(repo, 'fresh.txt'), 'fresh');
+		};
+		/** 改动进入暂存区后再重置，用于区分三种模式对暂存区的处理。 */
+		const restoreStaged = () => {
+			restore();
+			git('add', 'renamed.txt');
+		};
+
+		// 软重置保留暂存区：已暂存的改动仍是已暂存。
+		restoreStaged();
+		await reset('soft');
+		assert.match(git('status', '--short'), /^M  renamed\.txt$/m, '软重置应保留暂存区');
+
+		// 混合重置清空暂存区但保留改动内容。
+		restoreStaged();
+		await reset('mixed');
+		assert.match(git('status', '--short'), /^ M renamed\.txt$/m, '混合重置应把改动移出暂存区');
+
+		// 硬重置丢弃已跟踪文件的改动，未跟踪文件不受影响。
+		restoreStaged();
+		await reset('hard');
+		const afterHard = git('status', '--short');
+		assert.ok(!afterHard.includes('renamed.txt'), '硬重置应丢弃已跟踪改动');
+		assert.match(afterHard, /\?\? fresh\.txt/, '硬重置不应删除未跟踪文件');
+
+		// 丢弃全部：已跟踪与未跟踪分开下发，两者都应生效。
+		restore();
+		const entries = (await call({ command: 'loadWorkingTree' })).entries;
+		const tracked = entries.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
+		const untracked = entries.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
+		assert.ok(tracked.length > 0 && untracked.length > 0, '应同时存在已跟踪与未跟踪改动');
+		await call({ command: 'discardPaths', paths: tracked, untracked: false });
+		await call({ command: 'discardPaths', paths: untracked, untracked: true });
+		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, [], '丢弃全部后工作区应干净');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('贮藏改动与推送上游', { skip: !built && '未找到宿主产物' }, async () => {
+	const { repo, git } = makeRepo();
+	const remote = mkdtempSync(join(tmpdir(), 'gg-remote-'));
+	try {
+		const call = await makeCaller(repo);
+		writeFileSync(join(repo, 'renamed.txt'), 'changed');
+		writeFileSync(join(repo, 'fresh.txt'), 'fresh');
+
+		// 贮藏应把全部改动（含未跟踪文件）移出工作区。
+		const before = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
+		const stashed = await call({ command: 'pushStash', message: 'wip', includeUntracked: true });
+		assert.equal(stashed.error, null);
+		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, []);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
+		assert.equal(info.stashes.length, before.stashes.length + 1, '应新增一条贮藏');
+		// 贮藏按时间倒序，新建的排在最前。
+		assert.match(info.stashes[0].message, /wip/);
+
+		// 未设上游时推送给出可读错误，而不是静默成功。
+		const noUpstream = await call({ command: 'pushUpstream' });
+		assert.equal(typeof noUpstream.error, 'string');
+		assert.ok(noUpstream.error.length > 0, '未设上游时推送应报错而非静默成功');
+
+		// 设上游后推送成功，远程出现该分支。
+		execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
+		git('remote', 'add', 'origin', remote);
+		git('push', '-q', '--set-upstream', 'origin', 'main');
+		assert.equal((await call({ command: 'pushUpstream' })).error, null);
+		const remoteBranches = execFileSync('git', ['--git-dir', remote, 'branch', '--list', 'main'], { encoding: 'utf8' });
+		assert.match(remoteBranches, /main/);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(remote, { recursive: true, force: true });
+	}
+});
+
 test('未知命令被拒绝且非仓库路径不抛错', { skip: !built && '未找到宿主产物' }, async () => {
 	const { repo } = makeRepo();
 	try {

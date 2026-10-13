@@ -253,6 +253,19 @@ export function pushBranch(repo: string, branchName: string, remote: string, set
 }
 
 /**
+ * 把当前分支推送到其上游。
+ *
+ * 不带参数执行 `git push`：由 git 按 `push.default` 与分支的上游配置决定目标，
+ * 因此无需调用方指定远程。当前分支没有上游时 git 会给出提示性错误。
+ *
+ * @param repo - 仓库路径。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+export function pushUpstream(repo: string): Promise<ErrorInfo> {
+	return gitErrorInfo(['push'], repo);
+}
+
+/**
  * 把分支依次推送到多个远程仓库。
  *
  * @param repo - 仓库路径。

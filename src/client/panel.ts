@@ -9,7 +9,7 @@ import React from 'react';
 import {
 	addRemote, checkoutBranch, commitStaged, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
-	merge, pushBranch, removeWorktree, stagePaths, tagDetails, unstagePaths,
+	merge, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
 import { showCheckbox, showForm, showSelect, showText } from './dialog.ts';
@@ -17,7 +17,7 @@ import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
 import { reportError } from './panel/errors.ts';
-import { computeAheadBehind, computeAutoRefs, collectRefs, filterCommitsByRefs } from './panel/refs.ts';
+import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadSession, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
@@ -198,8 +198,43 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		}
 	}, [workingTreePath, refresh, setState]);
 
+	/**
+	 * 推送某个仓库的当前分支到其上游，失败时报错。
+	 *
+	 * `pushUpstream` 把失败放在返回值里而不抛错，因此这里显式检查，避免静默失败。
+	 *
+	 * @param repoPath - 目标仓库路径；省略时用当前选中的工作树。
+	 */
+	const pushCurrentBranch = React.useCallback(async (repoPath?: string) => {
+		const error = await pushUpstream(repoPath ?? (workingTreePath as string));
+		if (error !== null) throw new Error(error);
+	}, [workingTreePath]);
+
+	/** 把当前改动存入贮藏；贮藏信息由用户输入，留空表示不指定。 */
+	const handleStash = React.useCallback(() => {
+		void (async () => {
+			const label = await showText({
+				title: '贮藏改动',
+				message: '把当前所有改动（含未跟踪文件）存入贮藏。',
+				label: '贮藏信息（可选）',
+				placeholder: '例如：调试到一半',
+			});
+			if (label === null) return;
+			await run(async () => {
+				const error = await pushStash(workingTreePath as string, label, true);
+				if (error !== null) throw new Error(error);
+			});
+		})();
+	}, [run, workingTreePath]);
+
 	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
 	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+
+	/** 当前分支可达的提交哈希集合；重置这类改写当前分支的操作据此显示。 */
+	const branchHashes = React.useMemo(
+		() => currentBranchHashes(state.commits, state.head),
+		[state.commits, state.head],
+	);
 
 	/**
 	 * 打开某个提交或工作区文件。
@@ -342,7 +377,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 				await merge(workingTreePath, currentSync.upstream);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
-				await pushBranch(workingTreePath, state.head, []);
+				await pushCurrentBranch();
 			}
 		});
 	};
@@ -488,7 +523,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const items: ContextMenuItem[] = [
 			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run(() => refresh()); } },
 			{ title: '抓取', disabled: state.busy, onClick: () => { selectNodeAndReset(node); void run(async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); } },
-			{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNodeAndReset(node); void run(async () => { await pushBranch(node.path, branchName, []); }); } },
+			{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNodeAndReset(node); void run(() => pushCurrentBranch(node.path)); } },
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
@@ -544,13 +579,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
-		void openCommitMenu(menuDeps, { commit, event });
-	}, [menuDeps]);
+		void openCommitMenu(menuDeps, { commit, event, currentHashes: branchHashes });
+	}, [menuDeps, branchHashes]);
 
 	/** 引用标记（head / remote / tag / stash）右键菜单；条目按引用类型从同一注册表过滤。 */
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {
-		void openRefMenu(menuDeps, { commit, refInfo, event });
-	}, [menuDeps]);
+		void openRefMenu(menuDeps, { commit, refInfo, event, currentHashes: branchHashes });
+	}, [menuDeps, branchHashes]);
 
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => {
@@ -625,7 +660,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		React.createElement(ChangesSection, {
 			entries: state.entries, busy: state.busy, phase: state.phase,
 			workingTreePath, head: state.head,
-			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend,
+			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
 			aiBusy, aiWarning, aiStats, onAiCommit: handleAiCommit,
 			showSyncButton,
 			syncBehind: currentSync?.behind ?? 0,

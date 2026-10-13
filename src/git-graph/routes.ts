@@ -15,7 +15,7 @@ import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
 	cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
 	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash,
-	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, rebase, renameBranch,
+	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
@@ -261,6 +261,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 				willUpdateBranchConfig: bool('willUpdateBranchConfig'),
 				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never),
 			});
+			break;
+		case 'pushUpstream':
+			await respondError('pushUpstream', () => pushUpstream(repo));
 			break;
 
 		/* --- 提交操作 --- */

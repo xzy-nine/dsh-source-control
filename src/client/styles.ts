@@ -260,6 +260,9 @@ button.ggg-btn-danger:hover:not(:disabled){background:var(--dsw-alias-state-erro
 .ggg-ai-loading-bar::after{content:'';position:absolute;top:0;left:-40%;height:2px;width:40%;background:var(--dsw-alias-color-success,#22c55e);border-radius:1px;animation:ggg-ai-slide 1.2s ease-in-out infinite}
 @keyframes ggg-ai-slide{0%{left:-40%}100%{left:100%}}
 .ggg-commit-ai-warning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
+.ggg-commit-actions-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ggg-commit-actions-row .ggg-stash-btn{padding:0 6px;background:transparent;color:var(--dsw-alias-label-secondary)}
+.ggg-commit-actions-row .ggg-stash-btn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
 .ggg-commit-ai-stats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}
 .ggg-set-ai-model{display:flex;flex-direction:column;gap:6px}
 .ggg-set-row{display:flex;align-items:center;gap:8px}

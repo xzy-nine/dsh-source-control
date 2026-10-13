@@ -63,6 +63,8 @@ export interface ContextMenuItem {
 	readonly type?: 'divider';
 	/** 显示文案。 */
 	readonly title?: string;
+	/** 悬浮提示；不提供时不带提示。 */
+	readonly hint?: string;
 	/** 为 false 时该项不渲染。 */
 	readonly visible?: boolean;
 	/** 是否显示为已勾选。 */
@@ -92,20 +94,24 @@ export interface ShowContextMenuOptions {
 /**
  * 菜单项文案：有二级菜单时在右侧补一个箭头标识。
  *
- * Menu 的 label 接受任意节点，箭头由这里提供——组件本身不画。
+ * Menu 的 label 接受任意节点，箭头由这里提供——组件本身不画。`hint` 以原生 title
+ * 挂在文案节点上，鼠标停留时由浏览器显示。
  *
  * @param title - 显示文案。
  * @param hasChildren - 是否带二级菜单。
+ * @param hint - 悬浮提示；不提供时不带提示。
  * @returns 文案节点。
  */
-function labelOf(title: string, hasChildren: boolean): React.ReactNode {
-	if (!hasChildren) return title;
-	return React.createElement(
-		'span',
-		{ className: 'ggg-menu-label' },
-		React.createElement('span', { className: 'ggg-menu-label-text' }, title),
-		React.createElement(IconChevronRightOutlineRegular, { size: 13, className: 'ggg-menu-chevron' }),
-	);
+function labelOf(title: string, hasChildren: boolean, hint?: string): React.ReactNode {
+	const inner = hasChildren
+		? React.createElement(
+			'span',
+			{ className: 'ggg-menu-label' },
+			React.createElement('span', { className: 'ggg-menu-label-text' }, title),
+			React.createElement(IconChevronRightOutlineRegular, { size: 13, className: 'ggg-menu-chevron' }),
+		)
+		: title;
+	return hint === undefined ? inner : React.createElement('span', { title: hint }, inner);
 }
 
 /**
@@ -133,7 +139,7 @@ function toEntries(
 		if (item.checked === true) selectedIds.push(id);
 		entries.push({
 			id,
-			label: labelOf(item.title ?? '', children.length > 0),
+			label: labelOf(item.title ?? '', children.length > 0, item.hint),
 			disabled: item.disabled === true,
 			danger: item.danger === true,
 			// 二级菜单只接受普通项，分隔线在 Menu 的 submenu 里没有对应类型。
@@ -167,7 +173,7 @@ function toSubItems(
 		if (item.checked === true) selectedIds.push(id);
 		entries.push({
 			id,
-			label: item.title ?? '',
+			label: item.hint === undefined ? (item.title ?? '') : React.createElement('span', { title: item.hint }, item.title ?? ''),
 			disabled: item.disabled === true,
 			danger: item.danger === true,
 			...(children.length > 0 ? { submenu: toSubItems(children, `${id}.`, handlers, selectedIds) } : {}),

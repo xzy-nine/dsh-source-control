@@ -64,6 +64,38 @@ export function computeAutoRefs(commits: readonly Commit[], head: string | null)
 }
 
 /**
+ * 取当前分支可达的提交哈希集合（含分支尖端自身）。
+ *
+ * 提交图可能被加载上限截断，此时窗口外的提交不在集合内。
+ *
+ * @param commits - 提交列表。
+ * @param head - 当前分支名。
+ * @returns 可达提交哈希集合；无法确定当前分支时为空集。
+ */
+export function currentBranchHashes(commits: readonly Commit[], head: string | null): Set<string> {
+	if (head === null) return new Set();
+	const commitByHash = new Map<string, Commit>();
+	for (const commit of commits) {
+		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
+	}
+	let headHash: string | null = null;
+	for (const commit of commits) {
+		if ((commit.heads ?? []).includes(head)) { headHash = commit.hash; break; }
+	}
+	if (headHash === null) return new Set();
+	const reachable = new Set<string>();
+	const queue = [headHash];
+	while (queue.length > 0) {
+		const hash = queue.shift() as string;
+		if (reachable.has(hash)) continue;
+		reachable.add(hash);
+		const commit = commitByHash.get(hash);
+		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
+	}
+	return reachable;
+}
+
+/**
  * 按选中的引用名称过滤提交列表：仅保留选中引用可达的提交（含工作区伪提交）。
  *
  * @param commits - 全部提交。

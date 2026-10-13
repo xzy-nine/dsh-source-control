@@ -288,6 +288,30 @@ export function ChangeGroup({
 			await run(async () => { await discardPaths(workingTreePath, paths, untracked); });
 		})();
 	};
+	/**
+	 * 丢弃该分组内全部改动。
+	 *
+	 * 未跟踪文件要经 `git clean` 删除、已跟踪文件要经 `git restore` 还原，两者是不同的
+	 * 命令；混在一批里下发会让 `git restore` 因无效 pathspec 整体失败。
+	 */
+	const onDiscardAll = (): void => {
+		const tracked = visible.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
+		const untrackedPaths = visible.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
+		void (async () => {
+			const ok = await showConfirmation({
+				title: '丢弃改动',
+				message: untrackedPaths.length > 0
+					? `确定丢弃这 ${allPaths.length} 个文件的改动？其中 ${untrackedPaths.length} 个未跟踪文件会被删除，均无法恢复。`
+					: `确定丢弃这 ${allPaths.length} 个文件的改动？未提交的改动会丢失，且无法恢复。`,
+				confirmLabel: '丢弃', danger: true,
+			});
+			if (!ok) return;
+			await run(async () => {
+				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
+				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
+			});
+		})();
+	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;
@@ -303,7 +327,7 @@ export function ChangeGroup({
 			: [
 				{ title: `暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onStage(allPaths) },
 				{ type: 'divider' },
-				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: () => onDiscard(allPaths, false) },
+				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: onDiscardAll },
 			];
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
 	};

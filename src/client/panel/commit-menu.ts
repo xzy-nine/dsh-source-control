@@ -61,6 +61,8 @@ interface MenuContext {
 	/** 包含该提交的远程分支。 */
 	readonly remoteBranches: readonly string[];
 	readonly tagNames: readonly string[];
+	/** 该提交是否在当前分支上；重置这类改写当前分支的操作据此显示。 */
+	readonly onCurrentBranch: boolean;
 }
 
 /** 一项引用操作。 */
@@ -70,12 +72,53 @@ interface MenuAction {
 	/** 适用的引用类型；引用菜单据此过滤。 */
 	readonly refTypes: readonly string[];
 	/**
+	 * 在提交行菜单中的呈现方式。
+	 *
+	 * `tag` 表示该操作作用于提交上的标签；省略表示不在提交行菜单中出现（远程、贮藏等
+	 * 只在对应引用上才有目标）。
+	 */
+	readonly commitTarget?: 'tag';
+	/**
 	 * 构建菜单项。
 	 *
 	 * @param ctx - 构建上下文。
 	 * @returns 菜单项；该上下文下不适用时为 null。
 	 */
 	build(ctx: MenuContext): ContextMenuItem | null;
+}
+
+/**
+ * 取一项标签操作的目标标签。
+ *
+ * 引用菜单右键时只有被点击的那个标签；提交行右键时是该提交上的全部标签。
+ *
+ * @param ctx - 构建上下文。
+ * @returns 目标标签名；无目标时为空数组。
+ */
+function tagTargets(ctx: MenuContext): readonly string[] {
+	return ctx.ref !== null ? [ctx.ref.name] : ctx.tagNames;
+}
+
+/**
+ * 把一项标签操作渲染成菜单项。
+ *
+ * 只有一个目标时直接显示该项；多个目标时收进以标签名为子项的二级菜单，`danger`
+ * 一并带到子项，危险操作在二级菜单里仍保持危险样式。
+ *
+ * @param targets - 目标标签名。
+ * @param parentTitle - 多个目标时二级菜单入口的文案。
+ * @param build - 由标签名构造菜单项。
+ * @returns 菜单项。
+ */
+function tagItem(targets: readonly string[], parentTitle: string, build: (tagName: string) => ContextMenuItem): ContextMenuItem {
+	if (targets.length === 1) return build(targets[0]);
+	return {
+		title: parentTitle,
+		children: targets.map((name) => {
+			const item = build(name);
+			return { title: name, danger: item.danger, onClick: item.onClick };
+		}),
+	};
 }
 
 /** 全部引用操作；提交菜单与引用菜单共用这一份定义。 */
@@ -312,31 +355,40 @@ const ACTIONS: readonly MenuAction[] = [
 	{
 		id: 'checkoutTag',
 		refTypes: ['tag'],
-		build: (ctx) => (ctx.ref === null
-			? null
-			: { title: '检出此标签', onClick: () => { void ctx.deps.run(async () => { await checkoutCommit(ctx.repo, ctx.commit.hash); }); } }),
+		commitTarget: 'tag',
+		build: (ctx) => {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '检出标签', () => ({
+				title: '检出此标签',
+				onClick: () => { void ctx.deps.run(async () => { await checkoutCommit(ctx.repo, ctx.commit.hash); }); },
+			}));
+		},
 	},
 	{
 		id: 'createBranchFromTag',
 		refTypes: ['tag'],
+		commitTarget: 'tag',
 		build: (ctx) => {
-			if (ctx.ref === null) return null;
-			return {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '从标签创建分支…', () => ({
 				title: '从此标签创建分支…',
 				onClick: async () => {
 					const newName = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
 					if (newName !== null && newName !== '') void ctx.deps.run(async () => { await createBranch(ctx.repo, newName, ctx.commit.hash, true); });
 				},
-			};
+			}));
 		},
 	},
 	{
 		id: 'pushTag',
 		refTypes: ['tag'],
+		commitTarget: 'tag',
 		build: (ctx) => {
-			if (ctx.ref === null) return null;
-			const name = ctx.ref.name;
-			return {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '推送标签到远程…', (tagName) => ({
 				title: '推送标签到远程…',
 				onClick: async () => {
 					const { remotes } = ctx.deps;
@@ -344,42 +396,55 @@ const ACTIONS: readonly MenuAction[] = [
 					const remote = remotes.length === 1 ? remotes[0].name : await showSelect({
 						title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })),
 					});
-					if (remote !== null && remote !== '') void ctx.deps.run(async () => { await pushTag(ctx.repo, name, [remote], ctx.commit.hash, false); });
+					if (remote !== null && remote !== '') void ctx.deps.run(async () => { await pushTag(ctx.repo, tagName, [remote], ctx.commit.hash, false); });
 				},
-			};
+			}));
 		},
 	},
 	{
 		id: 'viewTagDetails',
 		refTypes: ['tag'],
-		build: (ctx) => (ctx.ref === null
-			? null
-			: { title: '查看标签详情…', onClick: () => { void ctx.deps.handleTagDetails(ctx.ref!.name, ctx.commit.hash); } }),
+		commitTarget: 'tag',
+		build: (ctx) => {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '查看标签详情…', (tagName) => ({
+				title: '查看标签详情…',
+				onClick: () => { void ctx.deps.handleTagDetails(tagName, ctx.commit.hash); },
+			}));
+		},
 	},
 	{
 		id: 'copyTagName',
 		refTypes: ['tag'],
-		build: (ctx) => (ctx.ref === null
-			? null
-			: { title: '复制标签名', onClick: async () => { await copyText(ctx.ref!.name); } }),
+		commitTarget: 'tag',
+		build: (ctx) => {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '复制标签名', (tagName) => ({
+				title: '复制标签名',
+				onClick: async () => { await copyText(tagName); },
+			}));
+		},
 	},
 	{
 		id: 'deleteTag',
 		refTypes: ['tag'],
+		commitTarget: 'tag',
 		build: (ctx) => {
-			if (ctx.ref === null) return null;
-			const name = ctx.ref.name;
-			return {
+			const targets = tagTargets(ctx);
+			if (targets.length === 0) return null;
+			return tagItem(targets, '删除标签', (tagName) => ({
 				title: '删除标签…', danger: true,
 				onClick: async () => {
 					const { remotes } = ctx.deps;
 					const ok = await showCheckbox({
-						title: '删除标签', message: `确定删除标签 ${name}？`,
+						title: '删除标签', message: `确定删除标签 ${tagName}？`,
 						checkboxLabel: '同时删除远程标签', danger: true,
 					});
-					if (ok) void ctx.deps.run(async () => { await deleteTag(ctx.repo, name, remotes.length > 0 ? remotes[0].name : null); });
+					if (ok) void ctx.deps.run(async () => { await deleteTag(ctx.repo, tagName, remotes.length > 0 ? remotes[0].name : null); });
 				},
-			};
+			}));
 		},
 	},
 	{
@@ -447,9 +512,10 @@ const ACTION_BY_ID = new Map(ACTIONS.map((action) => [action.id, action]));
  * @param deps - 菜单依赖面。
  * @param commit - 目标提交。
  * @param ref - 引用目标；提交行右键为 null。
+ * @param currentHashes - 当前分支可达的提交哈希集合。
  * @returns 构建上下文。
  */
-async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarget | null): Promise<MenuContext> {
+async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarget | null, currentHashes: ReadonlySet<string>): Promise<MenuContext> {
 	const repo = deps.workingTreePath as string;
 	const isUncommitted = commit.hash === '*';
 	// 分支只由尖端提交标识，中间提交需按「包含」关系查询；查询失败时退回该提交自身的引用。
@@ -464,13 +530,15 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 			? containing.remote
 			: (commit.remotes ?? []).map((remote) => remote.name),
 		tagNames: (commit.tags ?? []).map((tag) => tag.name),
+		onCurrentBranch: isUncommitted || currentHashes.has(commit.hash),
 	};
 }
 
 /**
  * 构建提交行右键菜单项。
  *
- * 分支操作按注册表顺序插入；引用专属操作（远程、标签、贮藏）在提交行没有目标，不出现。
+ * 分支与标签操作都取自注册表：分支操作直接渲染，标签操作按 `commitTarget` 属性渲染，
+ * 因此提交菜单与引用菜单共用同一份定义。
  *
  * @param ctx - 构建上下文。
  * @returns 菜单项。
@@ -478,18 +546,27 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	const { commit, deps, isUncommitted } = ctx;
 	const githubUrl = isUncommitted ? null : githubCommitUrl(deps.remotes, commit.hash);
-	const tagItems: ContextMenuItem[] = ctx.tagNames.map((name) => ({
-		title: name,
-		onClick: async () => {
-			const ok = await showCheckbox({
-				title: '删除标签', message: `确定删除标签 ${name}？`,
-				checkboxLabel: '同时删除远程标签', danger: true,
-			});
-			if (ok) void deps.run(async () => { await deleteTag(ctx.repo, name, deps.remotes.length > 0 ? deps.remotes[0].name : null); });
-		},
-	}));
 	const byId = (id: string): ContextMenuItem | null => ACTION_BY_ID.get(id)?.build(ctx) ?? null;
 	const push = (items: ContextMenuItem[], item: ContextMenuItem | null): void => { if (item !== null) items.push(item); };
+	/**
+	 * 构建作用于提交标签的操作。
+	 *
+	 * 这些操作与引用菜单共用注册表，按 `commitTarget` 属性取出。Menu 只渲染一层二级菜单，
+	 * 因此这里平铺、不再套一层「标签」分组；多标签时各操作自身已收进以标签名为子项的
+	 * 二级菜单，再加一层会超出 Menu 的能力而无法点击。
+	 *
+	 * @returns 标签操作的菜单项；无适用项时为空数组。
+	 */
+	const tagActions = (): ContextMenuItem[] => {
+		if (isUncommitted) return [];
+		const built: ContextMenuItem[] = [];
+		for (const action of ACTIONS) {
+			if (action.commitTarget !== 'tag') continue;
+			push(built, action.build(ctx));
+		}
+		return built;
+	};
+	const tagItems = tagActions();
 
 	const items: ContextMenuItem[] = [];
 	push(items, { title: '在 GitHub 上打开', visible: githubUrl !== null, onClick: () => { openExternal(githubUrl as string); } });
@@ -503,34 +580,38 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		if (name !== null && name !== '') void deps.run(async () => { await createBranch(ctx.repo, name, commit.hash, true); });
 	} });
 	push(items, byId('deleteBranch'));
-	push(items, { title: '创建标签…', disabled: isUncommitted, onClick: async () => {
-		const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
-		if (name !== null && name !== '') void deps.run(async () => { await addTag(ctx.repo, name, commit.hash, 0, '', false, null); });
-	} });
-	// 没有标签时该项没有可展开的目标，直接不显示。
-	push(items, { title: '删除标签', danger: true, visible: !isUncommitted && tagItems.length > 0, children: tagItems });
+	// 标签相关操作自成一组：用分割线与上方的分支操作、下方的提交操作隔开。
+	// 未提交伪提交上既不能创建标签、也没有标签可操作，整组不显示。
+	if (!isUncommitted) {
+		items.push({ type: 'divider' });
+		push(items, { title: '创建标签…', onClick: async () => {
+			const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
+			if (name !== null && name !== '') void deps.run(async () => { await addTag(ctx.repo, name, commit.hash, 0, '', false, null); });
+		} });
+		for (const item of tagItems) items.push(item);
+	}
 	items.push({ type: 'divider' });
-	push(items, { title: '从此提交拣选…', disabled: isUncommitted, onClick: () => { void deps.run(async () => { await cherrypickCommit(ctx.repo, commit.hash); }); } });
-	push(items, { title: '从此提交还原…', disabled: isUncommitted, onClick: () => { void deps.run(async () => { await revertCommit(ctx.repo, commit.hash); }); } });
+	push(items, { title: '挑拣此提交…', hint: '将此提交挑拣到当前分支', disabled: isUncommitted, onClick: () => { void deps.run(async () => { await cherrypickCommit(ctx.repo, commit.hash); }); } });
+	push(items, { title: '重置此提交…', hint: '将此提交效果重置并创建重置提交', disabled: isUncommitted, onClick: () => { void deps.run(async () => { await revertCommit(ctx.repo, commit.hash); }); } });
 	items.push({ type: 'divider' });
-	push(items, { title: '重置当前分支到此处…', danger: true, disabled: isUncommitted, onClick: async () => {
-		const mode = await showSelect({
-			title: '重置模式', message: '选择重置到该提交的方式', value: 'mixed',
-			options: [{ value: 'soft', label: '软' }, { value: 'mixed', label: '混合' }, { value: 'hard', label: '硬' }],
-		});
-		if (mode === null) return;
-		const ok = await showCheckbox({
-			title: '重置当前分支', message: `当前分支将重置到 ${commit.hash.slice(0, 7)}（${mode}）。未提交的改动可能丢失。`,
-			checkboxLabel: '我已知晓并继续', danger: true,
-		});
-		if (ok) void deps.run(async () => { await resetToCommit(ctx.repo, commit.hash, mode); });
-	} });
+	// 重置只对当前分支可达的提交有意义：重置到其他分支的提交会改写当前分支。
+	push(items, ctx.onCurrentBranch ? { title: '重置当前分支到此处', danger: true, disabled: isUncommitted, children: [
+		{ title: '暂存其他改动', hint: '软重置：保留改动并已暂存', onClick: () => { void deps.run(async () => { await resetToCommit(ctx.repo, commit.hash, 'soft'); }); } },
+		{ title: '不暂存其他改动', hint: '混合重置：保留改动但不暂存', onClick: () => { void deps.run(async () => { await resetToCommit(ctx.repo, commit.hash, 'mixed'); }); } },
+		{ title: '丢弃其他改动', hint: '硬重置：丢弃工作区与暂存区的改动', danger: true, onClick: async () => {
+			const ok = await showCheckbox({
+				title: '重置当前分支',
+				message: `当前分支将重置到 ${commit.hash.slice(0, 7)}（硬重置）。未提交的改动会丢失。`,
+				checkboxLabel: '我已知晓并继续', danger: true,
+			});
+			if (ok) void deps.run(async () => { await resetToCommit(ctx.repo, commit.hash, 'hard'); });
+		} },
+	] } : null);
 	push(items, byId('rebaseOnto'));
 	push(items, byId('mergeIntoBranch'));
 	items.push({ type: 'divider' });
 	push(items, { title: '复制哈希', onClick: async () => { await copyText(commit.hash); } });
 	push(items, { title: '复制提交信息', onClick: async () => { await copyText(commit.message ?? ''); } });
-	push(items, { title: '创建归档…', disabled: isUncommitted, onClick: () => { void deps.handleCreateArchive(commit.hash, `提交 ${commit.hash.slice(0, 7)}`); } });
 	return items;
 }
 
@@ -538,17 +619,17 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
  * 提交行右键菜单。
  *
  * @param deps - 见 {@link GraphMenuDeps}。
- * @param args - 目标提交与触发事件。
+ * @param args - 目标提交、当前分支可达的提交集合与触发事件。
  * @returns 无。
  */
 export async function openCommitMenu(
 	deps: GraphMenuDeps,
-	{ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> },
+	{ commit, event, currentHashes }: { commit: Commit; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
 ): Promise<void> {
 	// React 的 currentTarget 只在事件派发期间有效，本函数会 await，因此先在同步段取出。
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
-	const ctx = await makeContext(deps, commit, null);
+	const ctx = await makeContext(deps, commit, null, currentHashes);
 	target.classList.add('ggg-menu-target');
 	showContextMenu({
 		x: clientX, y: clientY,
@@ -564,16 +645,16 @@ export async function openCommitMenu(
  * 相关操作，不另行维护一份定义。
  *
  * @param deps - 见 {@link GraphMenuDeps}。
- * @param args - 目标提交、引用信息与触发事件。
+ * @param args - 目标提交、引用信息、当前分支可达的提交集合与触发事件。
  * @returns 无。
  */
 export async function openRefMenu(
 	deps: GraphMenuDeps,
-	{ commit, refInfo, event }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement> },
+	{ commit, refInfo, event, currentHashes }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
 ): Promise<void> {
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
-	const ctx = await makeContext(deps, commit, refInfo);
+	const ctx = await makeContext(deps, commit, refInfo, currentHashes);
 	const items: ContextMenuItem[] = [];
 	for (const action of ACTIONS) {
 		if (!action.refTypes.includes(refInfo.type)) continue;

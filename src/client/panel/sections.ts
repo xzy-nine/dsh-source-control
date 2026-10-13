@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular,
 	IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -103,6 +103,8 @@ export interface ChangesSectionProps {
 	readonly onMessageChange: (message: string) => void;
 	readonly amend: boolean;
 	readonly onToggleAmend: (checked: boolean) => void;
+	/** 把当前改动存入贮藏。 */
+	readonly onStash: () => void;
 	readonly aiBusy: boolean;
 	readonly aiWarning: string;
 	readonly aiStats: AiStats | null;
@@ -132,7 +134,7 @@ export interface ChangesSectionProps {
  * @returns 分区元素。
  */
 export function ChangesSection({
-	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend,
+	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
@@ -194,7 +196,13 @@ export function ChangesSection({
 					` · 缓存写 ${aiStats.cacheWriteTokens}`,
 					` · ${aiStats.elapsed}`,
 				),
-				React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+				React.createElement('div', { className: 'ggg-commit-actions-row' },
+					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+					React.createElement(Button, {
+						variant: 'ghost', size: 'sm', disabled: busy || entries.length === 0,
+						className: 'ggg-stash-btn', onClick: onStash, title: '把当前改动存入贮藏',
+					}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
+				),
 				showSyncButton
 					? React.createElement(Button, {
 						variant: 'primary', size: 'sm', disabled: busy,

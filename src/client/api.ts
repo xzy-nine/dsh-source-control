@@ -285,6 +285,19 @@ export async function pushBranch(cwd: string, branchName: string, remotes: reado
 }
 
 /**
+ * 把当前分支推送到其上游。
+ *
+ * 不带参数执行 `git push`，目标由 git 按分支的上游配置决定。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 错误文本，无错误时返回 null。
+ */
+export async function pushUpstream(cwd: string): Promise<string | null> {
+	const payload = await callApi(cwd, { command: 'pushUpstream' });
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
  * 读取仓库配置（远程、issue 链接等）。
  *
  * @param cwd - 会话工作区路径。
