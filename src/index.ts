@@ -32,7 +32,9 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
 		const getLlm = () => (ctx as unknown as { get(name: string): unknown }).get('llm');
 		const getAgentDefaultModel = () => (ctx as unknown as { get(name: string): unknown }).get('agentDefaultModel');
-		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel });
+		// 翻译走官方 translator 服务；未装载时该服务取不到，翻译入口据此提示降级。
+		const getTranslator = () => (ctx as unknown as { get(name: string): unknown }).get('translator');
+		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel, getTranslator });
 
 		(ctx.on as (event: string, cb: () => void) => void)('dispose', () => {
 			for (const d of disposers) d();

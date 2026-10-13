@@ -48,7 +48,14 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 	});
 }
 
-async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+/**
+ * 处理一条 API 命令。
+ *
+ * @param req - 请求。
+ * @param res - 响应。
+ * @param aiDeps - AI 与翻译依赖面；翻译服务可选装载，缺失时相关命令降级。
+ */
+async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, aiDeps?: AiCommitDeps): Promise<void> {
 	let msg: Record<string, unknown>;
 	try {
 		msg = await readBody(req);
@@ -524,6 +531,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse): P
 		case 'rescanForRepos':
 			respond({ command: 'rescanForRepos' });
 			break;
+		case 'translateAvailable':
+			// 翻译服务由 cot-translation bundle 可选装载；未装载时前端不显示翻译入口。
+			respond({ command: 'translateAvailable', available: usableTranslator(aiDeps?.getTranslator?.()) !== undefined });
+			break;
+		case 'translateText': {
+			// 逐段翻译：调用方按标题与正文行拆分后分别请求，避免整段被译成一行。
+			const text = str('text');
+			const targetLanguage = str('targetLanguage');
+			if (text === '') { sendBadRequest(res, '缺少 text'); break; }
+			if (targetLanguage === '') { sendBadRequest(res, '缺少 targetLanguage'); break; }
+			await respondResult('translateText', async () => ({
+				text: await translateWithService(aiDeps?.getTranslator?.(), text, targetLanguage),
+			}));
+			break;
+		}
 		case 'deleteUserDetails': {
 			const location = str('location') as 'local' | 'global';
 			const errors: string[] = [];
@@ -562,6 +584,8 @@ export interface GgRouteContext {
 export interface AiCommitDeps {
 	getLlm?: () => unknown;
 	getAgentDefaultModel?: () => unknown;
+	/** 取官方 translator 服务；未装载时为 undefined，翻译入口据此降级。 */
+	getTranslator?: () => unknown;
 }
 
 /** AI 提交生成的系统提示词。 */
@@ -569,6 +593,52 @@ const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定
 	+ '要求：第一行不超过 72 字符的 conventional commit 格式（如 `feat: ...`、`fix: ...`、`refactor: ...`）；'
 	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
 	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
+
+/**
+ * 语言提示词：告知模型用哪种语言写提交信息。
+ *
+ * 模型带提示词缓存，改语言会命中不同缓存；因此只在调用方给出语言时追加，
+ * 未给出（空串）时提示词与以往完全一致，不破坏既有缓存。
+ *
+ * @param language - 语言标签，如 `zh-CN`；空串表示不指定。
+ * @returns 追加到系统提示词末尾的一段文本；不指定时为空串。
+ */
+function languageDirective(language: string): string {
+	if (language === '') return '';
+	return `\n\n用 ${language} 书写提交信息，不要混用其他语言。`;
+}
+
+/**
+ * 取官方 translator 服务；未装载时返回 undefined。
+ *
+ * @param translator - 依赖面给出的服务实例。
+ * @returns 具备 resolve 与 translate 的服务；不可用时为 undefined。
+ */
+function usableTranslator(translator: unknown): { resolve: (request: { text: string; targetLanguage: string }) => unknown; translate: (spec: unknown) => Promise<string> } | undefined {
+	const service = translator as {
+		resolve?: (request: { text: string; targetLanguage: string }) => unknown;
+		translate?: (spec: unknown) => Promise<string>;
+	} | undefined;
+	if (service === undefined || typeof service.resolve !== 'function' || typeof service.translate !== 'function') return undefined;
+	return service as { resolve: (request: { text: string; targetLanguage: string }) => unknown; translate: (spec: unknown) => Promise<string> };
+}
+
+/**
+ * 用官方 translator 服务翻译一段文本。
+ *
+ * 该服务由 cot-translation bundle 可选装载；不可用时抛出可读错误，前端另有
+ * `translateAvailable` 查询，正常情况下不会走到这里。
+ *
+ * @param translator - translator 服务实例。
+ * @param text - 待翻译文本。
+ * @param targetLanguage - 目标语言标签。
+ * @returns 译文。
+ */
+async function translateWithService(translator: unknown, text: string, targetLanguage: string): Promise<string> {
+	const service = usableTranslator(translator);
+	if (service === undefined) throw new Error('未装载翻译服务（translator），无法翻译');
+	return await service.translate(service.resolve({ text, targetLanguage }));
+}
 
 /**
  * 查模型是否声明了 `off` 推理档位。
@@ -661,7 +731,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					res.end();
 					return;
 				}
-				void handleApi(req, res).catch((e) => {
+				void handleApi(req, res, aiDeps).catch((e) => {
 					sendJson(res, 500, { error: String(e instanceof Error ? e.message : e) });
 				});
 			},
@@ -732,7 +802,11 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
 
 					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
-					const systemPrompt = rules.length > 0 ? AI_COMMIT_SYSTEM_PROMPT + '\n\n' + rules : AI_COMMIT_SYSTEM_PROMPT;
+					// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
+					const language = typeof body.language === 'string' ? body.language.trim() : '';
+					const systemPrompt = AI_COMMIT_SYSTEM_PROMPT
+						+ languageDirective(language)
+						+ (rules.length > 0 ? '\n\n' + rules : '');
 					const off = await canDisableReasoning(llm, provider, model);
 					const request = amend
 						? `请根据以下 diff 生成提交信息（这是修补上一次提交，diff 含上一次提交的改动与本次改动）：\n\n${diff}`

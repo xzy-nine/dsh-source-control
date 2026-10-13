@@ -9,6 +9,7 @@ import React from 'react';
 import bookSvg from '../../assets/icons/book_2.svg';
 import cloudSvg from '../../assets/icons/cloud.svg';
 import cloudUploadSvg from '../../assets/icons/cloud_upload.svg';
+import translateSvg from '../../assets/icons/g_translate.svg';
 import tagSvg from '../../assets/icons/shoppingmode.svg';
 
 /** 引用标记的图标边长（像素）。 */
@@ -55,6 +56,8 @@ const CLOUD_MARKUP = iconMarkup(cloudSvg, REF_ICON_SIZE);
 const BOOK_MARKUP = iconMarkup(bookSvg, REPO_ICON_SIZE);
 /** 发布图标的行内标记。 */
 const CLOUD_UPLOAD_MARKUP = iconMarkup(cloudUploadSvg, ACTION_ICON_SIZE);
+/** 翻译图标的行内标记。 */
+const TRANSLATE_MARKUP = iconMarkup(translateSvg, ACTION_ICON_SIZE);
 
 /**
  * 标签引用图标。
@@ -90,4 +93,13 @@ export function RepoIcon(): React.ReactElement {
  */
 export function PublishIcon(): React.ReactElement {
 	return ResourceIcon(CLOUD_UPLOAD_MARKUP);
+}
+
+/**
+ * 翻译图标（译）。
+ *
+ * @returns 图标元素。
+ */
+export function TranslateIcon(): React.ReactElement {
+	return ResourceIcon(TRANSLATE_MARKUP);
 }

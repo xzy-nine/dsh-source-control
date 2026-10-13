@@ -1014,6 +1014,41 @@ export interface CommitMessageHandlers {
 }
 
 /**
+ * 翻译是否可用。
+ *
+ * 翻译服务由 cot-translation bundle 可选装载，未装载时调用方不显示翻译入口，
+ * 而不是等用户点击后才失败。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 可用时为 true。
+ */
+export async function translateAvailable(cwd: string): Promise<boolean> {
+	try {
+		const payload = await callApi(cwd, { command: 'translateAvailable' });
+		return payload.available === true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 翻译一段文本。
+ *
+ * 由宿主经官方 translator 服务转发；调用方按标题与正文行拆分后逐段请求，
+ * 使译文保留原有换行结构。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param text - 待翻译文本。
+ * @param targetLanguage - 目标语言标签。
+ * @param signal - 取消信号。
+ * @returns 译文。
+ */
+export async function translateText(cwd: string, text: string, targetLanguage: string, signal?: AbortSignal): Promise<string> {
+	const payload = await callApi(cwd, { command: 'translateText', text, targetLanguage }, signal);
+	return typeof payload.text === 'string' ? payload.text : text;
+}
+
+/**
  * 流式生成 AI 提交信息。
  *
  * @param cwd - 仓库路径。
@@ -1026,12 +1061,12 @@ export interface CommitMessageHandlers {
  */
 export async function generateCommitMessage(
 	cwd: string, provider: string, model: string, rules: string,
-	handlers: CommitMessageHandlers, amend = false,
+	handlers: CommitMessageHandlers, amend = false, language = '',
 ): Promise<void> {
 	const res = await fetch(AI_COMMIT_PATH, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ repo: cwd, provider, model, rules, amend }),
+		body: JSON.stringify({ repo: cwd, provider, model, rules, amend, language }),
 		signal: handlers.signal,
 	});
 	if (!res.ok) {

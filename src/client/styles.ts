@@ -265,6 +265,8 @@ button.ggg-btn-danger:hover:not(:disabled){background:var(--dsw-alias-state-erro
 @keyframes ggg-ai-slide{0%{left:-40%}100%{left:100%}}
 .ggg-commit-ai-warning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
 .ggg-commit-actions-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+/* 右侧动作组：翻译（仅图标）与贮藏靠右排列。 */
+.ggg-commit-actions-right{display:inline-flex;align-items:center;gap:2px;flex:none}
 .ggg-commit-actions-row .ggg-stash-btn{padding:0 6px;background:transparent;color:var(--dsw-alias-label-secondary)}
 .ggg-commit-actions-row .ggg-stash-btn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
 .ggg-commit-ai-stats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}

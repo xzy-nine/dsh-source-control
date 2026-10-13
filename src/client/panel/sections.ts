@@ -10,7 +10,7 @@ import {
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
-import { PublishIcon, RepoIcon } from '../ref-icons.ts';
+import { PublishIcon, RepoIcon, TranslateIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
@@ -110,6 +110,10 @@ export interface ChangesSectionProps {
 	readonly onToggleAmend: (checked: boolean) => void;
 	/** 把当前改动存入贮藏。 */
 	readonly onStash: () => void;
+	/** AI 生成完成且内容以非当前语言为主时，显示翻译按钮。 */
+	readonly showTranslate: boolean;
+	readonly translateBusy: boolean;
+	readonly onTranslate: () => void;
 	readonly aiBusy: boolean;
 	readonly aiWarning: string;
 	readonly aiStats: AiStats | null;
@@ -143,6 +147,7 @@ export interface ChangesSectionProps {
  */
 export function ChangesSection({
 	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
+	showTranslate, translateBusy, onTranslate,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	showPublishButton, onPublish,
 	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
@@ -207,10 +212,18 @@ export function ChangesSection({
 				),
 				React.createElement('div', { className: 'ggg-commit-actions-row' },
 					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
-					React.createElement(Button, {
-						variant: 'ghost', size: 'sm', disabled: busy || entries.length === 0,
-						className: 'ggg-stash-btn', onClick: onStash, title: '把当前改动存入贮藏',
-					}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
+					React.createElement('span', { className: 'ggg-commit-actions-right' },
+						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
+						showTranslate && React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: translateBusy,
+							className: 'ggg-stash-btn ggg-translate-btn', onClick: onTranslate,
+							title: '把提交信息翻译为当前语言', 'aria-label': '翻译',
+						}, React.createElement(TranslateIcon)),
+						React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: busy || entries.length === 0,
+							className: 'ggg-stash-btn', onClick: onStash, title: '把当前改动存入贮藏',
+						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
+					),
 				),
 				showSyncButton
 					? React.createElement(Button, {

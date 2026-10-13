@@ -11,7 +11,8 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, translateAvailable,
+	translateText, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
 import { showCheckbox, showForm, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
@@ -19,6 +20,7 @@ import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
 import { hasGitHubRemote } from './panel/github.ts';
+import { needsTranslation, splitCommitPrefix } from './language.ts';
 import { reportError } from './panel/errors.ts';
 import { showToast } from './panel/toast.ts';
 import { computeAheadBehind, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs } from './panel/refs.ts';
@@ -46,6 +48,20 @@ function issueLinkingConfigOf(settings: Settings): unknown {
 }
 
 /**
+ * 当前界面语言。
+ *
+ * DSH 的语言服务把活动语言同步到 `<html lang>`（`zh` 写成 `zh-CN`），因此直接读它；
+ * 读取不到时按英文处理。
+ *
+ * @returns 语言标签，如 `zh-CN`、`en`。
+ */
+function interfaceLanguage(): string {
+	if (typeof document === 'undefined') return 'en';
+	const lang = document.documentElement.lang;
+	return lang === '' ? 'en' : lang;
+}
+
+/**
  * Git Graph 面板。
  *
  * @param props - 见 {@link GitGraphPanelProps}。
@@ -56,6 +72,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const [aiBusy, setAiBusy] = React.useState(false);
 	const [aiWarning, setAiWarning] = React.useState('');
 	const [aiStats, setAiStats] = React.useState<AiStats | null>(null);
+	const [translateBusy, setTranslateBusy] = React.useState(false);
+	// 翻译服务由 cot-translation bundle 可选装载；不可用时连入口都不显示。
+	const [translateReady, setTranslateReady] = React.useState(false);
+	// 已翻译过的文本：避免对同一内容重复请求，也用于标记「已翻译」。
+	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
 	const [maxCommits, setMaxCommits] = React.useState(200);
@@ -150,6 +171,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
+
+	/* 翻译服务是否可用：换仓库时重查一次（同一进程内结果稳定，不必频繁请求）。 */
+	React.useEffect(() => {
+		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
+		let cancelled = false;
+		translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
+		return () => { cancelled = true; };
+	}, [workingTreePath]);
 
 	// 会话级持久化：按仓库/子模块/工作树路径存 sessionStorage，切换页面或工作区后恢复。
 	React.useEffect(() => {
@@ -428,7 +457,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	};
 
-	/** AI 生成提交信息：流式输出，不开启思考。 */
+	/**
+	 * AI 生成提交信息：流式输出，不开启思考。
+	 *
+	 * 系统提示词带上当前界面语言，降低生成错语言的概率；生成完成后若内容仍以
+	 * 非当前语言为主，界面出现翻译按钮。
+	 */
 	const handleAiCommit = (): void => {
 		if (aiBusy) return;
 		if (workingTreePath === null) { setAiWarning('未选中仓库'); return; }
@@ -436,6 +470,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		setAiBusy(true);
 		setAiWarning('');
 		setAiStats(null);
+		setTranslatedFrom(null);
 		setMessage('');
 		const controller = new AbortController();
 		aiAbortRef.current = controller;
@@ -446,8 +481,40 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			onError: (text) => setAiWarning(text),
 			onStats: (stats) => setAiStats(stats as AiStats),
 		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
-		}, amend).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
+		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
 	};
+
+	/**
+	 * 翻译提交信息：按行请求，保持原有换行结构。
+	 *
+	 * 逐行而不是整段一次：整段会被翻译服务拼成一行，丢失标题与要点的分行。
+	 * 每行的 git 惯例前缀（`feat:`、`fix(api):` 等）原样保留，只翻译其后的正文。
+	 */
+	const handleTranslate = React.useCallback(() => {
+		if (translateBusy || workingTreePath === null || message.trim() === '') return;
+		const source = message;
+		const locale = interfaceLanguage();
+		setTranslateBusy(true);
+		void (async () => {
+			try {
+				// 空行保留为空行，其余每行单独翻译。
+				const lines = source.split('\n');
+				const parts: string[] = [];
+				for (const line of lines) {
+					if (line.trim() === '') { parts.push(''); continue; }
+					// git 惯例前缀不翻译：翻译会破坏 type/scope 的机器可读语义。
+					const { prefix, body } = splitCommitPrefix(line);
+					parts.push(body.trim() === '' ? line : prefix + await translateText(workingTreePath, body, locale));
+				}
+				setMessage(parts.join('\n'));
+				setTranslatedFrom(source);
+			} catch (error) {
+				await notify(error instanceof Error ? error.message : String(error));
+			} finally {
+				setTranslateBusy(false);
+			}
+		})();
+	}, [translateBusy, workingTreePath, message, notify]);
 
 	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);
 	const aheadBehind = React.useMemo(
@@ -465,6 +532,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const isUnpublishedBranch = currentSync !== undefined && currentSync.branch !== null && currentSync.upstream === null;
 	// 有暂存改动时优先提示提交，提交后再显示发布；无改动且未发布时显示发布。
 	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
+
+	/**
+	 * 是否显示翻译入口。
+	 *
+	 * 三个条件同时满足才显示：翻译服务已装载（否则点了也失败）、当前无生成任务、
+	 * 且内容以非当前语言为主。已翻译过的内容不再重复提示。
+	 */
+	const showTranslate = translateReady && !aiBusy && !translateBusy
+		&& message.trim() !== '' && message !== translatedFrom
+		&& needsTranslation(message, interfaceLanguage());
 
 	/**
 	 * 没有远程时：在同一个对话框里用页签选择发布方式。
@@ -527,8 +604,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
 						{
 							type: 'select', name: 'visibility', label: '可见性', value: 'private', options: [
-								{ value: 'private', label: '私有仓库' },
-								{ value: 'public', label: '公开仓库' },
+								{ value: 'private', label: '私有' },
+								{ value: 'public', label: '公开' },
 							],
 						},
 						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
@@ -969,6 +1046,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			entries: state.entries, busy: state.busy, phase: state.phase,
 			workingTreePath, head: state.head,
 			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
+			showTranslate, translateBusy, onTranslate: handleTranslate,
 			aiBusy, aiWarning, aiStats, onAiCommit: handleAiCommit,
 			showSyncButton,
 			syncBehind: currentSync?.behind ?? 0,
