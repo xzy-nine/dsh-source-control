@@ -3,9 +3,10 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, IconBranchOutlineRegular,
+	Button, Checkbox,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { RemoteRefIcon, TagRefIcon } from '../ref-icons.ts';
+import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RefItem } from '../types.ts';
 
 /** 引用筛选弹窗的属性。 */
@@ -72,7 +73,7 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 						'label',
 						{ key: `${ref.type}:${ref.name}`, className: `ggg-filter-row${isChecked ? ' is-checked' : ''}` },
 						React.createElement(Checkbox, { checked: isChecked, onChange: () => onToggle(ref.name), label: '' }),
-						ref.type === 'branch' && React.createElement(IconBranchOutlineRegular, { size: 14, className: 'ggg-filter-icon' }),
+						ref.type === 'branch' && React.createElement(GitGraphIcon, { size: 14, className: 'ggg-filter-icon' }),
 						ref.type === 'remote' && React.createElement(RemoteRefIcon),
 						ref.type === 'tag' && React.createElement(TagRefIcon),
 						React.createElement('span', { className: 'ggg-filter-name' }, ref.name),

@@ -13,6 +13,7 @@ import { GitGraphPanel } from './panel.ts';
 import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
 import { fileDiffContent } from './api.ts';
+import { GitGraphIcon } from './plugin-icon.ts';
 import { STYLES } from './styles.ts';
 
 /** 页类型身份：正文与标题席位都用它当键。 */
@@ -37,21 +38,6 @@ function ensureStyle() {
 	element.id = 'dsh-dev-git-graph-style';
 	element.textContent = STYLES;
 	document.head.appendChild(element);
-}
-
-/** 侧栏页图标：分支走向。 */
-function GitGraphIcon(props) {
-	const size = props?.size ?? 16;
-	return React.createElement(
-		'svg',
-		{
-			width: size, height: size, viewBox: '0 0 16 16', fill: 'currentColor',
-			className: props?.className, 'aria-hidden': 'true', focusable: 'false',
-		},
-		React.createElement('path', {
-			d: 'M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6A1 1 0 005 9.5v1.878a2.251 2.251 0 11-1.5 0V4.622a2.251 2.251 0 111.5 0v1.58A2.49 2.49 0 006 7h4a1 1 0 001-1v-.578A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z',
-		}),
-	);
 }
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
@@ -107,7 +93,8 @@ function GitGraphTitle() {
 	return React.createElement(
 		'span',
 		{ className: 'ggg-chip' },
-		React.createElement(GitGraphIcon, { size: 16 }),
+		// 标签页头上的图标：比正文里的图标小一档，避免在标签条里显得过大。
+		React.createElement(GitGraphIcon, { size: 14 }),
 		React.createElement('span', null, TAB_TITLE),
 	);
 }

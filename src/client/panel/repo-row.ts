@@ -3,10 +3,11 @@
  */
 import React from 'react';
 import {
-	IconArchiveOutlineRegular, IconBranchOutlineRegular, IconChevronDownOutlineRegular,
-	IconEllipsisOutlineRegular,
+	IconArchiveOutlineRegular, IconChevronDownOutlineRegular,
+	IconEllipsisOutlineRegular, IconEnhanceOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { RepoIcon } from '../ref-icons.ts';
+import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RepoNode, RepoSync } from '../types.ts';
 
 /** 存储库树一行的属性。 */
@@ -52,12 +53,12 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 		isWorktree
-			? React.createElement(IconBranchOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
+			? React.createElement(IconEnhanceOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
 			: isSubmodule
 				? React.createElement(IconArchiveOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
 				: React.createElement(RepoIcon),
 		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
-		refText !== '' && React.createElement(IconBranchOutlineRegular, { size: 12, className: 'ggg-repo-branch-icon' }),
+		refText !== '' && React.createElement(GitGraphIcon, { size: 12, className: 'ggg-repo-branch-icon' }),
 		refText !== '' && React.createElement('span', {
 			className: 'ggg-repo-branch' + (onBranchClick !== undefined && !isDetached ? ' is-clickable' : ''),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { if (onBranchClick !== undefined && !isDetached) { event.stopPropagation(); onBranchClick(node, event); } },

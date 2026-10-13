@@ -5,12 +5,13 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, IconBranchOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	Button, Checkbox, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular,
 	IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
 import { RepoIcon } from '../ref-icons.ts';
+import { GitGraphIcon } from '../plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
 import type {
@@ -300,7 +301,7 @@ export function GraphSection({
 				React.createElement('button', {
 					type: 'button', className: 'ggg-icon-btn', title: '筛选分支与标签',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
-				}, React.createElement(IconBranchOutlineRegular, { size: 14 }), '分支'),
+				}, React.createElement(GitGraphIcon, { size: 14 }), '分支'),
 				React.createElement('button', {
 					type: 'button', className: 'ggg-icon-btn', title: '转到当前历史记录',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },

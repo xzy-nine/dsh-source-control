@@ -176,6 +176,14 @@ export const STYLES = `
 .ggg-repo-more{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-repo-more:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
 
+/* ── 侧栏标签页 chip ──────────────────────────────────────── */
+.ggg-chip{display:inline-flex;align-items:center;gap:4px;min-width:0}
+.ggg-chip svg{flex:none}
+
+/* ── 会话 header 入口 ─────────────────────────────────────── */
+.ggg-open{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+.ggg-open:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
 /* ── 提交输入框 ───────────────────────────────────────────── */
 .ggg-commit-input-wrap{position:relative;display:flex;align-items:stretch}
 .ggg-commit-input{flex:1;min-height:52px;max-height:160px;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}

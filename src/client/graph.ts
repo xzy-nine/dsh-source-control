@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import {
-	HoverCard, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconClockOutlineRegular,
+	HoverCard, IconArchiveOutlineRegular, IconClockOutlineRegular,
 	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
 	MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -20,6 +20,7 @@ import {
 	RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, laneCentre, laneColour, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
+import { GitGraphIcon } from './plugin-icon.ts';
 import { copyText } from './context-menu.ts';
 
 /** MarkdownText 所需的本地化标签。 */
@@ -217,7 +218,7 @@ function RefChip({ label, expanded = false }) {
 				? React.createElement(IconArchiveOutlineRegular, { size: 12 })
 				: label.kind === 'head'
 					? React.createElement(IconGoalOutlineRegular, { size: 12 })
-					: React.createElement(IconBranchOutlineRegular, { size: 12 });
+					: React.createElement(GitGraphIcon, { size: 12 });
 	const named = expanded || !ROUND_KINDS.has(label.kind);
 	return React.createElement(
 		'span',
