@@ -332,12 +332,13 @@ test('删除分支按包含关系列出候选', () => {
 test('异步打开提交菜单前先取出事件字段', () => {
 	// openCommitMenu 会 await 查询分支；React 的 currentTarget 在 await 之后已失效。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	const syncIndex = menu.indexOf('const target = event.currentTarget');
-	const awaitIndex = menu.indexOf('await branchesContaining');
+	const body = menu.slice(menu.indexOf('export async function openCommitMenu'));
+	const syncIndex = body.indexOf('const target = event.currentTarget');
+	const awaitIndex = body.indexOf('await makeContext');
 	assert.ok(syncIndex !== -1, '应取出 currentTarget');
 	assert.ok(awaitIndex !== -1, '应有 await 查询');
 	assert.ok(syncIndex < awaitIndex, 'currentTarget 必须在 await 之前取出');
-	assert.match(menu, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
+	assert.match(body, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
 });
 
 test('工作树分支从图形区与删除候选中排除', () => {
@@ -365,15 +366,26 @@ test('工作树右键提供移除入口', () => {
 test('删除当前分支时提示而非静默失败', () => {
 	// 当前分支仍在候选里，但点击后说明原因。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	assert.match(menu, /name === head/, '提交菜单应识别当前分支');
+	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
 	assert.match(menu, /await showMessage\(/, '应给出不可删除的提示');
-	const refMenu = readFileSync(join(panelDir, 'ref-menu.ts'), 'utf8');
-	assert.match(refMenu, /if \(isCurrent\)/, '引用菜单应同样拦截当前分支');
 	// 删除项不再置灰，改为点击后提示。
-	const deleteItem = /title: [^,]*删除分支[^,]*,[^}]*\}/.exec(refMenu);
+	const deleteItem = /title: '删除分支…', danger: true, onClick/.exec(menu);
 	assert.ok(deleteItem !== null, '未找到删除分支项');
 	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
 	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');
 	assert.match(dialog, /export function showMessage/, '应提供仅告知的提示框');
+});
+
+test('提交菜单与引用菜单共用同一份操作注册表', () => {
+	// 两处菜单由 ACTIONS 驱动：引用菜单按 refTypes 过滤，不再各自维护一份定义。
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	assert.match(menu, /refTypes: \[/, '每项操作应声明适用的引用类型');
+	assert.match(menu, /export async function openCommitMenu/, '应导出提交菜单');
+	assert.match(menu, /export async function openRefMenu/, '应导出引用菜单');
+	assert.match(menu, /action\.refTypes\.includes\(refInfo\.type\)/, '引用菜单应按引用类型过滤');
+	assert.ok(!existsSync(join(panelDir, 'ref-menu.ts')), '不应再保留独立的 ref-menu 模块');
+	// 提交行右键应能直接发起「合并到选中分支」，无需命中分支标签。
+	assert.match(menu, /ctx\.tipBranches/, '提交菜单应依据分支尖端列出合并目标');
+	assert.match(menu, /mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash\)/, '提交菜单应能直接合并到分支');
 });
 

@@ -18,8 +18,7 @@ import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
 import { reportError } from './panel/errors.ts';
 import { computeAheadBehind, computeAutoRefs, collectRefs, filterCommitsByRefs } from './panel/refs.ts';
-import { openCommitMenu } from './panel/commit-menu.ts';
-import { openRefMenu } from './panel/ref-menu.ts';
+import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadSession, saveSession } from './panel/storage.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
 import { useGraphData } from './panel/use-graph-data.ts';
@@ -537,20 +536,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		});
 	}, [state.commits, selectNodeAndReset, run]);
 
+	/** 菜单依赖面；提交菜单与引用菜单共用。 */
+	const menuDeps = React.useMemo(() => ({
+		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
+		unsupported, handleTagDetails, setCommitMessage: setMessage,
+	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, unsupported, handleTagDetails]);
+
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
-		void openCommitMenu({
-			workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
-		}, { commit, event });
-	}, [workingTreePath, run, state.remotes, handleCreateArchive, state.head]);
+		void openCommitMenu(menuDeps, { commit, event });
+	}, [menuDeps]);
 
-	/** 分支标签（head / remote / tag / stash）右键菜单。 */
+	/** 引用标记（head / remote / tag / stash）右键菜单；条目按引用类型从同一注册表过滤。 */
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {
-		openRefMenu({
-			workingTreePath, run, head: state.head, remotes: state.remotes, unsupported, handleTagDetails, handleCreateArchive,
-			setCommitMessage: setMessage,
-		}, { commit, refInfo, event });
-	}, [workingTreePath, run, state.head, state.remotes, unsupported, handleTagDetails, handleCreateArchive]);
+		void openRefMenu(menuDeps, { commit, refInfo, event });
+	}, [menuDeps]);
 
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => {
