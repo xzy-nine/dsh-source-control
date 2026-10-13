@@ -18,9 +18,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xzy-nine/dsh-dev-git-graph.git"
+    "url": "git+https://example.com/xzy-nine/dsh-dev-git-graph.git"
   },
-  "homepage": "https://github.com/xzy-nine/dsh-dev-git-graph#readme",
+  "homepage": "https://example.com/xzy-nine/dsh-dev-git-graph#readme",
   "type": "module",
   "packageManager": "pnpm@11.28.5",
   "main": "./lib/src/index.js",

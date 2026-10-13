@@ -1,104 +1,112 @@
 # dsh-dev-git-graph
 
-A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plugin that adds a **Git Graph page** to the DSH Web GUI's built-in right Sidebar: the commit graph, the working-tree changes list, and a commit box, arranged like VS Code's Source Control + Graph view. Its controls come from `@deepseek-ai/dsh-client-ui-primitives`, so it looks and behaves like the rest of the Harness.
-
-It automatically binds to the **current session's workspace**; no manual repo selection is needed.
+A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plugin that adds a **Git Graph page** to the DSH Web GUI's built-in right Sidebar: the commit graph, the working-tree changes list, and a commit box, arranged like VS Code's Source Control + Graph view. Its controls come from DSH's own components, so it looks and behaves like the rest of the Harness. The repository is bound automatically to the current session's workspace; no manual repo selection is needed.
 
 [中文文档](README.zh.md)
 
 ## Features
 
-- **Right Sidebar page**: a `devGitGraph` page type in the built-in right Sidebar; no third-party sidebar plugin required.
-- **Auto-bound repo**: the panel reads the session's working directory from the sessions snapshot; every repository row uses the local `book_2` icon, with worktrees and submodules told apart by their text label.
-- **Working tree**: stage, unstage, discard, and commit, with per-file status and hover actions; the status character sits in the rightmost column, aligned with a folder's change count; the commit box stays pinned at the top and only the change list scrolls; clicking a file row opens it (an untracked new file opens as a plain file); the commit message reuses the DSH `InlineEditor` (Enter commits, Shift+Enter breaks the line, Escape clears the draft).
-- **Diff page**: the sidebar file-diff view is **copied from DSH's `ui-deliverables` `FileDiff` (MIT)** — line-number gutters, hunk headers, and syntax highlighting; the host derives the hunks with `git diff --unified=3` (the frontend's local diff degrades to a whole-file replacement once an edit exceeds its search limit), and a wrap toggle switches line wrapping.
-- **Commit graph**: the section header collapses on click and the divider above that header is the drag handle (dragging up grows the graph, 120–720px, saved per session); branch lanes plus one row per commit — the subject with the author beside it, then right-aligned ref markers: icon-and-name pills for the current and other local branches, and circular cloud / tag / archive badges for remotes, tags, and stashes (names in the tooltip and the context menu); remote HEAD (`refs/remotes/<remote>/HEAD`) and local HEAD are never listed as ref markers. Each row's graph column is only as wide as the lanes that row draws, so the subject sits right after it while the markers stay pinned to the row's right edge. Node shape names the kind: two concentric rings for the current branch (outer r=7, inner r=4), a ring with a core for merges (outer r=6, core r=3), a filled dot otherwise (r=5); lane lines stop at the node's outer edge instead of running through it, a lane freed inside a row is filled by shifting the lanes to its right one step left (an S-curve), and merges and forks use a radius-11 arc. Paging only loads a window of commits, so a parent outside the window still holds its lane and keeps its line running to the row bottom — loading more never changes the lanes or colours already on screen. The date and short hash are in the row's hover card; hovering a row floats a card on the standard dsh floating surface with the author, the time (the leading label follows the configured date format and the parentheses always carry the detailed date and time, omitted when the leading label is already that detail), the full commit message, the changed-file and line counts, the ref markers (each expanded to icon plus name), and the short hash with a copy button; a hairline separates every section except the author line from the message; clicking a commit expands its changed-file region in place, directly below that row and inside the graph — the gutter continues that row's lanes on the left with the same padding and column gap as the row, the file tree collapses per folder, shows each file's +/− and status, and opens a diff, and clicking the same row again collapses it.
-- **Commit context menu**: view the commit, open it on GitHub (shown only when a GitHub remote exists), check it out, create a branch or tag from it, delete a branch (a submenu lists the local and remote branches pointing at that commit), delete a tag (a submenu lists its tags), cherry-pick, revert, reset the current branch, merge, rebase, and copy the hash or the message.
-- **Theming**: styles use `--dsw-alias-*` semantic tokens and follow the host's light / dark mode; ref markers use the fixed lane palette.
-- **No external processes**: the host runs `git` directly via `child_process.spawn` (array args, no shell injection).
+### Repositories
+
+Lists the repositories inside the current session's workspace, expanding their worktrees and submodules. Each row carries a kind-specific icon plus the checked-out branch and its ahead/behind counts against the upstream. The context menu offers refresh, fetch, push, and copy path; a linked worktree additionally offers **Remove worktree**.
+
+### Changes
+
+The working-tree change list, grouped into **Staged Changes** and **Changes**.
+
+- A file row shows its file-type icon, name, and the status character in the rightmost column (shared with a folder's change count). Clicking a file row opens it; an untracked new file opens as a plain file.
+- Hovering reveals discard and stage (or unstage) buttons; the context menu offers the same actions, plus open and copy path.
+- The file tree starts at the **earliest forking common directory**: a chain of directories with a single subdirectory each collapses into one row instead of expanding from the repository root.
+- The commit box stays pinned at the top and only the change list scrolls. A group header's context menu stages, unstages, or discards everything in it.
+
+### Commit box
+
+- The commit message accepts Enter to commit, Shift+Enter for a newline, and Escape to clear the draft.
+- **Amend last commit** turns the commit into `--amend`.
+- The commit button shows how many files are staged.
+- The message can be generated by AI (see below).
+
+### Graph
+
+The commit lane graph; its section header collapses on click. The divider above that header is the drag handle — dragging up grows the graph (120–720px, saved per session).
+
+- Each row is the lanes, then the commit subject with the author beside it (ellipsis-truncated when space runs short), then right-aligned ref markers.
+- Ref markers: icon-and-name pills for the current and other local branches, circular badges for remotes, tags, and stashes, with names in the tooltip and the context menu. Remote HEAD is never listed, and neither are branches checked out in another worktree.
+- Node shape names the kind: two concentric rings for the current branch, a ring with a core for merges, a filled dot otherwise. Lane lines stop at the node's outer edge instead of running through it.
+- The uncommitted row is drawn dashed with no node, and triggers neither the hover card nor the context menu.
+- When paging, a parent outside the loaded window still holds its lane and keeps its line running to the row bottom, so loading more never changes the lanes or colours already on screen.
+- Hovering a row floats a card with the author, the time, the full commit message, the changed-file and line counts, the ref markers, and the short hash with a copy button.
+- Clicking a commit expands its changed-file region in place, directly below that row, showing per-file +/− and status; clicking a file opens its diff, and clicking the row again collapses it.
+
+#### Commit context menu
+
+Open on GitHub (shown only when a GitHub remote exists), Check out to (a submenu listing the branches on that commit, shown only at a branch tip), Check out (detached), Create branch, Delete branch, Create tag, Delete tag, Cherry-pick, Revert, Reset current branch to here, Merge into current branch, Rebase current branch onto here, Copy hash, Copy commit message, Create archive.
+
+- **Delete branch** lists the local and remote branches **containing that commit** — a branch is identified only by its tip, so a mid-history commit would otherwise have no branch to delete.
+- **Delete tag** is hidden when the commit has no tags.
+- **Deleting the current branch** is still offered; clicking it explains why it cannot be deleted instead of being greyed out.
+- Rows with a submenu carry a trailing chevron.
+
+### Diff page
+
+Opens a file's diff in the Sidebar, with line-number gutters, hunk headers, and syntax highlighting.
+
+- **Side-by-side by default**, switchable to a unified view.
+- **Word wrap on by default**, switchable off.
+- Only the lines around each change are shown (git hunks), not the whole file.
+
+### Confirmation for destructive actions
+
+These actions ask for confirmation first, with a red confirm button: discard changes, delete a local or remote branch, delete a tag, drop a stash, reset the current branch, remove a worktree, and delete a remote configuration. Merge and rebase confirm too.
+
+**Unstaging is not destructive** and asks nothing. Discarding an untracked file is worded as a **delete** — the file is genuinely removed rather than reverted.
+
+### Repository configuration
+
+The settings panel offers:
+
+| Section | Contents |
+|---|---|
+| General | Commit ordering (topological / date / author date), date format, and display toggles for the commit box and the graph |
+| User Details | User identity (name and email), writable globally or per repository |
+| Remote Configuration | Add, edit, and delete remotes |
+| Issue Linking | Issue link rules |
+| Pull Request Creation | Pull-request creation settings |
+| Repository | Export the repository-level configuration |
+| AI commit message | The dedicated provider and model, plus custom rules appended to the end of the system prompt |
+
+### AI commit message
+
+Pick a provider and model (falling back to the current session model when unset) and optionally add custom rules; generation sends the working-tree diff to the chosen model and streams the result into the commit box.
+
+With **Amend last commit** checked, the diff becomes "the previous commit's changes plus this one's", and the prompt says so.
+
+## Entry points
+
+No third-party sidebar plugin is required; both entries open the same page:
+
+| Entry | Behaviour |
+|---|---|
+| Guide entry capsule | Open the right Sidebar's `+` control, then pick the **Git Graph** capsule |
+| Session header icon | Opens the page, or focuses the open one |
+
+Switching to another sidebar page or workspace and coming back leaves the page as it was — it neither reloads nor loses its expanded state.
 
 ## Install
 
 ```sh
 dsh plugin --profile web add dsh-dev-git-graph
-# restart `dsh web`, then open any conversation — the session header shows a Git Graph icon
+# restart `dsh web`; the right Sidebar's `+` → guide page shows Git Graph, and the session header gains an icon
 ```
 
-### Entry points
-
-| Entry | Seat | Behaviour |
-|---|---|---|
-| Guide entry capsule | the type's `guide` entry | Open the right Sidebar's `+` control, then pick the **Git Graph** capsule |
-| Session header icon | `conversation.session.header.utilities` (order -5) | Opens the page, or focuses the open one |
-
-Both open the same page type, registered through `ctx.sidebarRightTabs.register` (id `dsh-dev-git-graph/git-graph`, kind `devGitGraph`); the body sits in the keyed `sidebar.right.pane.tab` seat and the chip title in `sidebar.right.pane.tab.title`.
-
-## How it works
-
-```mermaid
-flowchart LR
-  subgraph GUI["DSH Web GUI"]
-    TAB["right Sidebar page Git Graph (React tree)"] --> PANEL["toolbar / repos / changes + commit box / commit graph"]
-  end
-  subgraph HOST["dsh web host plugin"]
-    PANEL -->|"fetch POST /dsh-dev-git-graph/gg/api"| API["command set"]
-    API --> WT["src/git-graph/working-tree.ts (status / stage / commit / discard)"] --> REPO
-  end
-```
-
-- **Frontend**: React components under `src/client/` (all TypeScript), bundled by esbuild into `lib/client.js`. `react` and
-  `@deepseek-ai/dsh-client-ui-primitives` are shell-shared platform modules and stay external.
-- **Panel split**: `src/client/panel.ts` holds only state and data loading and assembles the sections;
-  `src/client/panel/` carries the rest by responsibility — `sections.ts` (the three sections),
-  `changes.ts` (change-tree helpers and rows), `refs.ts` (ref and graph computations),
-  `commit-menu.ts` / `ref-menu.ts`, `ref-filter-dialog.ts`, `repo-row.ts`, `github.ts`, `storage.ts`,
-  `errors.ts`, plus the `use-repos.ts` / `use-graph-data.ts` / `use-commit-stats.ts` hooks.
-- **Lanes**: `src/client/lanes.ts` is a pure function (commit list → per-row lanes and links) rendered to SVG
-  by React; it does not touch the DOM and is unit-tested.
-- **API**: `POST /dsh-dev-git-graph/gg/api` keeps the ported command set and adds the working-tree commands.
-
-### Host commands added for the changes panel
-
-| Command | Purpose |
-|---|---|
-| `loadWorkingTree` | Working-tree changes (parses `git status --porcelain -z`, including rename origins) |
-| `stagePaths` | Stage the given paths; an empty array stages everything |
-| `unstagePaths` | Unstage; falls back to `git rm --cached` while the repo has no HEAD |
-| `discardPaths` | Discard changes (`git clean` for untracked files, `git restore` for tracked ones) |
-| `commitStaged` | Commit the index and return the new hash |
+## Differences from the original
 
 | Area | Behaviour |
 |---|---|
-| UI | No embedded VS Code webview; a React panel built from DSH primitives |
-| VS Code-only commands | `openFile` / `viewDiff` / `viewDiffWithWorkingFile` / `openTerminal` / `createPullRequest` / `createArchive` return "not supported" |
-| Repo source | auto-bound to the current session's workspace |
-
-## Security
-
-- Git is executed with **array arguments** (no shell), so repo paths and refs cannot be used for shell injection.
-- The API acts only on the repo path supplied by the caller (the session workspace); no path from the browser is
-  used to reach outside it.
-
-## Development
-
-```sh
-pnpm install                               # pnpm workspace, single package
-pnpm build                                 # build:host (tsc) + build:client (esbuild)
-pnpm typecheck                             # host (NodeNext)
-pnpm test                                  # lane layout unit tests
-```
-
-- The package manager is pnpm; `pnpm-workspace.yaml` allows esbuild's install script and
-  `pnpm-lock.yaml` is committed.
-- The host half compiles to `lib/` with `tsc -p tsconfig.json`; the browser half is bundled into
-  `lib/client.js` by `scripts/build-client.mjs`. `prepare` runs the full build after install.
-- Type checking runs in two passes: `tsconfig.json` (host, NodeNext) and `tsconfig.client.json`
-  (client, bundler resolution, `allowImportingTsExtensions`, no emit).
-- `pretest` rebuilds the client bundle first; `test/client-bundle.test.mjs` loads `lib/client.js`
-  under a stub ModuleLoader and checks the envelope, external requests, and seat registration.
-- `assets/icons/` holds the ref-marker SVGs; the client build inlines them as text, so the browser half
-  requests no extra resources at runtime.
-- The browser half must not import bare modules other than the shell-shared `react` and
-  `@deepseek-ai/dsh-client-ui-primitives`.
+| UI | No embedded VS Code webview; a Sidebar page built from DSH components |
+| Commit graph | Own lane layout and SVG rendering, unrelated to the upstream frontend |
+| VS Code-only commands | Open terminal, create pull request, view SCM, and similar are unavailable or reduced |
+| Repo source | Auto-bound to the current session's workspace (the page says so when there is none) |
+| Added | Working-tree changes panel, commit graph, AI commit message, diff page, worktree management |
 
 ## License
