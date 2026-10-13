@@ -38,6 +38,26 @@ export async function untrackedPatch(repo: string, filePath: string): Promise<st
 }
 
 /**
+ * 取一组路径。
+ *
+ * 一律用 `-z`：NUL 分隔下 git 不做转义，非 ASCII 路径（如中文文件名）保持原样，
+ * 可直接作为 pathspec 使用。默认 `core.quotepath=true` 时，`--name-only` 会把非 ASCII
+ * 路径写成加引号的八进制转义，拿它当 pathspec 匹配不到任何文件。
+ *
+ * @param repo - 仓库路径。
+ * @param args - 取路径的 git 参数（不含 `-z`）。
+ * @returns 路径数组；失败时返回空数组。
+ */
+async function listPaths(repo: string, args: readonly string[]): Promise<string[]> {
+	try {
+		const out = await gitOrThrow([...args, '-z'], repo);
+		return out.split('\0').filter((path) => path.length > 0);
+	} catch {
+		return [];
+	}
+}
+
+/**
  * 取仓库中全部未跟踪文件的 patch。
  *
  * @param repo - 仓库路径。
@@ -47,17 +67,12 @@ export async function untrackedPatch(repo: string, filePath: string): Promise<st
 async function untrackedPatches(repo: string, budget: number): Promise<{ parts: string[]; total: number }> {
 	const parts: string[] = [];
 	let total = 0;
-	try {
-		const out = await gitOrThrow(['ls-files', '--others', '--exclude-standard'], repo);
-		for (const file of out.split('\n').filter((line) => line.length > 0)) {
-			const patch = await untrackedPatch(repo, file);
-			if (patch.length === 0 || patch.length >= SINGLE_DIFF_MAX) continue;
-			if (total + patch.length > budget) break;
-			parts.push(patch);
-			total += patch.length + 1;
-		}
-	} catch {
-		/* 未跟踪文件读取失败时忽略 */
+	for (const file of await listPaths(repo, ['ls-files', '--others', '--exclude-standard'])) {
+		const patch = await untrackedPatch(repo, file);
+		if (patch.length === 0 || patch.length >= SINGLE_DIFF_MAX) continue;
+		if (total + patch.length > budget) break;
+		parts.push(patch);
+		total += patch.length + 1;
 	}
 	return { parts, total };
 }
@@ -73,8 +88,7 @@ async function untrackedPatches(repo: string, budget: number): Promise<{ parts: 
 async function collectWorkingDiff(repo: string): Promise<string> {
 	const diffs: string[] = [];
 	try {
-		const stagedOut = await gitOrThrow(['diff', '--cached', '--name-only'], repo);
-		const stagedFiles = stagedOut.split('\n').filter((s) => s.length > 0);
+		const stagedFiles = await listPaths(repo, ['diff', '--cached', '--name-only']);
 		if (stagedFiles.length > 0) {
 			for (const f of stagedFiles) {
 				try {
@@ -83,8 +97,7 @@ async function collectWorkingDiff(repo: string): Promise<string> {
 				} catch { /* 单个文件失败不影响其余 */ }
 			}
 		} else {
-			const workingOut = await gitOrThrow(['diff', '--name-only'], repo);
-			const workingFiles = workingOut.split('\n').filter((s) => s.length > 0);
+			const workingFiles = await listPaths(repo, ['diff', '--name-only']);
 			for (const f of workingFiles) {
 				try {
 					const d = await gitOrThrow(['diff', '--no-color', '--', f], repo);
