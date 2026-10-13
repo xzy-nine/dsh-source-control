@@ -9,6 +9,7 @@ import React from 'react';
 import {
 	addRemote, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
+	loadCommitMessage,
 	merge, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
@@ -366,16 +367,28 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
 
-	/** 勾选「修补上一次提交」时自动填入上一提交消息；取消勾选时清空。 */
+	/**
+	 * 勾选「修补上一次提交」时填入上一提交的完整消息；取消勾选时清空。
+	 *
+	 * 提交列表里的 message 只含标题（`git log --format=%s`），正文需按需取回。
+	 *
+	 * @param checked - 是否勾选。
+	 */
 	const toggleAmend = React.useCallback((checked: boolean) => {
 		setAmend(checked);
-		if (checked) {
-			const lastCommit = state.commits.find((commit) => commit.hash !== '*');
-			if (lastCommit !== undefined) setMessage(lastCommit.message ?? '');
-		} else {
+		if (!checked) {
 			setMessage('');
+			return;
 		}
-	}, [state.commits]);
+		const lastCommit = state.commits.find((commit) => commit.hash !== '*');
+		if (lastCommit === undefined) return;
+		// 先填标题，正文取回后再替换；取不到时保留标题。
+		setMessage(lastCommit.message ?? '');
+		if (workingTreePath === null) return;
+		void loadCommitMessage(workingTreePath, lastCommit.hash)
+			.then((full) => { if (full !== null && full !== '') setMessage(full); })
+			.catch(() => { /* 取不到正文时保留标题 */ });
+	}, [state.commits, workingTreePath]);
 
 	/** 提交暂存区。 */
 	const submit = (): void => {
