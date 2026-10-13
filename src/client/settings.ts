@@ -30,9 +30,6 @@ export const ORDERING = [
 	{ value: 'author-date', label: '作者时间', title: '按作者时间排序' },
 ];
 
-/** 默认排序：拓扑序。 */
-export const DEFAULT_ORDERING = 'topo';
-
 /** 日期格式选项：类型与是否使用 ISO。值用字符串，适配 SegmentedControl 的取值约定。 */
 export const DATE_FORMAT_TYPE = [
 	{ value: '0', label: '日期和时间', title: '显示完整日期与时间' },
@@ -104,24 +101,6 @@ export function saveSettings(settings: Settings): void {
 	} catch {
 		/* 持久化失败时静默回退到内存态 */
 	}
-}
-
-/**
- * 提交排序下拉：按钮显示当前排序，点击展开三档选择。
- *
- * @param props.value - 当前排序值。
- * @param props.onChange - 选择回调。
- * @returns 下拉元素。
- */
-export function OrderingMenu({ value, onChange }: { value: string; onChange: (next: string) => void }): React.ReactElement {
-	const current = ORDERING.find((option) => option.value === value) ?? ORDERING[0];
-	return React.createElement(SegmentedControl, {
-		id: 'ggg-ordering',
-		label: '提交排序',
-		value: current.value,
-		onChange,
-		options: ORDERING.map((option) => ({ value: option.value, label: option.label, title: option.title })),
-	});
 }
 
 /**

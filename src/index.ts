@@ -1,11 +1,13 @@
 /**
- * dsh-dev-git-graph host entry：内置移植版 vscode-git-graph 1.30.0（MIT，© mhutchie）。
- * 1) webServer 挂两条路由：
- *    GET /dsh-dev-git-graph/gg/          -> git-graph 前端入口（iframe 加载，带 __DSH_GG_BOOT__）
- *    GET /dsh-dev-git-graph/gg/<static>  -> 打包后的 JS/CSS
- *    POST /dsh-dev-git-graph/gg/api      -> 原扩展 gitGraphView.respondToMessage 的命令集（host 直跑 git 命令）
- * 2) 数据层复用 vendor/git-graph/dataSource.ts（mhutchie/vscode-git-graph，许可见 vendor/git-graph/LICENSE）。
- * 3) AI 提交信息生成：POST /dsh-dev-git-graph/gg/ai-commit —— 取暂存 diff，调 llm.stream 流式返回。
+ * dsh-dev-git-graph host entry：注册 web 路由并注入 AI 依赖。
+ *
+ * 1) webServer 挂三条路由：
+ *    POST /dsh-dev-git-graph/gg/api       -> 面板命令集（host 直跑 git 命令）
+ *    GET  /dsh-dev-git-graph/gg/ai-models -> AI 供应商与模型目录
+ *    POST /dsh-dev-git-graph/gg/ai-commit -> AI 生成提交信息（SSE 流式）
+ * 2) 提交图查询复用 vendor/git-graph/dataSource.ts（mhutchie/vscode-git-graph，
+ *    许可与本源文件不同，原文见 vendor/git-graph/LICENSE）。
+ * 3) 工作区变更、工作树与差异由 src/git-graph/ 下的本地 git 层提供。
  */
 import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';

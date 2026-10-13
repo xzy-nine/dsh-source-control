@@ -156,16 +156,6 @@ export interface RefItem {
 	readonly kind: string;
 }
 
-/** 引用标记（提交行内）。 */
-export interface RefLabel {
-	readonly key: string;
-	readonly kind: 'head' | 'branch' | 'remote' | 'tag' | 'stash';
-	readonly text: string;
-	readonly title: string;
-	readonly refType: string;
-	readonly refName: string;
-}
-
 /** 提交行右键识别出的引用信息。 */
 export interface RefInfo {
 	readonly type: string | null;
@@ -187,24 +177,6 @@ export interface PanelState {
 	detail: { commit: Commit; files: CommitFile[] } | null;
 	busy: boolean;
 	remotes: Remote[];
-}
-
-/** 打开差异时传给侧栏的描述。 */
-export interface DiffTarget {
-	readonly id: string;
-	readonly type: 'diff';
-	readonly title: string;
-	readonly diff: {
-		/** 打开方式：工作区差异、提交差异，或普通文件（未跟踪的新文件没有可比差异）。 */
-		readonly kind: 'worktree' | 'commit' | 'file';
-		readonly path: string;
-		readonly staged?: boolean;
-		readonly untracked?: boolean;
-		readonly hash?: string;
-		readonly hashFull?: string;
-		readonly subject?: string;
-		readonly repoRoot?: string | null;
-	};
 }
 
 /** AI 生成提交信息的用量统计。 */
