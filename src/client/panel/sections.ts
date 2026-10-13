@@ -6,11 +6,11 @@
 import React from 'react';
 import {
 	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular, IconSettingsOutlineRegular,
-	IconSparkleRegular,
+	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular,
+	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
-import { RepoIcon } from '../ref-icons.ts';
+import { PublishBranchIcon, RepoIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
@@ -118,6 +118,9 @@ export interface ChangesSectionProps {
 	readonly syncBehind: number;
 	readonly syncAhead: number;
 	readonly onSync: () => void;
+	/** 当前分支是纯本地分支（无上游）且无改动时，提交按钮改为发布。 */
+	readonly showPublishButton: boolean;
+	readonly onPublish: () => void;
 	readonly stagedPaths: readonly string[];
 	readonly onSubmit: () => void;
 	readonly onRefresh: () => void;
@@ -141,6 +144,7 @@ export interface ChangesSectionProps {
 export function ChangesSection({
 	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
+	showPublishButton, onPublish,
 	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 }: ChangesSectionProps): React.ReactElement {
@@ -216,10 +220,16 @@ export function ChangesSection({
 						syncBehind > 0 && React.createElement('span', null, ` ↓${syncBehind}`),
 						syncAhead > 0 && React.createElement('span', null, ` ↑${syncAhead}`),
 					)
-					: React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: busy || message.trim() === '' || stagedPaths.length === 0,
-						onClick: onSubmit,
-					}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
+					: showPublishButton
+						? React.createElement(Button, {
+							variant: 'primary', size: 'sm', disabled: busy,
+							title: '把当前分支推送到远程并建立跟踪',
+							onClick: onPublish,
+						}, React.createElement(PublishBranchIcon), '发布分支')
+						: React.createElement(Button, {
+							variant: 'primary', size: 'sm', disabled: busy || message.trim() === '' || stagedPaths.length === 0,
+							onClick: onSubmit,
+						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(

@@ -10,7 +10,7 @@ import {
 	addRemote, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, loadConfig, loadCommitFiles,
 	loadCommitMessage,
-	merge, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
 import { showCheckbox, showForm, showSelect, showText } from './dialog.ts';
@@ -429,6 +429,64 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const workAreaEmpty = state.entries.length === 0;
 	const hasRemoteDiff = currentSync !== undefined && (currentSync.ahead > 0 || currentSync.behind > 0);
 	const showSyncButton = workAreaEmpty && hasRemoteDiff;
+	/**
+	 * 当前分支是纯本地分支：有分支、无上游。
+	 *
+	 * `loadRepoSync` 无上游时 `upstream` 为 null，检出到游离头时 `branch` 为 null。
+	 */
+	const isUnpublishedBranch = currentSync !== undefined && currentSync.branch !== null && currentSync.upstream === null;
+	// 有暂存改动时优先提示提交，提交后再显示发布；无改动且未发布时显示发布。
+	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
+
+	/**
+	 * 发布当前本地分支：推送到选定远程并建立上游。
+	 *
+	 * 单一远程直接推送；多个远程弹窗选择；没有远程时弹窗输入地址后新建。
+	 */
+	const handlePublish = React.useCallback(() => {
+		if (state.busy || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
+		const branch = currentSync.branch;
+		const path = workingTreePath;
+		void (async () => {
+			let remote = '';
+			if (state.remotes.length === 1) {
+				remote = state.remotes[0].name;
+			} else if (state.remotes.length > 1) {
+				const picked = await showSelect({
+					title: '发布到远程仓库',
+					message: `把分支 ${branch} 推送到哪个远程仓库？`,
+					options: state.remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== null && item.url !== '' ? `（${item.url}）` : ''}` })),
+				});
+				if (picked === null || picked === '') return;
+				remote = picked;
+			} else {
+				const input = await showForm({
+					title: '发布到远程仓库',
+					message: '当前仓库还没有远程仓库，请输入地址后发布。',
+					fields: [
+						{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
+						{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git' },
+					],
+				});
+				if (input === null) return;
+				const name = String(input.name ?? '').trim() === '' ? 'origin' : String(input.name ?? '').trim();
+				const url = String(input.url ?? '').trim();
+				if (url === '') return;
+				await run(async () => {
+					const addError = await addRemote(path, name, url, null, false);
+					if (addError !== null) throw new Error(addError);
+					const errors = await pushBranch(path, branch, [name]);
+					if (errors.length > 0) throw new Error(errors.join('\n'));
+				});
+				return;
+			}
+			await run(async () => {
+				const errors = await pushBranch(path, branch, [remote]);
+				if (errors.length > 0) throw new Error(errors.join('\n'));
+			});
+		})();
+	}, [state.busy, state.remotes, currentSync, workingTreePath, run]);
+
 	const handleSync = (): void => {
 		if (state.busy || workingTreePath === null) return;
 		void run(async () => {
@@ -728,6 +786,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			syncBehind: currentSync?.behind ?? 0,
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
+			showPublishButton, onPublish: handlePublish,
 			stagedPaths, onSubmit: submit, onRefresh: () => { void run(() => refresh()); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths, openDiff,

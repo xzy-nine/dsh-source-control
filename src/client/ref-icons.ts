@@ -1,5 +1,5 @@
 /**
- * 本地资源图标：引用标记（标签、远端）与存储库行。
+ * 本地资源图标：引用标记（标签、远端）、存储库行与界面动作按钮。
  *
  * 资源文件取自 Google Material Symbols Outlined（24px、FILL 0、wght 400、
  * GRAD 0、opsz 24），置于 assets/icons/，由 scripts/build-client.mjs 以文本
@@ -8,12 +8,15 @@
 import React from 'react';
 import bookSvg from '../../assets/icons/book_2.svg';
 import cloudSvg from '../../assets/icons/cloud.svg';
+import cloudUploadSvg from '../../assets/icons/cloud_upload.svg';
 import tagSvg from '../../assets/icons/shoppingmode.svg';
 
 /** 引用标记的图标边长（像素）。 */
 const REF_ICON_SIZE = 12;
 /** 存储库行的图标边长（像素）。 */
 const REPO_ICON_SIZE = 14;
+/** 界面动作按钮里的图标边长（像素）。 */
+const ACTION_ICON_SIZE = 15;
 
 /**
  * 把资源 SVG 转成行内标记：改为图标边长，并让颜色随外层文字色。
@@ -50,6 +53,8 @@ const TAG_MARKUP = iconMarkup(tagSvg, REF_ICON_SIZE);
 const CLOUD_MARKUP = iconMarkup(cloudSvg, REF_ICON_SIZE);
 /** 存储库图标的行内标记。 */
 const BOOK_MARKUP = iconMarkup(bookSvg, REPO_ICON_SIZE);
+/** 发布分支图标的行内标记。 */
+const CLOUD_UPLOAD_MARKUP = iconMarkup(cloudUploadSvg, ACTION_ICON_SIZE);
 
 /**
  * 标签引用图标。
@@ -76,4 +81,13 @@ export function RemoteRefIcon(): React.ReactElement {
  */
 export function RepoIcon(): React.ReactElement {
 	return ResourceIcon(BOOK_MARKUP);
+}
+
+/**
+ * 发布分支图标（云 + 向上箭头）。
+ *
+ * @returns 图标元素。
+ */
+export function PublishBranchIcon(): React.ReactElement {
+	return ResourceIcon(CLOUD_UPLOAD_MARKUP);
 }
