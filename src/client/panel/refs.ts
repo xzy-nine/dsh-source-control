@@ -128,20 +128,21 @@ export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: R
 }
 
 /**
- * 计算用远程色标出的提交哈希集合。
+ * 计算本地与上游的分叉信息。
  *
- * 本地领先时取云端可达的全部提交，使领先部分（未推送）保持泳道原色、已同步部分标为远程色；
- * 否则只标云端独有的提交。
+ * 领先：本地 HEAD 可达而上游不可达；落后：上游可达而本地 HEAD 不可达。
+ * 两侧尖端各自对应一个指示节点：本地落后时上游尖端标云端领先，本地领先时 HEAD 标本地领先。
  *
  * @param commits - 提交列表。
  * @param head - 本地分支名。
  * @param upstream - 远程跟踪分支名（如 origin/main）。
- * @returns 需要标为远程色的哈希集合；无上游时为空集。
+ * @returns 领先与落后集合，以及两侧尖端哈希；无上游时为 null。
  */
-export function computeRemoteHashes(
+export function computeSyncMarkers(
 	commits: readonly Commit[], head: string | null, upstream: string | null,
-): Set<string> {
-	if (head === null || upstream === null) return new Set();
+): { ahead: Set<string>; behind: Set<string>; localTip: string | null; remoteTip: string | null } {
+	const none = { ahead: new Set<string>(), behind: new Set<string>(), localTip: null, remoteTip: null };
+	if (head === null || upstream === null) return none;
 	const commitByHash = new Map<string, Commit>();
 	for (const commit of commits) {
 		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
@@ -156,7 +157,7 @@ export function computeRemoteHashes(
 			if (remote.name === upstream) remoteHash = commit.hash;
 		}
 	}
-	if (localHash === null || remoteHash === null) return new Set();
+	if (localHash === null || remoteHash === null) return none;
 	// 收集各自祖先
 	const ancestorsOf = (rootHash: string): Set<string> => {
 		const seen = new Set<string>();
@@ -173,11 +174,14 @@ export function computeRemoteHashes(
 	const localAncestors = ancestorsOf(localHash);
 	const remoteAncestors = ancestorsOf(remoteHash);
 	const ahead = new Set<string>();
-	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);
-	// 本地领先时返回云端可达的全部提交，已同步部分因此标为远程色、未推送部分保持泳道原色。
-	if (ahead.size > 0) return remoteAncestors;
-	// 否则只标云端独有的提交（云端领先本地）。
 	const behind = new Set<string>();
+	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);
 	for (const hash of remoteAncestors) if (!localAncestors.has(hash)) behind.add(hash);
-	return behind;
+	// 指示节点只在实际领先/落后时出现：本地领先标 HEAD，云端领先标上游尖端。
+	return {
+		ahead,
+		behind,
+		localTip: ahead.size > 0 ? localHash : null,
+		remoteTip: behind.size > 0 ? remoteHash : null,
+	};
 }

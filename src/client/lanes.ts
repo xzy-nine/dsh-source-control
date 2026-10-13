@@ -25,6 +25,12 @@ export const MERGE_NODE_RADIUS = 6;
 export const MERGE_CORE_RADIUS = 3;
 /** 环节点的线宽。 */
 export const RING_STROKE = 1.5;
+/** 领先/落后指示节点的外圈半径。 */
+export const INDICATOR_NODE_RADIUS = 7;
+/** 领先/落后指示节点的内圈半径。 */
+export const INDICATOR_RING_RADIUS = 5;
+/** 领先/落后指示节点内圈的虚线样式。 */
+export const INDICATOR_DASH = '4,2';
 /** 泳道线宽。 */
 export const LANE_STROKE = 1.5;
 /** 线段与节点外沿之间的留白。 */
@@ -33,7 +39,7 @@ export const NODE_GAP = 0.5;
 export const ROW_OVERLAP = 0.1;
 
 /** 节点种类。 */
-export type NodeKind = 'head' | 'merge' | 'plain';
+export type NodeKind = 'head' | 'merge' | 'plain' | 'incoming' | 'outgoing';
 
 /**
  * 节点外沿半径：线段在此断开，节点内部不画线。
@@ -43,6 +49,7 @@ export type NodeKind = 'head' | 'merge' | 'plain';
  */
 export function nodeOuterRadius(kind: NodeKind): number {
 	if (kind === 'head') return HEAD_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
+	if (kind === 'incoming' || kind === 'outgoing') return INDICATOR_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
 	if (kind === 'merge') return MERGE_NODE_RADIUS + RING_STROKE / 2 + NODE_GAP;
 	return NODE_RADIUS + NODE_GAP;
 }
@@ -53,6 +60,10 @@ export interface LayoutCommit {
 	readonly hash: string;
 	/** 父提交哈希。 */
 	readonly parents?: readonly string[];
+	/** 指向本提交的本地分支名。 */
+	readonly heads?: readonly string[];
+	/** 指向本提交的远程跟踪分支。 */
+	readonly remotes?: readonly { readonly name: string }[];
 }
 
 /** 一条泳道线段。 */
@@ -65,16 +76,16 @@ export interface LaneSegment {
 	readonly fromTop: boolean;
 	/** 是否画到行底。 */
 	readonly toBottom: boolean;
-	/** 颜色下标。 */
-	readonly colour: number;
+	/** 颜色。 */
+	readonly colour: string;
 }
 
 /** 一行的布局。 */
 export interface LaneRow {
 	/** 本行提交所在泳道。 */
 	readonly lane: number;
-	/** 颜色下标。 */
-	readonly colour: number;
+	/** 颜色。 */
+	readonly colour: string;
 	/** 本行的线段。 */
 	readonly segments: readonly LaneSegment[];
 	/** 本行需要的泳道数。 */
@@ -87,6 +98,14 @@ export interface LaneLayout {
 	readonly rows: LaneRow[];
 	/** 泳道总数。 */
 	readonly laneCount: number;
+}
+
+/** 决定引用色的分支名：本地当前分支与它的上游。 */
+export interface LaneRefs {
+	/** 本地当前分支名。 */
+	readonly head?: string | null;
+	/** 上游远程跟踪分支名（如 origin/main）。 */
+	readonly upstream?: string | null;
 }
 
 /**
@@ -106,14 +125,35 @@ export interface LaneLayout {
  * 已加载部分的行不变。
  *
  * @param commits - 提交序列，按图上的从上到下顺序。
+ * @param refs - 决定引用色的本地分支与上游。
  * @returns 每行布局与泳道总数。
  */
-export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
+export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs = {}): LaneLayout {
 	/** 泳道 -> 正在等待的提交及颜色；null 表示空闲。 */
-	const lanes: Array<{ hash: string; colour: number } | null> = [];
+	const lanes: Array<{ hash: string; colour: string } | null> = [];
 	const rows: LaneRow[] = [];
+	const commitByHash = new Map<string, LayoutCommit>();
+	for (const commit of commits) commitByHash.set(commit.hash, commit);
 	let nextColour = 0;
 	let laneCount = 0;
+
+	/** 引用色：本地 HEAD 蓝、上游紫；提交不承载引用时为 null。 */
+	const refColour = (hash: string): string | null => {
+		const commit = commitByHash.get(hash);
+		if (commit === undefined) return null;
+		if (refs.head !== undefined && refs.head !== null && (commit.heads ?? []).includes(refs.head)) {
+			return HEAD_REF_COLOUR;
+		}
+		if (refs.upstream !== undefined && refs.upstream !== null
+			&& (commit.remotes ?? []).some((remote) => remote.name === refs.upstream)) {
+			return REMOTE_REF_COLOUR;
+		}
+		return null;
+	};
+	/** 无引用的泳道按 5 色池轮转分配。 */
+	const poolColour = (): string => LANE_COLOURS[nextColour++ % LANE_COLOURS.length];
+	/** 颜色优先级：本提交的引用色 → 继承的泳道色 → 色池轮转。 */
+	const colourOf = (hash: string, inherited: string | null): string => refColour(hash) ?? inherited ?? poolColour();
 
 	/** 找一条空闲泳道；没有则新开一条。 */
 	const takeLane = (): number => {
@@ -140,7 +180,7 @@ export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
 		const lane = waiting.length > 0 ? waiting[0] : takeLane();
 		const awaitedLane = awaited[lane] ?? null;
 		const inbound = awaitedLane !== null && awaitedLane.hash === commit.hash;
-		const colour = inbound && awaitedLane !== null ? awaitedLane.colour : nextColour++;
+		const colour = colourOf(commit.hash, inbound && awaitedLane !== null ? awaitedLane.colour : null);
 
 		const [firstParent, ...otherParents] = commit.parents ?? [];
 		// 父提交可能尚未加载：仍算有父提交，泳道继续等它。
@@ -152,10 +192,10 @@ export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
 			if (entry === null || entry === undefined || index === lane) continue;
 			if (entry.hash === commit.hash) lanes[index] = null;
 		}
-		lanes[lane] = hasFirstParent ? { hash: firstParent, colour } : null;
+		lanes[lane] = hasFirstParent ? { hash: firstParent, colour: refColour(firstParent) ?? colour } : null;
 
 		// 2) 其余父提交：已在等待则并入，否则各占一条泳道。
-		const parentLanes: Array<{ lane: number; colour: number }> = [];
+		const parentLanes: Array<{ lane: number; colour: string }> = [];
 		for (const parent of otherParents) {
 			let parentLane = -1;
 			for (let index = 0; index < lanes.length; index++) {
@@ -164,11 +204,15 @@ export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
 			}
 			if (parentLane === -1) {
 				parentLane = takeLane();
-				lanes[parentLane] = { hash: parent, colour: nextColour++ };
+				lanes[parentLane] = { hash: parent, colour: refColour(parent) ?? poolColour() };
+			} else {
+				// 已占用的泳道保持原色，行间不因压实变色；父提交自身带引用色时改用它。
+				const parentColour = refColour(parent);
+				if (parentColour !== null) lanes[parentLane] = { hash: parent, colour: parentColour };
 			}
 			// 颜色必须在压实前取：压实后泳道下标已移位。
 			const entry = lanes[parentLane];
-			parentLanes.push({ lane: parentLane, colour: entry === null || entry === undefined ? 0 : entry.colour });
+			parentLanes.push({ lane: parentLane, colour: entry === null || entry === undefined ? LANE_COLOURS[0] : entry.colour });
 		}
 
 		// 3) 压实：空洞右侧的泳道左移填补，记下输入索引到输出索引的映射。
@@ -235,21 +279,18 @@ export function layoutCommits(commits: readonly LayoutCommit[]): LaneLayout {
 	return { rows, laneCount };
 }
 
-/** 12 色调色板，取自 DSH 主题变量。 */
-export const LANE_COLOURS = [
-	'var(--dsw-alias-lane-0, #2f7bff)',
-	'var(--dsw-alias-lane-1, #ff3d8b)',
-	'var(--dsw-alias-lane-2, #16c46a)',
-	'var(--dsw-alias-lane-3, #ffab00)',
-	'var(--dsw-alias-lane-4, #8b5cf6)',
-	'var(--dsw-alias-lane-5, #ff4d3d)',
-	'var(--dsw-alias-lane-6, #00d4d4)',
-	'var(--dsw-alias-lane-7, #e040fb)',
-	'var(--dsw-alias-lane-8, #a3e600)',
-	'var(--dsw-alias-lane-9, #ff7a00)',
-	'var(--dsw-alias-lane-10, #5b6cff)',
-	'var(--dsw-alias-lane-11, #ffd400)',
-];
+/**
+ * 泳道色池：5 色，按序轮转分配给不承载引用的分支。
+ *
+ * 取值对应 VS Code 提交图的 `--vscode-scmGraph-foreground1..5`。
+ */
+export const LANE_COLOURS = ['#FFB000', '#DC267F', '#994F00', '#40B0A6', '#B66DFF'];
+
+/** 本地 HEAD 引用色，与 `.ggg-ref-head` / `.ggg-ref-branch` 同源。 */
+export const HEAD_REF_COLOUR = 'var(--dsw-alias-lane-0, #2f7bff)';
+
+/** 远端引用色，与 `.ggg-ref-remote` 同源。 */
+export const REMOTE_REF_COLOUR = 'var(--dsw-alias-lane-4, #8b5cf6)';
 
 /**
  * 取泳道颜色。
@@ -258,7 +299,7 @@ export const LANE_COLOURS = [
  * @returns CSS 颜色值。
  */
 export function laneColour(colour: number): string {
-	return LANE_COLOURS[colour % LANE_COLOURS.length];
+	return LANE_COLOURS[((colour % LANE_COLOURS.length) + LANE_COLOURS.length) % LANE_COLOURS.length];
 }
 
 /** 泳道中心线在行内的横向像素位置。 */

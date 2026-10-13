@@ -15,8 +15,10 @@ import {
 	MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
-	HEAD_CORE_RADIUS, HEAD_NODE_RADIUS, LANE_STROKE, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
-	RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, laneCentre, laneColour, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
+	HEAD_CORE_RADIUS, HEAD_NODE_RADIUS, INDICATOR_DASH, INDICATOR_NODE_RADIUS, INDICATOR_RING_RADIUS,
+	LANE_STROKE, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
+	REMOTE_REF_COLOUR, RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, HEAD_REF_COLOUR,
+	laneCentre, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
@@ -24,9 +26,6 @@ import { copyText } from './context-menu.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
-
-/** 云端已有提交的泳道与节点颜色，与远程标记同色；本地领先时用于标出已同步部分。 */
-const REMOTE_LANE_COLOUR = 'var(--dsw-alias-lane-4, #9b7bf6)';
 
 /**
  * 计算字符串的 MD5 哈希（用于 Gravatar 头像 URL）。
@@ -93,17 +92,16 @@ function avatarUrl(email, size = 40) {
  * @param props.row - 该行的布局。
  * @param props.isHead - 是否是当前分支指向的提交。
  * @param props.isMerge - 是否是合并提交（两个以上父提交）。
- * @param props.isRemote - 是否用远程色标出：云端独有，或本地领先时已同步到云端的部分。
+ * @param props.indicator - 领先/落后指示节点：'incoming' 云端领先、'outgoing' 本地领先。
  * @param props.isUncommitted - 是否是工作区未提交行。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge, isRemote, isUncommitted }) {
+function LaneCell({ row, isHead, isMerge, indicator, isUncommitted }) {
 	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
-	const overrideColour = isRemote ? REMOTE_LANE_COLOUR : null;
-	const colour = overrideColour ?? laneColour(row.colour);
+	const colour = row.colour;
 	const cx = laneCentre(row.lane);
-	const nodeKind = isHead ? 'head' : isMerge ? 'merge' : 'plain';
+	const nodeKind = indicator ?? (isHead ? 'head' : isMerge ? 'merge' : 'plain');
 	// 未提交行没有对应提交：不画节点，线因此贯穿整行（不留断口）。
 	const node = isUncommitted ? null : { x: cx, radius: nodeOuterRadius(nodeKind) };
 	const segments = (row.segments ?? []).flatMap((segment, index) => {
@@ -111,7 +109,7 @@ function LaneCell({ row, isHead, isMerge, isRemote, isUncommitted }) {
 		const shaped = isUncommitted && !segment.fromTop ? { ...segment, fromTop: true } : segment;
 		const geometry = segmentGeometry(shaped, node);
 		if (geometry === null) return [];
-		const stroke = overrideColour ?? laneColour(segment.colour);
+		const stroke = segment.colour;
 		// 未提交行的线用虚线，与真实提交区分。
 		const common = { stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round', ...(isUncommitted ? { strokeDasharray: '2 2' } : {}) };
 		if (geometry.kind === 'path') {
@@ -125,23 +123,33 @@ function LaneCell({ row, isHead, isMerge, isRemote, isUncommitted }) {
 		}
 		return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
 	});
-	const ring = (radius) => React.createElement('circle', {
-		key: 'ring', cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
+	const ring = (radius, key) => React.createElement('circle', {
+		key, cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
 	});
+	// 领先/落后指示：外圈实心 + 中圈透明 + 内圈虚线，虚线表示尚未同步。
+	const indicatorNodes = (nodeColour) => [
+		React.createElement('circle', { key: 'outer', cx, cy: half, r: INDICATOR_NODE_RADIUS, fill: nodeColour }),
+		React.createElement('circle', { key: 'mid', cx, cy: half, r: INDICATOR_RING_RADIUS, fill: 'none' }),
+		React.createElement('circle', {
+			key: 'inner', cx, cy: half, r: INDICATOR_RING_RADIUS, fill: 'none',
+			stroke: nodeColour, strokeWidth: RING_STROKE, strokeDasharray: INDICATOR_DASH,
+		}),
+	];
 	const nodes = isUncommitted
 		// 未提交行：节点位置用一段竖线占位（线由 segments 画到节点中心），不画节点。
 		? []
-		: isHead
-			? [
-				ring(HEAD_NODE_RADIUS),
-				React.createElement('circle', { key: 'core', cx, cy: half, r: HEAD_CORE_RADIUS, fill: 'none', stroke: colour, strokeWidth: RING_STROKE }),
-			]
-			: isMerge
-				? [
-					ring(MERGE_NODE_RADIUS),
-					React.createElement('circle', { key: 'core', cx, cy: half, r: MERGE_CORE_RADIUS, fill: colour }),
-				]
-				: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
+		: indicator === 'incoming'
+			? indicatorNodes(REMOTE_REF_COLOUR)
+			: indicator === 'outgoing'
+				? indicatorNodes(HEAD_REF_COLOUR)
+				: isHead
+					? [ring(HEAD_NODE_RADIUS, 'ring'), ring(HEAD_CORE_RADIUS, 'core')]
+					: isMerge
+						? [
+							ring(MERGE_NODE_RADIUS, 'ring'),
+							React.createElement('circle', { key: 'core', cx, cy: half, r: MERGE_CORE_RADIUS, fill: colour }),
+						]
+						: [React.createElement('circle', { key: 'dot', cx, cy: half, r: NODE_RADIUS, fill: colour })];
 	return React.createElement(
 		'svg',
 		{
@@ -390,7 +398,7 @@ function renderSubject(message, issueLinking) {
  * @returns 行元素。
  */
 function CommitRow({
-	commit, row, head, selected, isRemote, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
+	commit, row, head, selected, indicator, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
 	stats, message, onHover, widthAnchorRef,
 }) {
@@ -423,7 +431,7 @@ function CommitRow({
 			onPointerEnter: () => { if (!isUncommitted && stashSelector === null) onHover?.(commit.hash); },
 			onPointerLeave: () => { if (!isUncommitted && stashSelector === null) onHover?.(null); },
 		},
-		React.createElement(LaneCell, { row, isHead, isMerge, isRemote, isUncommitted }),
+		React.createElement(LaneCell, { row, isHead, isMerge, indicator, isUncommitted }),
 		React.createElement(
 			'span',
 			{ className: 'ggg-subject' },
@@ -467,7 +475,7 @@ function DetailGutter({ row }) {
 			key: index,
 			x1: laneCentre(segment.toLane), y1: 0,
 			x2: laneCentre(segment.toLane), y2: 100,
-			stroke: laneColour(segment.colour), strokeWidth: LANE_STROKE,
+			stroke: segment.colour, strokeWidth: LANE_STROKE,
 			vectorEffect: 'non-scaling-stroke',
 		})),
 	);
@@ -494,10 +502,10 @@ function DetailGutter({ row }) {
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
-	remoteHashes,
+	localTip, remoteTip, upstream,
 	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
 }) {
-	const layout = React.useMemo(() => layoutCommits(commits), [commits]);
+	const layout = React.useMemo(() => layoutCommits(commits, { head, upstream }), [commits, head, upstream]);
 	const graphRef = React.useRef(null);
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
@@ -507,13 +515,19 @@ export function CommitGraph({
 	const items = [];
 	for (const [index, commit] of commits.entries()) {
 		const row = layout.rows[index];
+		// 云端领先：上游尖端行标 incoming；本地领先：HEAD 行标 outgoing。
+		const indicator = remoteTip !== null && remoteTip !== undefined && commit.hash === remoteTip
+			? 'incoming'
+			: localTip !== null && localTip !== undefined && commit.hash === localTip
+				? 'outgoing'
+				: null;
 		items.push(React.createElement(CommitRow, {
 			key: commit.hash,
 			commit,
 			row,
 			head,
 			selected: commit.hash === selectedHash,
-			isRemote: remoteHashes?.has(commit.hash) ?? false,
+			indicator,
 			onSelect,
 			onContextMenu,
 			formatDate: dateFmt,

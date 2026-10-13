@@ -276,8 +276,11 @@ export interface GraphSectionProps {
 	readonly commits: readonly Commit[];
 	readonly head: string | null;
 	readonly selectedHash: string | null;
-	/** 用远程色标出的提交：云端独有，或本地领先时已同步到云端的部分。 */
-	readonly remoteHashes: ReadonlySet<string>;
+	/** 领先/落后标记：云端领先的上游尖端与本地领先的 HEAD。 */
+	readonly localTip: string | null;
+	readonly remoteTip: string | null;
+	/** 上游远程跟踪分支名，决定泳道引用色。 */
+	readonly upstream: string | null;
 	readonly moreCommitsAvailable: boolean;
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
@@ -310,7 +313,7 @@ export interface GraphSectionProps {
  */
 export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
-	remoteHashes, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
+	localTip, remoteTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
 	onOpenFilter, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
@@ -362,7 +365,9 @@ export function GraphSection({
 					commits,
 					head,
 					selectedHash,
-					remoteHashes,
+					localTip,
+					remoteTip,
+					upstream,
 					onSelect: (hash: string, additive?: boolean) => { onToggleCommit(hash, additive); },
 					onLoadMore,
 					moreCommitsAvailable,
