@@ -66,6 +66,10 @@
 
 .iconBtn:disabled{opacity:0.5;cursor:default}
 
+/* 筛选生效时按钮高亮，标题栏一眼可见当前不是全量视图。 */
+
+.filterOn{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
 /* ── 图形区标题栏仓库名（图标+名称） ─────────────────────── */
 
 .headRepo{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;padding:0 4px}

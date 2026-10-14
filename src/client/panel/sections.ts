@@ -314,7 +314,7 @@ export interface GraphSectionProps {
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
-	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null } | null;
+	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
 	readonly onToggleSection: () => void;
@@ -325,6 +325,10 @@ export interface GraphSectionProps {
 	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
 	readonly onHoverCommit: (hash: string | null) => void;
 	readonly onOpenFilter: () => void;
+	/** 引用筛选摘要：显示当前模式或已选数量。 */
+	readonly filterSummary: string;
+	/** 当前筛选是否收窄了提交范围。 */
+	readonly filterActive: boolean;
 	readonly onGoToHead: () => void;
 	readonly onFetch: () => void;
 	readonly onRefresh: () => void;
@@ -344,7 +348,7 @@ export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
 	localTip, remoteTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
-	onOpenFilter, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
+	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -367,9 +371,9 @@ export function GraphSection({
 					React.createElement('span', null, selectedNode.name),
 				),
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '筛选分支与标签',
+					type: 'button', className: cx(css.iconBtn, filterActive && css.filterOn), title: '筛选分支与标签',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
-				}, React.createElement(GitGraphIcon, { size: 14 }), '分支'),
+				}, React.createElement(GitGraphIcon, { size: 14 }), filterSummary),
 				React.createElement('button', {
 					type: 'button', className: css.iconBtn, title: '转到当前历史记录',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },
@@ -425,6 +429,7 @@ export function GraphSection({
 							React.createElement(CommitDetail, {
 								files: detail.files,
 								busy,
+								loading: detail.loading,
 								collapsed: detailCollapsed,
 								onToggle: (path: string) => onToggleChange('detail', path),
 								// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。

@@ -19,6 +19,8 @@ export interface RefFilterDialogProps {
 	readonly onSearch: (search: string) => void;
 	readonly onToggle: (name: string) => void;
 	readonly onSelectAll: (checked: boolean) => void;
+	/** 「全部」的勾选态：由筛选模式给出，不按列表反推。 */
+	readonly allChecked: boolean;
 	readonly autoChecked: boolean;
 	readonly onToggleAuto: (checked: boolean) => void;
 	readonly onClose: () => void;
@@ -30,9 +32,8 @@ export interface RefFilterDialogProps {
  * @param props - 见 {@link RefFilterDialogProps}。
  * @returns 弹窗元素。
  */
-export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, onSelectAll, autoChecked, onToggleAuto, onClose }: RefFilterDialogProps): React.ReactElement {
+export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, onSelectAll, allChecked, autoChecked, onToggleAuto, onClose }: RefFilterDialogProps): React.ReactElement {
 	const filtered = refs.filter((ref) => search === '' || ref.name.includes(search) || ref.hash.includes(search));
-	const allChecked = refs.length > 0 && refs.every((ref) => selected.has(ref.name));
 	return React.createElement(
 		'div',
 		{ className: css.filterBackdrop, onClick: onClose },

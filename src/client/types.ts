@@ -177,8 +177,9 @@ export interface PanelState {
 	 * 展开的提交详情。
 	 *
 	 * `compareWith` 非空时 `files` 是两个提交之间的改动，方向为 `compareWith → commit`。
+	 * `loading` 为 true 表示文件列表仍在读取；空提交读取完成后为 false 且 files 为空。
 	 */
-	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null } | null;
+	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
 	busy: boolean;
 	remotes: Remote[];
 }
