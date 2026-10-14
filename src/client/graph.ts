@@ -9,6 +9,7 @@
  * 合并提交为环加内点，其余为实心点。
  */
 import React from 'react';
+import md5 from 'blueimp-md5';
 import {
 	HoverCard, IconArchiveOutlineRegular, IconClockOutlineRegular,
 	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
@@ -36,59 +37,60 @@ const AUTO_LOAD_THRESHOLD = 120;
 /** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
 const LOAD_MORE_SETTLE_MS = 10000;
 
-/**
- * 计算字符串的 MD5 哈希（用于 Gravatar 头像 URL）。
- *
- * 紧凑实现：处理 UTF-8 字节，输出十六进制摘要。
- *
- * @param {string} input - 输入字符串。
- * @returns {string} 十六进制 MD5 摘要。
- */
-function md5(input) {
-	const bytes = new TextEncoder().encode(input);
-	const len = bytes.length;
-	const paddedLen = (Math.floor((len + 8) / 64) + 1) * 64;
-	const ab = new Uint8Array(paddedLen);
-	ab.set(bytes);
-	ab[len] = 0x80;
-	const bitLen = len * 8;
-	const view = new DataView(ab.buffer);
-	view.setUint32(paddedLen - 8, bitLen >>> 0, true);
-	view.setUint32(paddedLen - 4, Math.floor(bitLen / 0x100000000), true);
-	const s = new Uint32Array([7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]);
-	const K = new Uint32Array([0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8f1bbcdc, 0x6d6a3e8, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391]);
-	let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
-	for (let off = 0; off < ab.length; off += 64) {
-		const M = new Uint32Array(16);
-		for (let i = 0; i < 16; i++) M[i] = view.getUint32(off + i * 4, true);
-		let A = a0, B = b0, C = c0, D = d0;
-		for (let i = 0; i < 64; i++) {
-			let F, g;
-			if (i < 16) { F = (B & C) | (~B & D); g = i; }
-			else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
-			else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
-			else { F = C ^ (B | ~D); g = (7 * i) % 16; }
-			F = (F + A + K[i] + M[g]) >>> 0;
-			A = D; D = C; C = B;
-			B = (B + ((F << s[i % 16]) | (F >>> (32 - s[i % 16])))) >>> 0;
-		}
-		a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
-	}
-	const hex = (n) => Array.from({ length: 4 }, (_, i) => ((n >>> (i * 8)) & 0xff).toString(16).padStart(2, '0')).join('');
-	return hex(a0) + hex(b0) + hex(c0) + hex(d0);
-}
+/** GitHub 的 noreply 邮箱，形如 `ID+用户名@users.noreply.github.com` 或 `用户名@users.noreply.github.com`。 */
+const GITHUB_NOREPLY = /^(?:(\d+)\+)?([^@+]+)@users\.noreply\.github\.com$/i;
 
 /**
- * 构造 Gravatar 头像 URL。
+ * 构造作者头像的候选地址，按优先次序排列。
+ *
+ * GitHub 邮箱由 GitHub 直接提供头像；其余邮箱用 Gravatar。GitHub 在前，取不到时由
+ * Gravatar 兜底。
  *
  * @param {string} email - 作者邮箱。
  * @param {number} size - 请求的图片像素边长。
- * @returns {string|null} Gravatar URL，无邮箱时返回 null。
+ * @returns {string[]} 候选地址；无邮箱时为空数组。
  */
-function avatarUrl(email, size = 40) {
-	if (typeof email !== 'string' || email === '') return null;
-	const hash = md5(email.trim().toLowerCase());
-	return `https://www.gravatar.com/avatar/${hash}?s=${size}&d=mp`;
+function avatarUrls(email, size = 40) {
+	if (typeof email !== 'string') return [];
+	const trimmed = email.trim();
+	if (trimmed === '') return [];
+	const urls = [];
+	const noreply = GITHUB_NOREPLY.exec(trimmed);
+	if (noreply !== null) {
+		const [, id, username] = noreply;
+		// 带数字 id 时按 id 取；只有用户名时按用户名取。
+		urls.push(id !== undefined
+			? `https://avatars.githubusercontent.com/u/${id}?s=${size}&v=4`
+			: `https://avatars.githubusercontent.com/${encodeURIComponent(username)}?s=${size}&v=4`);
+	}
+	urls.push(`https://www.gravatar.com/avatar/${md5(trimmed.toLowerCase())}?s=${size}&d=mp`);
+	return urls;
+}
+
+/**
+ * 画作者头像：依次尝试候选地址，全部失败时回退到用户图标。
+ *
+ * 头像来自外部站点，取不到（离线、被拦、作者无头像）是常态，回退因此不报错也不留空白。
+ *
+ * @param props.urls - 候选地址，按优先次序。
+ * @returns 头像元素。
+ */
+function AvatarImage({ urls }) {
+	const [index, setIndex] = React.useState(0);
+	const [failed, setFailed] = React.useState(false);
+	if (failed || index >= urls.length) {
+		return React.createElement(IconUserOutlineRegular, { size: 13, className: css.cardIcon });
+	}
+	return React.createElement('img', {
+		className: css.cardAvatar,
+		src: urls[index],
+		alt: '',
+		width: 20,
+		height: 20,
+		loading: 'lazy',
+		// 该候选取不到就换下一个；候选用尽时标记失败。
+		onError: () => { if (index + 1 < urls.length) setIndex(index + 1); else setFailed(true); },
+	});
 }
 
 /**
@@ -295,9 +297,10 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown,
 	// 首行是标题，保持卡片自身字号；其余是正文，字号更小、行距更紧，且不留空行。
 	const [titleLine, ...bodyLines] = fullMessage.split('\n');
 	const body = bodyLines.filter((line) => line.trim() !== '');
-	const avatar = showAvatars && !isUncommitted ? avatarUrl(commit.email ?? commit.author, 40) : null;
-	const avatarEl = avatar !== null
-		? React.createElement('img', { className: css.cardAvatar, src: avatar, alt: '', width: 20, height: 20, loading: 'lazy' })
+	const avatars = showAvatars && !isUncommitted ? avatarUrls(commit.email ?? commit.author, 40) : [];
+	// key 取首个候选：换作者时重建，尝试进度不跨提交沿用。
+	const avatarEl = avatars.length > 0
+		? React.createElement(AvatarImage, { key: avatars[0], urls: avatars })
 		: React.createElement(IconUserOutlineRegular, { size: 13, className: css.cardIcon });
 	return React.createElement(
 		'div',
