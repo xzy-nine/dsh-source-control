@@ -13,7 +13,7 @@ import {
 } from '../api.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
 import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
-import { githubCommitUrl } from './github.ts';
+import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import type { Commit, Remote } from '../types.ts';
 
 /** 引用菜单识别出的目标。 */
@@ -561,7 +561,10 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
  */
 function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	const { commit, deps, isUncommitted } = ctx;
-	const githubUrl = isUncommitted ? null : githubCommitUrl(deps.remotes, commit.hash);
+	// 只有已同步到 GitHub 远程的提交才有对应网页：本地独有的提交打开会得到 404。
+	const githubRemotes = githubRemoteNames(deps.remotes);
+	const onGithub = ctx.remoteBranches.some((branch) => githubRemotes.has(remoteNameOfBranch(branch)));
+	const githubUrl = isUncommitted || !onGithub ? null : githubCommitUrl(deps.remotes, commit.hash);
 	const byId = (id: string): ContextMenuItem | null => ACTION_BY_ID.get(id)?.build(ctx) ?? null;
 	const push = (items: ContextMenuItem[], item: ContextMenuItem | null): void => { if (item !== null) items.push(item); };
 	/**

@@ -41,7 +41,7 @@ The commit lane graph; its section header collapses on click. The divider above 
 
 #### Commit context menu
 
-Open on GitHub (shown only when a GitHub remote exists), Check out to (a submenu listing the branches on that commit, shown only at a branch tip), Check out (detached), Create branch, Delete branch, Create tag, Delete tag, Cherry-pick, Revert, Reset current branch to here, Merge into current branch, Rebase current branch onto here, Copy hash, Copy commit message, Create archive.
+Open on GitHub (shown only when a remote branch of a GitHub remote contains that commit), Check out to (a submenu listing the branches on that commit, shown only at a branch tip), Check out (detached), Create branch, Delete branch, Create tag, Delete tag, Cherry-pick, Revert, Reset current branch to here, Merge into current branch, Rebase current branch onto here, Copy hash, Copy commit message, Create archive.
 
 - **Delete branch** lists the local and remote branches **containing that commit** — a branch is identified only by its tip, so a mid-history commit would otherwise have no branch to delete.
 - **Delete tag** is hidden when the commit has no tags.
@@ -69,6 +69,8 @@ A selection control switches a remote address between protocols inside the edit 
 - Remote Configuration accepts `git@host:owner/repo.git` and `ssh://` URLs; a **Protocol** segmented control below the URL field rewrites the field in place, together with the push URL when it points at the same host.
 - The rewrite happens in the form only: open a remote's pencil button, switch the protocol, and save to write it to the repository configuration.
 - Both the GitHub and the manual page of the publish dialog offer a protocol choice. The manual page converts the address to the selected protocol (HTTPS ⇄ SSH); the GitHub page runs `gh repo create` with it, so the new remote is created in that form from the start.
+
+The GitHub entry points (**Open on GitHub**, creating a pull request) recognise remotes written in all three forms — HTTPS, scp, and `ssh://` — so they keep working after a protocol switch.
 
 Switching to SSH is preceded by a local SSH status check: the `ssh` client, the private keys under `~/.ssh`, and whether the target host accepts this machine's key (non-interactive, with a connection timeout). When not ready, the reason is shown and the remote configuration is left untouched; switching back to HTTPS needs no local SSH.
 
