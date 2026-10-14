@@ -37,9 +37,11 @@
 
 .refBranch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#2f7bff) 18%,transparent);color:var(--dsw-alias-lane-0,#2f7bff)}
 
+/* 远端分支与贮藏默认只占一个图标位；展开由 .refWide 放宽。标记始终带名称。 */
+
 .refRemote{width:17px;background:var(--dsw-alias-lane-4,#8b5cf6);color:#fff}
 
-.refTag{width:17px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
+.refTag{padding:0 8px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
 
 .refStash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
 

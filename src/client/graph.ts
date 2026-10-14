@@ -216,8 +216,8 @@ function refLabels(commit, head) {
 	return labels;
 }
 
-/** 圆形标记的图标：只有图标、名称进 title 的种类。 */
-const ROUND_KINDS = new Set(['remote', 'tag', 'stash']);
+/** 默认只显示图标、名称进 title 的种类；本地分支、HEAD 与标记始终带名称。 */
+const ROUND_KINDS = new Set(['remote', 'stash']);
 
 /** 引用种类到样式类名的对应；种类来自 refLabels。 */
 const REF_CLASSES: Record<string, string> = {
@@ -228,7 +228,7 @@ const REF_CLASSES: Record<string, string> = {
  * 画一个引用标记。
  *
  * @param props.label - refLabels 给出的标记。
- * @param props.expanded - 是否展开为「图标 + 名称」药丸；默认只有分支带名称。
+ * @param props.expanded - 是否把默认收起的种类展开为「图标 + 名称」药丸。
  * @returns 标记元素。
  */
 function RefChip({ label, expanded = false }) {
@@ -452,7 +452,11 @@ function CommitRow({
 		labels.length > 0 && React.createElement(
 			'span',
 			{ className: css.refs },
-			...labels.map((label) => React.createElement(RefChip, { key: label.key, label })),
+			// 只有一个标记时展开成「图标 + 名称」：远端分支、标记与贮藏默认只显示图标，
+			// 独占一行时没有并排的宽度压力，名称直接给出（过长由 .refText 省略）。
+			...labels.map((label) => React.createElement(RefChip, {
+				key: label.key, label, expanded: labels.length === 1,
+			})),
 		),
 	);
 	// 未提交行没有可展示的提交信息，直接用行本身，不套悬停卡片。
