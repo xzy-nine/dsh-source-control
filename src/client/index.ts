@@ -15,7 +15,7 @@ import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource
 import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-sidebar-diff.ts';
 import { fileDiffContent } from './api.ts';
 import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
-import { GitGraphIcon } from './plugin-icon.ts';
+import { PluginLogoIcon } from './plugin-icon.ts';
 import css from './css/index.module.css';
 import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
@@ -106,8 +106,8 @@ function GitGraphTitle() {
 	return React.createElement(
 		'span',
 		{ className: css.chip },
-		// 标签页头上的图标：比正文里的图标小一档，避免在标签条里显得过大。
-		React.createElement(GitGraphIcon, { size: 14 }),
+		// 标签页头上的图标：与宿主标签条里同类图标（16）等大。
+		React.createElement(PluginLogoIcon, { size: 18 }),
 		React.createElement('span', null, TAB_TITLE),
 	);
 }
@@ -120,7 +120,7 @@ function GitGraphHeaderAction(props) {
 			type: 'button', className: css.open, title: TAB_TITLE, 'aria-label': TAB_TITLE,
 			onClick: props.open,
 		},
-		React.createElement(GitGraphIcon, { size: 16 }),
+		React.createElement(PluginLogoIcon, { size: 20 }),
 	);
 }
 
@@ -243,7 +243,7 @@ export function apply(ctx) {
 				order: 30,
 				title: () => TAB_TITLE,
 				description: () => '当前会话工作区的提交图',
-				icon: GitGraphIcon,
+				icon: PluginLogoIcon,
 			}],
 		}));
 		ctx.effect(() => rightTabs.register({

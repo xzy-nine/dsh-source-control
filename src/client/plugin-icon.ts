@@ -1,9 +1,14 @@
 /**
- * 插件图标：侧栏页标识与分支名前的小图标共用。
+ * 插件图标：插件标识用 logo，分支语义用走向图。
  *
  * 独立成模块，避免 repo-row / graph 反向依赖 index（index 已导入 panel）。
+ * logo 取自 assets/icons/plugin-logo.svg，由 scripts/build-client.mjs 以文本形式
+ * 内联进 lib/client.js，运行时不访问网络。
  */
 import React from 'react';
+import logo from '../../assets/icons/plugin-logo.svg';
+import css from './css/shared.module.css';
+import { cx } from './css/cx.ts';
 
 /** 插件图标的属性。 */
 export interface PluginIconProps {
@@ -14,7 +19,37 @@ export interface PluginIconProps {
 }
 
 /**
- * 画插件图标：分支走向。
+ * logo 的行内标记：只去掉根元素上的尺寸，其余内容（含背景矩形）原样保留。
+ *
+ * 不能整篇按 `width` / `height` 属性剥离：logo 的背景圆角矩形自带这两个属性，
+ * 一并删掉会让它塌成 0 尺寸、背景随之消失。
+ */
+const LOGO_MARKUP = logo
+	.replace(/^<svg\b[^>]*>/, (tag) => tag.replace(/\s(?:width|height)="[^"]*"/g, ''))
+	.replace(/\s+/g, ' ')
+	.trim();
+
+/**
+ * 画插件 logo：圆角蓝框内是带 Logo 的提交图。
+ *
+ * 用于插件自身的标识：侧栏页标签、会话 header 入口与引导页条目。
+ *
+ * @param props - 见 {@link PluginIconProps}。
+ * @returns 图标元素。
+ */
+export function PluginLogoIcon({ size = 16, className }: PluginIconProps): React.ReactElement {
+	const markup = LOGO_MARKUP.replace('<svg', `<svg width="${size}" height="${size}"`);
+	return React.createElement('span', {
+		className: cx(css.icon, className),
+		'aria-hidden': 'true',
+		dangerouslySetInnerHTML: { __html: markup },
+	});
+}
+
+/**
+ * 画分支走向图标：一条主干与一条并入的分支。
+ *
+ * 用于分支语义：提交行上的分支标记、引用筛选、仓库行分支名与「筛选分支与标签」按钮。
  *
  * @param props - 见 {@link PluginIconProps}。
  * @returns 图标元素。
