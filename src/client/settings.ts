@@ -58,7 +58,6 @@ export function defaultSettings(): Settings {
 		issueLinkingConfig: null,
 		markdown: true,
 		muteMergeCommits: false,
-		combineLocalAndRemoteBranchLabels: true,
 		fetchAndPrune: false,
 		fetchAndPruneTags: false,
 		onRepoLoadScrollToHead: false,
@@ -393,11 +392,6 @@ export function SettingsPanel({
 				label: '静音合并提交',
 				checked: settings.muteMergeCommits,
 				onChange: (muteMergeCommits) => patch({ muteMergeCommits }),
-			}),
-			React.createElement(ToggleRow, {
-				label: '合并本地与远程分支标签',
-				checked: settings.combineLocalAndRemoteBranchLabels,
-				onChange: (combineLocalAndRemoteBranchLabels) => patch({ combineLocalAndRemoteBranchLabels }),
 			}),
 			React.createElement(ToggleRow, {
 				label: '抓取时修剪已删除远程分支',

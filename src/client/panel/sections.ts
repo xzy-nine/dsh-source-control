@@ -378,7 +378,6 @@ export function GraphSection({
 					markdown: settings.markdown,
 					showAvatars: settings.showAvatars,
 					muteMergeCommits: settings.muteMergeCommits,
-					combineLocalAndRemoteBranchLabels: settings.combineLocalAndRemoteBranchLabels,
 					graphColours: settings.graphColours,
 					commitStats: statsByHash,
 					commitMessages: messageByHash,

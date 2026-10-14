@@ -172,13 +172,14 @@ function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 /**
  * 取提交的引用标记，并附上用于右键识别的类型与名称。
  *
+ * 本地分支与远程分支各自成标记：同名的一对分别显示，便于确认远程分支的存在。
+ *
  * @param commit - 提交。
  * @param head - 当前 HEAD 指向的分支。
  * @returns 标记列表：{ key, kind, text, title, refType, refName }。
  */
-function refLabels(commit, head, combineLocalAndRemote) {
+function refLabels(commit, head) {
 	const labels = [];
-	const localNames = new Set(commit.heads ?? []);
 	for (const name of commit.heads ?? []) {
 		const isHead = head !== null && name === head;
 		labels.push({
@@ -191,10 +192,6 @@ function refLabels(commit, head, combineLocalAndRemote) {
 		});
 	}
 	for (const remote of commit.remotes ?? []) {
-		if (combineLocalAndRemote) {
-			const short = remote.name.replace(/^[^/]+\//, '');
-			if (localNames.has(short)) continue;
-		}
 		labels.push({
 			key: `r:${remote.name}`, kind: 'remote', text: remote.name,
 			title: `远程分支 ${remote.name}`, refType: 'remote', refName: remote.name,
@@ -405,13 +402,13 @@ function renderSubject(message, issueLinking) {
  */
 function CommitRow({
 	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
-	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels,
+	markdown, showAvatars, muteMergeCommits,
 	stats, message, onHover, widthAnchorRef,
 }) {
 	const isUncommitted = commit.hash === '*';
 	// 贮藏标记行不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
 	const stashSelector = commit.stash?.selector ?? null;
-	const labels = refLabels(commit, head, combineLocalAndRemoteBranchLabels);
+	const labels = refLabels(commit, head);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
 	const isMuted = muteMergeCommits && isMerge && !isHead;
@@ -526,7 +523,7 @@ export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	localTip, remoteTip, upstream,
-	markdown, showAvatars, muteMergeCommits, combineLocalAndRemoteBranchLabels, graphColours,
+	markdown, showAvatars, muteMergeCommits, graphColours,
 }) {
 	const layout = React.useMemo(
 		() => layoutCommits(commits, { head, upstream, localTip, remoteTip }),
@@ -609,7 +606,6 @@ export function CommitGraph({
 			markdown,
 			showAvatars,
 			muteMergeCommits,
-			combineLocalAndRemoteBranchLabels,
 			stats: commitStats?.get(commit.hash) ?? null,
 			message: commitMessages?.get(commit.hash) ?? null,
 			onHover: onHoverCommit,
