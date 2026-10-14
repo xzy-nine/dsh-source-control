@@ -11,6 +11,7 @@ import {
 	IconChevronRightOutlineRegular, Menu, type MenuEntry, type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import css from './css/context-menu.module.css';
+import { SUBMENU_FLIP_ATTR } from './css/state-classes.ts';
 /**
  * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
  *
@@ -183,6 +184,35 @@ function toSubItems(
 }
 
 /**
+ * 向右展开二级菜单所需的右侧余量（像素）。
+ *
+ * 按宿主 Menu 原语的几何估算：主卡片最宽 360、卡片与二级卡片间隔 10、
+ * 二级卡片最小宽度 163、视口留白 12。估算偏保守，最坏只是提前左翻，
+ * 不会翻进新的溢出。
+ */
+const SUBMENU_RIGHT_ROOM = 400;
+
+/**
+ * 二级菜单的展开方向令牌。
+ *
+ * 宿主原语把二级菜单固定为向上、向右展开且不做视口夹取，在本插件贴右缘的面板里
+ * 向右展开必被裁掉。
+ *
+ * @param x - 触发点横坐标。
+ * @param y - 触发点纵坐标。
+ * @param vw - 视口宽度。
+ * @param vh - 视口高度。
+ * @returns 空白分隔的令牌：`left` 改向左展开，`down` 改向下展开；空串表示沿用原语默认。
+ */
+function submenuFlipTokens(x: number, y: number, vw: number, vh: number): string {
+	const tokens: string[] = [];
+	// 触发点在上半屏时卡片向下展开，二级菜单仍向上展开就会顶出视口上缘。
+	if (y < vh / 2) tokens.push('down');
+	if (x + SUBMENU_RIGHT_ROOM > vw) tokens.push('left');
+	return tokens.join(' ');
+}
+
+/**
  * 在光标位置弹出右键菜单。
  *
  * @param options - 见 {@link ShowContextMenuOptions}。
@@ -197,7 +227,15 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 	const mount = document.createElement('div');
 	document.body.appendChild(mount);
 	const root = createRoot(mount);
+	// 只有带二级菜单的菜单才需要翻转方向；属性存在期间样式才生效。
+	const hasSubmenu = visibleItems.some((item) => (item.children ?? []).some((child) => child.visible !== false));
+	const flipTokens = hasSubmenu ? submenuFlipTokens(x, y, window.innerWidth, window.innerHeight) : '';
+	if (flipTokens !== '') document.body.setAttribute(SUBMENU_FLIP_ATTR, flipTokens);
+	let closed = false;
 	const close = (): void => {
+		if (closed) return;
+		closed = true;
+		document.body.removeAttribute(SUBMENU_FLIP_ATTR);
 		root.unmount();
 		mount.remove();
 		onClose?.();

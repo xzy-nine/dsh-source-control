@@ -11,3 +11,25 @@
 .menuLabelText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .menuChevron{flex:none;color:var(--dsw-alias-label-tertiary)}
+
+/* ── 二级菜单的展开方向 ─────────────────────────────────── */
+/* Menu 原语把二级菜单固定为向上、向右展开（bottom:-4px、left:calc(100% + 10px)），
+   且不做视口夹取；主列表虽由原语夹取，二级菜单仍会在窗口右缘被整个裁掉，
+   而本插件的面板正贴着右缘。以下规则只在该属性存在期间生效，属性由
+   context-menu.ts 在同一次打开内设置与清除，因此不影响宿主或其他插件的菜单。
+
+   选择器不含类名，故不经 CSS 模块作用域化。 */
+
+body[data-dsh-source-control-submenu~='left'] div[role='menu'] div[role='menu']{left:auto;right:calc(100% + 10px)}
+
+/* 悬停通道跟着卡片移到父行左侧，否则指针穿过间隙时二级菜单会先关闭。 */
+
+body[data-dsh-source-control-submenu~='left'] div[role='menu'] div[role='menu']::before{left:auto;right:-10px}
+
+/* 向上展开在靠上位置会顶出视口上缘，改为自父行向下展开。 */
+
+body[data-dsh-source-control-submenu~='down'] div[role='menu'] div[role='menu']{top:-4px;bottom:auto}
+
+/* 向左展开时入口箭头随之改指左侧。 */
+
+body[data-dsh-source-control-submenu~='left'] .menuChevron{transform:rotate(180deg)}
