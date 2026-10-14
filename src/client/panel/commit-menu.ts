@@ -62,6 +62,8 @@ interface MenuContext {
 	readonly localBranches: readonly string[];
 	/** 以该提交为尖端的本地分支。 */
 	readonly tipBranches: readonly string[];
+	/** 以该提交为尖端的远程分支，形态为 `远程名/分支名`。 */
+	readonly tipRemoteBranches: readonly string[];
 	/** 包含该提交的远程分支。 */
 	readonly remoteBranches: readonly string[];
 	readonly tagNames: readonly string[];
@@ -89,6 +91,16 @@ interface MenuAction {
 	 * @returns 菜单项；该上下文下不适用时为 null。
 	 */
 	build(ctx: MenuContext): ContextMenuItem | null;
+}
+
+/**
+ * 去掉远程分支短名的远程名前缀。
+ *
+ * @param name - 远程分支短名，形态为 `远程名/分支名`。
+ * @returns 分支名。
+ */
+function shortBranchName(name: string): string {
+	return name.replace(/^[^/]+\//, '');
 }
 
 /**
@@ -139,14 +151,26 @@ const ACTIONS: readonly MenuAction[] = [
 					onClick: () => { void deps.run(async () => { await checkoutBranch(ctx.repo, name, null); }); },
 				};
 			}
-			if (ctx.tipBranches.length === 0) return null;
+			/*
+			 * 提交行右键：本地尖端分支与远程尖端分支都列。远程分支按去掉远程名的短名检出，由 git 决定
+			 * 是新建跟踪分支（本地没有同名分支）还是检出已有本地分支；本地已有同名尖端分支时不重复列出。
+			 */
+			const localNames = new Set(ctx.tipBranches);
+			const remoteTips = ctx.tipRemoteBranches.filter((name) => !localNames.has(shortBranchName(name)));
+			if (localNames.size === 0 && remoteTips.length === 0) return null;
 			return {
 				title: '签出到',
-				children: ctx.tipBranches.map((name) => ({
-					title: name === deps.head ? `${name}（当前）` : name,
-					disabled: name === deps.head,
-					onClick: () => { void deps.run(async () => { await checkoutBranch(ctx.repo, name, null); }); },
-				})),
+				children: [
+					...ctx.tipBranches.map((name) => ({
+						title: name === deps.head ? `${name}（当前）` : name,
+						disabled: name === deps.head,
+						onClick: () => { void deps.run(async () => { await checkoutBranch(ctx.repo, name, null); }); },
+					})),
+					...remoteTips.map((name) => ({
+						title: `${name}（远程）`,
+						onClick: () => { void deps.run(async () => { await checkoutBranch(ctx.repo, shortBranchName(name), null); }); },
+					})),
+				],
 			};
 		},
 	},
@@ -298,7 +322,7 @@ const ACTIONS: readonly MenuAction[] = [
 		build: (ctx) => {
 			if (ctx.ref === null) return null;
 			const name = ctx.ref.name;
-			const short = name.replace(/^[^/]+\//, '');
+			const short = shortBranchName(name);
 			return {
 				title: '检出远程分支…',
 				onClick: async () => {
@@ -314,7 +338,7 @@ const ACTIONS: readonly MenuAction[] = [
 		build: (ctx) => {
 			if (ctx.ref === null) return null;
 			const name = ctx.ref.name;
-			const short = name.replace(/^[^/]+\//, '');
+			const short = shortBranchName(name);
 			return {
 				title: '从远程分支创建本地分支…',
 				onClick: async () => {
@@ -542,6 +566,10 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 		deps, commit, ref, repo, isUncommitted,
 		localBranches: containing.local.length > 0 ? containing.local : (commit.heads ?? []),
 		tipBranches: isUncommitted ? [] : (commit.heads ?? []),
+		// 远程 HEAD 是指向分支的符号引用，不作为可签出的目标。
+		tipRemoteBranches: isUncommitted
+			? []
+			: (commit.remotes ?? []).map((remote) => remote.name).filter((name) => !name.endsWith('/HEAD')),
 		remoteBranches: containing.remote.length > 0
 			? containing.remote
 			: (commit.remotes ?? []).map((remote) => remote.name),

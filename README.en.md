@@ -41,7 +41,7 @@ The commit lane graph; its section header collapses on click. The divider above 
 
 #### Commit context menu
 
-Open on GitHub (shown only when a remote branch of a GitHub remote contains that commit), Check out to (a submenu listing the branches on that commit, shown only at a branch tip), Check out (detached), Create branch, Delete branch, Create tag, Delete tag, Cherry-pick, Revert, Reset current branch to here, Merge into current branch, Rebase current branch onto here, Copy hash, Copy commit message, Create archive.
+Open on GitHub (shown only when a remote branch of a GitHub remote contains that commit), Check out to (a submenu listing the local and remote branches whose tip is that commit, shown only at a branch tip; picking a remote branch checks it out by its short name, so git creates a tracking branch when no local branch of that name exists), Check out (detached), Create branch, Delete branch, Create tag, Delete tag, Cherry-pick, Revert, Reset current branch to here, Merge into current branch, Rebase current branch onto here, Copy hash, Copy commit message, Create archive.
 
 - **Delete branch** lists the local and remote branches **containing that commit** — a branch is identified only by its tip, so a mid-history commit would otherwise have no branch to delete.
 - **Delete tag** is hidden when the commit has no tags.
