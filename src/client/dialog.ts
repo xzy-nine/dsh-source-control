@@ -10,6 +10,8 @@ import {
 	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown, type DropdownOption } from './ui/dropdown.ts';
+import css from './css/dialog.module.css';
+import { cx } from './css/cx.ts';
 
 export type { DropdownOption };
 
@@ -64,7 +66,7 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(false) }, cancelLabel),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', className: danger ? 'ggg-btn-danger' : undefined,
+						variant: 'primary', size: 'sm', className: danger ? css.btnDanger : undefined,
 						onClick: () => finish(true),
 					}, confirmLabel),
 				),
@@ -98,7 +100,7 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 				onClose: () => finish(),
 				title,
 				closeLabel: '关闭',
-				children: React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+				children: React.createElement('div', { className: css.dialogHint }, message),
 				footer: React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => finish() }, closeLabel),
 			});
 		}
@@ -164,6 +166,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 	return runDialog<string | null>((finish) => {
 		function Content(): React.ReactElement {
 			const [text, setText] = React.useState(value);
+			const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -172,13 +175,17 @@ export function showText({ title, message = '', label = '', value = '', placehol
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
-					label !== '' && React.createElement('label', { className: 'ggg-field-label', htmlFor: 'ggg-text-input' }, label),
+					message !== '' && React.createElement('div', { className: css.dialogHint }, message),
+					label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
 					React.createElement(Input, {
 						id: 'ggg-text-input',
 						value: text,
 						placeholder,
 						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setText(event.target.value),
+						// 单行输入框里回车即确认：换行没有意义。
+						onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+							if (event.key === 'Enter') { event.preventDefault(); submit(); }
+						},
 					}),
 				),
 				footer: React.createElement(
@@ -186,7 +193,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: text.trim() === '', onClick: () => finish(text.trim()),
+						variant: 'primary', size: 'sm', disabled: text.trim() === '', onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -222,7 +229,7 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
+					message !== '' && React.createElement('div', { className: css.dialogHint }, message),
 					React.createElement(SegmentedControl, {
 						id: 'ggg-select',
 						label: title,
@@ -256,6 +263,7 @@ interface FormFieldBase {
 /** 表单字段定义。 */
 export type FormField =
 	| (FormFieldBase & { readonly type: 'text'; readonly placeholder?: string; readonly value?: string })
+	| (FormFieldBase & { readonly type: 'textarea'; readonly placeholder?: string; readonly value?: string })
 	| (FormFieldBase & { readonly type: 'checkbox'; readonly value?: boolean })
 	| (FormFieldBase & { readonly type: 'select'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
 	| (FormFieldBase & { readonly type: 'dropdown'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
@@ -286,6 +294,7 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 			}
 			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
 			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
+			const submit = (): void => finish(values);
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -294,15 +303,15 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 				children: React.createElement(
 					React.Fragment,
 					null,
-					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
-					...fields.map((field) => buildField(field, values, setField)),
+					message !== '' && React.createElement('div', { className: css.dialogHint }, message),
+					...fields.map((field) => buildField(field, values, setField, submit)),
 				),
 				footer: React.createElement(
 					React.Fragment,
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', onClick: () => finish(values),
+						variant: 'primary', size: 'sm', onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -379,6 +388,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
 				})),
 			];
+			const submit = (): void => finish({ page: active.value, ...activeValues });
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -393,8 +403,8 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 						onChange: setActiveValue,
 						items: tabItems,
 					}),
-					active.message !== undefined && active.message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, active.message),
-					...active.fields.map((field) => buildField(field, activeValues, setField)),
+					active.message !== undefined && active.message !== '' && React.createElement('div', { className: css.dialogHint }, active.message),
+					...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
 				),
 				footer: React.createElement(
 					React.Fragment,
@@ -402,7 +412,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm',
-						onClick: () => finish({ page: active.value, ...activeValues }),
+						onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -430,8 +440,8 @@ function DropdownField({ name, label, options, value, onChange }: {
 }): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-field' },
-		label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, label),
+		{ className: css.field },
+		label !== undefined && React.createElement('label', { className: css.fieldLabel }, label),
 		React.createElement(Dropdown, { id: `ggg-field-${name}`, options, value, onChange }),
 	);
 }
@@ -442,40 +452,68 @@ function DropdownField({ name, label, options, value, onChange }: {
  * @param field - 字段定义。
  * @param values - 当前全部字段值。
  * @param setField - 字段赋值回调。
+ * @param onEnter - 末位回车：与点确认按钮同义。
  * @returns 字段元素；条件不满足时返回 null。
  */
-function buildField(field: FormField, values: Record<string, unknown>, setField: (name: string, value: unknown) => void): React.ReactElement | null {
+function buildField(
+	field: FormField,
+	values: Record<string, unknown>,
+	setField: (name: string, value: unknown) => void,
+	onEnter: () => void,
+): React.ReactElement | null {
 	if (field.visibleWhen !== undefined && !field.visibleWhen(values)) return null;
 	const current = values[field.name];
 	if (field.type === 'text') {
 		return React.createElement(
 			'div',
-			{ key: field.name, className: 'ggg-field' },
-			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
+			{ key: field.name, className: css.field },
+			field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
 			React.createElement(Input, {
 				value: typeof current === 'string' ? current : '',
 				placeholder: field.placeholder ?? '',
 				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setField(field.name, event.target.value),
+				// 单行字段里回车即确认：该位置没有换行语义。
+				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+					if (event.key === 'Enter') { event.preventDefault(); onEnter(); }
+				},
+			}),
+		);
+	}
+	if (field.type === 'textarea') {
+		return React.createElement(
+			'div',
+			{ key: field.name, className: css.field },
+			field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
+			React.createElement('textarea', {
+				className: css.fieldTextarea,
+				value: typeof current === 'string' ? current : '',
+				placeholder: field.placeholder ?? '',
+				rows: 4,
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => setField(field.name, event.target.value),
+				// 有换行语义的字段：回车确认，Shift+回车插入换行。
+				onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+					if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onEnter(); }
+				},
 			}),
 		);
 	}
 	if (field.type === 'checkbox') {
+		// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
 		return React.createElement(
-			'label',
-			{ key: field.name, className: 'ggg-field ggg-field-inline' },
+			'div',
+			{ key: field.name, className: cx(css.field, css.fieldInline) },
 			React.createElement(Checkbox, {
 				checked: current === true,
 				onChange: (next: boolean) => setField(field.name, next),
 				label: field.label ?? '',
 			}),
-			React.createElement('span', { className: 'ggg-field-text' }, field.label),
 		);
 	}
 	if (field.type === 'select') {
 		return React.createElement(
 			'div',
-			{ key: field.name, className: 'ggg-field' },
-			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
+			{ key: field.name, className: css.field },
+			field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
 			React.createElement(SegmentedControl, {
 				id: `ggg-field-${field.name}`,
 				label: field.label ?? field.name,
@@ -499,13 +537,14 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 		const selected = Array.isArray(current) ? current as string[] : [];
 		return React.createElement(
 			'div',
-			{ key: field.name, className: 'ggg-field' },
-			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
+			{ key: field.name, className: css.field },
+			field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
 			...field.options.map((option) => {
 				const checked = selected.includes(option.value);
+				// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
 				return React.createElement(
-					'label',
-					{ key: option.value, className: 'ggg-field ggg-field-inline' },
+					'div',
+					{ key: option.value, className: cx(css.field, css.fieldInline) },
 					React.createElement(Checkbox, {
 						checked,
 						onChange: (next: boolean) => {
@@ -516,7 +555,6 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 						},
 						label: option.label,
 					}),
-					React.createElement('span', { className: 'ggg-field-text' }, option.label),
 				);
 			}),
 		);

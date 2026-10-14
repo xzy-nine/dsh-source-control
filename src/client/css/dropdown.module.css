@@ -1,0 +1,9 @@
+/*
+ * 下拉触发器。
+ */
+
+.setDropdown{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);cursor:pointer}
+
+.setDropdown:hover{background:var(--dsw-alias-interactive-bg-hover)}
+
+.setDropdownText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}

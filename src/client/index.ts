@@ -12,10 +12,12 @@ import React from 'react';
 import { GitGraphPanel } from './panel.ts';
 import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
+import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-sidebar-diff.ts';
 import { fileDiffContent } from './api.ts';
+import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
-import { STYLES } from './styles.ts';
-
+import css from './css/index.module.css';
+import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-source-control/panel';
 /** 页类型 kind：`ctx.sidebarRight.openTab` 用它打开。 */
@@ -29,16 +31,6 @@ const HEADER_ACTION_ORDER = -5;
 /** git-diff 页类型身份。 */
 const DIFF_TAB_ID = 'dsh-source-control/diff';
 const DIFF_TAB_KIND = 'devGitGraphDiff';
-
-/** 样式只注入一次。 */
-function ensureStyle() {
-	if (typeof document === 'undefined') return;
-	if (document.getElementById('dsh-source-control-style') !== null) return;
-	const element = document.createElement('style');
-	element.id = 'dsh-source-control-style';
-	element.textContent = STYLES;
-	document.head.appendChild(element);
-}
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
 const EMPTY_SESSIONS = (selector) => selector({ byId: {} });
@@ -58,6 +50,20 @@ function GitGraphTab(props) {
 		const entry = sessions?.byId?.[sessionId];
 		return entry?.cwd;
 	});
+	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
+	const pickDirectory = React.useMemo(() => {
+		const service = props.uiWorkspace;
+		return service === undefined || typeof service.pickDirectory !== 'function'
+			? undefined
+			: () => service.pickDirectory() as Promise<string | null>;
+	}, [props.uiWorkspace]);
+	// 终端由 ui-sidebar-terminal 与 terminal-controller 提供；未装载时提示手动克隆。
+	const runInTerminal = React.useMemo(() => {
+		if (props.terminals === undefined || props.sidebarRightService === undefined) return undefined;
+		return (targetSessionId: string, command: string) => runInTerminalCommand(
+			{ sidebarRight: props.sidebarRightService, terminals: props.terminals }, targetSessionId, command,
+		);
+	}, [props.terminals, props.sidebarRightService]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
@@ -75,6 +81,11 @@ function GitGraphTab(props) {
 			}
 			return;
 		}
+		// 打开这一刻才探测：设置页的启用开关要等设置 RPC 返回，提前判定会把「暂不可用」记成可用，
+		// 而该插件对已关闭的类型是静默 no-op，届时点击会毫无反应。
+		const betterSidebar = resolveBetterSidebarDiff(props.getBetterSidebar?.());
+		// 换算不出的差异（两提交区间对比、缺哈希）同样返回 false，一并回退。
+		if (openDiffInBetterSidebar(betterSidebar, diff, { sessionId, ...(typeof cwd === 'string' ? { cwd } : {}) })) return;
 		const hash = diff.kind === 'worktree' ? '*' : (diff.hashFull ?? diff.hash ?? '*');
 		const address = gitDiffAddress(sessionId, hash, path);
 		const staged = diff.kind === 'worktree' && diff.staged === true;
@@ -86,15 +97,15 @@ function GitGraphTab(props) {
 		} catch (error) {
 			void error;
 		}
-	}, [tabActions, sessionId, cwd]);
-	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff });
+	}, [tabActions, sessionId, cwd, props.getBetterSidebar]);
+	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff, pickDirectory, runInTerminal });
 }
 
 /** chip 标题：图标 + 文案。 */
 function GitGraphTitle() {
 	return React.createElement(
 		'span',
-		{ className: 'ggg-chip' },
+		{ className: css.chip },
 		// 标签页头上的图标：比正文里的图标小一档，避免在标签条里显得过大。
 		React.createElement(GitGraphIcon, { size: 14 }),
 		React.createElement('span', null, TAB_TITLE),
@@ -106,7 +117,7 @@ function GitGraphHeaderAction(props) {
 	return React.createElement(
 		'button',
 		{
-			type: 'button', className: 'ggg-open', title: TAB_TITLE, 'aria-label': TAB_TITLE,
+			type: 'button', className: css.open, title: TAB_TITLE, 'aria-label': TAB_TITLE,
 			onClick: props.open,
 		},
 		React.createElement(GitGraphIcon, { size: 16 }),
@@ -158,7 +169,7 @@ function GitDiffTab(props) {
 		load();
 	}, [load]);
 	if (parsed === null) {
-		return React.createElement('div', { className: 'ggg-empty' }, '无效的差异地址');
+		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
 	// 比较状态：加载中、无法读取，或可绘制的文本比较。
 	const state: ChangesDiffState = loading
@@ -172,27 +183,27 @@ function GitDiffTab(props) {
 			};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-diff-tab' },
-		React.createElement('div', { className: 'ggg-diff-tab-head' },
-			React.createElement('span', { className: 'ggg-diff-tab-path' }, parsed.path),
-			React.createElement('span', { className: 'ggg-diff-tab-hash' },
+		{ className: css.diffTab },
+		React.createElement('div', { className: css.diffTabHead },
+			React.createElement('span', { className: css.diffTabPath }, parsed.path),
+			React.createElement('span', { className: css.diffTabHash },
 				baseHash !== ''
 					? `${baseHash.slice(0, 7)} → ${parsed.hash.slice(0, 7)}`
 					: parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
 			React.createElement('button', {
-				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': split,
+				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
 				onClick: () => setSplit((value) => !value),
 			}, split ? '并排' : '统一'),
 			React.createElement('button', {
-				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': wrap,
+				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
 				onClick: () => setWrap((value) => !value),
 			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(
 			'div',
-			{ className: 'ggg-diff-tab-body' },
+			{ className: css.diffTabBody },
 			React.createElement(FileDiff, { state, split, wrap, retry: load }),
 		),
 	);
@@ -204,7 +215,7 @@ function GitDiffTitle(props) {
 	const address = tabInfo?.tab?.navigation?.address ?? '';
 	const parsed = parseGitDiffAddress(address);
 	const name = parsed !== null ? (parsed.path.split('/').pop() ?? 'Diff') : 'Diff';
-	return React.createElement('span', { className: 'ggg-chip' }, name);
+	return React.createElement('span', { className: css.chip }, name);
 }
 
 /**
@@ -214,7 +225,6 @@ function GitDiffTitle(props) {
  * @returns 无。
  */
 export function apply(ctx) {
-	ensureStyle();
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
 
@@ -247,9 +257,20 @@ export function apply(ctx) {
 		}));
 	}
 
+	// 目录选择器来自 ui-workspace、终端来自 ui-sidebar-terminal；都可能未装载，
+	// 因此在渲染期按需读取，缺失时由面板提示。
+	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
+		...props,
+		uiWorkspace: ctx.get?.('uiWorkspace'),
+		terminals: ctx.get?.('webTerminals'),
+		sidebarRightService: ctx.get?.('sidebarRight'),
+		// better-sidebar 未装载时为 undefined，面板据此回退到本插件自己的差异页。
+		// 传取值函数而不是取值：该插件的客户端半边可能晚于本插件激活，且服务本身要等设置就绪。
+		getBetterSidebar: () => ctx.get?.('betterSidebar'),
+	});
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: TAB_ID },
-		GitGraphTab,
+		gitGraphTab,
 	)));
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
 		{ name: 'sidebar.right.pane.tab.title', key: TAB_ID },

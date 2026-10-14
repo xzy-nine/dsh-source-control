@@ -9,6 +9,9 @@ import {
 import { RepoIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RepoNode, RepoSync } from '../types.ts';
+import css from '../css/repo-row.module.css';
+import shared from '../css/shared.module.css';
+import { cx } from '../css/cx.ts';
 
 /** 存储库树一行的属性。 */
 export interface RepoRowProps {
@@ -35,42 +38,42 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 	const isWorktree = node.kind === 'worktree';
 	const isSubmodule = node.kind === 'submodule';
 	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
 	const branchName = (sync?.branch ?? node.branch) ?? '';
 	const isDetached = branchName === '' && headHash !== null && headHash !== undefined;
 	const refText = isDetached ? headHash.slice(0, 7) : branchName;
 	return React.createElement(
 		'div',
 		{
-			className: `ggg-repo${active ? ' is-active' : ''}${node.available === false ? ' is-missing' : ''}`,
+			className: cx(css.repo, active && css.isActive, node.available === false && css.isMissing),
 			title: node.path,
 			onClick: () => onSelect(node),
 			onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => { event.preventDefault(); onMoreActions?.(node, event); },
 		},
 		...guides,
 		React.createElement('span', {
-			className: `ggg-repo-chevron${expanded ? '' : ' is-collapsed'}${hasChildren ? '' : ' is-empty'}`,
+			className: cx(shared.repoChevron, !expanded && shared.isCollapsed, !hasChildren && shared.isEmpty),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 		isWorktree
-			? React.createElement(IconEnhanceOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
+			? React.createElement(IconEnhanceOutlineRegular, { size: 14, className: css.repoIcon })
 			: isSubmodule
-				? React.createElement(IconArchiveOutlineRegular, { size: 14, className: 'ggg-repo-icon' })
+				? React.createElement(IconArchiveOutlineRegular, { size: 14, className: css.repoIcon })
 				: React.createElement(RepoIcon),
-		React.createElement('span', { className: 'ggg-repo-name' }, node.name),
-		refText !== '' && React.createElement(GitGraphIcon, { size: 12, className: 'ggg-repo-branch-icon' }),
+		React.createElement('span', { className: css.repoName }, node.name),
+		refText !== '' && React.createElement(GitGraphIcon, { size: 12, className: css.repoBranchIcon }),
 		refText !== '' && React.createElement('span', {
-			className: 'ggg-repo-branch' + (onBranchClick !== undefined && !isDetached ? ' is-clickable' : ''),
+			className: cx(css.repoBranch, onBranchClick !== undefined && !isDetached && css.isClickable),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { if (onBranchClick !== undefined && !isDetached) { event.stopPropagation(); onBranchClick(node, event); } },
 		}, refText),
 		sync !== undefined && (sync.ahead > 0 || sync.behind > 0) && React.createElement(
 			'span',
-			{ className: 'ggg-repo-sync', title: `领先 ${sync.ahead}、落后 ${sync.behind}` },
+			{ className: css.repoSync, title: `领先 ${sync.ahead}、落后 ${sync.behind}` },
 			sync.behind > 0 && React.createElement('span', null, `↓${sync.behind}`),
 			sync.ahead > 0 && React.createElement('span', null, `↑${sync.ahead}`),
 		),
 		React.createElement('button', {
-			type: 'button', className: 'ggg-repo-more', title: '更多操作',
+			type: 'button', className: css.repoMore, title: '更多操作',
 			onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onMoreActions?.(node, event); },
 		}, React.createElement(IconEllipsisOutlineRegular, { size: 14 })),
 	);

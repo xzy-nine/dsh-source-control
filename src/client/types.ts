@@ -130,7 +130,6 @@ export interface Settings {
 	issueLinkingConfig: IssueLinkingConfig | null;
 	markdown: boolean;
 	muteMergeCommits: boolean;
-	combineLocalAndRemoteBranchLabels: boolean;
 	fetchAndPrune: boolean;
 	fetchAndPruneTags: boolean;
 	onRepoLoadScrollToHead: boolean;

@@ -1,14 +1,16 @@
 # AGENTS.md
 
-本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 [README.md](README.md) /
-[README.en.md](README.en.md)，本文件不重复。
+本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 `doc/功能说明.md`，
+本文件不重复。
 
 ## 工作约定
 
 - **注释、文档与提交信息只写说明性描述，不写解释性描述**：说明「是什么、怎么用、约束是什么」，
   不叙述改动过程、不解释「为什么当初这么做」、不保留评审历史。
 - **回复与面向用户的文本用中文**；代码、命令、路径、标识符与逐字引用的外部文本保持原样。
-- **README 只讲功能**，代码结构、构建、测试等实现内容放本文件。
+- **文档分层**：[README.md](README.md) / [README.en.md](README.en.md) 只概述插件的整体能力与几个特色功能，
+  不列细节；每一项功能的完整行为写在 `doc/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
+  `doc/` 下的迁移差异与实现计划、数据层方案为本地文档，由 `.git/info/exclude` 排除，不提交。
 - **测试不测界面文案**：断言代码标识符、结构或行为，不断言菜单项文字、按钮文字等展示字符串。
 - **不写一次性改动的一次性测试**：局部、机械、只影响单个界面的改动不补测试。
 - **能复用 DSH 已导出的能力就直接用，不自行重造**。
@@ -31,9 +33,13 @@
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
-                    设置面板、样式与图标、类型
+                    设置面板、图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
+  src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
+                    shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
+                    cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
+doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
 scripts/            客户端打包脚本
 assets/icons/       引用标记用的 SVG
 ```
@@ -41,6 +47,10 @@ assets/icons/       引用标记用的 SVG
 宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
 `git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，无 git 调用，可被测试直接导入；
 `git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
+`ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
+`ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
+克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`clone-command.ts`，纯函数），由
+`terminal-run.ts` 打开 DSH 终端页并在其中执行。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
@@ -50,6 +60,20 @@ assets/icons/       引用标记用的 SVG
 missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / unknown，
 前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
 404 归入无权限。
+
+`better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
+要求服务已装载、`diff` 类型已注册且未被设置页关闭（该插件的 `openTab` 对未注册或已关闭的类型是静默
+no-op，无法事后察觉，因此只能事前探测）；`toSidebarDiffRef` 把本插件的差异描述换算成它的两种引用
+（工作区单文件 / 整提交补丁），两提交区间对比没有等价引用而返回 null；换算失败或未安装即回退到本插件
+自己的差异页。探测发生在每次打开差异的时刻，服务经传给面板的取值函数读取 `ctx.get('betterSidebar')`：
+该插件的客户端半边可能晚于本插件激活，且启用开关要等设置 RPC 返回，提前缓存会把「暂不可用」记成可用。
+服务不写进 `dsh.client.inject`——缺它只让差异页回退，不会把插件拖成 pending。
+
+普通文件打开不经过该模块：一律 `tabActions.openResource(dsh-resource://file/…)` 交宿主按注册表认领。
+better-sidebar 的 `editor` 以 `extension` 档注册 `dsh-resource://file/**`，压过宿主 `text` 预览的
+`fallback` 档，因此装了它就用它的编辑器；未安装或该类型被关闭时该注册不存在，排名自然落到宿主预览。
+回退由宿主的认领排名承担，插件不自行判断。该编辑器对宿主自带渲染器的格式（表格 / PDF / 图片 /
+Office）主动不认领，那些仍走宿主预览。
 
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
@@ -81,6 +105,10 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 - CSS 模块用 esbuild 的 `local-css` loader，**必须配 `outdir`**，否则报
   `Cannot import ... without an output path configured`。`local-css` 只产类名映射，样式文本需脚本单独
   收集并内联为 `<style id="dsh-source-control-module-style">`，`lib/` 下不留 CSS 文件。
+- CSS 模块按组件拆分，**作用域前缀按文件生成**：同一条选择器里的多个类名必须定义在同一文件，
+  否则两侧前缀不同、复合选择器失效。跨组件的共享类放 `css/shared.module.css`；由 JS 动态切换、
+  且要加在不同模块元素上的状态类（`menuTarget`）在样式里写 `:global(...)`，名字集中在
+  `css/state-classes.ts`，样式与组件共用同一份。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
 
@@ -92,13 +120,21 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | 文件 | 覆盖 |
 |---|---|
 | `lanes.test.mjs` | 泳道布局：连线连续性、压实、节点半径、越界重叠、无贝塞尔 |
-| `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构 |
+| `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构、CSS 模块类名引用 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `worktree-branches.test.mjs` | 工作树占用分支的判定 |
+| `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
+| `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
+| `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |
+| `git-messages.test.mjs` | git 失败文本的中文说明与原文回退 |
+| `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
+| `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
+| `poll-gate.test.mjs` | 变更轮询的重载判据：变化稳定与最小间隔 |
+| `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |

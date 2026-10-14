@@ -4,6 +4,7 @@
 import React from 'react';
 import { loadGraph, loadRepoSync, loadWorkingTree } from '../api.ts';
 import { reportError } from './errors.ts';
+import { shouldAutoRefresh } from './poll-gate.ts';
 import type { PanelState, RepoSync, Settings, WorkingTreeEntry } from '../types.ts';
 
 /**
@@ -107,20 +108,42 @@ export function useGraphData({
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 
-	/* ── 低频轮询：检测外部工作区变更 ─────────────────────── */
+	/*
+	 * 低频轮询：检测外部工作区变更。
+	 *
+	 * 判据是「连续两次轮询看到同一份签名」才认为变化已稳定。克隆等长时间写盘期间，
+	 * 目标目录已出现但还不是仓库，外层仓库的 `git status --untracked-files=all` 会把
+	 * 这棵正在增长的目录树整体列为未跟踪文件；只看「与上次不同」就会在克隆全程每 15 秒
+	 * 触发一次完整重载（提交图 + 工作区 + 领先/落后），与服务端争抢资源。
+	 * 稳定后才重载，且两次自动重载之间至少间隔 60 秒。
+	 */
 	entriesSigRef.current = entriesSignature(state.entries);
 	busyRef.current = state.busy;
 	React.useEffect(() => {
 		if (workingTreePath === null) return undefined;
 		let cancelled = false;
+		let polling = false;
+		let lastSeen = '';
+		let lastAutoRefresh = 0;
 		const intervalId = setInterval(() => {
-			if (cancelled || document.visibilityState !== 'visible' || busyRef.current) return;
+			if (cancelled || polling || document.visibilityState !== 'visible' || busyRef.current) return;
+			polling = true;
 			void (async () => {
 				try {
-					const entries = await loadWorkingTree(workingTreePath);
+					const signature = entriesSignature(await loadWorkingTree(workingTreePath));
 					if (cancelled) return;
-					if (entriesSigRef.current !== entriesSignature(entries)) void refresh();
-				} catch { /* 忽略轮询失败 */ }
+					if (!shouldAutoRefresh({
+						signature, lastSeen, loaded: entriesSigRef.current, lastRefreshAt: lastAutoRefresh, now: Date.now(),
+					})) {
+						lastSeen = signature;
+						return;
+					}
+					lastSeen = signature;
+					lastAutoRefresh = Date.now();
+					void refresh();
+				} catch { /* 忽略轮询失败 */ } finally {
+					polling = false;
+				}
 			})();
 		}, 15000);
 		return () => { cancelled = true; clearInterval(intervalId); };

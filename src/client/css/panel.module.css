@@ -1,0 +1,23 @@
+/*
+ * 面板根容器与顶部条。
+ */
+
+/*
+ * 视图样式：以 --dsw-* 语义 token 为主，随主题明暗切换；引用标记取泳道调色板的固定色。
+ *
+ * 组件自身（Button / Input / Checkbox 等）从 ui-primitives 取得，这里只负责布局与
+ * 提交图这类没有对应组件的部分。类名由 esbuild 的 local-css 作用域化，
+ * 组件经 CSS 模块映射引用，不再以裸类名字符串出现在源码里。
+ */
+
+.root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:13px}
+
+.bar{display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l1);flex-wrap:wrap}
+
+.barItem{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
+
+.barItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.barItem[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+.barSpacer{margin-left:auto}

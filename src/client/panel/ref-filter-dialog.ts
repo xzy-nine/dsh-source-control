@@ -8,6 +8,8 @@ import {
 import { RemoteRefIcon, TagRefIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RefItem } from '../types.ts';
+import css from '../css/ref-filter-dialog.module.css';
+import { cx } from '../css/cx.ts';
 
 /** 引用筛选弹窗的属性。 */
 export interface RefFilterDialogProps {
@@ -33,52 +35,52 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 	const allChecked = refs.length > 0 && refs.every((ref) => selected.has(ref.name));
 	return React.createElement(
 		'div',
-		{ className: 'ggg-filter-backdrop', onClick: onClose },
+		{ className: css.filterBackdrop, onClick: onClose },
 		React.createElement(
 			'div',
-			{ className: 'ggg-filter-dialog', onClick: (event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation() },
+			{ className: css.filterDialog, onClick: (event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation() },
 			// 顶部：搜索框 + 已选徽章 + 确定按钮
 			React.createElement(
 				'div',
-				{ className: 'ggg-filter-top' },
+				{ className: css.filterTop },
 				React.createElement('input', {
-					type: 'text', className: 'ggg-filter-search', placeholder: '搜索分支、标签…',
+					type: 'text', className: css.filterSearch, placeholder: '搜索分支、标签…',
 					value: search, onChange: (event: React.ChangeEvent<HTMLInputElement>) => onSearch(event.currentTarget.value),
 				}),
-				React.createElement('span', { className: 'ggg-filter-badge' }, `${selected.size}`),
+				React.createElement('span', { className: css.filterBadge }, `${selected.size}`),
 				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: onClose }, '确定'),
 			),
 			// 快捷选项
 			React.createElement(
 				'div',
-				{ className: 'ggg-filter-quick' },
-				React.createElement('label', { className: 'ggg-filter-quick-item' },
+				{ className: css.filterQuick },
+				React.createElement('label', { className: css.filterQuickItem },
 					React.createElement(Checkbox, { checked: allChecked, onChange: () => onSelectAll(!allChecked), label: '' }),
-					React.createElement('span', { className: 'ggg-filter-quick-label' }, '全部'),
-					React.createElement('span', { className: 'ggg-filter-quick-hint' }, '显示所有分支与标签'),
+					React.createElement('span', { className: css.filterQuickLabel }, '全部'),
+					React.createElement('span', { className: css.filterQuickHint }, '显示所有分支与标签'),
 				),
-				React.createElement('label', { className: 'ggg-filter-quick-item' },
+				React.createElement('label', { className: css.filterQuickItem },
 					React.createElement(Checkbox, { checked: autoChecked, onChange: onToggleAuto, label: '' }),
-					React.createElement('span', { className: 'ggg-filter-quick-label' }, '自动'),
-					React.createElement('span', { className: 'ggg-filter-quick-hint' }, '仅显示当前分支及向其合并的分支'),
+					React.createElement('span', { className: css.filterQuickLabel }, '自动'),
+					React.createElement('span', { className: css.filterQuickHint }, '仅显示当前分支及向其合并的分支'),
 				),
 			),
 			// 引用列表
 			React.createElement(
 				'div',
-				{ className: 'ggg-filter-list' },
+				{ className: css.filterList },
 				...filtered.map((ref) => {
 					const isChecked = selected.has(ref.name);
 					return React.createElement(
 						'label',
-						{ key: `${ref.type}:${ref.name}`, className: `ggg-filter-row${isChecked ? ' is-checked' : ''}` },
+						{ key: `${ref.type}:${ref.name}`, className: cx(css.filterRow, isChecked && css.isChecked) },
 						React.createElement(Checkbox, { checked: isChecked, onChange: () => onToggle(ref.name), label: '' }),
-						ref.type === 'branch' && React.createElement(GitGraphIcon, { size: 14, className: 'ggg-filter-icon' }),
+						ref.type === 'branch' && React.createElement(GitGraphIcon, { size: 14, className: css.filterIcon }),
 						ref.type === 'remote' && React.createElement(RemoteRefIcon),
 						ref.type === 'tag' && React.createElement(TagRefIcon),
-						React.createElement('span', { className: 'ggg-filter-name' }, ref.name),
-						React.createElement('span', { className: 'ggg-filter-hash' }, ref.hash.slice(0, 7)),
-						React.createElement('span', { className: 'ggg-filter-kind' }, ref.kind),
+						React.createElement('span', { className: css.filterName }, ref.name),
+						React.createElement('span', { className: css.filterHash }, ref.hash.slice(0, 7)),
+						React.createElement('span', { className: css.filterKind }, ref.kind),
 					);
 				}),
 			),

@@ -1,0 +1,23 @@
+/*
+ * 自建弹窗内的表单。
+ */
+
+/* ── 自建弹窗（Modal 内表单） ───────────────────────────── */
+
+.field{display:flex;flex-direction:column;gap:4px;font-size:12px}
+
+.fieldInline{flex-direction:row;align-items:center;gap:8px;cursor:pointer}
+
+.fieldLabel{color:var(--dsw-alias-label-secondary)}
+
+.fieldTextarea{font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}
+
+.dialogHint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
+
+/* 破坏性操作的确认按钮：Button 的 variant 规则带 :hover:not(:disabled)，特异性更高，
+   因此同时匹配静止与悬停两种状态才能压过它。 */
+
+button.btnDanger,
+button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);color:#fff}
+
+button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-secondary)}

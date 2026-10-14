@@ -1,0 +1,13 @@
+/*
+ * 右键浮层。
+ */
+
+/* ── 右键浮层 ───────────────────────────────────────────── */
+/* 有二级菜单的项：文案撑满，箭头贴右。Menu 的 label 槽是普通行内元素、
+   不是 flex 容器，因此这里用 width 撑满而不是 flex。 */
+
+.menuLabel{display:flex;align-items:center;gap:6px;width:100%}
+
+.menuLabelText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.menuChevron{flex:none;color:var(--dsw-alias-label-tertiary)}

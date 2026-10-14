@@ -60,6 +60,19 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 	return payload;
 }
 
+/**
+ * 把命令返回的错误文本转成异常。
+ *
+ * `run` 只提示抛出的错误，而命令把失败放在返回值里而不抛错：调用方忽略返回值即静默失败。
+ * 需要按错误内容分支的调用方自行读取返回值，不使用本函数。
+ *
+ * @param error - 命令返回的错误文本；成功为 null。
+ * @param describe - 展示前的文本整理；省略时原样抛出。
+ */
+export function throwIfError(error: string | null, describe: (error: string) => string = (text) => text): void {
+	if (error !== null) throw new Error(describe(error));
+}
+
 /** 仓库发现结果。 */
 export interface DiscoveryResult {
 	readonly nodes: RepoNode[];
@@ -195,6 +208,79 @@ export async function unstagePaths(cwd: string, paths: readonly string[]): Promi
  */
 export async function discardPaths(cwd: string, paths: readonly string[], untracked: boolean): Promise<void> {
 	await callApi(cwd, { command: 'discardPaths', paths, untracked });
+}
+
+/** 写入 `.gitignore` 的结果。 */
+export interface IgnoreWriteResult {
+	/** 规则写入的文件，相对仓库根。 */
+	readonly file: string;
+	/** 该文件是否为本次新建。 */
+	readonly created: boolean;
+	/** 写入前该文件是否已在版本控制中：未跟踪时没有可比较的差异。 */
+	readonly tracked: boolean;
+	/** 本次写入的规则；规则已存在时为 null。 */
+	readonly rule: string | null;
+}
+
+/** 本地排除文件的状态。 */
+export interface LocalExcludeState {
+	/** 排除文件的绝对路径。 */
+	readonly path: string;
+	/** 有效条目。 */
+	readonly entries: readonly string[];
+}
+
+/**
+ * 把路径写进最近的 `.gitignore`。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param path - 目标路径，相对当前工作树根。
+ * @returns 写入结果。
+ */
+export async function addToGitignore(cwd: string, path: string): Promise<IgnoreWriteResult> {
+	const payload = await callApi(cwd, { command: 'addToGitignore', path });
+	const result = (payload.result ?? {}) as Record<string, unknown>;
+	return {
+		file: typeof result.file === 'string' ? result.file : '',
+		created: result.created === true,
+		tracked: result.tracked === true,
+		rule: typeof result.rule === 'string' ? result.rule : null,
+	};
+}
+
+/**
+ * 把路径写进本地排除文件 `.git/info/exclude`。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param path - 目标路径，相对当前工作树根。
+ * @returns 写入后的排除状态。
+ */
+export async function addToLocalExclude(cwd: string, path: string): Promise<LocalExcludeState> {
+	const payload = await callApi(cwd, { command: 'addToLocalExclude', path });
+	return localExcludeStateOf(payload);
+}
+
+/**
+ * 读取本地排除文件的条目。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 排除文件路径与有效条目。
+ */
+export async function localExcludeState(cwd: string): Promise<LocalExcludeState> {
+	const payload = await callApi(cwd, { command: 'localExcludeState' });
+	return localExcludeStateOf(payload);
+}
+
+/**
+ * 从宿主响应里取本地排除状态。
+ *
+ * @param payload - 宿主响应。
+ * @returns 排除文件路径与有效条目。
+ */
+function localExcludeStateOf(payload: Record<string, unknown>): LocalExcludeState {
+	const state = (payload.state ?? {}) as Record<string, unknown>;
+	const entries = Array.isArray(state.entries) ? state.entries.filter((item): item is string => typeof item === 'string') : [];
+	return { path: typeof state.path === 'string' ? state.path : '', entries };
 }
 
 /**

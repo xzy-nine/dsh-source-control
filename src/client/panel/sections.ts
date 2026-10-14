@@ -5,8 +5,8 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular,
+	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
@@ -17,6 +17,9 @@ import { RepoRow } from './repo-row.ts';
 import type {
 	AiStats, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../types.ts';
+import css from '../css/sections.module.css';
+import shared from '../css/shared.module.css';
+import { cx } from '../css/cx.ts';
 
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
 const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '')
@@ -37,6 +40,10 @@ export interface RepoSectionProps {
 	readonly headHash: string | null;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
+	/** 克隆远程仓库：输入地址后选父目录，在其中创建同名子目录。 */
+	readonly onClone: () => void;
+	/** 克隆进行中：只禁用克隆入口，不影响其它控件。 */
+	readonly cloneBusy: boolean;
 	readonly onSelect: (node: RepoNode) => void;
 	readonly onToggle: (node: RepoNode) => void;
 	readonly onMoreActions: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
@@ -52,31 +59,36 @@ export interface RepoSectionProps {
  */
 export function RepoSection({
 	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
-	onToggleSection, onOpenSettings, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
+	onToggleSection, onOpenSettings, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-sec' },
+		{ className: css.sec },
 		React.createElement('div', {
-			className: 'ggg-sec-head' + (open ? '' : ' collapsed'),
+			className: cx(css.secHead, !open && css.collapsed),
 			onClick: onToggleSection,
 		},
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'存储库',
-			treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
-			React.createElement('span', { className: 'ggg-head-actions' },
+			treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
+			React.createElement('span', { className: css.headActions },
+				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '设置', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy || cloneBusy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onClone(); },
+				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				React.createElement('button', {
+					type: 'button', className: css.iconBtn, title: '设置', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },
 				}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
 			),
 		),
 		open && React.createElement(
 			'div',
-			{ className: 'ggg-repos', style: { maxHeight: height, overflowY: 'auto' } },
-			treeStatus === 'loading' && React.createElement('div', { className: 'ggg-hint' }, '正在发现仓库…'),
+			{ className: css.repos, style: { maxHeight: height, overflowY: 'auto' } },
+			treeStatus === 'loading' && React.createElement('div', { className: shared.hint }, '正在发现仓库…'),
 			treeStatus !== 'loading' && visibleRows.length === 0
-				&& React.createElement('div', { className: 'ggg-hint' }, '没有发现 git 仓库'),
+				&& React.createElement('div', { className: shared.hint }, '没有发现 git 仓库'),
 			...visibleRows.map(({ node, depth }) => React.createElement(RepoRow, {
 				key: node.id, node, depth,
 				active: node.id === selectedId,
@@ -90,7 +102,7 @@ export function RepoSection({
 			})),
 		),
 		open && React.createElement('div', {
-			className: 'ggg-sec-resize',
+			className: shared.secResize,
 			title: '拖动调整存储库区高度',
 			onPointerDown: onResizeStart,
 		}),
@@ -137,6 +149,14 @@ export interface ChangesSectionProps {
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	/** 把未暂存的路径加入 .gitignore。 */
+	readonly onAddToGitignore: (path: string) => void;
+	/** 把未暂存的路径加入本地排除文件。 */
+	readonly onAddToLocalExclude: (path: string) => void;
+	/** 当前工作树是否有本地排除条目；有才显示查看入口。 */
+	readonly hasLocalExclude: boolean;
+	/** 查看本地排除的条目。 */
+	readonly onShowLocalExclude: () => void;
 }
 
 /**
@@ -152,33 +172,34 @@ export function ChangesSection({
 	showPublishButton, onPublish,
 	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
+	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
 }: ChangesSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-sec ggg-workspace' },
+		{ className: cx(css.sec, css.workspace) },
 		React.createElement(
 			'div',
-			{ className: 'ggg-sec-head' },
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			{ className: css.secHead },
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'更改',
-			React.createElement('span', { className: 'ggg-head-actions' },
+			React.createElement('span', { className: css.headActions },
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
 				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 			),
 		),
 		React.createElement(
 			'div',
-			{ className: 'ggg-workspace-body' },
+			{ className: css.workspaceBody },
 			// ── 提交框 ────────────────────────────────────────
 			React.createElement(
 				'div',
-				{ className: 'ggg-commit-box' },
-				(aiBusy || busy || phase === 'loading') && React.createElement('div', { className: 'ggg-ai-loading-bar' }),
-				React.createElement('div', { className: 'ggg-commit-input-wrap' },
+				{ className: css.commitBox },
+				(aiBusy || busy || phase === 'loading') && React.createElement('div', { className: css.aiLoadingBar }),
+				React.createElement('div', { className: css.commitInputWrap },
 					React.createElement('textarea', {
-						className: 'ggg-commit-input',
+						className: css.commitInput,
 						placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${head ?? 'master'}'提交)`,
 						value: message,
 						disabled: aiBusy,
@@ -190,19 +211,19 @@ export function ChangesSection({
 							}
 						},
 					}),
-					React.createElement('div', { className: 'ggg-commit-input-actions' },
+					React.createElement('div', { className: css.commitInputActions },
 						React.createElement('button', {
-							type: 'button', className: 'ggg-commit-input-btn' + (aiBusy ? ' is-busy' : ''), title: 'AI 辅助提交',
+							type: 'button', className: cx(css.commitInputBtn, aiBusy && css.isBusy), title: 'AI 辅助提交',
 							disabled: aiBusy || busy,
 							onClick: onAiCommit,
 						}, React.createElement(IconSparkleRegular, { size: 14 })),
 						React.createElement('button', {
-							type: 'button', className: 'ggg-commit-input-btn', title: '选择提交方式',
+							type: 'button', className: css.commitInputBtn, title: '选择提交方式',
 						}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
 					),
 				),
-				aiWarning !== '' && React.createElement('div', { className: 'ggg-commit-ai-warning' }, aiWarning),
-				aiStats !== null && React.createElement('div', { className: 'ggg-commit-ai-stats' },
+				aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
+				aiStats !== null && React.createElement('div', { className: css.commitAiStats },
 					`${aiStats.tps} tok/s`,
 					` · 输入 ${aiStats.inputTokens}`,
 					` · 输出 ${aiStats.outputTokens}`,
@@ -210,18 +231,24 @@ export function ChangesSection({
 					` · 缓存写 ${aiStats.cacheWriteTokens}`,
 					` · ${aiStats.elapsed}+${aiStats.ttft}`,
 				),
-				React.createElement('div', { className: 'ggg-commit-actions-row' },
+				React.createElement('div', { className: css.commitActionsRow },
 					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
-					React.createElement('span', { className: 'ggg-commit-actions-right' },
+					React.createElement('span', { className: css.commitActionsRight },
+						// 本地排除有内容时给出打开入口：图标取 .gitignore 的文件图标。
+						hasLocalExclude && React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: busy,
+							className: css.stashBtn, onClick: onShowLocalExclude,
+							title: '打开本地排除文件', 'aria-label': '本地排除',
+						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 })),
 						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
 						showTranslate && React.createElement(Button, {
 							variant: 'ghost', size: 'sm', disabled: translateBusy,
-							className: 'ggg-stash-btn ggg-translate-btn', onClick: onTranslate,
+							className: css.stashBtn, onClick: onTranslate,
 							title: '把提交信息翻译为当前语言', 'aria-label': '翻译',
 						}, React.createElement(TranslateIcon)),
 						React.createElement(Button, {
 							variant: 'ghost', size: 'sm', disabled: busy || entries.length === 0,
-							className: 'ggg-stash-btn', onClick: onStash, title: '把当前改动存入贮藏',
+							className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
 						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
 					),
 				),
@@ -247,16 +274,18 @@ export function ChangesSection({
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(
 				'div',
-				{ className: 'ggg-changes-scroll' },
+				{ className: css.changesScroll },
 				ChangeGroup({
 					staged: true, entries, busy, workingTreePath: workingTreePath as string,
 					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					onAddToGitignore, onAddToLocalExclude,
 				}),
 				ChangeGroup({
 					staged: false, entries, busy, workingTreePath: workingTreePath as string,
 					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					onAddToGitignore, onAddToLocalExclude,
 					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
 				}),
 			),
@@ -319,45 +348,45 @@ export function GraphSection({
 }: GraphSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-sec ggg-graph-sec' },
+		{ className: cx(css.sec, css.graphSec) },
 		// 拖拽手柄落在工作区与图形的分界线上（图形标题之前）。
 		open && React.createElement('div', {
-			className: 'ggg-sec-resize',
+			className: shared.secResize,
 			title: '拖动调整图形区高度',
 			onPointerDown: onResizeStart,
 		}),
 		React.createElement('div', {
-			className: 'ggg-sec-head' + (open ? '' : ' collapsed'),
+			className: cx(css.secHead, !open && css.collapsed),
 			onClick: onToggleSection,
 		},
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: 'ggg-chevron' }),
+			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'图形',
-			React.createElement('span', { className: 'ggg-head-actions' },
-				selectedNode !== null && React.createElement('span', { className: 'ggg-head-repo' },
+			React.createElement('span', { className: css.headActions },
+				selectedNode !== null && React.createElement('span', { className: css.headRepo },
 					React.createElement(RepoIcon),
 					React.createElement('span', null, selectedNode.name),
 				),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '筛选分支与标签',
+					type: 'button', className: css.iconBtn, title: '筛选分支与标签',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
 				}, React.createElement(GitGraphIcon, { size: 14 }), '分支'),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '转到当前历史记录',
+					type: 'button', className: css.iconBtn, title: '转到当前历史记录',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },
 				}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '从所有远程抓取', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
 				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-icon-btn', title: '刷新', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
 				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 			),
 		),
 		open && (
 			phase === 'loading' && commitCount === 0
-				? React.createElement('div', { className: 'ggg-empty', style: { height } }, '正在加载提交图…')
+				? React.createElement('div', { className: shared.empty, style: { height } }, '正在加载提交图…')
 				: React.createElement('div', {
 					ref: graphScrollRef,
 					style: { height, display: 'flex', flexDirection: 'column', minHeight: 0 },
@@ -378,7 +407,6 @@ export function GraphSection({
 					markdown: settings.markdown,
 					showAvatars: settings.showAvatars,
 					muteMergeCommits: settings.muteMergeCommits,
-					combineLocalAndRemoteBranchLabels: settings.combineLocalAndRemoteBranchLabels,
 					graphColours: settings.graphColours,
 					commitStats: statsByHash,
 					commitMessages: messageByHash,
@@ -389,10 +417,10 @@ export function GraphSection({
 							null,
 							// 对比模式在文件列表前标出方向：旧 → 新。
 							detail.compareWith !== null
-								? React.createElement('div', { className: 'ggg-detail-compare' },
+								? React.createElement('div', { className: css.detailCompare },
 									`对比 ${detail.compareWith.hash.slice(0, 7)} → ${commit.hash.slice(0, 7)}`)
 								// 未进入对比时提示入口：按住修饰键点击另一提交即可对比。
-								: React.createElement('div', { className: 'ggg-detail-compare-hint' },
+								: React.createElement('div', { className: css.detailCompareHint },
 									`按住 ${COMPARE_MODIFIER} 点击另一个提交可对比两者`),
 							React.createElement(CommitDetail, {
 								files: detail.files,
