@@ -139,8 +139,22 @@ jobs:
           git config --global user.name "dsh-source-control-ci"
           git config --global user.email "ci@dsh.invalid"
 
+      # job 级 if 读不到 secrets 上下文，因此在这里判定并输出。
+      - name: 检查 npm 凭据
+        id: creds
+        env:
+          TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "publish=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=no" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 NPM_TOKEN，跳过 npm 发布（tag 与 Release 已创建）"
+          fi
+
       # prepublishOnly 会重新构建；发布的是该 tag 的产物。
       - name: 发布到 npm
+        if: steps.creds.outputs.publish == 'yes'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm publish --access public --no-git-checks
