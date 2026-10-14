@@ -78,6 +78,30 @@ Office）主动不认领，那些仍走宿主预览。
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
+## 刷新与触发
+
+自动刷新以事件驱动为主，另有低频兜底轮询：
+
+| 机制 | 触发源 | 周期/延迟 | 开关 |
+|---|---|---|---|
+| 自动刷新（事件） | 当前会话事件窗口里已落地的写入/编辑，且目标在所选仓库内 | 5s 冷却 | `autoRefresh`（默认开） |
+| 自动刷新（兜底） | 定时轮询工作区签名 | 120s，连续两次同一签名才重载 | 跟随 `autoRefresh` |
+| 自动抓取 | 定时循环 | `autoFetchPeriod` 秒（默认 180） | `autoFetch`（默认开） |
+| 缓存清理 | 定时循环 | 300s | 无 |
+
+兜底轮询覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），间隔远大于事件响应的及时性要求，
+页签不可见、上一次未结束、面板正忙时跳过。
+
+`change-events.ts` 是判据的纯函数层（无导入，可直接单测）：`settledFileChanges` 把事件折成「拿到结果
+且结果非错误」的写入/编辑，`repositoryRelativePath` 判定模型给出的路径是否真在仓库内。事件窗口是
+客户端会话事件源，因此 `run_code` 里的嵌套调用按 `tool/ptc-dispatch-start` + `tool/ptc-dispatch`
+一并覆盖。
+
+`use-file-change-refresh.ts` 订阅事件源：窗口没聚焦、面板正忙时挂起，连续变更按冷却节流。
+`use-auto-fetch.ts` 是唯一的定时网络操作，按「聚焦 + 空闲」门控。`use-cache-cleanup.ts` 丢弃过期的
+悬停统计与完整提交信息缓存。以上 hook 与 `use-graph-data.ts` 的兜底轮询都从该 hook 暴露的
+`busyRef` 读忙碌标志。
+
 ## 状态持久化的三级
 
 按存活范围分三级，取值刻意不同，不可统一：选级别看该状态「丢了会不会烦」与「跨会话是否仍有意义」。
@@ -133,7 +157,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `git-messages.test.mjs` | git 失败文本的中文说明与原文回退 |
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
-| `poll-gate.test.mjs` | 变更轮询的重载判据：变化稳定与最小间隔 |
+| `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |

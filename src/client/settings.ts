@@ -10,6 +10,7 @@ import {
 	IconEditOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown } from './ui/dropdown.ts';
+import { AUTO_FETCH_PERIOD_SECONDS_DEFAULT, AUTO_FETCH_PERIOD_SECONDS_MAX, AUTO_FETCH_PERIOD_SECONDS_MIN } from './panel/change-events.ts';
 import { fetchAiModels } from './api.ts';
 import { showConfirmation, showMessage } from './dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
@@ -62,6 +63,9 @@ export function defaultSettings(): Settings {
 		muteMergeCommits: false,
 		fetchAndPrune: false,
 		fetchAndPruneTags: false,
+		autoRefresh: true,
+		autoFetch: true,
+		autoFetchPeriod: AUTO_FETCH_PERIOD_SECONDS_DEFAULT,
 		onRepoLoadScrollToHead: false,
 		showAvatars: true,
 		graphColours: null,
@@ -173,6 +177,44 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
 		'div',
 		{ className: cx(css.setRow, css.setRowInline) },
 		React.createElement(Checkbox, { checked, onChange, label }),
+	);
+}
+
+/**
+ * 一个整数输入行。
+ *
+ * 输入期间保留草稿文本，失焦时收拢到区间并写回；非法输入回退到当前值。
+ *
+ * @param props.label - 文案。
+ * @param props.value - 当前值。
+ * @param props.min - 允许的最小值。
+ * @param props.max - 允许的最大值。
+ * @param props.onChange - 写回回调。
+ * @returns 行元素。
+ */
+function NumberRow({ label, value, min, max, onChange }: {
+	label: string;
+	value: number;
+	min: number;
+	max: number;
+	onChange: (next: number) => void;
+}): React.ReactElement {
+	const [draft, setDraft] = React.useState(String(value));
+	React.useEffect(() => { setDraft(String(value)); }, [value]);
+	const commit = (text: string): void => {
+		const parsed = Number.parseInt(text, 10);
+		if (!Number.isFinite(parsed)) { setDraft(String(value)); return; }
+		onChange(Math.min(max, Math.max(min, parsed)));
+	};
+	return React.createElement(
+		'div',
+		{ className: css.setRow },
+		React.createElement('span', { className: css.setRowText }, label),
+		React.createElement(Input, {
+			value: draft, type: 'number', min, max,
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => setDraft(event.target.value),
+			onBlur: (event: React.FocusEvent<HTMLInputElement>) => commit(event.target.value),
+		}),
 	);
 }
 
@@ -404,6 +446,23 @@ export function SettingsPanel({
 				label: '抓取时修剪远程标签',
 				checked: settings.fetchAndPruneTags,
 				onChange: (fetchAndPruneTags) => patch({ fetchAndPruneTags }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '文件改动时自动刷新',
+				checked: settings.autoRefresh,
+				onChange: (autoRefresh) => patch({ autoRefresh }),
+			}),
+			React.createElement(ToggleRow, {
+				label: '自动抓取远程',
+				checked: settings.autoFetch,
+				onChange: (autoFetch) => patch({ autoFetch }),
+			}),
+			React.createElement(NumberRow, {
+				label: '自动抓取间隔（秒）',
+				value: settings.autoFetchPeriod,
+				min: AUTO_FETCH_PERIOD_SECONDS_MIN,
+				max: AUTO_FETCH_PERIOD_SECONDS_MAX,
+				onChange: (autoFetchPeriod) => patch({ autoFetchPeriod }),
 			}),
 			React.createElement(ToggleRow, {
 				label: '加载仓库后滚动到 HEAD',

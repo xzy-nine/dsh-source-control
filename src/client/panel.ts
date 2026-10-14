@@ -29,7 +29,9 @@ import { showToast } from './panel/toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './panel/refs.ts';
 import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
 import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
+import { useAutoFetch } from './panel/use-auto-fetch.ts';
 import { useCommitStats } from './panel/use-commit-stats.ts';
+import { useFileChangeRefresh, type SessionsLike } from './panel/use-file-change-refresh.ts';
 import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
@@ -61,6 +63,8 @@ export interface GitGraphPanelProps {
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
 	readonly runInTerminal?: ((sessionId: string, command: string) => Promise<boolean>) | undefined;
+	/** 取会话服务；未装载时为 null。 */
+	readonly getSessions?: (() => unknown) | undefined;
 }
 
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
@@ -88,7 +92,7 @@ function interfaceLanguage(): string {
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runInTerminal }: GitGraphPanelProps): React.ReactElement {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
 	const [message, setMessage] = React.useState('');
 	const [aiBusy, setAiBusy] = React.useState(false);
 	const [aiWarning, setAiWarning] = React.useState('');
@@ -220,10 +224,45 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterKey !== null) savePersistent(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
-	const { state, setState, refresh } = useGraphData({
+	const { state, setState, refresh, busyRef } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
+
+	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
+	const sessions = React.useMemo(() => {
+		try {
+			return (getSessions?.() ?? null) as SessionsLike | null;
+		} catch {
+			return null;
+		}
+	}, [getSessions]);
+
+	/*
+	 * 文件改动事件驱动的自动刷新：工具写入/编辑落地、且目标确实在所选仓库内时重载面板。
+	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用），因此无需宿主新增通道。
+	 */
+	useFileChangeRefresh({
+		sessions,
+		sessionId,
+		workingTreePath,
+		cwd: cwd ?? null,
+		enabled: settings.autoRefresh,
+		busyRef,
+		refresh,
+	});
+
+	/*
+	 * 定时抓取：唯一的定时网络操作，默认关闭。启用后按周期静默抓取当前仓库的远程引用，
+	 * 抓取同样受「聚焦 + 空闲」门控。
+	 */
+	useAutoFetch({
+		workingTreePath,
+		enabled: settings.autoFetch,
+		periodSeconds: settings.autoFetchPeriod,
+		busyRef,
+		fetch: async (path) => { await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); },
+	});
 
 	/*
 	 * 克隆命令写入终端后置起重扫标志，窗口重新获得焦点时重扫一次仓库树。

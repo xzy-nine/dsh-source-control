@@ -98,7 +98,14 @@ function GitGraphTab(props) {
 			void error;
 		}
 	}, [tabActions, sessionId, cwd, props.getBetterSidebar]);
-	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff, pickDirectory, runInTerminal });
+	return React.createElement(GitGraphPanel, {
+		sessionId,
+		cwd: typeof cwd === 'string' ? cwd : null,
+		onOpenDiff,
+		pickDirectory,
+		runInTerminal,
+		getSessions: props.getSessions,
+	});
 }
 
 /** chip 标题：图标 + 文案。 */
@@ -261,6 +268,7 @@ export function apply(ctx) {
 	// 因此在渲染期按需读取，缺失时由面板提示。
 	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
 		...props,
+		getSessions: () => ctx.get?.('sessions'),
 		uiWorkspace: ctx.get?.('uiWorkspace'),
 		terminals: ctx.get?.('webTerminals'),
 		sidebarRightService: ctx.get?.('sidebarRight'),
