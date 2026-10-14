@@ -62,6 +62,10 @@ export interface ChangeNodeRowProps {
 	/** 打开文件：isNew 为 true 时按普通文件打开（新文件没有可比差异）。 */
 	readonly onOpen: (entry: WorkingTreeEntry, isNew: boolean) => void;
 	readonly descendantsOf: (folderPath: string) => string[];
+	/** 把路径加入 .gitignore。 */
+	readonly onAddToGitignore: (path: string) => void;
+	/** 把路径加入本地排除文件。 */
+	readonly onAddToLocalExclude: (path: string) => void;
 }
 
 /**
@@ -77,6 +81,7 @@ export function isNewFile(entry: WorkingTreeEntry): boolean {
 /** 文件夹行或文件行（变更树内）。 */
 export function ChangeNodeRow({
 	row, busy, open, staged, onToggle, onStage, onUnstage, onDiscard, onOpen, descendantsOf,
+	onAddToGitignore, onAddToLocalExclude,
 }: ChangeNodeRowProps): React.ReactElement {
 	if (row.kind === 'folder') {
 		const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -90,6 +95,12 @@ export function ChangeNodeRow({
 				items.push({ title: `取消暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onUnstage(paths) });
 			} else {
 				items.push({ title: `暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onStage(paths) });
+				// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
+				items.push(
+					{ type: 'divider' },
+					{ title: '添加到 .gitignore', disabled: busy, onClick: () => onAddToGitignore(row.path) },
+					{ title: '添加到本地排除', disabled: busy, onClick: () => onAddToLocalExclude(row.path) },
+				);
 			}
 			items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(row.path); } });
 			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
@@ -126,6 +137,12 @@ export function ChangeNodeRow({
 		} else {
 			items.push({ title: '暂存改动', disabled: busy, onClick: () => onStage([entry.path]) });
 			items.push({ title: '丢弃改动', danger: true, disabled: busy, onClick: () => onDiscard([entry.path], untracked) });
+			// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
+			items.push(
+				{ type: 'divider' },
+				{ title: '添加到 .gitignore', disabled: busy, onClick: () => onAddToGitignore(entry.path) },
+				{ title: '添加到本地排除', disabled: busy, onClick: () => onAddToLocalExclude(entry.path) },
+			);
 		}
 		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
@@ -247,6 +264,10 @@ export interface ChangeGroupProps {
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	/** 把路径加入 .gitignore。 */
+	readonly onAddToGitignore: (path: string) => void;
+	/** 把路径加入本地排除文件。 */
+	readonly onAddToLocalExclude: (path: string) => void;
 	readonly forceShow?: boolean;
 }
 
@@ -258,7 +279,7 @@ export interface ChangeGroupProps {
  */
 export function ChangeGroup({
 	staged, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
-	stagePaths, unstagePaths, discardPaths, openDiff, forceShow,
+	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude, forceShow,
 }: ChangeGroupProps): React.ReactElement | [] {
 	const visible = entries.filter((entry) => staged
 		? (entry.index !== ' ' && entry.index !== '?')
@@ -358,6 +379,7 @@ export function ChangeGroup({
 				onToggle: (path: string) => toggleChange(groupKey, path),
 				onStage, onUnstage, onDiscard, onOpen,
 				descendantsOf,
+				onAddToGitignore, onAddToLocalExclude,
 			})),
 		),
 	);

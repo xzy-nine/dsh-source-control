@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import {
-	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -137,6 +137,14 @@ export interface ChangesSectionProps {
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	/** 把未暂存的路径加入 .gitignore。 */
+	readonly onAddToGitignore: (path: string) => void;
+	/** 把未暂存的路径加入本地排除文件。 */
+	readonly onAddToLocalExclude: (path: string) => void;
+	/** 当前工作树是否有本地排除条目；有才显示查看入口。 */
+	readonly hasLocalExclude: boolean;
+	/** 查看本地排除的条目。 */
+	readonly onShowLocalExclude: () => void;
 }
 
 /**
@@ -152,6 +160,7 @@ export function ChangesSection({
 	showPublishButton, onPublish,
 	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
+	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
 }: ChangesSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -213,6 +222,12 @@ export function ChangesSection({
 				React.createElement('div', { className: 'ggg-commit-actions-row' },
 					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
 					React.createElement('span', { className: 'ggg-commit-actions-right' },
+						// 本地排除有内容时给出打开入口：图标取 .gitignore 的文件图标。
+						hasLocalExclude && React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: busy,
+							className: 'ggg-stash-btn', onClick: onShowLocalExclude,
+							title: '打开本地排除文件', 'aria-label': '本地排除',
+						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 })),
 						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
 						showTranslate && React.createElement(Button, {
 							variant: 'ghost', size: 'sm', disabled: translateBusy,
@@ -252,11 +267,13 @@ export function ChangesSection({
 					staged: true, entries, busy, workingTreePath: workingTreePath as string,
 					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					onAddToGitignore, onAddToLocalExclude,
 				}),
 				ChangeGroup({
 					staged: false, entries, busy, workingTreePath: workingTreePath as string,
 					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
+					onAddToGitignore, onAddToLocalExclude,
 					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
 				}),
 			),

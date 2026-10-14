@@ -23,6 +23,7 @@ import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
+import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
@@ -113,6 +114,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
+			break;
+		case 'addToGitignore':
+			await respondResult('addToGitignore', async () => ({ result: await addToGitignore(repo, str('path')) }));
+			break;
+		case 'addToLocalExclude':
+			await respondResult('addToLocalExclude', async () => ({ state: await addToLocalExclude(repo, str('path')) }));
+			break;
+		case 'localExcludeState':
+			await respondResult('localExcludeState', async () => ({ state: await localExcludeState(repo) }));
 			break;
 		case 'removeWorktree':
 			await respondResult('removeWorktree', async () => {

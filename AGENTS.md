@@ -44,6 +44,8 @@ assets/icons/       引用标记用的 SVG
 宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
 `git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，无 git 调用，可被测试直接导入；
 `git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
+`ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
+`ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
@@ -106,6 +108,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
 | `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |
 | `git-messages.test.mjs` | git 失败文本的中文说明与原文回退 |
+| `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |

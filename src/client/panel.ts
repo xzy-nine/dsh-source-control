@@ -7,10 +7,10 @@
  */
 import React from 'react';
 import {
-	addRemote, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
+	addRemote, addToGitignore, addToLocalExclude, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
-	loadCommitMessage,
+	localExcludeState, loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from './api.ts';
@@ -33,6 +33,7 @@ import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
+import type { LocalExcludeState, IgnoreWriteResult } from './api.ts';
 
 /** 面板属性。 */
 export interface GitGraphPanelProps {
@@ -85,6 +86,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
+	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
+	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
 	const [filterOpen, setFilterOpen] = React.useState(false);
 	const [filterSearch, setFilterSearch] = React.useState('');
 	const [filterSelected, setFilterSelected] = React.useState<Set<string>>(() => new Set());
@@ -179,6 +182,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
 		let cancelled = false;
 		translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
+		return () => { cancelled = true; };
+	}, [workingTreePath]);
+
+	/* 本地排除条目：换仓库时读一次，写入后再刷新，决定提交框是否显示查看入口。 */
+	React.useEffect(() => {
+		if (workingTreePath === null) { setLocalExclude(null); return undefined; }
+		let cancelled = false;
+		localExcludeState(workingTreePath)
+			.then((state) => { if (!cancelled) setLocalExclude(state); })
+			.catch(() => { if (!cancelled) setLocalExclude(null); });
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
@@ -811,6 +824,47 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	}, [workingTreePath, run]);
 
 	/**
+	 * 把未暂存的路径加入 `.gitignore`，随后打开该文件的差异视图。
+	 *
+	 * 规则写进最近的 `.gitignore`（没有则在仓库根新建）；新建的文件没有旧侧内容，
+	 * 因此按普通文件打开而不是差异。
+	 */
+	const handleAddToGitignore = React.useCallback((path: string) => {
+		void (async () => {
+			let written: IgnoreWriteResult | null = null;
+			await run(async () => { written = await addToGitignore(workingTreePath as string, path); });
+			const result: IgnoreWriteResult | null = written;
+			if (result === null || result.file === '') return;
+			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
+			await openDiff('*', result.file, false, !result.tracked);
+		})();
+	}, [run, workingTreePath, openDiff, notify]);
+
+	/**
+	 * 把未暂存的路径加入本地排除文件 `.git/info/exclude`，随后打开该文件。
+	 *
+	 * 该文件在 `.git` 目录内，以宿主返回的绝对路径按普通文件打开。
+	 */
+	const handleAddToLocalExclude = React.useCallback((path: string) => {
+		void (async () => {
+			let written: LocalExcludeState | null = null;
+			await run(async () => { written = await addToLocalExclude(workingTreePath as string, path); });
+			const state: LocalExcludeState | null = written;
+			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
+			if (state === null || state.path === '') return;
+			setLocalExclude(state);
+			await openDiff('*', state.path, false, true);
+		})();
+	}, [run, workingTreePath, openDiff]);
+
+	/** 打开本地排除文件；它在 `.git` 目录内，以绝对路径按普通文件打开。 */
+	const handleShowLocalExclude = React.useCallback(() => {
+		const state = localExclude;
+		if (state === null || state.path === '') return;
+		void openDiff('*', state.path, false, true);
+	}, [localExclude, openDiff]);
+
+	/**
 	 * 创建 Pull Request：选目标分支、填标题与正文，交给 gh 创建。
 	 *
 	 * 当前分支没有上游时先说明原因；gh 不可用时给出降级提示而不是静默失败。
@@ -1110,6 +1164,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			stagedPaths, onSubmit: submit, onRefresh: () => { void run(() => refresh()); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths, openDiff,
+			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
+			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
 		}),
 
 		// ── 图形 ────────────────────────────────────────────────
