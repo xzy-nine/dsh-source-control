@@ -62,6 +62,18 @@ These actions ask for confirmation first, with a red confirm button: discard cha
 
 **Unstaging is not destructive** and asks nothing. Discarding an untracked file is worded as a **delete** — the file is genuinely removed rather than reverted.
 
+### SSH remotes
+
+A selection control switches a remote address between protocols inside the edit form, in both directions:
+
+- Remote Configuration accepts `git@host:owner/repo.git` and `ssh://` URLs; a **Protocol** segmented control below the URL field rewrites the field in place, together with the push URL when it points at the same host.
+- The rewrite happens in the form only: open a remote's pencil button, switch the protocol, and save to write it to the repository configuration.
+- Both the GitHub and the manual page of the publish dialog offer a protocol choice. The manual page converts the address to the selected protocol (HTTPS ⇄ SSH); the GitHub page runs `gh repo create` with it, so the new remote is created in that form from the start.
+
+Switching to SSH is preceded by a local SSH status check: the `ssh` client, the private keys under `~/.ssh`, and whether the target host accepts this machine's key (non-interactive, with a connection timeout). When not ready, the reason is shown and the remote configuration is left untouched; switching back to HTTPS needs no local SSH.
+
+The status is handled like the GitHub account status: cached per host in the host process, for 5 minutes when ready and 15 seconds when not, so repeated requests in that window probe nothing and every check in the UI shares one result. The section's **Check SSH status** action ignores the cache and probes again.
+
 ### Repository configuration
 
 The settings panel offers:
@@ -70,7 +82,7 @@ The settings panel offers:
 |---|---|
 | General | Commit ordering (topological / date / author date), date format, and display toggles for the commit box and the graph |
 | User Details | User identity (name and email), writable globally or per repository |
-| Remote Configuration | Add, edit, and delete remotes |
+| Remote Configuration | Add, edit, and delete remotes, plus switching between the HTTPS and SSH protocols |
 | Issue Linking | Issue link rules |
 | Pull Request Creation | Pull-request creation settings |
 | Repository | Export the repository-level configuration |

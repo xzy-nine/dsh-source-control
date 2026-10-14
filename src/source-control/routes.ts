@@ -23,6 +23,7 @@ import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
+import { sshStatus } from './ssh-status.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -435,7 +436,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					private: bool('private'),
 					description: str('description'),
 					remote: str('remote') === '' ? 'origin' : str('remote'),
+					protocol: str('protocol') === 'ssh' ? 'ssh' : 'https',
 				}),
+			}));
+			break;
+		case 'sshStatus':
+			await respondResult('sshStatus', async () => ({
+				status: await sshStatus(str('host') === '' ? 'github.com' : str('host'), str('refresh') === 'true'),
 			}));
 			break;
 		case 'openExtensionSettings':

@@ -266,13 +266,16 @@ export interface GhCreateRepoOptions {
 	readonly description: string;
 	/** 本地远程名。 */
 	readonly remote: string;
+	/** 远程地址协议：`https` 或 `ssh`。 */
+	readonly protocol: 'https' | 'ssh';
 }
 
 /**
  * 用 `gh repo create` 在 GitHub 上新建仓库，并把它设为本地仓库的远程后推送。
  *
  * `--source` 指向本地仓库、`--remote` 指定远程名、`--push` 推送现有提交；`--public` /
- * `--private` 二选一。返回新建仓库的地址。
+ * `--private` 二选一。选择 SSH 时附加 `--protocol ssh`，远程地址即为 SSH 形态。
+ * 返回新建仓库的地址。
  *
  * @param repo - 本地仓库路径。
  * @param options - 见 {@link GhCreateRepoOptions}。
@@ -288,11 +291,14 @@ export async function ghCreateRepo(repo: string, options: GhCreateRepoOptions): 
 		options.private ? '--private' : '--public',
 	];
 	if (options.description !== '') args.push('--description', options.description);
+	if (options.protocol === 'ssh') args.push('--protocol', 'ssh');
 	const result = await runGh(args, repo);
 	if (result.code !== 0) throw new Error(ghError(result, 'create-repo'));
-	// `gh repo create` 输出的是仓库地址；取不到时按属主与仓库名拼出。
+	// `gh repo create` 输出的是仓库地址；取不到时按属主、仓库名与协议拼出。
 	const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
-	return url.startsWith('http') ? url : `https://github.com/${slug}`;
+	const acceptable = options.protocol === 'ssh' ? url.startsWith('git@') || url.startsWith('ssh://') : url.startsWith('http');
+	if (acceptable) return url;
+	return options.protocol === 'ssh' ? `git@github.com:${slug}.git` : `https://github.com/${slug}`;
 }
 
 /** 创建 Pull Request 的入参。 */

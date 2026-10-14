@@ -362,13 +362,61 @@ export async function ghRepoInfo(cwd: string): Promise<GhRepoInfoResult> {
 }
 
 /**
+ * 本地 SSH 状态。
+ */
+export interface SshStatusInfo {
+	/** ssh 客户端是否可用。 */
+	readonly installed: boolean;
+	/** ssh 版本行；不可用时为 null。 */
+	readonly version: string | null;
+	/** `~/.ssh` 下的私钥文件名。 */
+	readonly keys: readonly string[];
+	/** 探测的目标主机。 */
+	readonly host: string;
+	/** 目标主机是否接受本机公钥。 */
+	readonly authenticated: boolean;
+	/** 是否可直接用于 SSH 远程操作。 */
+	readonly ready: boolean;
+	/** 未就绪时的原因说明。 */
+	readonly message: string | null;
+	/** 探测输出的原文。 */
+	readonly detail: string;
+}
+
+/**
+ * 检测本地 SSH 状态：ssh 客户端、私钥与对目标主机的认证。
+ *
+ * 结果由宿主按主机缓存：就绪结果缓存 5 分钟、未就绪结果缓存 15 秒，重复调用不重新探测。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param host - 目标主机名，默认 github.com。
+ * @param refresh - 为 true 时忽略宿主缓存，重新探测。
+ * @returns SSH 状态。
+ */
+export async function sshStatus(cwd: string, host = 'github.com', refresh = false): Promise<SshStatusInfo> {
+	const payload = await callApi(cwd, { command: 'sshStatus', host, refresh });
+	const status = (payload.status ?? {}) as Record<string, unknown>;
+	const keys = Array.isArray(status.keys) ? status.keys.filter((item): item is string => typeof item === 'string') : [];
+	return {
+		installed: status.installed === true,
+		version: typeof status.version === 'string' ? status.version : null,
+		keys,
+		host: typeof status.host === 'string' ? status.host : host,
+		authenticated: status.authenticated === true,
+		ready: status.ready === true,
+		message: typeof status.message === 'string' ? status.message : null,
+		detail: typeof status.detail === 'string' ? status.detail : '',
+	};
+}
+
+/**
  * 在 GitHub 上新建仓库并设为本地远程后推送。
  *
  * @param cwd - 会话工作区路径。
- * @param options - 仓库名、属主、可见性与简介。
+ * @param options - 仓库名、属主、可见性、简介与远程地址协议。
  * @returns 新仓库地址。
  */
-export async function ghCreateRepo(cwd: string, options: { name: string; owner: string; private: boolean; description: string }): Promise<string> {
+export async function ghCreateRepo(cwd: string, options: { name: string; owner: string; private: boolean; description: string; protocol: 'https' | 'ssh' }): Promise<string> {
 	const payload = await callApi(cwd, { command: 'ghCreateRepo', ...options, remote: 'origin' });
 	return typeof payload.url === 'string' ? payload.url : '';
 }

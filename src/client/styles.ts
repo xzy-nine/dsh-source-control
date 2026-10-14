@@ -237,7 +237,7 @@ export const STYLES = `
 .ggg-card-avatar{flex:none;width:20px;height:20px;border-radius:50%;object-fit:cover}
 
 /* ── 远程配置编辑按钮 ─────────────────────────────────────── */
-.ggg-set-remote-edit{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:4px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.ggg-set-remote-edit{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ggg-set-remote-edit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .ggg-set-form-actions{display:flex;gap:6px;margin-top:6px}
 .ggg-dialog-hint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}

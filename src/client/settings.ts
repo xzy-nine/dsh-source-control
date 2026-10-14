@@ -7,12 +7,14 @@
 import React from 'react';
 import {
 	Button, Checkbox, Input, SegmentedControl, SegmentedTabs,
-	IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
+	IconEditOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown } from './ui/dropdown.ts';
 import { fetchAiModels } from './api.ts';
-import { showConfirmation } from './dialog.ts';
-import type { AiModelCatalog } from './api.ts';
+import { showConfirmation, showMessage } from './dialog.ts';
+import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
+import type { RemoteProtocolSlot } from './remote-url.ts';
+import type { AiModelCatalog, SshStatusInfo } from './api.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
 
 /** 用户身份配置位置选项。 */
@@ -31,6 +33,12 @@ export const DATE_FORMAT_TYPE = [
 	{ value: '0', label: '日期和时间', title: '显示完整日期与时间' },
 	{ value: '1', label: '相对', title: '显示相对时间（如「3 天前」）' },
 	{ value: '2', label: '绝对', title: '显示绝对日期' },
+];
+
+/** 远程地址协议档位选项：HTTP(S) 与 git:// 归入 HTTPS 档，其余为 SSH 档。 */
+export const REMOTE_PROTOCOLS = [
+	{ value: 'https', label: 'HTTPS', title: '以 HTTP(S) 形式访问远程' },
+	{ value: 'ssh', label: 'SSH', title: '以 SSH 形式访问远程' },
 ];
 
 /**
@@ -295,6 +303,8 @@ export interface SettingsPanelProps {
 	readonly onDeleteRemote: (name: string) => void;
 	readonly onAddRemote?: (name: string, url: string, pushUrl: string | null) => void;
 	readonly onEditRemote?: (nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void;
+	/** 读取本地 SSH 状态；refresh 为 true 时忽略宿主缓存，返回 null 表示检测失败。 */
+	readonly onCheckSsh?: (host: string, refresh?: boolean) => Promise<SshStatusInfo | null>;
 	readonly onExportConfig?: () => void;
 	readonly userDetails: UserDetails | null;
 	readonly onEditUserDetails: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;
@@ -311,7 +321,7 @@ export interface SettingsPanelProps {
  * @returns 面板元素，未展开时返回 null。
  */
 export function SettingsPanel({
-	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig,
+	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, onCheckSsh,
 	userDetails, onEditUserDetails, onDeleteUserDetails,
 }: SettingsPanelProps): React.ReactElement | null {
 	const [tab, setTab] = React.useState<SettingsTab>('repo');
@@ -429,6 +439,7 @@ export function SettingsPanel({
 				onDeleteRemote,
 				onAddRemote,
 				onEditRemote,
+				onCheckSsh,
 			}),
 		),
 		React.createElement(Section, { title: 'Pull Request Creation', key: 'pr' },
@@ -480,25 +491,112 @@ export function SettingsPanel({
 }
 
 /**
- * 远程仓库配置区：列出已有远程（含编辑/删除）与添加远程表单。
+ * SSH 状态的一行说明。
+ *
+ * @param status - 检测结果。
+ * @returns 说明文本。
+ */
+function sshStatusText(status: SshStatusInfo): string {
+	if (!status.installed) return 'SSH：未找到 ssh 客户端';
+	const keys = status.keys.length > 0 ? `私钥 ${status.keys.join('、')}` : '未发现 ~/.ssh 私钥';
+	return `SSH：${status.host} ${status.authenticated ? '已认证' : '未认证'}（${status.version ?? 'ssh'}；${keys}）`;
+}
+
+/**
+ * 远程仓库配置区：列出已有远程（含编辑与删除）与添加 / 编辑表单。
+ *
+ * 协议切换只在表单内进行：表单的协议分段控件换算输入框内容，保存后写入仓库配置。
+ * 切到 SSH 前先检测本地 SSH 状态（客户端、私钥与目标主机认证），未就绪时说明原因且不改写配置；
+ * 切回 HTTPS 不依赖本地 SSH。
  *
  * @param props.remotes - 远程列表。
  * @param props.onDeleteRemote - 删除远程回调。
  * @param props.onAddRemote - 添加远程回调。
  * @param props.onEditRemote - 编辑远程回调。
+ * @param props.onCheckSsh - 本地 SSH 状态检测回调。
  * @returns 区元素。
  */
-function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemote }: {
+function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemote, onCheckSsh }: {
 	remotes: readonly Remote[];
 	onDeleteRemote: (name: string) => void;
 	onAddRemote?: ((name: string, url: string, pushUrl: string | null) => void) | undefined;
 	onEditRemote?: ((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void) | undefined;
+	onCheckSsh?: ((host: string, refresh?: boolean) => Promise<SshStatusInfo | null>) | undefined;
 }): React.ReactElement {
 	const [adding, setAdding] = React.useState(false);
 	const [editing, setEditing] = React.useState<Remote | null>(null);
 	const [name, setName] = React.useState('');
 	const [url, setUrl] = React.useState('');
 	const [pushUrl, setPushUrl] = React.useState('');
+	const [protocolDraft, setProtocolDraft] = React.useState<RemoteProtocolSlot>('https');
+	const [sshNote, setSshNote] = React.useState<string | null>(null);
+	const [sshBusy, setSshBusy] = React.useState(false);
+
+	/**
+	 * 检测本地 SSH 状态。
+	 *
+	 * 结果由宿主按主机缓存，转换前的校验直接复用；显式检测时绕过缓存重新探测。
+	 *
+	 * @param host - 目标主机名。
+	 * @param refresh - 为 true 时忽略宿主缓存重新探测。
+	 * @returns 就绪时为 true；未就绪时说明原因并返回 false。
+	 */
+	const checkSsh = async (host: string, refresh = false): Promise<boolean> => {
+		if (onCheckSsh === undefined) return true;
+		setSshBusy(true);
+		try {
+			const status = await onCheckSsh(host, refresh);
+			if (status === null) {
+				setSshNote('SSH：检测失败');
+				await showMessage({ title: 'SSH 状态未知', message: '无法获取本地 SSH 状态，请稍后重试。' });
+				return false;
+			}
+			setSshNote(sshStatusText(status));
+			if (!status.ready) {
+				await showMessage({ title: 'SSH 未就绪', message: status.message ?? `本地 SSH 无法用于 ${status.host}。` });
+				return false;
+			}
+			return true;
+		} finally {
+			setSshBusy(false);
+		}
+	};
+
+	/**
+	 * 换算地址的协议档位。
+	 *
+	 * 转为 SSH 前检测本地 SSH 状态（客户端、私钥与目标主机认证），未就绪时说明原因且不换算；
+	 * 转回 HTTPS 不依赖本地 SSH，直接换算。
+	 *
+	 * @param value - 待换算的地址。
+	 * @param target - 目标档位。
+	 * @returns 换算后的地址；不可换算或 SSH 未就绪时为 null。
+	 */
+	const convertUrl = async (value: string, target: RemoteProtocolSlot): Promise<string | null> => {
+		const next = target === 'ssh' ? toSshRemoteUrl(value) : toHttpsRemoteUrl(value);
+		if (next === null) {
+			await showMessage({ title: '无法转换', message: '该地址不是 HTTP(S) 或 SSH 形态的远程地址。' });
+			return null;
+		}
+		if (next === value.trim() || target === 'https') return next;
+		const host = remoteHostOf(value);
+		return (await checkSsh(host === '' ? 'github.com' : host)) ? next : null;
+	};
+
+	/**
+	 * 换算同一远程的推送地址：与抓取地址同主机时跟随换算，否则原样保留。
+	 *
+	 * @param push - 推送地址；未配置时为 null。
+	 * @param fetch - 抓取地址。
+	 * @param target - 目标档位。
+	 * @returns 换算后的推送地址。
+	 */
+	const convertPushUrl = (push: string, fetch: string, target: RemoteProtocolSlot): string => {
+		if (remoteHostOf(push) !== remoteHostOf(fetch)) return push;
+		const next = target === 'ssh' ? toSshRemoteUrl(push) : toHttpsRemoteUrl(push);
+		return next ?? push;
+	};
+
 	const submitAdd = (): void => {
 		if (!name || !url) return;
 		onAddRemote?.(name, url, pushUrl || null);
@@ -515,6 +613,18 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		setUrl(remote.url ?? '');
 		setPushUrl(remote.pushUrl ?? '');
 	};
+	/** 表单内切换协议：换算输入框内容，推送地址同主机时一并换算。 */
+	const switchFormProtocol = async (target: RemoteProtocolSlot): Promise<void> => {
+		if (url.trim() === '' || remoteProtocolSlot(url) === target) {
+			setProtocolDraft(target);
+			return;
+		}
+		const next = await convertUrl(url, target);
+		if (next === null) return;
+		setProtocolDraft(target);
+		if (pushUrl.trim() !== '') setPushUrl(convertPushUrl(pushUrl, url, target));
+		setUrl(next);
+	};
 	const form = React.createElement(
 		'div',
 		{ className: 'ggg-set-form' },
@@ -524,7 +634,20 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
 			React.createElement('span', { className: 'ggg-set-row-text' }, 'URL'),
-			React.createElement(Input, { value: url, placeholder: 'https://github.com/owner/repo.git', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value) }),
+			React.createElement(Input, {
+				value: url,
+				placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
+				onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value),
+			}),
+		),
+		React.createElement('div', { className: 'ggg-set-row' },
+			React.createElement('span', { className: 'ggg-set-row-text' }, '协议'),
+			React.createElement(SegmentedControl, {
+				id: 'ggg-set-remote-protocol', label: '协议',
+				value: remoteProtocolSlot(url) ?? protocolDraft,
+				onChange: (next: string) => { void switchFormProtocol(next === 'ssh' ? 'ssh' : 'https'); },
+				options: REMOTE_PROTOCOLS,
+			}),
 		),
 		React.createElement('label', { className: 'ggg-set-row-block' },
 			React.createElement('span', { className: 'ggg-set-row-text' }, '推送 URL（可选）'),
@@ -535,6 +658,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
 		),
 	);
+	const probeHost = remotes.map((remote) => remoteHostOf(remote.url ?? '')).find((host) => host !== '') ?? 'github.com';
 	return React.createElement(
 		'div',
 		null,
@@ -548,7 +672,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 					React.createElement('button', {
 						type: 'button', className: 'ggg-set-remote-edit', title: '编辑远程',
 						onClick: () => beginEdit(remote),
-					}, React.createElement(IconChevronDownOutlineRegular, { size: 13 })),
+					}, React.createElement(IconEditOutlineRegular, { size: 18 })),
 					React.createElement('button', {
 						type: 'button', className: 'ggg-set-remote-del', title: '删除远程',
 						// 删除远程会改动仓库配置，先确认。
@@ -566,6 +690,13 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		!adding && editing === null
 			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
 			: form,
+		React.createElement('div', { className: 'ggg-set-form-actions' },
+			React.createElement(Button, {
+				variant: 'toolbar', size: 'sm', disabled: sshBusy,
+				onClick: () => { void checkSsh(probeHost, true); },
+			}, '检测 SSH 状态'),
+		),
+		sshNote !== null && React.createElement('div', { className: 'ggg-set-note' }, sshNote),
 	);
 }
 

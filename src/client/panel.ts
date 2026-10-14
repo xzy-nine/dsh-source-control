@@ -11,11 +11,12 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, stagePaths, tagDetails, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, translateAvailable,
 	translateText, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
-import { showCheckbox, showForm, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
+import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
+import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
 import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
 import { changeOf } from './panel/changes.ts';
@@ -29,7 +30,7 @@ import { loadPersistent, loadSession, savePersistent, saveSession } from './pane
 import { useCommitStats } from './panel/use-commit-stats.ts';
 import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
-import { formatDate, loadSettings, saveSettings, SettingsPanel } from './settings.ts';
+import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
 
 /** 面板属性。 */
@@ -542,17 +543,46 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		&& needsTranslation(message, interfaceLanguage());
 
 	/**
+	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
+	 *
+	 * @param host - 目标主机名。
+	 * @param refresh - 为 true 时忽略宿主缓存重新探测。
+	 * @returns SSH 状态；没有工作区或请求失败时为 null。
+	 */
+	const handleCheckSsh = React.useCallback(async (host: string, refresh = false) => (
+		workingTreePath === null ? null : withProgress(() => sshStatus(workingTreePath, host, refresh))
+	), [workingTreePath, withProgress]);
+
+	/**
+	 * 校验目标主机的 SSH 可用性：客户端、私钥与认证。
+	 *
+	 * @param host - 目标主机名。
+	 * @returns 就绪时为 true；否则说明原因并返回 false。
+	 */
+	const ensureSshReady = React.useCallback(async (host: string): Promise<boolean> => {
+		const status = await handleCheckSsh(host);
+		if (status !== null && status.ready) return true;
+		await showMessage({
+			title: 'SSH 未就绪',
+			message: status === null ? '无法获取本地 SSH 状态，请稍后重试。' : status.message ?? `本地 SSH 无法用于 ${status.host}。`,
+		});
+		return false;
+	}, [handleCheckSsh]);
+
+	/**
 	 * 没有远程时：在同一个对话框里用页签选择发布方式。
 	 *
 	 * GitHub 页签与手工页签一并列出，切换页签不丢失已填内容；未安装 gh / 未登录 / 缺 scope
 	 * 时不显示 GitHub 页签，改为在对话框内说明原因，手工页签始终可用。
+	 * 两页都可选协议：手工页按所选协议换算地址（HTTPS ⇄ SSH），GitHub 页让 gh 以所选协议建远程；
+	 * 换算为 SSH 或建仓前先校验本机 SSH 状态。
 	 *
 	 * @param branch - 当前分支名。
 	 * @returns 选中的方式与参数；取消时返回 null。
 	 */
 	const askRemoteSource = React.useCallback(async (branch: string): Promise<
-		| { kind: 'manual'; name: string; url: string }
-		| { kind: 'github'; owner: string; name: string; private: boolean; description: string }
+		| { kind: 'manual'; name: string; url: string; protocol: 'https' | 'ssh' }
+		| { kind: 'github'; owner: string; name: string; private: boolean; description: string; protocol: 'https' | 'ssh' }
 		| null
 	> => {
 		const account = await withProgress(() => ghAccount(workingTreePath as string));
@@ -563,6 +593,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		const repoName = selectedNode?.name ?? '';
 		const user = account?.user ?? '';
 		const orgs = (account?.owners ?? []).filter((owner) => owner !== user);
+		const protocolField = {
+			type: 'select' as const, name: 'protocol', label: '协议', value: 'https', options: REMOTE_PROTOCOLS,
+		};
 
 		const manualPage: FormPage = {
 			value: 'manual',
@@ -570,7 +603,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			message: '填写已有远程仓库的地址。',
 			fields: [
 				{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
-				{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git' },
+				{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git' },
+				protocolField,
 			],
 		};
 		const unavailableNote = account !== null && account.loggedIn
@@ -606,6 +640,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 								{ value: 'public', label: '公开' },
 							],
 						},
+						protocolField,
 						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
 					],
 				},
@@ -627,19 +662,35 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			const chosenOrg = String(form.owner ?? '').trim();
 			const owner = form.accountType === 'org' && chosenOrg !== '' ? chosenOrg : user;
 			if (owner === '') return null;
+			// 选 SSH 时先确认本机可认证，避免仓库已建好却推送失败。
+			if (form.protocol === 'ssh' && !await ensureSshReady('github.com')) return null;
 			return {
 				kind: 'github',
 				owner,
 				name,
 				private: String(form.visibility ?? 'private') !== 'public',
 				description: String(form.description ?? '').trim(),
+				protocol: form.protocol === 'ssh' ? 'ssh' : 'https',
 			};
 		}
 		const name = String(form.name ?? '').trim() === '' ? 'origin' : String(form.name ?? '').trim();
-		const url = String(form.url ?? '').trim();
+		let url = String(form.url ?? '').trim();
 		if (url === '') return null;
-		return { kind: 'manual', name, url };
-	}, [workingTreePath, selectedNode, withProgress]);
+		if (form.protocol === 'ssh') {
+			const sshUrl = toSshRemoteUrl(url);
+			if (sshUrl === null) {
+				await showMessage({ title: '无法转换', message: '该地址不是 HTTP(S) 或 SSH 形态的远程地址，无法按 SSH 发布。' });
+				return null;
+			}
+			const host = remoteHostOf(url);
+			if (sshUrl !== url && !await ensureSshReady(host === '' ? 'github.com' : host)) return null;
+			url = sshUrl;
+		} else {
+			// 选择 HTTPS 时把 SSH 形态的地址换算回 HTTPS；不可换算的地址按原样使用。
+			url = toHttpsRemoteUrl(url) ?? url;
+		}
+		return { kind: 'manual', name, url, protocol: form.protocol === 'ssh' ? 'ssh' : 'https' };
+	}, [workingTreePath, selectedNode, withProgress, ensureSshReady]);
 
 	/**
 	 * 发布当前本地分支：推送到选定远程并建立上游。
@@ -669,6 +720,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 					await run(async () => {
 						const url = await ghCreateRepo(path, {
 							name: source.name, owner: source.owner, private: source.private, description: source.description,
+							protocol: source.protocol,
 						});
 						await notify(`已发布到 ${url}`);
 					});
@@ -1000,6 +1052,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			open: settingsOpen, onClose: () => setSettingsOpen(false),
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
 			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
+			onCheckSsh: handleCheckSsh,
 			userDetails, onEditUserDetails: handleEditUserDetails, onDeleteUserDetails: handleDeleteUserDetails,
 		}),
 
