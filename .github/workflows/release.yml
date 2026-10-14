@@ -1,0 +1,116 @@
+# 版本号更新与发布：push 到 main 后按 conventional commits 推断语义化版本
+# （feat→minor / fix|perf→patch / breaking→major），有 releasable 提交时回写 package.json 版本号、
+# 打 v{版本} tag、创建 GitHub Release 并发布到 npm。
+#
+# 回写用 CI_PUSH_TOKEN（用户 PAT）直推 main：仓库级 ruleset 已为作者配置 bypass，
+# semantic-release 生成的提交信息自带 [skip ci] 防循环。
+# 插件依赖在运行时安装，不写入仓库依赖。
+name: 发布
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只预览版本与变更说明，不写回、不打 tag、不发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: 检查
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: 推断版本并发布
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+        with:
+          # semantic-release 需完整历史与 tag 才能推断版本。
+          fetch-depth: 0
+          fetch-tags: true
+          # 推送由 CI_PUSH_TOKEN 承担，不用默认凭据。
+          persist-credentials: false
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 版本一律锁定：这些包不锁版本时会各自漂移到最新大版本，极易互相不兼容。
+      # conventional-changelog-conventionalcommits 漂移到 10.x 时，其内部依赖要求
+      # conventional-changelog-writer@9+，而 @semantic-release/release-notes-generator@14
+      # 依赖 writer@^8，会导致 generateNotes 报 "Missing helper" 并中断发版。
+      # 升级时需确认 conventional-changelog-writer 在两侧的主版本一致。
+      - name: 安装 semantic-release 及插件（不写入仓库依赖）
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund \
+            semantic-release@25.0.9 \
+            @semantic-release/commit-analyzer@13.0.1 \
+            @semantic-release/release-notes-generator@14.1.1 \
+            @semantic-release/npm@13.1.5 \
+            @semantic-release/github@12.0.9 \
+            @semantic-release/git@11.0.1 \
+            conventional-changelog-conventionalcommits@9.3.1
+
+      - name: 推断版本并发布
+        id: release
+        env:
+          # git 插件用该令牌推送回写提交（用户 PAT，可绕过 main 保护规则）。
+          GITHUB_TOKEN: ${{ secrets.CI_PUSH_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BEFORE_TAG="$(git tag --sort=-version:refname | head -n 1)"
+          echo "发布前最新 tag：${BEFORE_TAG:-（无）}"
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npx --yes semantic-release --dry-run
+          else
+            npx --yes semantic-release
+          fi
+
+          AFTER_TAG="$(git tag --sort=-version:refname | head -n 1)"
+          if [ -n "$AFTER_TAG" ] && [ "$AFTER_TAG" != "$BEFORE_TAG" ]; then
+            echo "tag=$AFTER_TAG" >> "$GITHUB_OUTPUT"
+            echo "version=${AFTER_TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "本次发版：$AFTER_TAG"
+          else
+            echo "本次无 releasable 提交，未产生新 tag"
+          fi
+
+      - name: 发布结果
+        if: steps.release.outputs.tag != ''
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          echo "## 已发布 ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 值 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 版本 | \`${{ steps.release.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag | \`${TAG}\` |" >> "$GITHUB_STEP_SUMMARY"

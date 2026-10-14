@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+  # 发布前复用同一套检查，避免发版流程另跑一份。
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: Node.js 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+        with:
+          # 泳道图与提交排序测试跑真实 git 历史，需要完整历史与 tag。
+          fetch-depth: 0
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # 插件自身的 revert / cherry-pick 会 spawn git，测试依赖环境身份；runner 默认没有。
+      - name: 配置测试用 git 身份
+        run: |
+          git config --global user.name "dsh-source-control-ci"
+          git config --global user.email "ci@dsh.invalid"
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm typecheck
+
+      # pretest 会先跑完整 build（宿主 tsc + 客户端 esbuild），再跑测试。
+      - name: 测试
+        run: pnpm test
+
+      - name: 校验发布包
+        run: pnpm pack
