@@ -188,7 +188,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					bool('showRemoteBranches', true),
 					bool('includeCommitsMentionedByReflogs'),
 					bool('onlyFollowFirstParent'),
-					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'date') as never,
+					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
 					remoteNames,
 					arr('hideRemotes'),
 					arr('stashes'),

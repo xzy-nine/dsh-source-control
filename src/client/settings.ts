@@ -2,7 +2,7 @@
  * 源代码管理设置：分区配置、本地持久化与日期格式化。
  *
  * 全局分区覆盖提交图、引用标签与日期格式；仓库分区覆盖用户身份、远程仓库、
- * Pull Request Creation、Issue Linking 与仓库配置导出。
+ * Issue Linking 与仓库配置导出。
  */
 import React from 'react';
 import {
@@ -50,7 +50,7 @@ export const REMOTE_PROTOCOLS = [
  */
 export function defaultSettings(): Settings {
 	return {
-		commitOrdering: 'date',
+		commitOrdering: 'topo',
 		dateFormat: { type: 0, iso: false },
 		showStashes: true,
 		showTags: true,
@@ -437,12 +437,6 @@ export function SettingsPanel({
 				onEditRemote,
 				onCheckSsh,
 			}),
-		),
-		React.createElement(Section, { title: 'Pull Request Creation', key: 'pr' },
-			React.createElement('div', { className: css.setNote },
-				'创建 Pull Request 通过 gh CLI 完成：在当前分支的提交右键菜单或分支引用右键菜单选择'
-				+ '「创建 Pull Request…」，填写目标分支、标题与正文，可创建为草稿。'
-				+ '需要本机已登录 gh，且当前分支已推送到 GitHub 远程；授权缺少所需 scope 时提示补授权命令。'),
 		),
 		React.createElement(Section, { title: '仓库配置', key: 'export' },
 			React.createElement(Button, {
