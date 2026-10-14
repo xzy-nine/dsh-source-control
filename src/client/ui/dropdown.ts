@@ -6,6 +6,7 @@
  */
 import React from 'react';
 import { IconChevronDownOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives';
+import css from '../css/styles.module.css';
 
 /** 一个下拉选项。 */
 export interface DropdownOption {
@@ -47,11 +48,11 @@ export function Dropdown({ options, value, onChange, id, fallbackLabel }: Dropdo
 		onSelect: (menuId: string) => { setOpen(false); onChange(menuId); },
 		onClose: () => setOpen(false),
 		anchor: React.createElement('button', {
-			type: 'button', ref: triggerRef, id, className: 'ggg-set-dropdown',
+			type: 'button', ref: triggerRef, id, className: css.setDropdown,
 			'aria-haspopup': 'menu', 'aria-expanded': open,
 			onClick: () => setOpen((previous) => !previous),
 		},
-			React.createElement('span', { className: 'ggg-set-dropdown-text' }, current?.label ?? fallbackLabel ?? value),
+			React.createElement('span', { className: css.setDropdownText }, current?.label ?? fallbackLabel ?? value),
 			React.createElement(IconChevronDownOutlineRegular, { size: 13 }),
 		),
 	});

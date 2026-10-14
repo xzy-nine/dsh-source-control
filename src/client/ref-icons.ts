@@ -11,6 +11,7 @@ import cloudSvg from '../../assets/icons/cloud.svg';
 import cloudUploadSvg from '../../assets/icons/cloud_upload.svg';
 import translateSvg from '../../assets/icons/g_translate.svg';
 import tagSvg from '../../assets/icons/shoppingmode.svg';
+import css from './css/styles.module.css';
 
 /** 引用标记的图标边长（像素）。 */
 const REF_ICON_SIZE = 12;
@@ -42,7 +43,7 @@ function iconMarkup(svg: string, size: number): string {
  */
 function ResourceIcon(markup: string): React.ReactElement {
 	return React.createElement('span', {
-		className: 'ggg-icon',
+		className: css.icon,
 		'aria-hidden': 'true',
 		dangerouslySetInnerHTML: { __html: markup },
 	});

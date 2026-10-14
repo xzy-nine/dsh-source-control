@@ -16,7 +16,7 @@ import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-side
 import { fileDiffContent } from './api.ts';
 import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
-import { STYLES } from './styles.ts';
+import css from './css/styles.module.css';
 
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-source-control/panel';
@@ -31,16 +31,6 @@ const HEADER_ACTION_ORDER = -5;
 /** git-diff 页类型身份。 */
 const DIFF_TAB_ID = 'dsh-source-control/diff';
 const DIFF_TAB_KIND = 'devGitGraphDiff';
-
-/** 样式只注入一次。 */
-function ensureStyle() {
-	if (typeof document === 'undefined') return;
-	if (document.getElementById('dsh-source-control-style') !== null) return;
-	const element = document.createElement('style');
-	element.id = 'dsh-source-control-style';
-	element.textContent = STYLES;
-	document.head.appendChild(element);
-}
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
 const EMPTY_SESSIONS = (selector) => selector({ byId: {} });
@@ -115,7 +105,7 @@ function GitGraphTab(props) {
 function GitGraphTitle() {
 	return React.createElement(
 		'span',
-		{ className: 'ggg-chip' },
+		{ className: css.chip },
 		// 标签页头上的图标：比正文里的图标小一档，避免在标签条里显得过大。
 		React.createElement(GitGraphIcon, { size: 14 }),
 		React.createElement('span', null, TAB_TITLE),
@@ -127,7 +117,7 @@ function GitGraphHeaderAction(props) {
 	return React.createElement(
 		'button',
 		{
-			type: 'button', className: 'ggg-open', title: TAB_TITLE, 'aria-label': TAB_TITLE,
+			type: 'button', className: css.open, title: TAB_TITLE, 'aria-label': TAB_TITLE,
 			onClick: props.open,
 		},
 		React.createElement(GitGraphIcon, { size: 16 }),
@@ -179,7 +169,7 @@ function GitDiffTab(props) {
 		load();
 	}, [load]);
 	if (parsed === null) {
-		return React.createElement('div', { className: 'ggg-empty' }, '无效的差异地址');
+		return React.createElement('div', { className: css.empty }, '无效的差异地址');
 	}
 	// 比较状态：加载中、无法读取，或可绘制的文本比较。
 	const state: ChangesDiffState = loading
@@ -193,27 +183,27 @@ function GitDiffTab(props) {
 			};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-diff-tab' },
-		React.createElement('div', { className: 'ggg-diff-tab-head' },
-			React.createElement('span', { className: 'ggg-diff-tab-path' }, parsed.path),
-			React.createElement('span', { className: 'ggg-diff-tab-hash' },
+		{ className: css.diffTab },
+		React.createElement('div', { className: css.diffTabHead },
+			React.createElement('span', { className: css.diffTabPath }, parsed.path),
+			React.createElement('span', { className: css.diffTabHash },
 				baseHash !== ''
 					? `${baseHash.slice(0, 7)} → ${parsed.hash.slice(0, 7)}`
 					: parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
 			React.createElement('button', {
-				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': split,
+				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
 				onClick: () => setSplit((value) => !value),
 			}, split ? '并排' : '统一'),
 			React.createElement('button', {
-				type: 'button', className: 'ggg-diff-tab-toggle', 'aria-pressed': wrap,
+				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
 				onClick: () => setWrap((value) => !value),
 			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(
 			'div',
-			{ className: 'ggg-diff-tab-body' },
+			{ className: css.diffTabBody },
 			React.createElement(FileDiff, { state, split, wrap, retry: load }),
 		),
 	);
@@ -225,7 +215,7 @@ function GitDiffTitle(props) {
 	const address = tabInfo?.tab?.navigation?.address ?? '';
 	const parsed = parseGitDiffAddress(address);
 	const name = parsed !== null ? (parsed.path.split('/').pop() ?? 'Diff') : 'Diff';
-	return React.createElement('span', { className: 'ggg-chip' }, name);
+	return React.createElement('span', { className: css.chip }, name);
 }
 
 /**
@@ -235,7 +225,6 @@ function GitDiffTitle(props) {
  * @returns 无。
  */
 export function apply(ctx) {
-	ensureStyle();
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
 

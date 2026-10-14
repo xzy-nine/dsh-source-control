@@ -16,6 +16,8 @@ import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } fr
 import type { RemoteProtocolSlot } from './remote-url.ts';
 import type { AiModelCatalog, SshStatusInfo } from './api.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
+import css from './css/styles.module.css';
+import { cx } from './css/cx.ts';
 
 /** 用户身份配置位置选项。 */
 /** localStorage 键。 */
@@ -149,8 +151,8 @@ export function formatDate(unixSeconds: number, dateFormat: DateFormat): string 
 function Section({ title, children }: { title: string; children?: React.ReactNode }): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-section' },
-		React.createElement('div', { className: 'ggg-set-section-title' }, title),
+		{ className: css.setSection },
+		React.createElement('div', { className: css.setSectionTitle }, title),
 		children,
 	);
 }
@@ -169,7 +171,7 @@ function Section({ title, children }: { title: string; children?: React.ReactNod
 function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (next: boolean) => void }): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-row ggg-set-row-inline' },
+		{ className: cx(css.setRow, css.setRowInline) },
 		React.createElement(Checkbox, { checked, onChange, label }),
 	);
 }
@@ -191,8 +193,8 @@ function SelectRow({ label, options, value, onChange }: {
 }): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-row' },
-		React.createElement('span', { className: 'ggg-set-row-text' }, label),
+		{ className: css.setRow },
+		React.createElement('span', { className: css.setRowText }, label),
 		React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
 	);
 }
@@ -214,8 +216,8 @@ function DropdownRow({ label, options, value, onChange }: {
 }): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-row' },
-		React.createElement('span', { className: 'ggg-set-label' }, label),
+		{ className: css.setRow },
+		React.createElement('span', { className: css.setLabel }, label),
 		React.createElement(Dropdown, { options, value, onChange }),
 	);
 }
@@ -249,11 +251,11 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 	const models = modelsByProvider[provider] ?? [];
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-ai-model' },
+		{ className: css.setAiModel },
 		provider === '' && fallback !== null
-			? React.createElement('div', { className: 'ggg-set-note' }, '未配置专用模型，将使用当前会话模型（', fallback.provider, '/', fallback.model, '）。')
+			? React.createElement('div', { className: css.setNote }, '未配置专用模型，将使用当前会话模型（', fallback.provider, '/', fallback.model, '）。')
 			: provider === ''
-				? React.createElement('div', { className: 'ggg-set-note' }, '未配置专用模型，且无法获取当前会话模型。')
+				? React.createElement('div', { className: css.setNote }, '未配置专用模型，且无法获取当前会话模型。')
 				: null,
 		React.createElement(DropdownRow, {
 			label: '供应商',
@@ -270,10 +272,10 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 			options: models.map((m) => ({ value: m, label: m })),
 			onChange: (next: string) => onChange(provider, next),
 		}),
-		React.createElement('div', { className: 'ggg-set-row' },
-			React.createElement('label', { className: 'ggg-set-label' }, '规则'),
+		React.createElement('div', { className: css.setRow },
+			React.createElement('label', { className: css.setLabel }, '规则'),
 			React.createElement('textarea', {
-				className: 'ggg-set-textarea',
+				className: css.setTextarea,
 				value: rules,
 				placeholder: '自定义规则提示词，追加到系统提示词末尾。例如：使用中文；提交信息不超过 50 字符。',
 				onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => onRulesChange(e.currentTarget.value),
@@ -437,7 +439,7 @@ export function SettingsPanel({
 			}),
 		),
 		React.createElement(Section, { title: 'Pull Request Creation', key: 'pr' },
-			React.createElement('div', { className: 'ggg-set-note' },
+			React.createElement('div', { className: css.setNote },
 				'创建 Pull Request 通过 gh CLI 完成：在当前分支的提交右键菜单或分支引用右键菜单选择'
 				+ '「创建 Pull Request…」，填写目标分支、标题与正文，可创建为草稿。'
 				+ '需要本机已登录 gh，且当前分支已推送到 GitHub 远程；授权缺少所需 scope 时提示补授权命令。'),
@@ -452,11 +454,11 @@ export function SettingsPanel({
 	return React.createElement(
 		React.Fragment,
 		null,
-		React.createElement('div', { className: 'ggg-settings-backdrop', onClick: onClose }),
+		React.createElement('div', { className: css.settingsBackdrop, onClick: onClose }),
 		React.createElement(
 			'div',
-			{ className: 'ggg-settings', role: 'dialog', 'aria-label': '源代码管理设置' },
-			React.createElement('div', { className: 'ggg-settings-head' },
+			{ className: css.settings, role: 'dialog', 'aria-label': '源代码管理设置' },
+			React.createElement('div', { className: css.settingsHead },
 				'设置',
 				React.createElement(Button, {
 					variant: 'toolbar', size: 'sm', title: '关闭',
@@ -473,7 +475,7 @@ export function SettingsPanel({
 				],
 			}),
 			React.createElement('div', {
-				className: 'ggg-settings-body',
+				className: css.settingsBody,
 				id: tab === 'repo' ? 'ggg-set-panel-repo' : 'ggg-set-panel-global',
 				role: 'tabpanel',
 				'aria-labelledby': tab === 'repo' ? 'ggg-set-tab-repo' : 'ggg-set-tab-global',
@@ -623,21 +625,21 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 	};
 	const form = React.createElement(
 		'div',
-		{ className: 'ggg-set-form' },
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, '名称'),
+		{ className: css.setForm },
+		React.createElement('label', { className: css.setRowBlock },
+			React.createElement('span', { className: css.setRowText }, '名称'),
 			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value) }),
 		),
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, 'URL'),
+		React.createElement('label', { className: css.setRowBlock },
+			React.createElement('span', { className: css.setRowText }, 'URL'),
 			React.createElement(Input, {
 				value: url,
 				placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
 				onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value),
 			}),
 		),
-		React.createElement('div', { className: 'ggg-set-row' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, '协议'),
+		React.createElement('div', { className: css.setRow },
+			React.createElement('span', { className: css.setRowText }, '协议'),
 			React.createElement(SegmentedControl, {
 				id: 'ggg-set-remote-protocol', label: '协议',
 				value: remoteProtocolSlot(url) ?? protocolDraft,
@@ -645,11 +647,11 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 				options: REMOTE_PROTOCOLS,
 			}),
 		),
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, '推送 URL（可选）'),
+		React.createElement('label', { className: css.setRowBlock },
+			React.createElement('span', { className: css.setRowText }, '推送 URL（可选）'),
 			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setPushUrl(e.target.value) }),
 		),
-		React.createElement('div', { className: 'ggg-set-form-actions' },
+		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
 			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
 		),
@@ -659,18 +661,18 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		'div',
 		null,
 		remotes !== undefined && remotes.length > 0
-			? React.createElement('div', { className: 'ggg-set-remotes' },
+			? React.createElement('div', { className: css.setRemotes },
 				...remotes.map((remote) => React.createElement(
 					'div',
-					{ key: remote.name, className: 'ggg-set-remote' },
-					React.createElement('span', { className: 'ggg-set-remote-name' }, remote.name),
-					React.createElement('span', { className: 'ggg-set-remote-url' }, remote.url ?? ''),
+					{ key: remote.name, className: css.setRemote },
+					React.createElement('span', { className: css.setRemoteName }, remote.name),
+					React.createElement('span', { className: css.setRemoteUrl }, remote.url ?? ''),
 					React.createElement('button', {
-						type: 'button', className: 'ggg-set-remote-edit', title: '编辑远程',
+						type: 'button', className: css.setRemoteEdit, title: '编辑远程',
 						onClick: () => beginEdit(remote),
 					}, React.createElement(IconEditOutlineRegular, { size: 18 })),
 					React.createElement('button', {
-						type: 'button', className: 'ggg-set-remote-del', title: '删除远程',
+						type: 'button', className: css.setRemoteDel, title: '删除远程',
 						// 删除远程会改动仓库配置，先确认。
 						onClick: async () => {
 							const ok = await showConfirmation({
@@ -682,17 +684,17 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 					}, React.createElement(IconTrashOutlineRegular, { size: 13 })),
 				)),
 			)
-			: React.createElement('div', { className: 'ggg-set-note' }, '没有配置远程仓库'),
+			: React.createElement('div', { className: css.setNote }, '没有配置远程仓库'),
 		!adding && editing === null
 			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
 			: form,
-		React.createElement('div', { className: 'ggg-set-form-actions' },
+		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, {
 				variant: 'toolbar', size: 'sm', disabled: sshBusy,
 				onClick: () => { void checkSsh(probeHost, true); },
 			}, '检测 SSH 状态'),
 		),
-		sshNote !== null && React.createElement('div', { className: 'ggg-set-note' }, sshNote),
+		sshNote !== null && React.createElement('div', { className: css.setNote }, sshNote),
 	);
 }
 
@@ -711,24 +713,24 @@ function IssueLinkingForm({ config, onChange }: {
 	const url = config?.issueUrlTemplate ?? '';
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-form' },
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, 'Issue 正则'),
+		{ className: css.setForm },
+		React.createElement('label', { className: css.setRowBlock },
+			React.createElement('span', { className: css.setRowText }, 'Issue 正则'),
 			React.createElement(Input, {
 				value: regex,
 				placeholder: '如 #(\\d+)',
 				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: event.target.value, issueUrlTemplate: url }),
 			}),
 		),
-		React.createElement('label', { className: 'ggg-set-row-block' },
-			React.createElement('span', { className: 'ggg-set-row-text' }, 'Issue 链接模板'),
+		React.createElement('label', { className: css.setRowBlock },
+			React.createElement('span', { className: css.setRowText }, 'Issue 链接模板'),
 			React.createElement(Input, {
 				value: url,
 				placeholder: '如 https://github.com/owner/repo/issues/%ID%',
 				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }),
 			}),
 		),
-		React.createElement('div', { className: 'ggg-set-note' }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
+		React.createElement('div', { className: css.setNote }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
 	);
 }
 
@@ -812,7 +814,7 @@ function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 	};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-set-form' },
+		{ className: css.setForm },
 		scope === 'repo' && React.createElement(ToggleRow, {
 			label: '使用全局身份',
 			checked: useGlobal,
@@ -821,33 +823,33 @@ function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 		// 使用全局身份时不显示输入框；当前值由下方的配置说明给出，不重复列出。
 		inheriting
 			? (globalName === null && globalEmail === null
-				? React.createElement('div', { className: 'ggg-set-note' }, '未配置全局身份，请在「全局设置」中配置。')
+				? React.createElement('div', { className: css.setNote }, '未配置全局身份，请在「全局设置」中配置。')
 				: null)
 			: [
-				React.createElement('label', { className: 'ggg-set-row-block', key: 'name' },
-					React.createElement('span', { className: 'ggg-set-row-text' }, '用户名'),
+				React.createElement('label', { className: css.setRowBlock, key: 'name' },
+					React.createElement('span', { className: css.setRowText }, '用户名'),
 					React.createElement(Input, {
 						value: name,
 						placeholder: 'git user.name',
 						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setName(event.target.value),
 					}),
 				),
-				React.createElement('label', { className: 'ggg-set-row-block', key: 'email' },
-					React.createElement('span', { className: 'ggg-set-row-text' }, '邮箱'),
+				React.createElement('label', { className: css.setRowBlock, key: 'email' },
+					React.createElement('span', { className: css.setRowText }, '邮箱'),
 					React.createElement(Input, {
 						value: email,
 						placeholder: 'git user.email',
 						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setEmail(event.target.value),
 					}),
 				),
-				React.createElement('div', { className: 'ggg-set-row ggg-set-row-inline', key: 'actions' },
+				React.createElement('div', { className: cx(css.setRow, css.setRowInline), key: 'actions' },
 					React.createElement(Button, { variant: 'primary', size: 'sm', onClick: save }, '保存'),
 					React.createElement(Button, { variant: 'outline', size: 'sm', onClick: remove }, '删除'),
 				),
 			],
 		localName !== null
-			&& React.createElement('div', { className: 'ggg-set-note' }, `仓库级覆盖：${localName} <${localEmail ?? '?'}>`),
+			&& React.createElement('div', { className: css.setNote }, `仓库级覆盖：${localName} <${localEmail ?? '?'}>`),
 		globalName !== null
-			&& React.createElement('div', { className: 'ggg-set-note' }, `全局配置：${globalName} <${globalEmail ?? '?'}>`),
+			&& React.createElement('div', { className: css.setNote }, `全局配置：${globalName} <${globalEmail ?? '?'}>`),
 	);
 }

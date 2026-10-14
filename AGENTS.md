@@ -33,8 +33,10 @@
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
-                    设置面板、样式与图标、类型
+                    设置面板、图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
+  src/client/css/   样式：styles.module.css（视图样式）、file-diff.module.css（复制的差异视图）、
+                    cx.ts（类名拼接）
 test/               单元测试（`node --test test/*.test.mjs`）
 doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
 scripts/            客户端打包脚本
@@ -113,7 +115,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | 文件 | 覆盖 |
 |---|---|
 | `lanes.test.mjs` | 泳道布局：连线连续性、压实、节点半径、越界重叠、无贝塞尔 |
-| `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构 |
+| `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构、CSS 模块类名引用 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |

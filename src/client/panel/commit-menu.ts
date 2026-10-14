@@ -17,6 +17,7 @@ import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import type { Commit, Remote } from '../types.ts';
+import css from '../css/styles.module.css';
 
 /** 引用菜单识别出的目标。 */
 export interface RefMenuTarget {
@@ -681,10 +682,10 @@ export async function openCommitMenu(
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
 	const ctx = await makeContext(deps, commit, null, currentHashes);
-	target.classList.add('ggg-menu-target');
+	target.classList.add(css.menuTarget);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove('ggg-menu-target'),
+		onClose: () => target.classList.remove(css.menuTarget),
 		items: buildCommitItems(ctx),
 	});
 }
@@ -713,10 +714,10 @@ export async function openRefMenu(
 		if (item !== null) items.push(item);
 	}
 	if (items.length === 0) return;
-	target.classList.add('ggg-menu-target');
+	target.classList.add(css.menuTarget);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove('ggg-menu-target'),
+		onClose: () => target.classList.remove(css.menuTarget),
 		items,
 	});
 }

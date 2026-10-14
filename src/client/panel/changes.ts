@@ -12,6 +12,8 @@ import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu
 import { showConfirmation } from '../dialog.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { CommitFile, WorkingTreeEntry } from '../types.ts';
+import css from '../css/styles.module.css';
+import { cx } from '../css/cx.ts';
 
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
 export interface ChangeInfo {
@@ -45,7 +47,7 @@ export function splitPath(path: string): { dir: string; name: string } {
 /** 按 depth 生成的竖线层级占位。 */
 function guidesOf(depth: number): React.ReactElement[] {
 	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: 'ggg-repo-guide' }));
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: css.repoGuide }));
 	return guides;
 }
 
@@ -88,7 +90,7 @@ export function ChangeNodeRow({
 			event.preventDefault();
 			event.stopPropagation();
 			const target = event.currentTarget;
-			target.classList.add('ggg-menu-target');
+			target.classList.add(css.menuTarget);
 			const paths = descendantsOf(row.path);
 			const items: ContextMenuItem[] = [];
 			if (staged) {
@@ -103,21 +105,21 @@ export function ChangeNodeRow({
 				);
 			}
 			items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(row.path); } });
-			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
+			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
 		};
 		return React.createElement(
 			'div',
 			{
-				className: 'ggg-change ggg-folder', title: row.path,
+				className: cx(css.change, css.folder), title: row.path,
 				onClick: () => onToggle(row.path), onContextMenu: handleContextMenu,
 			},
 			...guidesOf(row.depth),
 			React.createElement('span', {
-				className: `ggg-repo-chevron${open ? '' : ' is-collapsed'}`,
+				className: cx(css.repoChevron, !open && css.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 			React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
-			React.createElement('span', { className: 'ggg-change-name' }, row.name),
-			React.createElement('span', { className: 'ggg-row-tail ggg-count' }, String(row.count)),
+			React.createElement('span', { className: css.changeName }, row.name),
+			React.createElement('span', { className: cx(css.rowTail, css.count) }, String(row.count)),
 		);
 	}
 	const entry = row.entry;
@@ -130,7 +132,7 @@ export function ChangeNodeRow({
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
 		const target = event.currentTarget;
-		target.classList.add('ggg-menu-target');
+		target.classList.add(css.menuTarget);
 		const items: ContextMenuItem[] = [{ title: isNew ? '打开文件' : '打开', onClick: () => onOpen(entry, isNew) }, { type: 'divider' }];
 		if (fileStaged) {
 			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
@@ -145,7 +147,7 @@ export function ChangeNodeRow({
 			);
 		}
 		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -155,29 +157,30 @@ export function ChangeNodeRow({
 	};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-change ggg-change-openable', title: entry.path, onClick: handleClick, onContextMenu: handleContextMenu },
+		{ className: cx(css.change, css.changeOpenable), title: entry.path, onClick: handleClick, onContextMenu: handleContextMenu },
 		...guidesOf(row.depth),
 		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: 'ggg-change-name' }, name),
+		React.createElement('span', { className: css.changeName },
+			React.createElement('span', { className: css.changeText }, name)),
 		// 悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。
 		fileStaged
 			? React.createElement('button', {
-				type: 'button', className: 'ggg-change-btn', title: '取消暂存', disabled: busy,
+				type: 'button', className: css.changeBtn, title: '取消暂存', disabled: busy,
 				onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onUnstage([entry.path]); },
 			}, React.createElement(IconCloseOutlineRegular, { size: 14 }))
 			: React.createElement(
 				React.Fragment,
 				null,
 				React.createElement('button', {
-					type: 'button', className: 'ggg-change-btn', title: '丢弃改动', disabled: busy,
+					type: 'button', className: css.changeBtn, title: '丢弃改动', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onDiscard([entry.path], untracked); },
 				}, React.createElement(IconTrashOutlineRegular, { size: 14 })),
 				React.createElement('button', {
-					type: 'button', className: 'ggg-change-btn', title: '暂存改动', disabled: busy,
+					type: 'button', className: css.changeBtn, title: '暂存改动', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onStage([entry.path]); },
 				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
 			),
-		React.createElement('span', { className: 'ggg-row-tail ggg-status', 'data-type': type }, type),
+		React.createElement('span', { className: cx(css.rowTail, css.status), 'data-type': type }, type),
 	);
 }
 
@@ -199,27 +202,27 @@ export interface CommitDetailProps {
  */
 export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
 	if (files.length === 0) {
-		return React.createElement('div', { className: 'ggg-hint' }, '正在加载改动文件…');
+		return React.createElement('div', { className: css.hint }, '正在加载改动文件…');
 	}
 	const rows: ChangeRow<CommitFile>[] = changeRowsOf(files, collapsed);
 	return React.createElement(
 		'div',
-		{ className: 'ggg-changes ggg-detail-changes' },
+		{ className: cx(css.changes, css.detailChanges) },
 		...rows.map((row) => {
 			if (row.kind === 'folder') {
 				return React.createElement(
 					'div',
 					{
-						key: `f:${row.path}`, className: 'ggg-change ggg-folder', title: row.path,
+						key: `f:${row.path}`, className: cx(css.change, css.folder), title: row.path,
 						onClick: () => onToggle(row.path),
 					},
 					...guidesOf(row.depth),
 					React.createElement('span', {
-						className: `ggg-repo-chevron${row.open ? '' : ' is-collapsed'}`,
+						className: cx(css.repoChevron, !row.open && css.isCollapsed),
 					}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 					React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
-					React.createElement('span', { className: 'ggg-change-name' }, row.name),
-					React.createElement('span', { className: 'ggg-count' }, String(row.count)),
+					React.createElement('span', { className: css.changeName }, row.name),
+					React.createElement('span', { className: css.count }, String(row.count)),
 				);
 			}
 			const entry = row.entry;
@@ -230,18 +233,19 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 			return React.createElement(
 				'div',
 				{
-					key: `e:${entry.path}`, className: 'ggg-change ggg-change-openable', title: entry.path,
+					key: `e:${entry.path}`, className: cx(css.change, css.changeOpenable), title: entry.path,
 					onClick: () => { if (!busy) onOpen(entry.path, isNew); },
 				},
 				...guidesOf(row.depth),
 				React.createElement(FileTypeIcon, { path: name, size: 14 }),
-				React.createElement('span', { className: 'ggg-status', 'data-type': entry.type }, entry.type),
-				React.createElement('span', { className: 'ggg-change-name' }, name),
+				React.createElement('span', { className: css.status, 'data-type': entry.type }, entry.type),
+				React.createElement('span', { className: css.changeName },
+					React.createElement('span', { className: css.changeText }, name)),
 				stat && React.createElement(
 					'span',
-					{ className: 'ggg-detail-stat' },
-					React.createElement('span', { className: 'ggg-detail-add' }, `+${entry.additions}`),
-					React.createElement('span', { className: 'ggg-detail-del' }, `-${entry.deletions}`),
+					{ className: css.detailStat },
+					React.createElement('span', { className: css.detailAdd }, `+${entry.additions}`),
+					React.createElement('span', { className: css.detailDel }, `-${entry.deletions}`),
 				),
 			);
 		}),
@@ -342,7 +346,7 @@ export function ChangeGroup({
 		event.preventDefault();
 		event.stopPropagation();
 		const target = event.currentTarget;
-		target.classList.add('ggg-menu-target');
+		target.classList.add(css.menuTarget);
 		const items: ContextMenuItem[] = staged
 			? [{ title: `取消暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onUnstage(allPaths) }]
 			: [
@@ -350,27 +354,27 @@ export function ChangeGroup({
 				{ type: 'divider' },
 				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: onDiscardAll },
 			];
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove('ggg-menu-target') });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
 	};
 	return React.createElement(
 		'div',
-		{ className: 'ggg-change-group' },
+		{ className: css.changeGroup },
 		React.createElement(
 			'div',
 			{
-				className: 'ggg-change ggg-group-root',
+				className: cx(css.change, css.groupRoot),
 				onClick: () => onToggleGroup(),
 				onContextMenu: handleHeadContextMenu,
 			},
 			React.createElement('span', {
-				className: `ggg-repo-chevron${open ? '' : ' is-collapsed'}`,
+				className: cx(css.repoChevron, !open && css.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
-			React.createElement('span', { className: 'ggg-group-title' }, title),
-			React.createElement('span', { className: 'ggg-count' }, String(visible.length)),
+			React.createElement('span', { className: css.groupTitle }, title),
+			React.createElement('span', { className: css.count }, String(visible.length)),
 		),
 		open && React.createElement(
 			'div',
-			{ className: 'ggg-changes' },
+			{ className: css.changes },
 			...rows.map((row) => React.createElement(ChangeNodeRow, {
 				key: row.kind === 'folder' ? `f:${row.path}` : `e:${row.entry.path}`,
 				row, busy,

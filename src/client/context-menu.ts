@@ -10,6 +10,7 @@ import { createRoot } from 'react-dom/client';
 import {
 	IconChevronRightOutlineRegular, Menu, type MenuEntry, type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import css from './css/styles.module.css';
 
 /**
  * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
@@ -106,9 +107,9 @@ function labelOf(title: string, hasChildren: boolean, hint?: string): React.Reac
 	const inner = hasChildren
 		? React.createElement(
 			'span',
-			{ className: 'ggg-menu-label' },
-			React.createElement('span', { className: 'ggg-menu-label-text' }, title),
-			React.createElement(IconChevronRightOutlineRegular, { size: 13, className: 'ggg-menu-chevron' }),
+			{ className: css.menuLabel },
+			React.createElement('span', { className: css.menuLabelText }, title),
+			React.createElement(IconChevronRightOutlineRegular, { size: 13, className: css.menuChevron }),
 		)
 		: title;
 	return hint === undefined ? inner : React.createElement('span', { title: hint }, inner);

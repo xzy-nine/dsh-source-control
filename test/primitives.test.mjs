@@ -5,6 +5,9 @@
  * 背景：ui-primitives 的产品图标导出名带 `Regular` / `Medium` 权重后缀，
  * 写成裸名会得到 undefined，React 渲染时不报编译错误、只在运行时抛
  * 「元素类型无效」并让整个侧栏页变空白。此测试把这类拼写错误挡在构建前。
+ *
+ * 样式已从 TS 模板字符串改为 CSS 模块（`css/styles.module.css`）：组件经类名映射引用，
+ * 源码里不再出现裸类名，因此结构断言改看映射键，样式规则断言改读 CSS 文件。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const clientDir = join(root, 'src', 'client');
 const panelDir = join(clientDir, 'panel');
+const cssDir = join(clientDir, 'css');
 
 /** ui-primitives 在源码检出中的位置；profile 安装版没有源码，此时跳过。 */
 const PRIMITIVES_INDEX = 'E:/GitHubCode/02DSH/deepseek-harness/packages/client/ui-primitives/src/index.ts';
@@ -28,6 +32,9 @@ function clientFiles() {
 		.map((entry) => join(clientDir, entry.name));
 	for (const entry of readdirSync(panelDir, { withFileTypes: true })) {
 		if (entry.isFile() && entry.name.endsWith('.ts')) files.push(join(panelDir, entry.name));
+	}
+	for (const entry of readdirSync(cssDir, { withFileTypes: true })) {
+		if (entry.isFile() && entry.name.endsWith('.ts')) files.push(join(cssDir, entry.name));
 	}
 	return files;
 }
@@ -78,8 +85,8 @@ test('图形区拖拽手柄在图形标题之前', () => {
 	// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
 	// 否则会出现在标题与图形之间。
 	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
-	const section = source.indexOf("'ggg-sec ggg-graph-sec'");
-	const handle = source.indexOf("'ggg-sec-resize'", section);
+	const section = source.indexOf('cx(css.sec, css.graphSec)');
+	const handle = source.indexOf('css.secResize', section);
 	const title = source.indexOf("'图形'");
 	assert.ok(section !== -1 && handle !== -1 && title !== -1, '未找到图形区标记');
 	assert.ok(handle > section && handle < title, '拖拽手柄必须排在图形标题之前');
@@ -97,18 +104,18 @@ test('改动文件区在图形区内展开', () => {
 	// 展开块由 CommitGraph 按选中行渲染，面板不再另起一块。
 	const graphSource = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
 	assert.match(graphSource, /renderDetail/, 'CommitGraph 必须接收 renderDetail');
-	assert.match(graphSource, /ggg-detail-inline/, '展开块必须由图形区渲染');
+	assert.match(graphSource, /css\.detailInline/, '展开块必须由图形区渲染');
 	const sectionSource = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
-	const section = sectionSource.indexOf("'ggg-sec ggg-graph-sec'");
+	const section = sectionSource.indexOf('cx(css.sec, css.graphSec)');
 	assert.ok(section !== -1, '未找到图形区标记');
-	assert.ok(!sectionSource.includes("'ggg-detail'"), '图形区不应渲染独立的 ggg-detail 区块');
+	assert.ok(!/css\.detail(?![A-Za-z])/.test(sectionSource), '图形区不应渲染独立的 detail 区块');
 });
 
 test('展开块左内边距与提交行一致', () => {
-	// 少了与 .ggg-row 相同的左内边距与列间距，泳道列会相对提交行左移。
-	const source = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
-	const row = /\.ggg-row\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
-	const inline = /\.ggg-detail-inline\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
+	// 少了与 .row 相同的左内边距与列间距，泳道列会相对提交行左移。
+	const source = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const row = /\.row\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
+	const inline = /\.detailInline\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
 	assert.ok(row, '提交行应有 8px 列间距与 0 8px 内边距');
 	assert.ok(inline, '展开块应有同样的 8px 列间距与 0 8px 内边距，与提交行对齐');
 });
@@ -134,8 +141,8 @@ test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primi
 test('提交框在滚动区之外', () => {
 	// 滚动必须只发生在变更列表上：提交框若落在滚动容器内会随列表一起滚走。
 	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
-	const box = source.indexOf("'ggg-commit-box'");
-	const scroll = source.indexOf("'ggg-changes-scroll'");
+	const box = source.indexOf('css.commitBox');
+	const scroll = source.indexOf('css.changesScroll');
 	assert.ok(box !== -1 && scroll !== -1, '未找到提交框或滚动容器标记');
 	assert.ok(box < scroll, '提交框必须排在滚动容器之前');
 	// 两个变更分组都必须在滚动容器内。
@@ -145,12 +152,12 @@ test('提交框在滚动区之外', () => {
 });
 
 test('工作区主体自身不滚动', () => {
-	const source = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
-	const body = /\.ggg-workspace-body\{([^}]*)\}/.exec(source);
-	assert.ok(body !== null, '未找到 .ggg-workspace-body');
+	const source = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const body = /\.workspaceBody\{([^}]*)\}/.exec(source);
+	assert.ok(body !== null, '未找到 .workspaceBody');
 	assert.match(body[1], /overflow:hidden/, '工作区主体不得自身滚动，否则提交框会跟着滚');
-	const scroll = /\.ggg-changes-scroll\{([^}]*)\}/.exec(source);
-	assert.ok(scroll !== null, '未找到 .ggg-changes-scroll');
+	const scroll = /\.changesScroll\{([^}]*)\}/.exec(source);
+	assert.ok(scroll !== null, '未找到 .changesScroll');
 	assert.match(scroll[1], /overflow-y:auto/, '变更列表容器应纵向滚动');
 });
 
@@ -160,7 +167,7 @@ test('文件行整行点击即打开', () => {
 	assert.ok(!source.includes('IconCompareSplitOutlineRegular'), '不应再引用差异按钮图标');
 	assert.match(source, /const handleClick = [\s\S]{0,200}?onOpen\(entry, isNew\)/, '整行点击应直接打开文件');
 	assert.match(source, /onClick: handleClick/, '行元素应绑定整行点击');
-	const openable = source.match(/ggg-change-openable/g) ?? [];
+	const openable = source.match(/css\.changeOpenable/g) ?? [];
 	assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
 });
 
@@ -186,7 +193,7 @@ test('差异页默认并排且可切换', () => {
 	assert.match(source, /useState\(true\)/, '默认应为并排');
 	assert.match(source, /FileDiff, \{ state, split, wrap, retry: load \}/, '应把 split 传给 FileDiff');
 	assert.match(source, /setSplit/, '应能切换布局');
-	const css = readFileSync(join(clientDir, 'file-diff.module.css'), 'utf8');
+	const css = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
 	assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 });
 
@@ -200,18 +207,18 @@ test('普通文件地址按仓库根换算', () => {
 test('状态字符与文件夹数量同处最右一列', () => {
 	// 两者必须共用同一个尾部列，否则文件行与文件夹行的右边界参差。
 	const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
-	const tails = source.match(/ggg-row-tail/g) ?? [];
+	const tails = source.match(/css\.rowTail/g) ?? [];
 	assert.ok(tails.length >= 2, `文件状态与文件夹数量都应使用尾部列，实际 ${tails.length} 处`);
 	// 状态字符排在文件名之后，即最右侧。
-	const nameAt = source.indexOf("'ggg-change-name' }, name)");
-	const statusAt = source.indexOf("ggg-row-tail ggg-status");
+	const nameAt = source.indexOf('css.changeText }, name)');
+	const statusAt = source.indexOf('css.rowTail, css.status');
 	assert.ok(nameAt !== -1 && statusAt !== -1 && nameAt < statusAt, '状态字符必须排在文件名之后');
-	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
-	const tail = /\.ggg-row-tail\{([^}]*)\}/.exec(styles);
-	assert.ok(tail !== null, '未找到 .ggg-row-tail 样式');
+	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const tail = /\.rowTail\{([^}]*)\}/.exec(styles);
+	assert.ok(tail !== null, '未找到 .rowTail 样式');
 	assert.match(tail[1], /width:24px/, '尾部列应定宽，使状态字符与数量对齐');
 	// 文件夹数量不再用 margin-left:auto 单独靠右。
-	assert.ok(!/\.ggg-folder \.ggg-count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
+	assert.ok(!/\.folder \.count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
 });
 
 test('文件差异视图为复制自 DSH 的实现', () => {
@@ -221,8 +228,8 @@ test('文件差异视图为复制自 DSH 的实现', () => {
 	assert.match(viewSource, /ui-deliverables/, '应写明来源路径');
 	assert.match(viewSource, /export function FileDiff/, '应导出 FileDiff');
 	assert.match(viewSource, /export function hunkRows/, '应保留原实现的行号计算');
-	assert.match(viewSource, /from '\.\/file-diff\.module\.css'/, '应通过 CSS 模块引用样式');
-	const cssSource = readFileSync(join(clientDir, 'file-diff.module.css'), 'utf8');
+	assert.match(viewSource, /from '\.\/css\/file-diff\.module\.css'/, '应通过 CSS 模块引用样式');
+	const cssSource = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
 	assert.match(cssSource, /\.number/, 'CSS 模块应含行号列样式');
 	assert.match(cssSource, /\.hunkHeader/, 'CSS 模块应含 hunk 头样式');
 	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
@@ -240,6 +247,21 @@ test('构建脚本把 CSS 模块的样式内联进包', () => {
 	assert.match(script, /endsWith\('\.css'\)/, '应收集 esbuild 产出的样式');
 	assert.match(script, /dsh-source-control-module-style/, '应把样式内联为一段 style');
 	assert.match(script, /jsx: 'automatic'/, '复制的视图使用自动 JSX 运行时');
+});
+
+test('样式经 CSS 模块引用且类名全部有映射', () => {
+	// 组件不再写裸类名字符串；每个 css.xxx 都必须能在 styles.module.css 里找到同名类。
+	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const defined = new Set();
+	for (const match of styles.matchAll(/\.([A-Za-z][\w-]*)/g)) defined.add(match[1]);
+	assert.ok(defined.size > 100, `样式类名过少（${defined.size}），可能解析出错`);
+	for (const file of clientFiles()) {
+		const source = readFileSync(file, 'utf8');
+		if (!source.includes("from './css/styles.module.css'") && !source.includes("from '../css/styles.module.css'")) continue;
+		for (const match of source.matchAll(/css\.([A-Za-z][\w]*)/g)) {
+			assert.ok(defined.has(match[1]), `${file} 引用了样式里不存在的类名：${match[1]}`);
+		}
+	}
 });
 
 test('宿主 hunk 形状与视图一致', () => {
@@ -300,20 +322,20 @@ test('卡片正文更紧凑且不留空行', () => {
 	assert.match(graphSource, /variant: 'compact'/, 'markdown 应用 compact 变体');
 	assert.match(graphSource, /const \[titleLine, \.\.\.bodyLines\] = fullMessage\.split\('\\n'\)/, '首行作标题、其余作正文');
 	assert.match(graphSource, /bodyLines\.filter\(\(line\) => line\.trim\(\) !== ''\)/, '正文应滤掉空行');
-	assert.match(graphSource, /className: 'ggg-card-title'/, '标题单独渲染');
-	assert.match(graphSource, /className: 'ggg-card-body'/, '正文单独渲染');
-	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
+	assert.match(graphSource, /className: css\.cardTitle/, '标题单独渲染');
+	assert.match(graphSource, /className: css\.cardBody/, '正文单独渲染');
+	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
 	// 标题不改字号。
-	const title = /\.ggg-card-title\{([^}]*)\}/.exec(styles);
-	assert.ok(title !== null, '未找到 .ggg-card-title');
+	const title = /\.cardTitle\{([^}]*)\}/.exec(styles);
+	assert.ok(title !== null, '未找到 .cardTitle');
 	assert.ok(!/font-size/.test(title[1]), '标题不应改字号');
 	// 正文更小、更紧。
-	const body = /\.ggg-card-body\{([^}]*)\}/.exec(styles);
-	assert.ok(body !== null, '未找到 .ggg-card-body');
+	const body = /\.cardBody\{([^}]*)\}/.exec(styles);
+	assert.ok(body !== null, '未找到 .cardBody');
 	assert.match(body[1], /font-size:11px/, '正文字号应更小');
 	assert.match(body[1], /line-height:1\.35/, '正文行距应更紧');
 	// 卡片自身字号不变。
-	const card = /\.ggg-card\{([^}]*)\}/.exec(styles);
+	const card = /\.card\{([^}]*)\}/.exec(styles);
 	assert.match(card[1], /font-size:12px/, '卡片字号不应改动');
 	assert.match(styles, /data-markdown-variant='compact'\]\s*:is\(p, ul, ol, blockquote\)\{margin:0\}/, 'markdown 段距应压到 0');
 });
@@ -408,7 +430,6 @@ test('表单勾选项的文案只由 Checkbox 渲染', () => {
 	assert.ok(!/ggg-field-text(?!area)/.test(dialog), '不应再另加文案节点');
 	assert.match(dialog, /label: field\.label \?\? ''/, '勾选字段应把文案交给 Checkbox');
 	assert.match(dialog, /label: option\.label/, '多选字段应把每项文案交给 Checkbox');
-	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
-	assert.ok(!/\.ggg-field-text(?!area)/.test(styles), '无用的文案节点样式应一并移除');
+	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	assert.ok(!/\.fieldText(?!area)/.test(styles), '无用的文案节点样式应一并移除');
 });
-

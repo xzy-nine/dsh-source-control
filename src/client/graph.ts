@@ -23,6 +23,8 @@ import {
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
 import { copyText } from './context-menu.ts';
+import css from './css/styles.module.css';
+import { cx } from './css/cx.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
@@ -159,7 +161,7 @@ function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 	return React.createElement(
 		'svg',
 		{
-			className: 'ggg-lane', width, height: ROW_HEIGHT,
+			className: css.lane, width, height: ROW_HEIGHT,
 			viewBox: `0 0 ${width} ${ROW_HEIGHT}`,
 			// 线段在行顶与行底各越界 ROW_OVERLAP，必须允许溢出，否则越界部分被裁掉、接缝仍在。
 			overflow: 'visible', 'aria-hidden': 'true',
@@ -216,6 +218,11 @@ function refLabels(commit, head) {
 /** 圆形标记的图标：只有图标、名称进 title 的种类。 */
 const ROUND_KINDS = new Set(['remote', 'tag', 'stash']);
 
+/** 引用种类到样式类名的对应；种类来自 refLabels。 */
+const REF_CLASSES: Record<string, string> = {
+	head: css.refHead, branch: css.refBranch, remote: css.refRemote, tag: css.refTag, stash: css.refStash,
+};
+
 /**
  * 画一个引用标记。
  *
@@ -237,7 +244,7 @@ function RefChip({ label, expanded = false }) {
 	return React.createElement(
 		'span',
 		{
-			className: `ggg-ref ggg-ref-${label.kind}${named && ROUND_KINDS.has(label.kind) ? ' ggg-ref-wide' : ''}`,
+			className: cx(css.ref, REF_CLASSES[label.kind], named && ROUND_KINDS.has(label.kind) && css.refWide),
 			title: label.title,
 			'data-ref-type': label.refType,
 			'data-ref-name': label.refName,
@@ -245,7 +252,7 @@ function RefChip({ label, expanded = false }) {
 			...(named ? {} : { role: 'img', 'aria-label': label.title }),
 		},
 		icon,
-		named ? React.createElement('span', { className: 'ggg-ref-text' }, label.text) : null,
+		named ? React.createElement('span', { className: css.refText }, label.text) : null,
 	);
 }
 
@@ -289,49 +296,49 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown,
 	const body = bodyLines.filter((line) => line.trim() !== '');
 	const avatar = showAvatars && !isUncommitted ? avatarUrl(commit.email ?? commit.author, 40) : null;
 	const avatarEl = avatar !== null
-		? React.createElement('img', { className: 'ggg-card-avatar', src: avatar, alt: '', width: 20, height: 20, loading: 'lazy' })
-		: React.createElement(IconUserOutlineRegular, { size: 13, className: 'ggg-card-icon' });
+		? React.createElement('img', { className: css.cardAvatar, src: avatar, alt: '', width: 20, height: 20, loading: 'lazy' })
+		: React.createElement(IconUserOutlineRegular, { size: 13, className: css.cardIcon });
 	return React.createElement(
 		'div',
-		{ className: 'ggg-card' },
+		{ className: css.card },
 		React.createElement(
 			'div',
-			{ className: 'ggg-card-head' },
+			{ className: css.cardHead },
 			avatarEl,
-			React.createElement('span', { className: 'ggg-card-author' }, commit.author ?? ''),
-			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: 'ggg-card-icon' }),
-			dated && React.createElement('span', { className: 'ggg-card-time' }, timeLabel),
+			React.createElement('span', { className: css.cardAuthor }, commit.author ?? ''),
+			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: css.cardIcon }),
+			dated && React.createElement('span', { className: css.cardTime }, timeLabel),
 		),
 		React.createElement(
 			'div',
-			{ className: 'ggg-card-message' },
+			{ className: css.cardMessage },
 			// 标题：首行，保持卡片自身字号。
-			React.createElement('div', { className: 'ggg-card-title' }, titleLine === '' ? '\u00a0' : titleLine),
+			React.createElement('div', { className: css.cardTitle }, titleLine === '' ? '\u00a0' : titleLine),
 			// 正文：其余各行，字号更小、行距更紧。
 			body.length > 0 && (markdown
 				// compact 变体把段落间距从 16px 收到 4px，适合卡片这种小空间。
-				? React.createElement('div', { className: 'ggg-card-body' },
+				? React.createElement('div', { className: css.cardBody },
 					React.createElement(MarkdownText, { text: body.join('\n'), labels: MD_LABELS, variant: 'compact' }))
-				: React.createElement('div', { className: 'ggg-card-body' },
-					...body.map((line, index) => React.createElement('div', { key: `line-${index}`, className: 'ggg-card-line' }, line)))),
+				: React.createElement('div', { className: css.cardBody },
+					...body.map((line, index) => React.createElement('div', { key: `line-${index}` }, line)))),
 		),
 		stats !== null && stats !== undefined && React.createElement(
 			'div',
-			{ className: 'ggg-card-stats' },
+			{ className: css.cardStats },
 			`已更改 ${stats.files} 个文件，${stats.additions} 行插入(+)，${stats.deletions} 行删除(-)`,
 		),
 		labels.length > 0 && React.createElement(
 			'div',
-			{ className: 'ggg-card-refs' },
+			{ className: css.cardRefs },
 			...labels.map((label) => React.createElement(RefChip, { key: label.key, label, expanded: true })),
 		),
 		!isUncommitted && React.createElement(
 			'div',
-			{ className: 'ggg-card-hash' },
-			React.createElement('span', { className: 'ggg-card-hash-text' }, commit.hash.slice(0, 7)),
+			{ className: css.cardHash },
+			React.createElement('span', null, commit.hash.slice(0, 7)),
 			React.createElement('button', {
 				type: 'button',
-				className: 'ggg-card-copy',
+				className: css.cardCopy,
 				title: '复制完整哈希',
 				'aria-label': '复制完整哈希',
 				onClick: () => { void copyText(commit.hash); },
@@ -372,7 +379,7 @@ function renderSubject(message, issueLinking) {
 		if (match.index > last) parts.push(message.slice(last, match.index));
 		parts.push(React.createElement(
 			'a',
-			{ key: `issue-${key++}`, className: 'ggg-issue-link', href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => event.stopPropagation() },
+			{ key: `issue-${key++}`, className: css.issueLink, href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => event.stopPropagation() },
 			match[0],
 		));
 		last = match.index + match[0].length;
@@ -415,7 +422,7 @@ function CommitRow({
 	const anchor = React.createElement(
 		'div',
 		{
-			className: `ggg-row${selected ? ' is-selected' : ''}${isUncommitted ? ' ggg-row-uncommitted' : ''}${isMuted ? ' ggg-row-muted' : ''}`,
+			className: cx(css.row, selected && css.isSelected, isUncommitted && css.rowUncommitted, isMuted && css.rowMuted),
 			'data-hash': commit.hash,
 			// Ctrl/Cmd 点击进入与已展开提交的对比；普通点击展开自身详情。
 			onClick: (event: React.MouseEvent<HTMLDivElement>) => onSelect(commit.hash, event.ctrlKey || event.metaKey),
@@ -437,13 +444,13 @@ function CommitRow({
 		React.createElement(LaneCell, { row, isHead, isMerge, isUncommitted }),
 		React.createElement(
 			'span',
-			{ className: 'ggg-subject' },
+			{ className: css.subject },
 			...renderSubject(displayMessage(commit), issueLinking),
-			!isUncommitted && React.createElement('span', { className: 'ggg-author' }, commit.author),
+			!isUncommitted && React.createElement('span', { className: css.author }, commit.author),
 		),
 		labels.length > 0 && React.createElement(
 			'span',
-			{ className: 'ggg-refs' },
+			{ className: css.refs },
 			...labels.map((label) => React.createElement(RefChip, { key: label.key, label })),
 		),
 	);
@@ -468,9 +475,9 @@ function CommitRow({
 function IndicatorRow({ row, indicator }) {
 	return React.createElement(
 		'div',
-		{ className: 'ggg-row ggg-row-indicator' },
+		{ className: cx(css.row, css.rowIndicator) },
 		React.createElement(LaneCell, { row, isUncommitted: false, isHead: false, isMerge: false }),
-		React.createElement('span', { className: 'ggg-subject ggg-indicator-label' },
+		React.createElement('span', { className: css.subject },
 			indicator === 'incoming' ? '云端领先' : '本地领先'),
 	);
 }
@@ -488,7 +495,7 @@ function DetailGutter({ row }) {
 	return React.createElement(
 		'svg',
 		{
-			className: 'ggg-detail-gutter', width, viewBox: `0 0 ${width} 100`,
+			className: css.detailGutter, width, viewBox: `0 0 ${width} 100`,
 			preserveAspectRatio: 'none', 'aria-hidden': 'true',
 		},
 		...continued.map((segment, index) => React.createElement('line', {
@@ -579,7 +586,7 @@ export function CommitGraph({
 	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
 
 	if (commits.length === 0) {
-		return React.createElement('div', { className: 'ggg-empty' }, '这个仓库还没有提交');
+		return React.createElement('div', { className: css.empty }, '这个仓库还没有提交');
 	}
 	const commitByHash = new Map();
 	for (const commit of commits) commitByHash.set(commit.hash, commit);
@@ -616,19 +623,19 @@ export function CommitGraph({
 		if (detail !== null && detail !== undefined) {
 			items.push(React.createElement(
 				'div',
-				{ key: `${commit.hash}:detail`, className: 'ggg-detail-inline' },
+				{ key: `${commit.hash}:detail`, className: css.detailInline },
 				React.createElement(DetailGutter, { row }),
-				React.createElement('div', { className: 'ggg-detail-body' }, detail),
+				React.createElement('div', { className: css.detailBody }, detail),
 			));
 		}
 	}
 	return React.createElement(
 		'div',
-		{ className: 'ggg-graph', ref: graphRef, onScroll: maybeLoadMore },
+		{ className: css.graph, ref: graphRef, onScroll: maybeLoadMore },
 		...items,
 		moreCommitsAvailable && React.createElement(
 			'div',
-			{ className: 'ggg-pager' },
+			{ className: css.pager },
 			loadingMore ? '正在加载更多提交…' : '滚动到底部自动加载更多',
 		),
 	);

@@ -1,0 +1,286 @@
+/*
+ * 视图样式：以 --dsw-* 语义 token 为主，随主题明暗切换；引用标记取泳道调色板的固定色。
+ *
+ * 组件自身（Button / Input / Checkbox 等）从 ui-primitives 取得，这里只负责布局与
+ * 提交图这类没有对应组件的部分。类名由 esbuild 的 local-css 作用域化，
+ * 组件经 CSS 模块映射引用，不再以裸类名字符串出现在源码里。
+ */
+.root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:13px}
+.bar{display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l1);flex-wrap:wrap}
+.barItem{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
+.barItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.barItem[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+.barSpacer{margin-left:auto}
+.settingsBackdrop{position:fixed;inset:0;z-index:40;background:var(--dsw-alias-overlay-scrim, rgba(0,0,0,0.32))}
+.settings{position:fixed;z-index:41;top:50%;left:50%;transform:translate(-50%,-50%);min-width:280px;padding:14px;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:var(--dsw-alias-elevation-3, 0 8px 24px rgba(0,0,0,0.24))}
+.settingsHead{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600}
+.settingsRow{display:flex;align-items:center;gap:12px}
+.settingsLabel{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}
+.sec{border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0}
+.secHead{cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600;user-select:none}
+.secHead .chevron{transition:transform 0.15s ease}
+.secHead.collapsed .chevron{transform:rotate(-90deg)}
+.secHead .count{color:var(--dsw-alias-label-tertiary);font-weight:400}
+.secHead .headActions{margin-left:auto;display:flex;gap:2px}
+.repos{display:flex;flex-direction:column;gap:1px;padding:0 6px 6px}
+.repo{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;cursor:pointer;position:relative}
+.repo:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.repo.isActive{background:var(--dsw-alias-interactive-bg-active)}
+.repo.isMissing{opacity:0.55}
+.repoGuide{flex:none;width:12px;align-self:stretch;border-left:1px solid var(--dsw-alias-border-l2);margin-left:3px}
+.repoName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repoBranch{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}
+.repoChevron{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary);transition:transform 0.12s ease}
+.repoChevron.isCollapsed{transform:rotate(-90deg)}
+.repoChevron.isEmpty{visibility:hidden}
+.repoKind{flex:none;padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px}
+.repoSync{flex:none;display:inline-flex;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.secNote{color:var(--dsw-alias-state-warn-primary);cursor:default}
+/* 基准为 0：分区高度只由剩余空间决定，不受提交信息行数与变更文件数影响。 */
+.sec.workspace{flex:1 1 0;min-height:0}
+.sec.graphSec{flex:0 0 auto}
+/* 提交框固定在分区顶部，不随变更列表滚动；只有 .changesScroll 滚动。 */
+.workspaceBody{display:flex;flex-direction:column;flex:1 1 0;min-height:0;overflow:hidden}
+.workspaceBody .commitBox{border-top:none;flex:none}
+.changesScroll{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden}
+/* 可拖拽的分界线：4px 命中区骑在分界线上（上下各溢出 2px，不占布局高度），
+ * 拖动时显示一条高亮线。 */
+.secResize{flex:none;position:relative;height:4px;margin-top:-2px;margin-bottom:-2px;cursor:row-resize;-webkit-user-select:none;user-select:none;touch-action:none}
+.secResize::after{content:'';position:absolute;left:0;right:0;top:1px;height:2px;border-radius:2px;background:transparent;transition:background 0.12s ease}
+.secResize:hover::after{background:var(--dsw-alias-interactive-bg-active)}
+.secResize.isDragging::after{background:var(--dsw-alias-state-business-primary)}
+.changeGroup{margin-top:2px;padding-top:2px}
+.changeGroup + .changeGroup{border-top:1px solid var(--dsw-alias-border-l1)}
+.groupRoot{cursor:pointer}
+.groupRoot .groupTitle{flex:1;min-width:0;color:var(--dsw-alias-label-secondary);font-weight:600}
+.groupRoot .count{margin-left:auto}
+.changeGroup .changes{max-height:none}
+.changes{display:flex;flex-direction:column;padding:0 6px 6px}
+/* 图形区内的改动文件展开块：左列续画泳道线，右侧排文件树。
+ * 内边距与列间距都与 .row 一致（8px），泳道列与文件树才不会相对提交行位移。 */
+.detailInline{display:flex;align-items:stretch;gap:8px;padding:0 8px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.detailInline .detailGutter{flex:none;align-self:stretch;display:block}
+.detailInline .detailBody{flex:1 1 auto;min-width:0;padding:4px 0 6px;font-size:12px}
+.detailChanges{padding:0}
+.detailStat{flex:none;display:inline-flex;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.detailAdd{color:var(--dsw-alias-state-success-primary)}
+.detailDel{color:var(--dsw-alias-state-error-primary)}
+.change{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;min-width:0}
+.change:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.change.menuTarget{background:var(--dsw-alias-interactive-bg-active)}
+/* 文件行整行可点即打开；文件夹行仍是展开/收起。 */
+.changeOpenable{cursor:pointer}
+/* direction:rtl 让过长文件名从左侧截断、保住扩展名；文字本身另包一层
+ * .changeText 并隔离双向文本，否则文件名开头的「.」是中性字符，会被排到行尾，
+ * .gitignore 显示成 gitignore.。 */
+.changeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.changeText{direction:ltr;unicode-bidi:isolate}
+.changeDir{color:var(--dsw-alias-label-tertiary)}
+.folder{cursor:pointer}
+.folder .changeName{flex:1 1 auto;direction:ltr;text-align:left;color:var(--dsw-alias-label-secondary)}
+.folder .count{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400}
+.changeStat{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.changeBtn{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.change:hover .changeBtn{display:inline-flex}
+.changeBtn:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+/* 文件状态字符与文件夹数量共用最右一列：定宽使两者左右边界都对齐。 */
+.rowTail{flex:none;width:24px;text-align:center}
+.status{font-weight:600;font-size:11px}
+.status[data-type='M']{color:var(--dsw-alias-state-warn-primary)}
+.status[data-type='A']{color:var(--dsw-alias-state-success-primary)}
+.status[data-type='D']{color:var(--dsw-alias-state-error-primary)}
+.status[data-type='U']{color:var(--dsw-alias-state-success-primary)}
+.status[data-type='R']{color:var(--dsw-alias-brand-primary)}
+.status[data-type='C']{color:var(--dsw-alias-brand-primary)}
+.status[data-type='!']{color:var(--dsw-alias-state-error-primary)}
+.commitBox{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
+.empty{padding:16px 12px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
+.graph{flex:1;min-height:0;overflow:auto;padding:0 0 12px}
+.row{display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
+.row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.row.isSelected{background:var(--dsw-alias-interactive-bg-active)}
+.row.menuTarget{background:var(--dsw-alias-interactive-bg-active)}
+.lane{flex:none;height:22px;overflow:visible}
+.subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
+.refs{display:inline-flex;align-items:center;gap:4px;flex:none}
+.ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
+.icon{display:inline-flex;align-items:center}
+.icon svg{display:block}
+.refText{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.refHead{padding:0 8px;background:var(--dsw-alias-lane-0,#2f7bff);color:#0d1116}
+.refBranch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#2f7bff) 18%,transparent);color:var(--dsw-alias-lane-0,#2f7bff)}
+.refRemote{width:17px;background:var(--dsw-alias-lane-4,#8b5cf6);color:#fff}
+.refTag{width:17px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
+.refStash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
+.refWide{width:auto;padding:0 8px}
+.pager{display:flex;justify-content:center;padding:8px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* ── 悬停卡片（浮窗外观由 HoverCard 提供，这里只排内容） ── */
+.card{display:flex;flex-direction:column;padding:12px 0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.6}
+.cardHead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 14px}
+.cardIcon{flex:none;color:var(--dsw-alias-label-tertiary)}
+.cardAuthor{font-weight:500}
+.cardTime{color:var(--dsw-alias-label-tertiary);font-size:11px}
+/* 提交信息：首行是标题，沿用卡片自身字号与行距；其余是正文，字号更小、行距更紧。
+ * MarkdownText 的 compact 变体自带 font-size 与 line-height，段距仍有 4px；
+ * 用 data-markdown-variant 属性（MarkdownText 在 compact 时输出）在卡片内覆盖。 */
+.cardMessage{margin-top:6px;padding:0 14px;max-height:132px;overflow:auto;word-break:break-word}
+.cardTitle{font:inherit}
+.cardBody{font-size:11px;line-height:1.35}
+.cardBody [data-markdown-variant='compact']{font-size:11px;line-height:1.35}
+.cardBody [data-markdown-variant='compact'] :is(p, ul, ol, blockquote){margin:0}
+.cardBody [data-markdown-variant='compact'] p + p{margin-top:2px}
+.cardStats{margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px}
+.cardRefs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1)}
+.cardHash{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.cardCopy{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.cardCopy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* 提交对比：文件列表前的方向标识。 */
+.detailCompare{padding:4px 10px 2px;color:var(--dsw-alias-brand-primary);font-size:11px;font-family:var(--dsw-alias-font-mono,monospace)}
+/* 对比入口提示：未进入对比时说明修饰键用法。 */
+.detailCompareHint{padding:4px 10px 2px;color:var(--dsw-alias-label-tertiary);font-size:11px}
+/* 错误与提示改由顶部轻量横幅呈现（见 panel/toast.ts），面板内不再有错误条。 */
+.issueLink{color:var(--dsw-alias-brand-primary);text-decoration:none}
+.issueLink:hover{text-decoration:underline}
+.rowUncommitted{font-style:italic}
+.rowIndicator{color:var(--dsw-alias-label-tertiary);font-size:11px;cursor:default}
+
+/* ── 右键浮层 ───────────────────────────────────────────── */
+/* 有二级菜单的项：文案撑满，箭头贴右。Menu 的 label 槽是普通行内元素、
+   不是 flex 容器，因此这里用 width 撑满而不是 flex。 */
+.menuLabel{display:flex;align-items:center;gap:6px;width:100%}
+.menuLabelText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menuChevron{flex:none;color:var(--dsw-alias-label-tertiary)}
+
+/* ── 设置分区 ───────────────────────────────────────────── */
+.settings{top:8%;left:8%;right:8%;bottom:8%;transform:none;width:auto;max-width:560px;margin:auto;max-height:84vh}
+.settingsBody{overflow:auto;display:flex;flex-direction:column;gap:14px;padding:2px}
+.setSection{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.setSectionTitle{font-weight:600;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.setRow{display:flex;align-items:center;gap:10px;font-size:12px}
+.setRowInline{cursor:pointer}
+.setRowText{flex:none;color:var(--dsw-alias-label-primary)}
+.setRowBlock{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.setNote{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}
+.setRemotes{display:flex;flex-direction:column;gap:4px}
+.setRemote{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-1)}
+.setRemoteName{flex:none;font-weight:600;font-size:12px}
+.setRemoteUrl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}
+.setRemoteDel{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.setRemoteDel:hover{background:var(--dsw-alias-state-error-bg-secondary,rgba(255,0,0,0.08));color:var(--dsw-alias-state-error-primary)}
+.setForm{display:flex;flex-direction:column;gap:8px}
+
+/* ── 自建弹窗（Modal 内表单） ───────────────────────────── */
+.field{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.fieldInline{flex-direction:row;align-items:center;gap:8px;cursor:pointer}
+.fieldLabel{color:var(--dsw-alias-label-secondary)}
+.fieldTextarea{font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}
+
+/* ── 仓库行右侧操作 ───────────────────────────────────────── */
+.repoIcon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+.repoBranchIcon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+.repoMore{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.repoMore:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* ── 侧栏标签页 chip ──────────────────────────────────────── */
+.chip{display:inline-flex;align-items:center;gap:4px;min-width:0}
+.chip svg{flex:none}
+
+/* ── 会话 header 入口 ─────────────────────────────────────── */
+.open{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+.open:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 提交输入框 ───────────────────────────────────────────── */
+.commitInputWrap{position:relative;display:flex;align-items:stretch}
+/* 固定高度：内容超出时输入框自身滚动，提交框高度恒定。 */
+.commitInput{flex:1;height:52px;overflow-y:auto;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
+.commitInput:focus{border-color:var(--dsw-alias-brand-primary)}
+.commitInput::placeholder{color:var(--dsw-alias-label-tertiary)}
+.commitInputActions{position:absolute;right:4px;top:0;bottom:0;display:flex;align-items:center;gap:2px}
+.commitInputBtn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.commitInputBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 图标按钮（无常驻边框与背景） ─────────────────────────── */
+.iconBtn{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+.iconBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.iconBtn:disabled{opacity:0.5;cursor:default}
+
+/* ── 图形区标题栏仓库名（图标+名称） ─────────────────────── */
+.headRepo{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;padding:0 4px}
+
+/* ── 仓库行分支名可点击 ───────────────────────────────────── */
+.repoBranch.isClickable{cursor:pointer;border-radius:3px;padding:0 2px}
+.repoBranch.isClickable:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 引用筛选弹窗 ─────────────────────────────────────────── */
+.filterBackdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3)}
+.filterDialog{width:420px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.2);overflow:hidden}
+.filterTop{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.filterSearch{flex:1;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}
+.filterSearch:focus{border-color:var(--dsw-alias-brand-primary)}
+.filterSearch::placeholder{color:var(--dsw-alias-label-tertiary)}
+.filterBadge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;border-radius:9px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}
+.filterQuick{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.filterQuickItem{display:flex;align-items:center;gap:6px;cursor:pointer}
+.filterQuickLabel{font-size:12px;color:var(--dsw-alias-label-primary)}
+.filterQuickHint{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.filterList{flex:1;overflow-y:auto;padding:4px 0}
+.filterRow{display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer}
+.filterRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.filterRow.isChecked{background:var(--dsw-alias-interactive-bg-active)}
+.filterIcon{flex:none;color:var(--dsw-alias-label-tertiary)}
+.filterName{font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.filterHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace)}
+.filterKind{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:0 6px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover)}
+
+/* ── 静音合并提交 ─────────────────────────────────────────── */
+.rowMuted{opacity:0.5}
+
+/* ── 悬停卡片头像 ─────────────────────────────────────────── */
+.cardAvatar{flex:none;width:20px;height:20px;border-radius:50%;object-fit:cover}
+
+/* ── 远程配置编辑按钮 ─────────────────────────────────────── */
+.setRemoteEdit{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.setRemoteEdit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.setFormActions{display:flex;gap:6px;margin-top:6px}
+.dialogHint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
+/* 破坏性操作的确认按钮：Button 的 variant 规则带 :hover:not(:disabled)，特异性更高，
+   因此同时匹配静止与悬停两种状态才能压过它。 */
+button.btnDanger,
+button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);color:#fff}
+button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-secondary)}
+
+/* ── 侧边栏差异查看页 ─────────────────────────────────────── */
+.diffTab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
+.diffTabHead{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.diffTabPath{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diffTabHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
+/* 差异页正文：作为复制来的 FileDiff 的弹性父容器，滚动由后者自己承担。 */
+.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.diffTabToggle{flex:none;margin-left:8px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
+.diffTabToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.diffTabToggle[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* 差异视图的样式来自 ./file-diff.module.css（复制自 DSH ui-deliverables 的
+ * FileDiff.module.css，MIT 许可），由构建脚本把 esbuild 产出的样式内联进包。 */
+
+/* ── AI 提交信息 ─────────────────────────────────────────── */
+.commitInputBtn.isBusy{opacity:0.5;pointer-events:none}
+.aiLoadingBar{height:2px;width:100%;background:transparent;overflow:hidden;position:relative;flex:none;border-radius:1px}
+.aiLoadingBar::after{content:'';position:absolute;top:0;left:-40%;height:2px;width:40%;background:var(--dsw-alias-color-success,#22c55e);border-radius:1px;animation:aiSlide 1.2s ease-in-out infinite}
+@keyframes aiSlide{0%{left:-40%}100%{left:100%}}
+.commitAiWarning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
+.commitActionsRow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+/* 右侧动作组：翻译（仅图标）与贮藏靠右排列。 */
+.commitActionsRight{display:inline-flex;align-items:center;gap:2px;flex:none}
+.commitActionsRow .stashBtn{padding:0 6px;background:transparent;color:var(--dsw-alias-label-secondary)}
+.commitActionsRow .stashBtn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
+.commitAiStats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}
+.setAiModel{display:flex;flex-direction:column;gap:6px}
+.setRow{display:flex;align-items:center;gap:8px}
+.setLabel{font-size:12px;color:var(--dsw-alias-label-secondary);width:56px;flex:none}
+.setDropdown{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);cursor:pointer}
+.setDropdown:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.setDropdownText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.setTextarea{flex:1;min-width:0;font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}

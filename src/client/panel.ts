@@ -35,6 +35,7 @@ import { useRepos } from './panel/use-repos.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from './api.ts';
+import css from './css/styles.module.css';
 
 /** 面板属性。 */
 export interface GitGraphPanelProps {
@@ -138,12 +139,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const startY = event.clientY;
 		const startHeight = graphHeight;
 		const handle = event.currentTarget;
-		handle.classList.add('is-dragging');
+		handle.classList.add(css.isDragging);
 		const onMove = (moveEvent: PointerEvent): void => {
 			commitGraphHeight(startHeight - (moveEvent.clientY - startY));
 		};
 		const onUp = (): void => {
-			handle.classList.remove('is-dragging');
+			handle.classList.remove(css.isDragging);
 			window.removeEventListener('pointermove', onMove);
 			window.removeEventListener('pointerup', onUp);
 		};
@@ -162,12 +163,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const startY = event.clientY;
 		const startHeight = repoHeight;
 		const handle = event.currentTarget;
-		handle.classList.add('is-dragging');
+		handle.classList.add(css.isDragging);
 		const onMove = (moveEvent: PointerEvent): void => {
 			commitRepoHeight(startHeight + (moveEvent.clientY - startY));
 		};
 		const onUp = (): void => {
-			handle.classList.remove('is-dragging');
+			handle.classList.remove(css.isDragging);
 			window.removeEventListener('pointermove', onMove);
 			window.removeEventListener('pointerup', onUp);
 		};
@@ -1082,7 +1083,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 仓库行「更多操作」右键菜单。 */
 	const handleRepoMoreActions = React.useCallback((node, event) => {
 		const target = event.currentTarget;
-		target.classList.add('ggg-menu-target');
+		target.classList.add(css.menuTarget);
 		const branchName = node.branch ?? '';
 		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
 		const isLinkedWorktree = node.kind === 'worktree';
@@ -1113,7 +1114,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}
 		showContextMenu({
 			x: event.clientX, y: event.clientY,
-			onClose: () => target.classList.remove('ggg-menu-target'),
+			onClose: () => target.classList.remove(css.menuTarget),
 			items,
 		});
 	}, [selectNodeAndReset, run, refresh, state.busy, settings, workingTreePath, setSelectedId]);
@@ -1126,10 +1127,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}
 		if (branches.size === 0) return;
 		const target = event.currentTarget;
-		target.classList.add('ggg-menu-target');
+		target.classList.add(css.menuTarget);
 		showContextMenu({
 			x: event.clientX, y: event.clientY,
-			onClose: () => target.classList.remove('ggg-menu-target'),
+			onClose: () => target.classList.remove(css.menuTarget),
 			items: [...branches].sort().map((name) => ({
 				title: name,
 				onClick: () => { selectNodeAndReset(node); void run(async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }); },
@@ -1182,7 +1183,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);
 
 	if (state.phase === 'no-workspace') {
-		return React.createElement('div', { className: 'ggg-empty' }, '该会话没有工作区目录');
+		return React.createElement('div', { className: css.empty }, '该会话没有工作区目录');
 	}
 
 	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条。
@@ -1192,7 +1193,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	return React.createElement(
 		'div',
-		{ className: 'ggg-root' },
+		{ className: css.root },
 
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => setSettingsOpen(false),
