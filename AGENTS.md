@@ -58,6 +58,20 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
 404 归入无权限。
 
+`better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
+要求服务已装载、`diff` 类型已注册且未被设置页关闭（该插件的 `openTab` 对未注册或已关闭的类型是静默
+no-op，无法事后察觉，因此只能事前探测）；`toSidebarDiffRef` 把本插件的差异描述换算成它的两种引用
+（工作区单文件 / 整提交补丁），两提交区间对比没有等价引用而返回 null；换算失败或未安装即回退到本插件
+自己的差异页。探测发生在每次打开差异的时刻，服务经传给面板的取值函数读取 `ctx.get('betterSidebar')`：
+该插件的客户端半边可能晚于本插件激活，且启用开关要等设置 RPC 返回，提前缓存会把「暂不可用」记成可用。
+服务不写进 `dsh.client.inject`——缺它只让差异页回退，不会把插件拖成 pending。
+
+普通文件打开不经过该模块：一律 `tabActions.openResource(dsh-resource://file/…)` 交宿主按注册表认领。
+better-sidebar 的 `editor` 以 `extension` 档注册 `dsh-resource://file/**`，压过宿主 `text` 预览的
+`fallback` 档，因此装了它就用它的编辑器；未安装或该类型被关闭时该注册不存在，排名自然落到宿主预览。
+回退由宿主的认领排名承担，插件不自行判断。该编辑器对宿主自带渲染器的格式（表格 / PDF / 图片 /
+Office）主动不认领，那些仍走宿主预览。
+
 分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
@@ -113,6 +127,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `poll-gate.test.mjs` | 变更轮询的重载判据：变化稳定与最小间隔 |
+| `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |

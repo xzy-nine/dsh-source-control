@@ -12,6 +12,7 @@ import React from 'react';
 import { GitGraphPanel } from './panel.ts';
 import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
+import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-sidebar-diff.ts';
 import { fileDiffContent } from './api.ts';
 import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
@@ -90,6 +91,11 @@ function GitGraphTab(props) {
 			}
 			return;
 		}
+		// 打开这一刻才探测：设置页的启用开关要等设置 RPC 返回，提前判定会把「暂不可用」记成可用，
+		// 而该插件对已关闭的类型是静默 no-op，届时点击会毫无反应。
+		const betterSidebar = resolveBetterSidebarDiff(props.getBetterSidebar?.());
+		// 换算不出的差异（两提交区间对比、缺哈希）同样返回 false，一并回退。
+		if (openDiffInBetterSidebar(betterSidebar, diff, { sessionId, ...(typeof cwd === 'string' ? { cwd } : {}) })) return;
 		const hash = diff.kind === 'worktree' ? '*' : (diff.hashFull ?? diff.hash ?? '*');
 		const address = gitDiffAddress(sessionId, hash, path);
 		const staged = diff.kind === 'worktree' && diff.staged === true;
@@ -101,7 +107,7 @@ function GitGraphTab(props) {
 		} catch (error) {
 			void error;
 		}
-	}, [tabActions, sessionId, cwd]);
+	}, [tabActions, sessionId, cwd, props.getBetterSidebar]);
 	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff, pickDirectory, runInTerminal });
 }
 
@@ -269,6 +275,9 @@ export function apply(ctx) {
 		uiWorkspace: ctx.get?.('uiWorkspace'),
 		terminals: ctx.get?.('webTerminals'),
 		sidebarRightService: ctx.get?.('sidebarRight'),
+		// better-sidebar 未装载时为 undefined，面板据此回退到本插件自己的差异页。
+		// 传取值函数而不是取值：该插件的客户端半边可能晚于本插件激活，且服务本身要等设置就绪。
+		getBetterSidebar: () => ctx.get?.('betterSidebar'),
 	});
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: TAB_ID },
