@@ -35,6 +35,10 @@ on:
         description: 只预览版本与变更说明，不写回、不打 tag、不发布
         type: boolean
         default: false
+      force_bump:
+        description: 无 releasable 提交时手动发版，按该档位提升版本号（patch/minor/major；留空则交给 semantic-release）
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -108,6 +112,20 @@ jobs:
 
           BEFORE_TAG="$(git tag --sort=-version:refname | head -n 1)"
           echo "发布前最新 tag：${BEFORE_TAG:-（无）}"
+
+          # 手动发版：无 releasable 提交时，用一个符合 conventional commits 的空提交
+          # 把想要的档位告诉 semantic-release（fix→patch、feat→minor、breaking→major）。
+          FORCE_BUMP="${{ inputs.force_bump }}"
+          if [ -n "$FORCE_BUMP" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            case "$FORCE_BUMP" in
+              patch) MSG="fix: 手动发版（patch）" ;;
+              minor) MSG="feat: 手动发版（minor）" ;;
+              major) MSG="feat!: 手动发版（major）" ;;
+              *) echo "::error::force_bump 只接受 patch / minor / major，收到：$FORCE_BUMP"; exit 1 ;;
+            esac
+            echo "手动发版：$MSG"
+            git commit --allow-empty -m "$MSG"
+          fi
 
           # 绝对路径调用：进程工作目录仍是仓库根目录，插件从该安装位置解析。
           if [ "${{ inputs.dry_run }}" = "true" ]; then
