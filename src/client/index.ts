@@ -16,8 +16,8 @@ import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-side
 import { fileDiffContent } from './api.ts';
 import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
-import css from './css/styles.module.css';
-
+import css from './css/index.module.css';
+import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-source-control/panel';
 /** 页类型 kind：`ctx.sidebarRight.openTab` 用它打开。 */
@@ -169,7 +169,7 @@ function GitDiffTab(props) {
 		load();
 	}, [load]);
 	if (parsed === null) {
-		return React.createElement('div', { className: css.empty }, '无效的差异地址');
+		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
 	// 比较状态：加载中、无法读取，或可绘制的文本比较。
 	const state: ChangesDiffState = loading

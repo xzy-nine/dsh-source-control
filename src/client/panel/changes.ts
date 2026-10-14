@@ -12,7 +12,9 @@ import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu
 import { showConfirmation } from '../dialog.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { CommitFile, WorkingTreeEntry } from '../types.ts';
-import css from '../css/styles.module.css';
+import css from '../css/changes.module.css';
+import shared from '../css/shared.module.css';
+import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 import { cx } from '../css/cx.ts';
 
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
@@ -47,7 +49,7 @@ export function splitPath(path: string): { dir: string; name: string } {
 /** 按 depth 生成的竖线层级占位。 */
 function guidesOf(depth: number): React.ReactElement[] {
 	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: css.repoGuide }));
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
 	return guides;
 }
 
@@ -90,7 +92,7 @@ export function ChangeNodeRow({
 			event.preventDefault();
 			event.stopPropagation();
 			const target = event.currentTarget;
-			target.classList.add(css.menuTarget);
+			target.classList.add(MENU_TARGET_CLASS);
 			const paths = descendantsOf(row.path);
 			const items: ContextMenuItem[] = [];
 			if (staged) {
@@ -105,7 +107,7 @@ export function ChangeNodeRow({
 				);
 			}
 			items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(row.path); } });
-			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
+			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 		};
 		return React.createElement(
 			'div',
@@ -115,7 +117,7 @@ export function ChangeNodeRow({
 			},
 			...guidesOf(row.depth),
 			React.createElement('span', {
-				className: cx(css.repoChevron, !open && css.isCollapsed),
+				className: cx(shared.repoChevron, !open && shared.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 			React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
 			React.createElement('span', { className: css.changeName }, row.name),
@@ -132,7 +134,7 @@ export function ChangeNodeRow({
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
 		const target = event.currentTarget;
-		target.classList.add(css.menuTarget);
+		target.classList.add(MENU_TARGET_CLASS);
 		const items: ContextMenuItem[] = [{ title: isNew ? '打开文件' : '打开', onClick: () => onOpen(entry, isNew) }, { type: 'divider' }];
 		if (fileStaged) {
 			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
@@ -147,7 +149,7 @@ export function ChangeNodeRow({
 			);
 		}
 		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -202,7 +204,7 @@ export interface CommitDetailProps {
  */
 export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
 	if (files.length === 0) {
-		return React.createElement('div', { className: css.hint }, '正在加载改动文件…');
+		return React.createElement('div', { className: shared.hint }, '正在加载改动文件…');
 	}
 	const rows: ChangeRow<CommitFile>[] = changeRowsOf(files, collapsed);
 	return React.createElement(
@@ -218,7 +220,7 @@ export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: Commi
 					},
 					...guidesOf(row.depth),
 					React.createElement('span', {
-						className: cx(css.repoChevron, !row.open && css.isCollapsed),
+						className: cx(shared.repoChevron, !row.open && shared.isCollapsed),
 					}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 					React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
 					React.createElement('span', { className: css.changeName }, row.name),
@@ -346,7 +348,7 @@ export function ChangeGroup({
 		event.preventDefault();
 		event.stopPropagation();
 		const target = event.currentTarget;
-		target.classList.add(css.menuTarget);
+		target.classList.add(MENU_TARGET_CLASS);
 		const items: ContextMenuItem[] = staged
 			? [{ title: `取消暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onUnstage(allPaths) }]
 			: [
@@ -354,7 +356,7 @@ export function ChangeGroup({
 				{ type: 'divider' },
 				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: onDiscardAll },
 			];
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(css.menuTarget) });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
 	return React.createElement(
 		'div',
@@ -367,7 +369,7 @@ export function ChangeGroup({
 				onContextMenu: handleHeadContextMenu,
 			},
 			React.createElement('span', {
-				className: cx(css.repoChevron, !open && css.isCollapsed),
+				className: cx(shared.repoChevron, !open && shared.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
 			React.createElement('span', { className: css.groupTitle }, title),
 			React.createElement('span', { className: css.count }, String(visible.length)),

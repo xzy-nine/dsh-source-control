@@ -1,0 +1,79 @@
+/*
+ * 变更树：文件行、文件夹行、变更分组与提交改动列表。
+ */
+
+.changeGroup{margin-top:2px;padding-top:2px}
+
+.changeGroup + .changeGroup{border-top:1px solid var(--dsw-alias-border-l1)}
+
+.groupRoot{cursor:pointer}
+
+.groupRoot .groupTitle{flex:1;min-width:0;color:var(--dsw-alias-label-secondary);font-weight:600}
+
+.groupRoot .count{margin-left:auto}
+
+.changeGroup .changes{max-height:none}
+
+.changes{display:flex;flex-direction:column;padding:0 6px 6px}
+
+.detailChanges{padding:0}
+
+.detailStat{flex:none;display:inline-flex;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+
+.detailAdd{color:var(--dsw-alias-state-success-primary)}
+
+.detailDel{color:var(--dsw-alias-state-error-primary)}
+
+.change{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;min-width:0}
+
+.change:hover{background:var(--dsw-alias-interactive-bg-hover)}
+
+.change:global(.ggg-menu-target){background:var(--dsw-alias-interactive-bg-active)}
+
+/* 文件行整行可点即打开；文件夹行仍是展开/收起。 */
+
+.changeOpenable{cursor:pointer}
+
+/* direction:rtl 让过长文件名从左侧截断、保住扩展名；文字本身另包一层
+ * .changeText 并隔离双向文本，否则文件名开头的「.」是中性字符，会被排到行尾，
+ * .gitignore 显示成 gitignore.。 */
+
+.changeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+
+.changeText{direction:ltr;unicode-bidi:isolate}
+
+.changeDir{color:var(--dsw-alias-label-tertiary)}
+
+.folder{cursor:pointer}
+
+.folder .changeName{flex:1 1 auto;direction:ltr;text-align:left;color:var(--dsw-alias-label-secondary)}
+
+.folder .count{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400}
+
+.changeStat{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+
+.changeBtn{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+
+.change:hover .changeBtn{display:inline-flex}
+
+.changeBtn:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* 文件状态字符与文件夹数量共用最右一列：定宽使两者左右边界都对齐。 */
+
+.rowTail{flex:none;width:24px;text-align:center}
+
+.status{font-weight:600;font-size:11px}
+
+.status[data-type='M']{color:var(--dsw-alias-state-warn-primary)}
+
+.status[data-type='A']{color:var(--dsw-alias-state-success-primary)}
+
+.status[data-type='D']{color:var(--dsw-alias-state-error-primary)}
+
+.status[data-type='U']{color:var(--dsw-alias-state-success-primary)}
+
+.status[data-type='R']{color:var(--dsw-alias-brand-primary)}
+
+.status[data-type='C']{color:var(--dsw-alias-brand-primary)}
+
+.status[data-type='!']{color:var(--dsw-alias-state-error-primary)}

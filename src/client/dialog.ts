@@ -10,7 +10,7 @@ import {
 	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown, type DropdownOption } from './ui/dropdown.ts';
-import css from './css/styles.module.css';
+import css from './css/dialog.module.css';
 import { cx } from './css/cx.ts';
 
 export type { DropdownOption };

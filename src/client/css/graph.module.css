@@ -1,0 +1,104 @@
+/*
+ * 提交图：泳道、引用标记、提交行与悬停卡片。
+ */
+
+/* 图形区内的改动文件展开块：左列续画泳道线，右侧排文件树。
+ * 内边距与列间距都与 .row 一致（8px），泳道列与文件树才不会相对提交行位移。 */
+
+.detailInline{display:flex;align-items:stretch;gap:8px;padding:0 8px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+
+.detailInline .detailGutter{flex:none;align-self:stretch;display:block}
+
+.detailInline .detailBody{flex:1 1 auto;min-width:0;padding:4px 0 6px;font-size:12px}
+
+.graph{flex:1;min-height:0;overflow:auto;padding:0 0 12px}
+
+.row{display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
+
+.row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+
+.row.isSelected{background:var(--dsw-alias-interactive-bg-active)}
+
+.row:global(.ggg-menu-target){background:var(--dsw-alias-interactive-bg-active)}
+
+.lane{flex:none;height:22px;overflow:visible}
+
+.subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
+
+.author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
+
+.refs{display:inline-flex;align-items:center;gap:4px;flex:none}
+
+.ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
+
+.refText{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+
+.refHead{padding:0 8px;background:var(--dsw-alias-lane-0,#2f7bff);color:#0d1116}
+
+.refBranch{padding:0 8px;background:color-mix(in srgb,var(--dsw-alias-lane-0,#2f7bff) 18%,transparent);color:var(--dsw-alias-lane-0,#2f7bff)}
+
+.refRemote{width:17px;background:var(--dsw-alias-lane-4,#8b5cf6);color:#fff}
+
+.refTag{width:17px;background:var(--dsw-alias-lane-0,#2f7bff);color:#fff}
+
+.refStash{width:17px;background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-secondary)}
+
+.refWide{width:auto;padding:0 8px}
+
+.pager{display:flex;justify-content:center;padding:8px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+
+/* ── 悬停卡片（浮窗外观由 HoverCard 提供，这里只排内容） ── */
+
+.card{display:flex;flex-direction:column;padding:12px 0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.6}
+
+.cardHead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 14px}
+
+.cardIcon{flex:none;color:var(--dsw-alias-label-tertiary)}
+
+.cardAuthor{font-weight:500}
+
+.cardTime{color:var(--dsw-alias-label-tertiary);font-size:11px}
+
+/* 提交信息：首行是标题，沿用卡片自身字号与行距；其余是正文，字号更小、行距更紧。
+ * MarkdownText 的 compact 变体自带 font-size 与 line-height，段距仍有 4px；
+ * 用 data-markdown-variant 属性（MarkdownText 在 compact 时输出）在卡片内覆盖。 */
+
+.cardMessage{margin-top:6px;padding:0 14px;max-height:132px;overflow:auto;word-break:break-word}
+
+.cardTitle{font:inherit}
+
+.cardBody{font-size:11px;line-height:1.35}
+
+.cardBody [data-markdown-variant='compact']{font-size:11px;line-height:1.35}
+
+.cardBody [data-markdown-variant='compact'] :is(p, ul, ol, blockquote){margin:0}
+
+.cardBody [data-markdown-variant='compact'] p + p{margin-top:2px}
+
+.cardStats{margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px}
+
+.cardRefs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1)}
+
+.cardHash{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 14px 0;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+
+.cardCopy{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+
+.cardCopy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* 错误与提示改由顶部轻量横幅呈现（见 panel/toast.ts），面板内不再有错误条。 */
+
+.issueLink{color:var(--dsw-alias-brand-primary);text-decoration:none}
+
+.issueLink:hover{text-decoration:underline}
+
+.rowUncommitted{font-style:italic}
+
+.rowIndicator{color:var(--dsw-alias-label-tertiary);font-size:11px;cursor:default}
+
+/* ── 静音合并提交 ─────────────────────────────────────────── */
+
+.rowMuted{opacity:0.5}
+
+/* ── 悬停卡片头像 ─────────────────────────────────────────── */
+
+.cardAvatar{flex:none;width:20px;height:20px;border-radius:50%;object-fit:cover}

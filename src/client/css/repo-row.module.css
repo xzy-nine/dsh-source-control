@@ -1,0 +1,35 @@
+/*
+ * 仓库树的行。
+ */
+
+.repo{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;font-size:12px;cursor:pointer;position:relative}
+
+.repo:hover{background:var(--dsw-alias-interactive-bg-hover)}
+
+.repo.isActive{background:var(--dsw-alias-interactive-bg-active)}
+
+.repo.isMissing{opacity:0.55}
+
+.repoName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.repoBranch{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}
+
+.repoKind{flex:none;padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px}
+
+.repoSync{flex:none;display:inline-flex;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+
+/* ── 仓库行右侧操作 ───────────────────────────────────────── */
+
+.repoIcon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+
+.repoBranchIcon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+
+.repoMore{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+
+.repoMore:hover{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* ── 仓库行分支名可点击 ───────────────────────────────────── */
+
+.repoBranch.isClickable{cursor:pointer;border-radius:3px;padding:0 2px}
+
+.repoBranch.isClickable:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}

@@ -23,7 +23,8 @@ import {
 import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
 import { copyText } from './context-menu.ts';
-import css from './css/styles.module.css';
+import css from './css/graph.module.css';
+import shared from './css/shared.module.css';
 import { cx } from './css/cx.ts';
 
 /** MarkdownText 所需的本地化标签。 */
@@ -586,7 +587,7 @@ export function CommitGraph({
 	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
 
 	if (commits.length === 0) {
-		return React.createElement('div', { className: css.empty }, '这个仓库还没有提交');
+		return React.createElement('div', { className: shared.empty }, '这个仓库还没有提交');
 	}
 	const commitByHash = new Map();
 	for (const commit of commits) commitByHash.set(commit.hash, commit);

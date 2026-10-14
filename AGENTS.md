@@ -35,8 +35,9 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
                     设置面板、图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
-  src/client/css/   样式：styles.module.css（视图样式）、file-diff.module.css（复制的差异视图）、
-                    cx.ts（类名拼接）
+  src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
+                    shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
+                    cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
 doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
 scripts/            客户端打包脚本
@@ -104,6 +105,10 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 - CSS 模块用 esbuild 的 `local-css` loader，**必须配 `outdir`**，否则报
   `Cannot import ... without an output path configured`。`local-css` 只产类名映射，样式文本需脚本单独
   收集并内联为 `<style id="dsh-source-control-module-style">`，`lib/` 下不留 CSS 文件。
+- CSS 模块按组件拆分，**作用域前缀按文件生成**：同一条选择器里的多个类名必须定义在同一文件，
+  否则两侧前缀不同、复合选择器失效。跨组件的共享类放 `css/shared.module.css`；由 JS 动态切换、
+  且要加在不同模块元素上的状态类（`menuTarget`）在样式里写 `:global(...)`，名字集中在
+  `css/state-classes.ts`，样式与组件共用同一份。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
 

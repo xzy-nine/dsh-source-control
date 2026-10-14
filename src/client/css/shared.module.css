@@ -1,0 +1,35 @@
+/*
+ * 跨组件共享的类：空态与提示、图标、仓库树展开标记、分区拖拽手柄。
+ *
+ * 样式以 --dsw-* 语义 token 为主，随主题明暗切换；引用标记取泳道调色板的固定色。
+ * 组件自身（Button / Input / Checkbox 等）从 ui-primitives 取得，这里只负责布局与
+ * 提交图这类没有对应组件的部分。类名由 esbuild 的 local-css 作用域化，
+ * 组件经 CSS 模块映射引用，不再以裸类名字符串出现在源码里。
+ */
+
+.repoGuide{flex:none;width:12px;align-self:stretch;border-left:1px solid var(--dsw-alias-border-l2);margin-left:3px}
+
+.repoChevron{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary);transition:transform 0.12s ease}
+
+.repoChevron.isCollapsed{transform:rotate(-90deg)}
+
+.repoChevron.isEmpty{visibility:hidden}
+
+/* 可拖拽的分界线：4px 命中区骑在分界线上（上下各溢出 2px，不占布局高度），
+ * 拖动时显示一条高亮线。 */
+
+.secResize{flex:none;position:relative;height:4px;margin-top:-2px;margin-bottom:-2px;cursor:row-resize;-webkit-user-select:none;user-select:none;touch-action:none}
+
+.secResize::after{content:'';position:absolute;left:0;right:0;top:1px;height:2px;border-radius:2px;background:transparent;transition:background 0.12s ease}
+
+.secResize:hover::after{background:var(--dsw-alias-interactive-bg-active)}
+
+.secResize.isDragging::after{background:var(--dsw-alias-state-business-primary)}
+
+.empty{padding:16px 12px;color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
+
+.icon{display:inline-flex;align-items:center}
+
+.icon svg{display:block}
+
+.hint{color:var(--dsw-alias-label-tertiary);font-size:12px}

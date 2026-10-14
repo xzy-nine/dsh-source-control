@@ -1,0 +1,97 @@
+/*
+ * 三个分区：标题栏、仓库列表容器、提交框与 AI 提交状态。
+ */
+
+.sec{border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0}
+
+.secHead{cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600;user-select:none}
+
+.secHead .chevron{transition:transform 0.15s ease}
+
+.secHead.collapsed .chevron{transform:rotate(-90deg)}
+
+.secHead .headActions{margin-left:auto;display:flex;gap:2px}
+
+.repos{display:flex;flex-direction:column;gap:1px;padding:0 6px 6px}
+
+.secNote{color:var(--dsw-alias-state-warn-primary);cursor:default}
+
+/* 基准为 0：分区高度只由剩余空间决定，不受提交信息行数与变更文件数影响。 */
+
+.sec.workspace{flex:1 1 0;min-height:0}
+
+.sec.graphSec{flex:0 0 auto}
+
+/* 提交框固定在分区顶部，不随变更列表滚动；只有 .changesScroll 滚动。 */
+
+.workspaceBody{display:flex;flex-direction:column;flex:1 1 0;min-height:0;overflow:hidden}
+
+.workspaceBody .commitBox{border-top:none;flex:none}
+
+.changesScroll{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden}
+
+.commitBox{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
+
+/* 提交对比：文件列表前的方向标识。 */
+
+.detailCompare{padding:4px 10px 2px;color:var(--dsw-alias-brand-primary);font-size:11px;font-family:var(--dsw-alias-font-mono,monospace)}
+
+/* 对比入口提示：未进入对比时说明修饰键用法。 */
+
+.detailCompareHint{padding:4px 10px 2px;color:var(--dsw-alias-label-tertiary);font-size:11px}
+
+/* ── 提交输入框 ───────────────────────────────────────────── */
+
+.commitInputWrap{position:relative;display:flex;align-items:stretch}
+
+/* 固定高度：内容超出时输入框自身滚动，提交框高度恒定。 */
+
+.commitInput{flex:1;height:52px;overflow-y:auto;padding:6px 28px 6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;resize:none;outline:none}
+
+.commitInput:focus{border-color:var(--dsw-alias-brand-primary)}
+
+.commitInput::placeholder{color:var(--dsw-alias-label-tertiary)}
+
+.commitInputActions{position:absolute;right:4px;top:0;bottom:0;display:flex;align-items:center;gap:2px}
+
+.commitInputBtn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+
+.commitInputBtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 图标按钮（无常驻边框与背景） ─────────────────────────── */
+
+.iconBtn{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+
+.iconBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.iconBtn:disabled{opacity:0.5;cursor:default}
+
+/* ── 图形区标题栏仓库名（图标+名称） ─────────────────────── */
+
+.headRepo{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;padding:0 4px}
+
+/* 差异视图的样式来自 ./file-diff.module.css（复制自 DSH ui-deliverables 的
+ * FileDiff.module.css，MIT 许可），由构建脚本把 esbuild 产出的样式内联进包。 */
+/* ── AI 提交信息 ─────────────────────────────────────────── */
+
+.commitInputBtn.isBusy{opacity:0.5;pointer-events:none}
+
+.aiLoadingBar{height:2px;width:100%;background:transparent;overflow:hidden;position:relative;flex:none;border-radius:1px}
+
+.aiLoadingBar::after{content:'';position:absolute;top:0;left:-40%;height:2px;width:40%;background:var(--dsw-alias-color-success,#22c55e);border-radius:1px;animation:aiSlide 1.2s ease-in-out infinite}
+
+@keyframes aiSlide{0%{left:-40%}100%{left:100%}}
+
+.commitAiWarning{font-size:11px;color:var(--dsw-alias-label-warning,var(--dsw-alias-label-secondary));padding:2px 0}
+
+.commitActionsRow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+
+/* 右侧动作组：翻译（仅图标）与贮藏靠右排列。 */
+
+.commitActionsRight{display:inline-flex;align-items:center;gap:2px;flex:none}
+
+.commitActionsRow .stashBtn{padding:0 6px;background:transparent;color:var(--dsw-alias-label-secondary)}
+
+.commitActionsRow .stashBtn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
+
+.commitAiStats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}

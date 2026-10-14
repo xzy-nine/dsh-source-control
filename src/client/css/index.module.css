@@ -1,0 +1,35 @@
+/*
+ * 侧栏页入口与差异页外壳。
+ */
+
+/* ── 侧栏标签页 chip ──────────────────────────────────────── */
+
+.chip{display:inline-flex;align-items:center;gap:4px;min-width:0}
+
+.chip svg{flex:none}
+
+/* ── 会话 header 入口 ─────────────────────────────────────── */
+
+.open{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;transition:background 0.1s ease,color 0.1s ease}
+
+.open:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* ── 侧边栏差异查看页 ─────────────────────────────────────── */
+
+.diffTab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
+
+.diffTabHead{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+
+.diffTabPath{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.diffTabHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
+
+/* 差异页正文：作为复制来的 FileDiff 的弹性父容器，滚动由后者自己承担。 */
+
+.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+
+.diffTabToggle{flex:none;margin-left:8px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
+
+.diffTabToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.diffTabToggle[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}

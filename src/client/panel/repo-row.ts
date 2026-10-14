@@ -9,7 +9,8 @@ import {
 import { RepoIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RepoNode, RepoSync } from '../types.ts';
-import css from '../css/styles.module.css';
+import css from '../css/repo-row.module.css';
+import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 存储库树一行的属性。 */
@@ -37,7 +38,7 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 	const isWorktree = node.kind === 'worktree';
 	const isSubmodule = node.kind === 'submodule';
 	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: css.repoGuide }));
+	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
 	const branchName = (sync?.branch ?? node.branch) ?? '';
 	const isDetached = branchName === '' && headHash !== null && headHash !== undefined;
 	const refText = isDetached ? headHash.slice(0, 7) : branchName;
@@ -51,7 +52,7 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 		},
 		...guides,
 		React.createElement('span', {
-			className: cx(css.repoChevron, !expanded && css.isCollapsed, !hasChildren && css.isEmpty),
+			className: cx(shared.repoChevron, !expanded && shared.isCollapsed, !hasChildren && shared.isEmpty),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { event.stopPropagation(); if (hasChildren) onToggle(node); },
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 		isWorktree

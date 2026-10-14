@@ -16,7 +16,7 @@ import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } fr
 import type { RemoteProtocolSlot } from './remote-url.ts';
 import type { AiModelCatalog, SshStatusInfo } from './api.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
-import css from './css/styles.module.css';
+import css from './css/settings.module.css';
 import { cx } from './css/cx.ts';
 
 /** 用户身份配置位置选项。 */

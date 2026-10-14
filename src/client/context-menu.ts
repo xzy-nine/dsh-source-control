@@ -10,8 +10,7 @@ import { createRoot } from 'react-dom/client';
 import {
 	IconChevronRightOutlineRegular, Menu, type MenuEntry, type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import css from './css/styles.module.css';
-
+import css from './css/context-menu.module.css';
 /**
  * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
  *

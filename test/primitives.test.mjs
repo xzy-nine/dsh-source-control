@@ -6,8 +6,8 @@
  * 写成裸名会得到 undefined，React 渲染时不报编译错误、只在运行时抛
  * 「元素类型无效」并让整个侧栏页变空白。此测试把这类拼写错误挡在构建前。
  *
- * 样式已从 TS 模板字符串改为 CSS 模块（`css/styles.module.css`）：组件经类名映射引用，
- * 源码里不再出现裸类名，因此结构断言改看映射键，样式规则断言改读 CSS 文件。
+ * 样式已从 TS 模板字符串改为 CSS 模块（`css/` 下按组件拆分）：组件经类名映射引用，
+ * 源码里不再出现裸类名，因此结构断言改看映射键，样式规则断言按归属模块读取 CSS 文件。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,12 +81,17 @@ test('ui-primitives 导入名全部存在', { skip: !available && '未找到 ui-
 	}
 });
 
+/** 读取某个 CSS 模块的源码。 */
+function cssFile(name) {
+	return readFileSync(join(cssDir, name), 'utf8');
+}
+
 test('图形区拖拽手柄在图形标题之前', () => {
 	// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
 	// 否则会出现在标题与图形之间。
 	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
 	const section = source.indexOf('cx(css.sec, css.graphSec)');
-	const handle = source.indexOf('css.secResize', section);
+	const handle = source.indexOf('shared.secResize', section);
 	const title = source.indexOf("'图形'");
 	assert.ok(section !== -1 && handle !== -1 && title !== -1, '未找到图形区标记');
 	assert.ok(handle > section && handle < title, '拖拽手柄必须排在图形标题之前');
@@ -113,7 +118,7 @@ test('改动文件区在图形区内展开', () => {
 
 test('展开块左内边距与提交行一致', () => {
 	// 少了与 .row 相同的左内边距与列间距，泳道列会相对提交行左移。
-	const source = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const source = cssFile('graph.module.css');
 	const row = /\.row\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
 	const inline = /\.detailInline\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
 	assert.ok(row, '提交行应有 8px 列间距与 0 8px 内边距');
@@ -152,7 +157,7 @@ test('提交框在滚动区之外', () => {
 });
 
 test('工作区主体自身不滚动', () => {
-	const source = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const source = cssFile('sections.module.css');
 	const body = /\.workspaceBody\{([^}]*)\}/.exec(source);
 	assert.ok(body !== null, '未找到 .workspaceBody');
 	assert.match(body[1], /overflow:hidden/, '工作区主体不得自身滚动，否则提交框会跟着滚');
@@ -213,7 +218,7 @@ test('状态字符与文件夹数量同处最右一列', () => {
 	const nameAt = source.indexOf('css.changeText }, name)');
 	const statusAt = source.indexOf('css.rowTail, css.status');
 	assert.ok(nameAt !== -1 && statusAt !== -1 && nameAt < statusAt, '状态字符必须排在文件名之后');
-	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const styles = cssFile('changes.module.css');
 	const tail = /\.rowTail\{([^}]*)\}/.exec(styles);
 	assert.ok(tail !== null, '未找到 .rowTail 样式');
 	assert.match(tail[1], /width:24px/, '尾部列应定宽，使状态字符与数量对齐');
@@ -250,18 +255,49 @@ test('构建脚本把 CSS 模块的样式内联进包', () => {
 });
 
 test('样式经 CSS 模块引用且类名全部有映射', () => {
-	// 组件不再写裸类名字符串；每个 css.xxx 都必须能在 styles.module.css 里找到同名类。
-	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
-	const defined = new Set();
-	for (const match of styles.matchAll(/\.([A-Za-z][\w-]*)/g)) defined.add(match[1]);
-	assert.ok(defined.size > 100, `样式类名过少（${defined.size}），可能解析出错`);
+	// 组件不再写裸类名字符串；每个 <别名>.xxx 都必须能在对应模块里找到同名类。
+	const defined = new Map();
+	for (const file of readdirSync(cssDir).filter((n) => n.endsWith('.module.css'))) {
+		const source = readFileSync(join(cssDir, file), 'utf8');
+		const names = new Set();
+		for (const match of source.matchAll(/\.([A-Za-z][\w-]*)/g)) names.add(match[1]);
+		defined.set(file, names);
+	}
+	const total = [...defined.values()].reduce((n, s) => n + s.size, 0);
+	assert.ok(total > 100, `样式类名过少（${total}），可能解析出错`);
+
+	// 源文件里 `import <别名> from '.../<模块>.module.css'` 建立别名到模块的对应。
 	for (const file of clientFiles()) {
 		const source = readFileSync(file, 'utf8');
-		if (!source.includes("from './css/styles.module.css'") && !source.includes("from '../css/styles.module.css'")) continue;
-		for (const match of source.matchAll(/css\.([A-Za-z][\w]*)/g)) {
-			assert.ok(defined.has(match[1]), `${file} 引用了样式里不存在的类名：${match[1]}`);
+		const aliasToModule = new Map();
+		for (const match of source.matchAll(/import\s+(\w+)\s+from\s+'[^']*\/([\w-]+)\.module\.css'/g)) {
+			aliasToModule.set(match[1], `${match[2]}.module.css`);
+		}
+		if (aliasToModule.size === 0) continue;
+		// 去掉 import 行，避免把模块路径本身当成类名引用。
+		const body = source.split('\n').filter((line) => !/^\s*import\b/.test(line)).join('\n');
+		for (const match of body.matchAll(/\b(\w+)\.([A-Za-z][\w]*)\b/g)) {
+			const module = aliasToModule.get(match[1]);
+			if (module === undefined) continue;
+			assert.ok(
+				defined.get(module)?.has(match[2]),
+				`${file} 引用了 ${module} 里不存在的类名：${match[1]}.${match[2]}`,
+			);
 		}
 	}
+});
+
+test('动态切换的状态类不经模块作用域', () => {
+	// menuTarget 会加在变更行与提交行两种元素上，两者分属不同 CSS 模块：
+	// 若随模块作用域化，另一侧的元素拿不到该类，样式即失效。
+	const state = readFileSync(join(cssDir, 'state-classes.ts'), 'utf8');
+	const name = /MENU_TARGET_CLASS = '([^']+)'/.exec(state)?.[1];
+	assert.ok(name !== undefined && name !== '', '应给出状态类名');
+	// 样式侧以 :global 引用同一名字。
+	const changes = cssFile('changes.module.css');
+	const graph = cssFile('graph.module.css');
+	assert.match(changes, new RegExp(`\\.change:global\\(\\.${name}\\)`), '变更行的高亮应引用全局状态类');
+	assert.match(graph, new RegExp(`\\.row:global\\(\\.${name}\\)`), '提交行的高亮应引用全局状态类');
 });
 
 test('宿主 hunk 形状与视图一致', () => {
@@ -324,7 +360,7 @@ test('卡片正文更紧凑且不留空行', () => {
 	assert.match(graphSource, /bodyLines\.filter\(\(line\) => line\.trim\(\) !== ''\)/, '正文应滤掉空行');
 	assert.match(graphSource, /className: css\.cardTitle/, '标题单独渲染');
 	assert.match(graphSource, /className: css\.cardBody/, '正文单独渲染');
-	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const styles = cssFile('graph.module.css');
 	// 标题不改字号。
 	const title = /\.cardTitle\{([^}]*)\}/.exec(styles);
 	assert.ok(title !== null, '未找到 .cardTitle');
@@ -430,6 +466,6 @@ test('表单勾选项的文案只由 Checkbox 渲染', () => {
 	assert.ok(!/ggg-field-text(?!area)/.test(dialog), '不应再另加文案节点');
 	assert.match(dialog, /label: field\.label \?\? ''/, '勾选字段应把文案交给 Checkbox');
 	assert.match(dialog, /label: option\.label/, '多选字段应把每项文案交给 Checkbox');
-	const styles = readFileSync(join(cssDir, 'styles.module.css'), 'utf8');
+	const styles = cssFile('dialog.module.css');
 	assert.ok(!/\.fieldText(?!area)/.test(styles), '无用的文案节点样式应一并移除');
 });

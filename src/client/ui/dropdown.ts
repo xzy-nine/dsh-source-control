@@ -6,8 +6,7 @@
  */
 import React from 'react';
 import { IconChevronDownOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives';
-import css from '../css/styles.module.css';
-
+import css from '../css/dropdown.module.css';
 /** 一个下拉选项。 */
 export interface DropdownOption {
 	readonly value: string;

@@ -17,7 +17,8 @@ import { RepoRow } from './repo-row.ts';
 import type {
 	AiStats, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../types.ts';
-import css from '../css/styles.module.css';
+import css from '../css/sections.module.css';
+import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
@@ -85,9 +86,9 @@ export function RepoSection({
 		open && React.createElement(
 			'div',
 			{ className: css.repos, style: { maxHeight: height, overflowY: 'auto' } },
-			treeStatus === 'loading' && React.createElement('div', { className: css.hint }, '正在发现仓库…'),
+			treeStatus === 'loading' && React.createElement('div', { className: shared.hint }, '正在发现仓库…'),
 			treeStatus !== 'loading' && visibleRows.length === 0
-				&& React.createElement('div', { className: css.hint }, '没有发现 git 仓库'),
+				&& React.createElement('div', { className: shared.hint }, '没有发现 git 仓库'),
 			...visibleRows.map(({ node, depth }) => React.createElement(RepoRow, {
 				key: node.id, node, depth,
 				active: node.id === selectedId,
@@ -101,7 +102,7 @@ export function RepoSection({
 			})),
 		),
 		open && React.createElement('div', {
-			className: css.secResize,
+			className: shared.secResize,
 			title: '拖动调整存储库区高度',
 			onPointerDown: onResizeStart,
 		}),
@@ -350,7 +351,7 @@ export function GraphSection({
 		{ className: cx(css.sec, css.graphSec) },
 		// 拖拽手柄落在工作区与图形的分界线上（图形标题之前）。
 		open && React.createElement('div', {
-			className: css.secResize,
+			className: shared.secResize,
 			title: '拖动调整图形区高度',
 			onPointerDown: onResizeStart,
 		}),
@@ -385,7 +386,7 @@ export function GraphSection({
 		),
 		open && (
 			phase === 'loading' && commitCount === 0
-				? React.createElement('div', { className: css.empty, style: { height } }, '正在加载提交图…')
+				? React.createElement('div', { className: shared.empty, style: { height } }, '正在加载提交图…')
 				: React.createElement('div', {
 					ref: graphScrollRef,
 					style: { height, display: 'flex', flexDirection: 'column', minHeight: 0 },

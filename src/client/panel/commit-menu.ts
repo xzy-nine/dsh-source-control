@@ -17,8 +17,7 @@ import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import type { Commit, Remote } from '../types.ts';
-import css from '../css/styles.module.css';
-
+import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 /** 引用菜单识别出的目标。 */
 export interface RefMenuTarget {
 	/** 引用类型：head / remote / tag / stash。 */
@@ -682,10 +681,10 @@ export async function openCommitMenu(
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
 	const ctx = await makeContext(deps, commit, null, currentHashes);
-	target.classList.add(css.menuTarget);
+	target.classList.add(MENU_TARGET_CLASS);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove(css.menuTarget),
+		onClose: () => target.classList.remove(MENU_TARGET_CLASS),
 		items: buildCommitItems(ctx),
 	});
 }
@@ -714,10 +713,10 @@ export async function openRefMenu(
 		if (item !== null) items.push(item);
 	}
 	if (items.length === 0) return;
-	target.classList.add(css.menuTarget);
+	target.classList.add(MENU_TARGET_CLASS);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove(css.menuTarget),
+		onClose: () => target.classList.remove(MENU_TARGET_CLASS),
 		items,
 	});
 }

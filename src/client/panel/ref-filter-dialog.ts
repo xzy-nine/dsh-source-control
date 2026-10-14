@@ -8,7 +8,7 @@ import {
 import { RemoteRefIcon, TagRefIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import type { RefItem } from '../types.ts';
-import css from '../css/styles.module.css';
+import css from '../css/ref-filter-dialog.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 引用筛选弹窗的属性。 */
