@@ -1,10 +1,29 @@
 # 版本号更新与发布：push 到 main 后按 conventional commits 推断语义化版本
 # （feat→minor / fix|perf→patch / breaking→major），有 releasable 提交时回写 package.json 版本号、
-# 打 v{版本} tag、创建 GitHub Release 并发布到 npm。
+# 打 v{版本} tag、创建 GitHub Release，再以可信发布（Trusted Publishing / OIDC）发布到 npm。
 #
 # 回写用 CI_PUSH_TOKEN（用户 PAT）直推 main：仓库级 ruleset 已为作者配置 bypass，
 # semantic-release 生成的提交信息自带 [skip ci] 防循环。
-# 插件依赖在运行时安装，不写入仓库依赖。
+#
+# npm 侧不存任何长期发布令牌：2FA-bypass 的 granular access token 已不再能直接发布，
+# 官方指向可信发布或暂存发布。可信发布按「包 + 仓库 + 工作流文件名」授权，因此
+# 只能在该包已存在后配置。以下是仅需做一次的引导步骤（包在 npm 上尚不存在时）：
+#
+#   1. 本地登录 npm，暂存首个版本（暂存不弹 2FA）：
+#        npm login
+#        npm stage publish --access public
+#   2. 用 2FA 批准该版本，包在 npm 上建立：
+#        npm stage list dsh-source-control
+#        npm stage approve <stage-id>
+#   3. 在 npmjs.com 该包 Settings → Trusted Publishers 添加：
+#        Provider: GitHub Actions
+#        Organization or user: xzy-nine
+#        Repository: dsh-source-control
+#        Workflow filename: release.yml
+#        Environment: （留空）
+#   4. 之后每次发版都由本工作流自动完成，无需任何令牌。
+#
+# 引导完成前，本工作流仍会正常打 tag 与建 Release，只在发布那步提示需要先引导。
 name: 发布
 
 on:
@@ -16,6 +35,10 @@ on:
         description: 只预览版本与变更说明，不写回、不打 tag、不发布
         type: boolean
         default: false
+      force_bump:
+        description: 无 releasable 提交时手动发版，按该档位提升版本号（patch/minor/major；留空则交给 semantic-release）
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -32,10 +55,13 @@ jobs:
       contents: read
 
   release:
-    name: 推断版本并发布
+    name: 推断版本并打 tag
     needs: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
@@ -53,21 +79,21 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: pnpm
-          registry-url: https://registry.npmjs.org
-
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
 
       # 版本一律锁定：这些包不锁版本时会各自漂移到最新大版本，极易互相不兼容。
       # conventional-changelog-conventionalcommits 漂移到 10.x 时，其内部依赖要求
       # conventional-changelog-writer@9+，而 @semantic-release/release-notes-generator@14
       # 依赖 writer@^8，会导致 generateNotes 报 "Missing helper" 并中断发版。
       # 升级时需确认 conventional-changelog-writer 在两侧的主版本一致。
-      - name: 安装 semantic-release 及插件（不写入仓库依赖）
+      #
+      # 装在仓库之外的临时目录：版本推断只需 git 与 package.json，与本项目的 pnpm 依赖分开，
+      # 避免两套包管理器写同一个 node_modules。
+      - name: 安装 semantic-release 及插件（装在仓库之外）
         run: |
-          npm install --no-save --no-package-lock --no-audit --no-fund \
-            semantic-release@25.0.9 \
+          mkdir -p "$RUNNER_TEMP/semrel"
+          cd "$RUNNER_TEMP/semrel"
+          printf '{"name":"semrel-toolchain","private":true}\n' > package.json
+          pnpm add semantic-release@25.0.9 \
             @semantic-release/commit-analyzer@13.0.1 \
             @semantic-release/release-notes-generator@14.1.1 \
             @semantic-release/npm@13.1.5 \
@@ -75,13 +101,11 @@ jobs:
             @semantic-release/git@11.0.1 \
             conventional-changelog-conventionalcommits@9.3.1
 
-      - name: 推断版本并发布
+      - name: 推断版本并打 tag
         id: release
         env:
           # git 插件用该令牌推送回写提交（用户 PAT，可绕过 main 保护规则）。
           GITHUB_TOKEN: ${{ secrets.CI_PUSH_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -89,10 +113,25 @@ jobs:
           BEFORE_TAG="$(git tag --sort=-version:refname | head -n 1)"
           echo "发布前最新 tag：${BEFORE_TAG:-（无）}"
 
+          # 手动发版：无 releasable 提交时，用一个符合 conventional commits 的空提交
+          # 把想要的档位告诉 semantic-release（fix→patch、feat→minor、breaking→major）。
+          FORCE_BUMP="${{ inputs.force_bump }}"
+          if [ -n "$FORCE_BUMP" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            case "$FORCE_BUMP" in
+              patch) MSG="fix: 手动发版（patch）" ;;
+              minor) MSG="feat: 手动发版（minor）" ;;
+              major) MSG="feat!: 手动发版（major）" ;;
+              *) echo "::error::force_bump 只接受 patch / minor / major，收到：$FORCE_BUMP"; exit 1 ;;
+            esac
+            echo "手动发版：$MSG"
+            git commit --allow-empty -m "$MSG"
+          fi
+
+          # 绝对路径调用：进程工作目录仍是仓库根目录，插件从该安装位置解析。
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            npx --yes semantic-release --dry-run
+            "$RUNNER_TEMP/semrel/node_modules/.bin/semantic-release" --dry-run
           else
-            npx --yes semantic-release
+            "$RUNNER_TEMP/semrel/node_modules/.bin/semantic-release"
           fi
 
           AFTER_TAG="$(git tag --sort=-version:refname | head -n 1)"
@@ -104,13 +143,104 @@ jobs:
             echo "本次无 releasable 提交，未产生新 tag"
           fi
 
-      - name: 发布结果
-        if: steps.release.outputs.tag != ''
+  publish:
+    name: 发布到 npm
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # 可信发布（OIDC）与构建溯源需要签发 id-token。
+      id-token: write
+    steps:
+      - name: 检出新 tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          # 构建与测试会读真实 git 历史。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # 可信发布要求 npm >= 11.5.1，runner 自带的版本不保证满足。
+      # 不用 npm@latest：该 tag 曾发出缺少内置 sigstore 模块的构建，会让 --provenance 失败。
+      - name: 升级 npm 以支持可信发布
+        run: npm install -g npm@11.21.0
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 配置测试用 git 身份
+        run: |
+          git config --global user.name "dsh-source-control-ci"
+          git config --global user.email "ci@dsh.invalid"
+
+      # 回写提交与 tag 同源，这里挡住「tag 与包版本不一致」这类错发。
+      - name: 核对 tag 与 package.json 版本一致
         env:
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          echo "package.json：${expected}"
+          echo "tag：${TAG}"
+          if [ "$expected" != "$TAG" ]; then
+            echo "::error::tag $TAG 与 package.json 的 $expected 不一致"
+            exit 1
+          fi
+
+      # 可信发布的授权关系只能建在已存在的包上，因此先探测包是否已发布。
+      - name: 检查包是否已在 npm 上
+        id: exists
+        run: |
+          if npm view dsh-source-control version >/dev/null 2>&1; then
+            echo "exists=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 提示先完成发布引导
+        if: steps.exists.outputs.exists == 'no'
+        run: |
+          echo "::warning::包 dsh-source-control 尚未发布到 npm，跳过发布。请按 release.yml 头部的一次性引导步骤操作。"
+          {
+            echo "## 已打 tag，但未发布到 npm"
+            echo ""
+            echo "包在 npm 上尚不存在。可信发布需要先在包上配置授权，因此需先本地引导一次（见 \`.github/workflows/release.yml\` 头部）："
+            echo ""
+            echo '```'
+            echo "npm login"
+            echo "npm stage publish --access public"
+            echo "npm stage list dsh-source-control"
+            echo "npm stage approve <stage-id>"
+            echo '```'
+            echo ""
+            echo "随后在 npmjs.com 该包的 Settings → Trusted Publishers 填入仓库与工作流文件名。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 不提供 NODE_AUTH_TOKEN：npm 用 OIDC id-token 向该包配置的可信发布方换取短期凭据，
+      # 并附带构建溯源。prepublishOnly 会重新构建，发布的是该 tag 的产物。
+      - name: 发布到 npm（可信发布）
+        if: steps.exists.outputs.exists == 'yes'
+        run: npm publish --provenance --access public
+
+      - name: 发布结果
+        if: steps.exists.outputs.exists == 'yes'
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
         run: |
           echo "## 已发布 ${TAG}" >> "$GITHUB_STEP_SUMMARY"
           echo "| 项目 | 值 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|-----|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 版本 | \`${{ steps.release.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 版本 | \`${{ needs.release.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tag | \`${TAG}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| npm | https://www.npmjs.com/package/dsh-source-control/v/${{ needs.release.outputs.version }} |" >> "$GITHUB_STEP_SUMMARY"

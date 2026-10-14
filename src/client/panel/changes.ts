@@ -190,6 +190,8 @@ export function ChangeNodeRow({
 export interface CommitDetailProps {
 	readonly files: readonly CommitFile[];
 	readonly busy: boolean;
+	/** 是否仍在读取文件列表；false 时 files 为空即该提交确实没有改动。 */
+	readonly loading: boolean;
 	readonly collapsed: ReadonlySet<string>;
 	readonly onToggle: (path: string) => void;
 	/** 打开文件：isNew 为 true 时按普通文件打开（新增文件没有可比差异）。 */
@@ -202,9 +204,11 @@ export interface CommitDetailProps {
  * @param props - 见 {@link CommitDetailProps}。
  * @returns 文件列表元素。
  */
-export function CommitDetail({ files, busy, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
+export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
 	if (files.length === 0) {
-		return React.createElement('div', { className: shared.hint }, '正在加载改动文件…');
+		// 读取中与「确实没有改动」必须分开：空提交（如 --allow-empty）不是加载中。
+		return React.createElement('div', { className: shared.hint },
+			loading ? '正在加载改动文件…' : '该提交没有文件改动');
 	}
 	const rows: ChangeRow<CommitFile>[] = changeRowsOf(files, collapsed);
 	return React.createElement(

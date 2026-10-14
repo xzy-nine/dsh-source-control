@@ -4,12 +4,13 @@ export default {
   plugins: [
     ['@semantic-release/commit-analyzer', { preset: 'conventionalcommits' }],
     ['@semantic-release/release-notes-generator', { preset: 'conventionalcommits' }],
-    ['@semantic-release/npm', { npmPublish: true }],
+    // npmPublish: false —— 只回写 package.json 版本号；构建与发布由工作流的 publish 任务承担，
+    // 那里才装了本项目的依赖。
+    ['@semantic-release/npm', { npmPublish: false }],
     ['@semantic-release/github', { successComment: false, failComment: false }],
     [
       '@semantic-release/git',
       {
-        // pnpm-lock 的根 importer 不记录包版本，回写只涉及 package.json。
         assets: ['package.json'],
         message: 'chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}',
       },

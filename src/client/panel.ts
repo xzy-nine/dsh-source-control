@@ -38,6 +38,17 @@ import type { LocalExcludeState, IgnoreWriteResult } from './api.ts';
 import css from './css/panel.module.css';
 import shared from './css/shared.module.css';
 import { MENU_TARGET_CLASS } from './css/state-classes.ts';
+
+/** 引用筛选的三种模式：自动、全部、手动勾选。 */
+type RefFilterMode = 'auto' | 'all' | 'manual';
+
+/** 一个仓库的引用筛选状态。 */
+interface RefFilterState {
+	readonly mode: RefFilterMode;
+	/** 手动模式下的勾选集合。 */
+	readonly selected: Set<string>;
+}
+
 /** 面板属性。 */
 export interface GitGraphPanelProps {
 	/** 会话工作区路径；没有工作区时为 undefined。 */
@@ -106,8 +117,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const rescanPending = React.useRef(false);
 	const [filterOpen, setFilterOpen] = React.useState(false);
 	const [filterSearch, setFilterSearch] = React.useState('');
-	const [filterSelected, setFilterSelected] = React.useState<Set<string>>(() => new Set());
-	const [filterAuto, setFilterAuto] = React.useState(false);
+	// 引用筛选按仓库持久化：模式与手动勾选都记在各自仓库名下，切换仓库即换一套。
+	// 默认「自动」，即每个仓库初次都按自动规则勾选。
+	const [filterState, setFilterState] = React.useState<{ mode: RefFilterMode; selected: Set<string> }>(
+		() => ({ mode: 'auto', selected: new Set() }),
+	);
 	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；窗口级、不持久化。
 	// detail 是图形区内展开块的文件夹集合。
 	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; detail: Set<string> }>(
@@ -187,6 +201,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		? selectedNode.path
 		: (treeStatus === 'loading' ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined && cwd !== null;
+
+	// 引用筛选按仓库持久化：每个仓库各有一套模式与勾选，默认「自动」。
+	const filterKey = workingTreePath === null ? null : `dsh-source-control-ref-filter:${workingTreePath}`;
+
+	// 切换仓库时载入该仓库的筛选状态；没有记录就用默认的「自动」。
+	React.useEffect(() => {
+		if (filterKey === null) return;
+		const saved = loadPersistent<RefFilterState | null>(filterKey, null);
+		setFilterState(saved === null || saved.mode === undefined
+			? { mode: 'auto', selected: new Set() }
+			: { mode: saved.mode, selected: new Set(saved.selected ?? []) });
+	}, [filterKey]);
+
+	/** 写入当前仓库的筛选状态并保留模式。 */
+	const patchFilter = React.useCallback((next: RefFilterState) => {
+		setFilterState(next);
+		if (filterKey !== null) savePersistent(filterKey, { mode: next.mode, selected: [...next.selected] });
+	}, [filterKey]);
 
 	const { state, setState, refresh } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
@@ -393,25 +425,25 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			const compareWith = baseHash === undefined ? null : state.commits.find((item) => item.hash === baseHash) ?? null;
 			setState((previous) => ({
 				...previous,
-				detail: commit === undefined ? null : { commit, files: [], compareWith },
+				detail: commit === undefined ? null : { commit, files: [], compareWith, loading: true },
 			}));
 			if (baseHash !== undefined) {
 				const files = await compareCommits(workingTreePath, baseHash, hash);
 				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files } }
+					? { ...previous, detail: { ...previous.detail, files, loading: false } }
 					: previous));
 				return;
 			}
 			if (hash === '*') {
 				const files: CommitFile[] = state.entries.map((entry) => ({ path: entry.path, type: changeOf(entry).type, additions: null, deletions: null }));
 				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files } }
+					? { ...previous, detail: { ...previous.detail, files, loading: false } }
 					: previous));
 				return;
 			}
 			const files = await loadCommitFiles(workingTreePath, hash);
 			setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-				? { ...previous, detail: { ...previous.detail, files } }
+				? { ...previous, detail: { ...previous.detail, files, loading: false } }
 				: previous));
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
@@ -1192,6 +1224,26 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (state.error !== null) showToast(state.error);
 	}, [state.error]);
 
+	// 当前仓库的全部引用：全部模式与「全选」都以它为准。
+	const allRefs = React.useMemo(() => collectRefs(state.commits), [state.commits]);
+
+	// 按模式派生实际勾选集：自动与全部每次都按规则重算，不固化首次进入时的结果。
+	const filterSelected = React.useMemo(() => {
+		if (filterState.mode === 'auto') return computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null);
+		if (filterState.mode === 'all') return new Set(allRefs.map((ref) => ref.name));
+		return filterState.selected;
+	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream]);
+
+	// 标题栏按钮文案即当前模式：模式名，或选中的分支/标签名。只看模式，不按勾选内容反推。
+	const filterSummary = React.useMemo(() => {
+		if (filterState.mode === 'auto') return '自动';
+		if (filterState.mode === 'all') return '全部';
+		const names = [...filterState.selected];
+		if (names.length === 0) return '未选';
+		if (names.length === 1) return names[0];
+		return `${names.length} 个`;
+	}, [filterState]);
+
 	return React.createElement(
 		'div',
 		{ className: css.root },
@@ -1208,22 +1260,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null),
 			selected: filterSelected, search: filterSearch,
 			onSearch: setFilterSearch,
-			onToggle: (name: string) => { setFilterAuto(false); setFilterSelected((previous) => {
-				const next = new Set(previous);
+			// 手动勾选一处即离开规则模式，此后由勾选决定。
+			onToggle: (name: string) => {
+				const next = new Set(filterSelected);
 				if (next.has(name)) next.delete(name);
 				else next.add(name);
-				return next;
-			}); },
-			onSelectAll: (checked: boolean) => { setFilterAuto(false); setFilterSelected(() => {
-				if (!checked) return new Set();
-				return new Set(collectRefs(state.commits).map((ref) => ref.name));
-			}); },
-			autoChecked: filterAuto,
-			onToggleAuto: (checked: boolean) => {
-				setFilterAuto(checked);
-				if (checked) setFilterSelected(() => computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null));
-				else setFilterSelected(new Set());
+				patchFilter({ mode: 'manual', selected: next });
 			},
+			onSelectAll: (checked: boolean) => patchFilter({
+				mode: checked ? 'all' : 'manual',
+				selected: checked ? new Set(allRefs.map((ref) => ref.name)) : new Set(),
+			}),
+			// 勾选态一律由模式决定，不看勾选内容反推：模式是唯一事实来源。
+			allChecked: filterState.mode === 'all',
+			autoChecked: filterState.mode === 'auto',
+			onToggleAuto: (checked: boolean) => patchFilter(checked
+				? { mode: 'auto', selected: new Set() }
+				: { mode: 'manual', selected: new Set() }),
 			onClose: () => setFilterOpen(false),
 		}),
 
@@ -1278,6 +1331,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
 			onOpenFilter: () => setFilterOpen(true),
+			filterSummary,
+			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,
 			onFetch: () => { void run(async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
 			onRefresh: () => { void run(() => refresh()); },

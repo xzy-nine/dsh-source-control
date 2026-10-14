@@ -9,11 +9,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorktreeList, foreignWorktreeBranches } from '../src/source-control/worktree-branches.ts';
-import { resolve } from 'node:path';
 
-/** 与宿主 nodeId 一致：绝对化、统一 `/` 分隔、小写。 */
-const lower = (path) => resolve(path).split('\\').join('/').toLowerCase();
-
+/**
+ * 路径规范化：宿主 nodeId 的替身，统一分隔符并小写。
+ *
+ * 不调用 resolve：Windows 形态的固件路径在别的平台上不会被当作绝对路径，
+ * 而这里要验证的是「比较前两边都过了规范化」这条规则。
+ */
+const lower = (path) => path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
 /** 列表固件：主工作树在 feature 分支，链接工作树在 review 分支。 */
 const PORCELAIN = [
 	'worktree E:/repo/main',
