@@ -60,8 +60,6 @@ interface MenuContext {
 	readonly ref: RefMenuTarget | null;
 	readonly repo: string;
 	readonly isUncommitted: boolean;
-	/** 包含该提交的本地分支。 */
-	readonly localBranches: readonly string[];
 	/** 以该提交为尖端的本地分支。 */
 	readonly tipBranches: readonly string[];
 	/** 以该提交为尖端的远程分支，形态为 `远程名/分支名`。 */
@@ -308,13 +306,32 @@ const ACTIONS: readonly MenuAction[] = [
 				});
 				if (ok) void deps.run(async () => { throwIfError(await deleteBranch(ctx.repo, name, true)); });
 			};
+			const removeRemote = (name: string) => async (): Promise<void> => {
+				const remote = remoteNameOfBranch(name);
+				if (remote === '') return;
+				const ok = await showCheckbox({
+					title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
+					checkboxLabel: '我已知晓并继续', danger: true,
+				});
+				if (ok) void deps.run(async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); });
+			};
 			if (ctx.ref !== null) {
 				return { title: '删除分支…', danger: true, onClick: remove(ctx.ref.name) };
 			}
-			if (ctx.localBranches.length === 0) return null;
+			/*
+			 * 提交行右键只列以该提交为尖端的本地与远程分支：包含该提交的分支（在其之上的分支）
+			 * 删除后不影响此提交，列入会让「删除分支」指向与所选提交无关的分支。
+			 * 远程分支名自带远程名前缀，不再另加后缀。
+			 */
+			const localTips = ctx.tipBranches.filter((name) => name !== deps.head);
+			const remoteTips = ctx.tipRemoteBranches;
+			if (localTips.length === 0 && remoteTips.length === 0) return null;
 			return {
 				title: '删除分支', danger: true,
-				children: ctx.localBranches.map((name) => ({ title: name, onClick: remove(name) })),
+				children: [
+					...localTips.map((name) => ({ title: name, onClick: remove(name) })),
+					...remoteTips.map((name) => ({ title: name, onClick: removeRemote(name) })),
+				],
 			};
 		},
 	},
@@ -561,12 +578,12 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 	const repo = deps.workingTreePath as string;
 	const isUncommitted = commit.hash === '*';
 	// 分支只由尖端提交标识，中间提交需按「包含」关系查询；查询失败时退回该提交自身的引用。
+	// 包含关系只用于判断提交是否已在远程上（GitHub 入口），不作为可操作的分支候选。
 	const containing = deps.workingTreePath === null || isUncommitted
 		? { local: [], remote: [] }
 		: await branchesContaining(repo, commit.hash).catch(() => ({ local: [], remote: [] }));
 	return {
 		deps, commit, ref, repo, isUncommitted,
-		localBranches: containing.local.length > 0 ? containing.local : (commit.heads ?? []),
 		tipBranches: isUncommitted ? [] : (commit.heads ?? []),
 		// 远程 HEAD 是指向分支的符号引用，不作为可签出的目标。
 		tipRemoteBranches: isUncommitted

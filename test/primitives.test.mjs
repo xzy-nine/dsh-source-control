@@ -384,11 +384,16 @@ test('差异面板默认自动换行', () => {
 	assert.equal(wrap[1], 'true', '换行应默认开启');
 });
 
-test('删除分支按包含关系列出候选', () => {
-	// 分支只由尖端提交标识：中间提交的 heads 为空，只看 heads 会让删除分支在非尖端不可用。
+test('删除分支只列以该提交为尖端的分支', () => {
+	// 包含该提交的分支是它的后代，删除后不影响该提交：作为候选会让「删除分支」指向无关分支。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	assert.match(menu, /branchesContaining/, '应向 git 查询包含该提交的分支');
-	assert.match(menu, /containing\.local\.length > 0 \? containing\.local/, '查询结果优先，失败时退回自身引用');
+	const build = menu.slice(menu.indexOf("id: 'deleteBranch'"), menu.indexOf("id: 'checkoutRemoteBranch'"));
+	assert.match(build, /ctx\.tipBranches\.filter/, '本地候选取自尖端分支');
+	assert.match(build, /ctx\.tipRemoteBranches/, '远程候选取自尖端远程分支');
+	assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
+	// 远程分支名自带远程名前缀，不再另加后缀。
+	assert.ok(!/（远程）/.test(build), '远程分支不另加后缀');
+
 	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
