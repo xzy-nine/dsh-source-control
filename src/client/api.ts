@@ -60,6 +60,19 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 	return payload;
 }
 
+/**
+ * 把命令返回的错误文本转成异常。
+ *
+ * `run` 只提示抛出的错误，而命令把失败放在返回值里而不抛错：调用方忽略返回值即静默失败。
+ * 需要按错误内容分支的调用方自行读取返回值，不使用本函数。
+ *
+ * @param error - 命令返回的错误文本；成功为 null。
+ * @param describe - 展示前的文本整理；省略时原样抛出。
+ */
+export function throwIfError(error: string | null, describe: (error: string) => string = (text) => text): void {
+	if (error !== null) throw new Error(describe(error));
+}
+
 /** 仓库发现结果。 */
 export interface DiscoveryResult {
 	readonly nodes: RepoNode[];

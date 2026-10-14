@@ -11,10 +11,11 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
+import { checkoutFailureText } from './panel/git-messages.ts';
 import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
 import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
@@ -746,7 +747,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		void run(async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
-				await merge(workingTreePath, currentSync.upstream);
+				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
 				await pushCurrentBranch();
@@ -762,7 +763,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	/** 删除远程并刷新。 */
 	const deleteRemoteByName = React.useCallback((name: string) => {
-		void run(async () => { await deleteRemote(workingTreePath as string, name); });
+		void run(async () => { throwIfError(await deleteRemote(workingTreePath as string, name)); });
 	}, [workingTreePath, run]);
 
 	/* 打开设置时加载仓库配置（用户身份等）。 */
@@ -785,26 +786,28 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	const handleEditUserDetails = React.useCallback((name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => {
 		void run(async () => {
-			await editUserDetails(workingTreePath as string, name, email, location, deleteLocalName, deleteLocalEmail);
+			const errors = await editUserDetails(workingTreePath as string, name, email, location, deleteLocalName, deleteLocalEmail);
+			if (errors.length > 0) throw new Error(errors[0]);
 			await reloadUserDetails();
 		});
 	}, [workingTreePath, run, state.remotes]);
 
 	const handleDeleteUserDetails = React.useCallback((delName: boolean, delEmail: boolean, location: string) => {
 		void run(async () => {
-			await deleteUserDetails(workingTreePath as string, delName, delEmail, location);
+			const errors = await deleteUserDetails(workingTreePath as string, delName, delEmail, location);
+			if (errors.length > 0) throw new Error(errors[0]);
 			await reloadUserDetails();
 		});
 	}, [workingTreePath, run, state.remotes]);
 
 	/** 添加远程并刷新。 */
 	const handleAddRemote = React.useCallback((name: string, url: string, pushUrl: string | null) => {
-		void run(async () => { await addRemote(workingTreePath as string, name, url, pushUrl, false); });
+		void run(async () => { throwIfError(await addRemote(workingTreePath as string, name, url, pushUrl, false)); });
 	}, [workingTreePath, run]);
 
 	/** 编辑远程并刷新。 */
 	const handleEditRemote = React.useCallback((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => {
-		void run(async () => { await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew); });
+		void run(async () => { throwIfError(await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew)); });
 	}, [workingTreePath, run]);
 
 	/**
@@ -986,7 +989,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			onClose: () => target.classList.remove('ggg-menu-target'),
 			items: [...branches].sort().map((name) => ({
 				title: name,
-				onClick: () => { selectNodeAndReset(node); void run(async () => { await checkoutBranch(node.path, name); }); },
+				onClick: () => { selectNodeAndReset(node); void run(async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }); },
 			})),
 		});
 	}, [state.commits, selectNodeAndReset, run]);

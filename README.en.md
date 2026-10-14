@@ -62,6 +62,10 @@ These actions ask for confirmation first, with a red confirm button: discard cha
 
 **Unstaging is not destructive** and asks nothing. Discarding an untracked file is worded as a **delete** — the file is genuinely removed rather than reverted.
 
+### Reported failures
+
+Checking out and switching branches, checking out a commit, merging, rebasing, resetting, cherry-picking and reverting, creating or deleting branches and tags, stash actions, and writes to the remote configuration and user identity all report failures as a notice on the panel instead of ending silently. When git refuses because of uncommitted changes, untracked files, or an unfinished merge or rebase, the notice is the matching explanation; otherwise git's own output is shown.
+
 ### SSH remotes
 
 A selection control switches a remote address between protocols inside the edit form, in both directions:
