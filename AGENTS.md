@@ -1,14 +1,16 @@
 # AGENTS.md
 
-本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 [README.md](README.md) /
-[README.en.md](README.en.md)，本文件不重复。
+本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 `doc/功能说明.md`，
+本文件不重复。
 
 ## 工作约定
 
 - **注释、文档与提交信息只写说明性描述，不写解释性描述**：说明「是什么、怎么用、约束是什么」，
   不叙述改动过程、不解释「为什么当初这么做」、不保留评审历史。
 - **回复与面向用户的文本用中文**；代码、命令、路径、标识符与逐字引用的外部文本保持原样。
-- **README 只讲功能**，代码结构、构建、测试等实现内容放本文件。
+- **文档分层**：[README.md](README.md) / [README.en.md](README.en.md) 只概述插件的整体能力与几个特色功能，
+  不列细节；每一项功能的完整行为写在 `doc/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
+  `doc/` 下的迁移差异与实现计划、数据层方案为本地文档，由 `.git/info/exclude` 排除，不提交。
 - **测试不测界面文案**：断言代码标识符、结构或行为，不断言菜单项文字、按钮文字等展示字符串。
 - **不写一次性改动的一次性测试**：局部、机械、只影响单个界面的改动不补测试。
 - **能复用 DSH 已导出的能力就直接用，不自行重造**。
@@ -34,6 +36,7 @@ src/client/         客户端侧：侧栏页入口、面板状态与组装、泳
                     设置面板、样式与图标、类型
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
 test/               单元测试（`node --test test/*.test.mjs`）
+doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
 scripts/            客户端打包脚本
 assets/icons/       引用标记用的 SVG
 ```
@@ -99,6 +102,10 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `worktree-branches.test.mjs` | 工作树占用分支的判定 |
+| `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
+| `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
+| `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |
+| `git-messages.test.mjs` | git 失败文本的中文说明与原文回退 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |

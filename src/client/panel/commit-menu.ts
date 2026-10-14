@@ -3,7 +3,8 @@
  *
  * 每个分支/引用操作声明它适用的引用类型（`refTypes`）。提交行右键把分支操作渲染为以
  * 候选分支为目标的二级菜单，引用标记右键则直接作用于被点击的引用；两处菜单由同一份
- * 定义驱动，不再各自维护一份。
+ * 定义驱动，不再各自维护一份。提交菜单的顺序另在 `buildCommitItems` 中给出：新增作用于
+ * 提交行的操作时需在那里列出，引用菜单则自动按 `refTypes` 过滤。
  */
 import {
 	addTag, applyStash, branchFromStash, branchesContaining, checkoutBranch, checkoutCommit,
@@ -628,6 +629,8 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		if (name !== null && name !== '') void deps.run(async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); });
 	} });
 	push(items, byId('deleteBranch'));
+	// PR 是分支级操作，作用于当前分支而非选中的提交；条件不满足时该项自身返回 null。
+	push(items, byId('createPullRequest'));
 	// 标签相关操作自成一组：用分割线与上方的分支操作、下方的提交操作隔开。
 	// 未提交伪提交上既不能创建标签、也没有标签可操作，整组不显示。
 	if (!isUncommitted) {

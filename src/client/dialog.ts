@@ -460,15 +460,15 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 		);
 	}
 	if (field.type === 'checkbox') {
+		// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
 		return React.createElement(
-			'label',
+			'div',
 			{ key: field.name, className: 'ggg-field ggg-field-inline' },
 			React.createElement(Checkbox, {
 				checked: current === true,
 				onChange: (next: boolean) => setField(field.name, next),
 				label: field.label ?? '',
 			}),
-			React.createElement('span', { className: 'ggg-field-text' }, field.label),
 		);
 	}
 	if (field.type === 'select') {
@@ -503,8 +503,9 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
 			...field.options.map((option) => {
 				const checked = selected.includes(option.value);
+				// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
 				return React.createElement(
-					'label',
+					'div',
 					{ key: option.value, className: 'ggg-field ggg-field-inline' },
 					React.createElement(Checkbox, {
 						checked,
@@ -516,7 +517,6 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 						},
 						label: option.label,
 					}),
-					React.createElement('span', { className: 'ggg-field-text' }, option.label),
 				);
 			}),
 		);

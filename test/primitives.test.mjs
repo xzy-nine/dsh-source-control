@@ -398,5 +398,17 @@ test('提交菜单与引用菜单共用同一份操作注册表', () => {
 	// 提交行右键应能直接发起「合并到选中分支」，无需命中分支标签。
 	assert.match(menu, /ctx\.tipBranches/, '提交菜单应依据分支尖端列出合并目标');
 	assert.match(menu, /mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash\)/, '提交菜单应能直接合并到分支');
+	// 作用于当前分支的操作在提交行右键也要有入口，不能只挂在分支标签的引用菜单上。
+	assert.match(menu, /push\(items, byId\('createPullRequest'\)\)/, '提交菜单应列出创建 Pull Request 入口');
+});
+
+test('表单勾选项的文案只由 Checkbox 渲染', () => {
+	// Checkbox 自身携带可见文案且根元素是 `<label>`：再包一层 label 或另加文案节点会让文案显示两次。
+	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');
+	assert.ok(!dialog.includes('ggg-field-text'), '不应再另加文案节点');
+	assert.match(dialog, /label: field\.label \?\? ''/, '勾选字段应把文案交给 Checkbox');
+	assert.match(dialog, /label: option\.label/, '多选字段应把每项文案交给 Checkbox');
+	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
+	assert.ok(!styles.includes('.ggg-field-text'), '无用的文案节点样式应一并移除');
 });
 
