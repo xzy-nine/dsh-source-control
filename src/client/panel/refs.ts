@@ -97,8 +97,16 @@ export function currentBranchHashes(commits: readonly Commit[], head: string | n
 	return reachable;
 }
 
+/** 该提交是否带贮藏标记。 */
+function isStash(commit: Commit): boolean {
+	return commit.stash !== null && commit.stash !== undefined;
+}
+
 /**
- * 按选中的引用名称过滤提交列表：仅保留选中引用可达的提交（含工作区伪提交）。
+ * 按选中的引用名称过滤提交列表：仅保留选中引用可达的提交（含工作区伪提交与贮藏）。
+ *
+ * 贮藏提交的父提交是它所在分支的尖端，即它是尖端之后的分支外提交，可达性遍历取不到，
+ * 因此按标记直接保留。
  *
  * @param commits - 全部提交。
  * @param selectedNames - 选中的引用名称集合；空集表示不过滤。
@@ -126,7 +134,7 @@ export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: R
 		const commit = commitByHash.get(hash);
 		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
 	}
-	return commits.filter((commit) => commit.hash === '*' || reachable.has(commit.hash));
+	return commits.filter((commit) => commit.hash === '*' || isStash(commit) || reachable.has(commit.hash));
 }
 
 /**

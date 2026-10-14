@@ -123,7 +123,7 @@ export function useGraphData({
 	 * 同一份签名才重载，避免克隆等长时间写盘期间反复拉取整棵目录树。
 	 */
 	React.useEffect(() => {
-		if (workingTreePath === null) return undefined;
+		if (!settings.autoRefresh || workingTreePath === null) return undefined;
 		let cancelled = false;
 		let polling = false;
 		let lastSeen = '';
@@ -146,7 +146,7 @@ export function useGraphData({
 			})();
 		}, FALLBACK_POLL_INTERVAL_MS);
 		return () => { cancelled = true; window.clearInterval(intervalId); };
-	}, [workingTreePath, refresh]);
+	}, [workingTreePath, refresh, settings.autoRefresh]);
 
 	return { state, setState, refresh, busyRef };
 }
