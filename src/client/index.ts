@@ -13,6 +13,7 @@ import { GitGraphPanel } from './panel.ts';
 import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
 import { fileDiffContent } from './api.ts';
+import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { GitGraphIcon } from './plugin-icon.ts';
 import { STYLES } from './styles.ts';
 
@@ -58,6 +59,20 @@ function GitGraphTab(props) {
 		const entry = sessions?.byId?.[sessionId];
 		return entry?.cwd;
 	});
+	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
+	const pickDirectory = React.useMemo(() => {
+		const service = props.uiWorkspace;
+		return service === undefined || typeof service.pickDirectory !== 'function'
+			? undefined
+			: () => service.pickDirectory() as Promise<string | null>;
+	}, [props.uiWorkspace]);
+	// 终端由 ui-sidebar-terminal 与 terminal-controller 提供；未装载时提示手动克隆。
+	const runInTerminal = React.useMemo(() => {
+		if (props.terminals === undefined || props.sidebarRightService === undefined) return undefined;
+		return (targetSessionId: string, command: string) => runInTerminalCommand(
+			{ sidebarRight: props.sidebarRightService, terminals: props.terminals }, targetSessionId, command,
+		);
+	}, [props.terminals, props.sidebarRightService]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
@@ -87,7 +102,7 @@ function GitGraphTab(props) {
 			void error;
 		}
 	}, [tabActions, sessionId, cwd]);
-	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff });
+	return React.createElement(GitGraphPanel, { sessionId, cwd: typeof cwd === 'string' ? cwd : null, onOpenDiff, pickDirectory, runInTerminal });
 }
 
 /** chip 标题：图标 + 文案。 */
@@ -247,9 +262,17 @@ export function apply(ctx) {
 		}));
 	}
 
+	// 目录选择器来自 ui-workspace、终端来自 ui-sidebar-terminal；都可能未装载，
+	// 因此在渲染期按需读取，缺失时由面板提示。
+	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
+		...props,
+		uiWorkspace: ctx.get?.('uiWorkspace'),
+		terminals: ctx.get?.('webTerminals'),
+		sidebarRightService: ctx.get?.('sidebarRight'),
+	});
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: TAB_ID },
-		GitGraphTab,
+		gitGraphTab,
 	)));
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
 		{ name: 'sidebar.right.pane.tab.title', key: TAB_ID },

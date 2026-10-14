@@ -171,6 +171,7 @@ export const STYLES = `
 .ggg-field{display:flex;flex-direction:column;gap:4px;font-size:12px}
 .ggg-field-inline{flex-direction:row;align-items:center;gap:8px;cursor:pointer}
 .ggg-field-label{color:var(--dsw-alias-label-secondary)}
+.ggg-field-textarea{font-size:12px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-primary);color:var(--dsw-alias-label-primary);resize:vertical;font-family:inherit}
 
 /* ── 仓库行右侧操作 ───────────────────────────────────────── */
 .ggg-repo-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-tertiary)}

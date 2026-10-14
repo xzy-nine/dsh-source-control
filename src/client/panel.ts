@@ -15,6 +15,7 @@ import {
 	translateText, unstagePaths,
 } from './api.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
+import { cloneTerminalCommand } from './clone-command.ts';
 import { checkoutFailureText } from './panel/git-messages.ts';
 import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
@@ -43,6 +44,10 @@ export interface GitGraphPanelProps {
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
+	/** 打开宿主目录选择器；未装载时为 undefined。 */
+	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
+	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
+	readonly runInTerminal?: ((sessionId: string, command: string) => Promise<boolean>) | undefined;
 }
 
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
@@ -70,7 +75,7 @@ function interfaceLanguage(): string {
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps): React.ReactElement {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runInTerminal }: GitGraphPanelProps): React.ReactElement {
 	const [message, setMessage] = React.useState('');
 	const [aiBusy, setAiBusy] = React.useState(false);
 	const [aiWarning, setAiWarning] = React.useState('');
@@ -88,6 +93,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
 	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
 	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
+	/** 克隆进行中：只禁用克隆入口，不影响面板其余控件。 */
+	const [cloneBusy, setCloneBusy] = React.useState(false);
+	/**
+	 * 待重扫标志：命令写进终端后置位，窗口重新获得焦点时重扫一次。
+	 *
+	 * 克隆在终端里何时结束无法观测，因此不在面板里定时重扫——定时重扫会在克隆期间
+	 * 反复做整棵仓库树的发现与领先/落后拉取，与服务端争抢资源。
+	 */
+	const rescanPending = React.useRef(false);
 	const [filterOpen, setFilterOpen] = React.useState(false);
 	const [filterSearch, setFilterSearch] = React.useState('');
 	const [filterSelected, setFilterSelected] = React.useState<Set<string>>(() => new Set());
@@ -163,7 +177,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 
 	const {
 		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSyncById, setSelectedId,
+		selectNode, toggleNode, setSyncById, setSelectedId, rescan,
 	} = useRepos({ cwd, sessionId });
 
 	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
@@ -176,6 +190,27 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
+
+	/*
+	 * 克隆命令写入终端后置起重扫标志，窗口重新获得焦点时重扫一次仓库树。
+	 *
+	 * 克隆在终端里何时结束无法观测，因此不在面板里定时重扫：克隆中途目标目录还不是
+	 * 仓库，外层仓库的工作区读取会把这棵正在增长的目录树整体列为未跟踪文件，定时重扫
+	 * 会在克隆全程反复拉取整棵仓库树与服务端争抢资源。
+	 */
+	React.useEffect(() => {
+		const onReturn = (): void => {
+			if (!rescanPending.current) return;
+			rescanPending.current = false;
+			rescan();
+		};
+		window.addEventListener('focus', onReturn);
+		document.addEventListener('visibilitychange', onReturn);
+		return () => {
+			window.removeEventListener('focus', onReturn);
+			document.removeEventListener('visibilitychange', onReturn);
+		};
+	}, [rescan]);
 
 	/* 翻译服务是否可用：换仓库时重查一次（同一进程内结果稳定，不必频繁请求）。 */
 	React.useEffect(() => {
@@ -865,6 +900,60 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 	}, [localExclude, openDiff]);
 
 	/**
+	 * 克隆远程仓库：先填地址，再选父目录，然后在 DSH 终端里执行克隆命令。
+	 *
+	 * 克隆由终端承担——进度、凭据提示与交互都在那里，插件不自己跑 git；命令只依赖
+	 * `git -C <父目录> clone`，不必切换终端目录。命令写入后置起重扫标志，窗口重新获得
+	 * 焦点时重扫一次仓库树。
+	 */
+	const handleClone = React.useCallback(() => {
+		void (async () => {
+			if (cwd === undefined || cwd === null) {
+				await notify('没有可用的会话工作区，无法克隆。');
+				return;
+			}
+			if (cloneBusy) return;
+			const form = await showForm({
+				title: '克隆远程仓库',
+				message: '输入远程仓库地址，下一步选择存放位置；克隆在 DSH 终端里执行。',
+				fields: [
+					{ type: 'text', name: 'url', label: '仓库地址', placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git' },
+				],
+				confirmLabel: '下一步',
+			});
+			if (form === null) return;
+			const url = String(form.url ?? '').trim();
+			if (url === '') return;
+			if (pickDirectory === undefined) {
+				await notify('当前界面没有装载目录选择器，无法选择存放位置。');
+				return;
+			}
+			const parent = await pickDirectory();
+			if (parent === null) return;
+			const command = cloneTerminalCommand(parent, url);
+			if (command === null) {
+				await notify('地址或目录含无法自动转义的字符，请在终端里手动克隆。');
+				return;
+			}
+			if (runInTerminal === undefined) {
+				await notify('当前界面没有装载终端，无法在其中克隆。');
+				return;
+			}
+			setCloneBusy(true);
+			try {
+				const started = await runInTerminal(sessionId, command);
+				await notify(started
+					? `已在终端执行克隆：${command}`
+					: '无法在终端里执行克隆命令，请在终端里手动执行。');
+				// 回到本窗口时重扫一次：克隆可能已经完成，也可能还在跑。
+				if (started) rescanPending.current = true;
+			} finally {
+				setCloneBusy(false);
+			}
+		})();
+	}, [cwd, notify, pickDirectory, runInTerminal, sessionId, cloneBusy, rescan]);
+
+	/**
 	 * 创建 Pull Request：选目标分支、填标题与正文，交给 gh 创建。
 	 *
 	 * 当前分支没有上游时先说明原因；gh 不可用时给出降级提示而不是静默失败。
@@ -900,7 +989,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			fields: [
 				{ type: 'select', name: 'base', label: '目标分支', value: base, options: branches.map((name) => ({ value: name, label: name })) },
 				{ type: 'text', name: 'title', label: '标题', value: state.detail !== null && state.detail.commit.hash !== '*' ? (state.detail.commit.message ?? '') : '', placeholder: 'PR 标题' },
-				{ type: 'text', name: 'body', label: '正文（可选）', placeholder: '' },
+				{ type: 'textarea', name: 'body', label: '正文（可选）', placeholder: '' },
 				{ type: 'checkbox', name: 'draft', label: '创建为草稿', value: false },
 			],
 		});
@@ -1142,6 +1231,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff }: GitGraphPanelProps
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
 			onOpenSettings: () => setSettingsOpen(true),
+			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
 			onMoreActions: handleRepoMoreActions,

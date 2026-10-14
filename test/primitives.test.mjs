@@ -405,10 +405,10 @@ test('提交菜单与引用菜单共用同一份操作注册表', () => {
 test('表单勾选项的文案只由 Checkbox 渲染', () => {
 	// Checkbox 自身携带可见文案且根元素是 `<label>`：再包一层 label 或另加文案节点会让文案显示两次。
 	const dialog = readFileSync(join(clientDir, 'dialog.ts'), 'utf8');
-	assert.ok(!dialog.includes('ggg-field-text'), '不应再另加文案节点');
+	assert.ok(!/ggg-field-text(?!area)/.test(dialog), '不应再另加文案节点');
 	assert.match(dialog, /label: field\.label \?\? ''/, '勾选字段应把文案交给 Checkbox');
 	assert.match(dialog, /label: option\.label/, '多选字段应把每项文案交给 Checkbox');
 	const styles = readFileSync(join(clientDir, 'styles.ts'), 'utf8');
-	assert.ok(!styles.includes('.ggg-field-text'), '无用的文案节点样式应一并移除');
+	assert.ok(!/\.ggg-field-text(?!area)/.test(styles), '无用的文案节点样式应一并移除');
 });
 

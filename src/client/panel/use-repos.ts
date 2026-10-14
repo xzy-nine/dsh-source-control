@@ -42,6 +42,8 @@ export interface UseReposResult {
 	readonly setSelectedId: React.Dispatch<React.SetStateAction<string | null>>;
 	/** 记录某个节点的领先/落后。 */
 	readonly setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>;
+	/** 重新扫描仓库树；克隆出新仓库后调用。 */
+	readonly rescan: () => void;
 }
 
 /**
@@ -57,6 +59,8 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	const [selectedId, setSelectedId] = React.useState<string | null>(null);
 	const [expandedIds, setExpandedIds] = React.useState<Set<string>>(() => loadExpanded(sessionId));
 	const [syncById, setSyncById] = React.useState<Map<string, RepoSync>>(() => new Map());
+	/** 每次重新扫描递增：作为发现 effect 的依赖，克隆出新仓库后据此重扫。 */
+	const [scanSeq, setScanSeq] = React.useState(0);
 	const hasWorkspace = cwd !== undefined && cwd !== null;
 
 	React.useEffect(() => {
@@ -87,7 +91,13 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			setTreeNote(error instanceof Error ? error.message : String(error));
 		});
 		return () => { controller.abort(); };
-	}, [cwd, sessionId, hasWorkspace]);
+	}, [cwd, sessionId, hasWorkspace, scanSeq]);
+
+	/** 重新扫描仓库树。 */
+	const rescan = React.useCallback(() => {
+		setSyncById(new Map());
+		setScanSeq((previous) => previous + 1);
+	}, []);
 
 	/** 选中一个仓库节点并持久化。 */
 	const selectNode = React.useCallback((node: RepoNode) => {
@@ -125,19 +135,23 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 
 	/* ── 后台预取可见节点的领先/落后 ─────────────────────── */
 
+	/*
+	 * 一次只预取一个节点：领先/落后要跑三次 git，每个节点都是一次完整的服务端往返；
+	 * 并发预取（尤其是仓库树刚重扫、节点全部变化时）会把服务端压满，拖慢其它响应。
+	 */
 	React.useEffect(() => {
 		const pending = visibleRows.filter(({ node }) => !syncById.has(node.id));
 		if (pending.length === 0) return undefined;
 		let cancelled = false;
 		const idle = typeof window.requestIdleCallback === 'function'
-			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1200 })
-			: (fn: () => void): number => window.setTimeout(fn, 80);
+			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
+			: (fn: () => void): number => window.setTimeout(fn, 120);
 		const cancelIdle = typeof window.cancelIdleCallback === 'function'
 			? (handle: number): void => window.cancelIdleCallback(handle)
 			: (handle: number): void => window.clearTimeout(handle);
 		const handle = idle(() => {
 			void (async () => {
-				for (const { node } of pending.slice(0, 3)) {
+				for (const { node } of pending.slice(0, 1)) {
 					if (cancelled) return;
 					let sync: RepoSync = { branch: null, upstream: null, ahead: 0, behind: 0 };
 					try {
@@ -155,6 +169,6 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 
 	return {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSelectedId, setSyncById,
+		selectNode, toggleNode, setSelectedId, setSyncById, rescan,
 	};
 }

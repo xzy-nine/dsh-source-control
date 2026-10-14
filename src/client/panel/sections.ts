@@ -6,7 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconRefreshOutlineRegular,
+	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph.ts';
@@ -37,6 +37,10 @@ export interface RepoSectionProps {
 	readonly headHash: string | null;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
+	/** 克隆远程仓库：输入地址后选父目录，在其中创建同名子目录。 */
+	readonly onClone: () => void;
+	/** 克隆进行中：只禁用克隆入口，不影响其它控件。 */
+	readonly cloneBusy: boolean;
 	readonly onSelect: (node: RepoNode) => void;
 	readonly onToggle: (node: RepoNode) => void;
 	readonly onMoreActions: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
@@ -52,7 +56,7 @@ export interface RepoSectionProps {
  */
 export function RepoSection({
 	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
-	onToggleSection, onOpenSettings, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
+	onToggleSection, onOpenSettings, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -65,6 +69,11 @@ export function RepoSection({
 			'存储库',
 			treeNote !== null && React.createElement('span', { className: 'ggg-sec-note', title: treeNote }, '⚠'),
 			React.createElement('span', { className: 'ggg-head-actions' },
+				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
+				React.createElement('button', {
+					type: 'button', className: 'ggg-icon-btn', title: '克隆远程仓库', disabled: busy || cloneBusy,
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onClone(); },
+				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
 				React.createElement('button', {
 					type: 'button', className: 'ggg-icon-btn', title: '设置', disabled: busy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },

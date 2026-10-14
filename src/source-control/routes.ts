@@ -154,8 +154,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('discoverRepositories', async () => {
 				const result = await discoverRepositories(repo, { maxDepth: num('maxDepth', 3) });
 				return { root: repo, nodes: result.nodes, truncated: result.truncated };
-			});
-			break;
+			});			break;
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
 				const sync = await loadRepoSync(repo);

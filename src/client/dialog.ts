@@ -164,6 +164,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 	return runDialog<string | null>((finish) => {
 		function Content(): React.ReactElement {
 			const [text, setText] = React.useState(value);
+			const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -179,6 +180,10 @@ export function showText({ title, message = '', label = '', value = '', placehol
 						value: text,
 						placeholder,
 						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setText(event.target.value),
+						// 单行输入框里回车即确认：换行没有意义。
+						onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+							if (event.key === 'Enter') { event.preventDefault(); submit(); }
+						},
 					}),
 				),
 				footer: React.createElement(
@@ -186,7 +191,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: text.trim() === '', onClick: () => finish(text.trim()),
+						variant: 'primary', size: 'sm', disabled: text.trim() === '', onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -256,6 +261,7 @@ interface FormFieldBase {
 /** 表单字段定义。 */
 export type FormField =
 	| (FormFieldBase & { readonly type: 'text'; readonly placeholder?: string; readonly value?: string })
+	| (FormFieldBase & { readonly type: 'textarea'; readonly placeholder?: string; readonly value?: string })
 	| (FormFieldBase & { readonly type: 'checkbox'; readonly value?: boolean })
 	| (FormFieldBase & { readonly type: 'select'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
 	| (FormFieldBase & { readonly type: 'dropdown'; readonly value?: string; readonly options: ReadonlyArray<DropdownOption> })
@@ -286,6 +292,7 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 			}
 			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
 			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
+			const submit = (): void => finish(values);
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -295,14 +302,14 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 					React.Fragment,
 					null,
 					message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, message),
-					...fields.map((field) => buildField(field, values, setField)),
+					...fields.map((field) => buildField(field, values, setField, submit)),
 				),
 				footer: React.createElement(
 					React.Fragment,
 					null,
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', onClick: () => finish(values),
+						variant: 'primary', size: 'sm', onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -379,6 +386,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
 				})),
 			];
+			const submit = (): void => finish({ page: active.value, ...activeValues });
 			return React.createElement(Modal, {
 				open: true,
 				onClose: () => finish(null),
@@ -394,7 +402,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 						items: tabItems,
 					}),
 					active.message !== undefined && active.message !== '' && React.createElement('div', { className: 'ggg-dialog-hint' }, active.message),
-					...active.fields.map((field) => buildField(field, activeValues, setField)),
+					...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
 				),
 				footer: React.createElement(
 					React.Fragment,
@@ -402,7 +410,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm',
-						onClick: () => finish({ page: active.value, ...activeValues }),
+						onClick: submit,
 					}, confirmLabel),
 				),
 			});
@@ -442,9 +450,15 @@ function DropdownField({ name, label, options, value, onChange }: {
  * @param field - 字段定义。
  * @param values - 当前全部字段值。
  * @param setField - 字段赋值回调。
+ * @param onEnter - 末位回车：与点确认按钮同义。
  * @returns 字段元素；条件不满足时返回 null。
  */
-function buildField(field: FormField, values: Record<string, unknown>, setField: (name: string, value: unknown) => void): React.ReactElement | null {
+function buildField(
+	field: FormField,
+	values: Record<string, unknown>,
+	setField: (name: string, value: unknown) => void,
+	onEnter: () => void,
+): React.ReactElement | null {
 	if (field.visibleWhen !== undefined && !field.visibleWhen(values)) return null;
 	const current = values[field.name];
 	if (field.type === 'text') {
@@ -456,6 +470,28 @@ function buildField(field: FormField, values: Record<string, unknown>, setField:
 				value: typeof current === 'string' ? current : '',
 				placeholder: field.placeholder ?? '',
 				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setField(field.name, event.target.value),
+				// 单行字段里回车即确认：该位置没有换行语义。
+				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+					if (event.key === 'Enter') { event.preventDefault(); onEnter(); }
+				},
+			}),
+		);
+	}
+	if (field.type === 'textarea') {
+		return React.createElement(
+			'div',
+			{ key: field.name, className: 'ggg-field' },
+			field.label !== undefined && React.createElement('label', { className: 'ggg-field-label' }, field.label),
+			React.createElement('textarea', {
+				className: 'ggg-field-textarea',
+				value: typeof current === 'string' ? current : '',
+				placeholder: field.placeholder ?? '',
+				rows: 4,
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => setField(field.name, event.target.value),
+				// 有换行语义的字段：回车确认，Shift+回车插入换行。
+				onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+					if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onEnter(); }
+				},
 			}),
 		);
 	}
