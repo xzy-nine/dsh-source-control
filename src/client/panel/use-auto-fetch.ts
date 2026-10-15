@@ -7,7 +7,7 @@
 import React from 'react';
 import { AUTO_REFRESH_COOLDOWN_MS, autoFetchPeriodMs } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
-import type { BusyEntry } from '../types.ts';
+import type { BusyEntry } from '../shared/types.ts';
 
 /** 等待聚焦/空闲的复核节拍（毫秒）。 */
 const GATE_RETRY_MS = 1000;

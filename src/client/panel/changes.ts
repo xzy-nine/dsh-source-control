@@ -8,10 +8,10 @@ import {
 	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular,
 	IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
-import { showConfirmation } from '../dialog.ts';
+import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { showConfirmation } from '../ui/dialog.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
-import type { BusyScope, CommitFile, WorkingTreeEntry } from '../types.ts';
+import type { BusyScope, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { layoutCommits } from '../src/client/lanes.ts';
+import { layoutCommits } from '../src/client/graph/lanes.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 

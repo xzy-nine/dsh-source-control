@@ -1,7 +1,7 @@
 /**
  * 工作区变更、暂存提交、工作树移除、贮藏与清理操作。
  */
-import type { WorkingTreeEntry } from '../types.ts';
+import type { WorkingTreeEntry } from '../shared/types.ts';
 import { callApi, callApiRaw } from './http.ts';
 
 /**

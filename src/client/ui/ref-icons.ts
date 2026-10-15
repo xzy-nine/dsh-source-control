@@ -6,12 +6,12 @@
  * 形式内联进 lib/client.js，运行时不访问网络。
  */
 import React from 'react';
-import bookSvg from '../../assets/icons/book_2.svg';
-import cloudSvg from '../../assets/icons/cloud.svg';
-import cloudUploadSvg from '../../assets/icons/cloud_upload.svg';
-import translateSvg from '../../assets/icons/g_translate.svg';
-import tagSvg from '../../assets/icons/shoppingmode.svg';
-import css from './css/shared.module.css';
+import bookSvg from '../../../assets/icons/book_2.svg';
+import cloudSvg from '../../../assets/icons/cloud.svg';
+import cloudUploadSvg from '../../../assets/icons/cloud_upload.svg';
+import translateSvg from '../../../assets/icons/g_translate.svg';
+import tagSvg from '../../../assets/icons/shoppingmode.svg';
+import css from '../css/shared.module.css';
 /** 引用标记的图标边长（像素）。 */
 const REF_ICON_SIZE = 12;
 /** 存储库行的图标边长（像素）。 */

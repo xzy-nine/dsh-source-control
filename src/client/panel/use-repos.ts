@@ -5,8 +5,8 @@ import React from 'react';
 import { discoverRepositories, loadRepoSync } from '../api/index.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
-} from '../repo-tree.ts';
-import type { RepoNode, RepoSync } from '../types.ts';
+} from './repo-tree.ts';
+import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
 export interface UseReposOptions {

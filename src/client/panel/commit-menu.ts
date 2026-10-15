@@ -12,11 +12,11 @@ import {
 	fetchIntoLocalBranch, merge, mergeIntoBranch, popStash, pushTag, rebase, renameBranch,
 	resetToCommit, revertCommit, throwIfError,
 } from '../api/index.ts';
-import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
-import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
+import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { showCheckbox, showConfirmation, showSelect, showText } from '../ui/dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
-import type { BusyScope, Commit, Remote } from '../types.ts';
+import type { BusyScope, Commit, Remote } from '../shared/types.ts';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 /** 引用菜单识别出的目标。 */
 export interface RefMenuTarget {

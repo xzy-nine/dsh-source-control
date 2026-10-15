@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
 	laneCentre, laneColour, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 	LANE_COLOURS, LANE_WIDTH, ROW_HEIGHT, ROW_OVERLAP, S_CURVE_RADIUS,
-} from '../src/client/lanes.ts';
+} from '../src/client/graph/lanes.ts';
 
 /** 构造一个提交。 */
 const commit = (hash, ...parents) => ({ hash, parents });

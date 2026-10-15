@@ -10,7 +10,7 @@ import { useMemo, useRef } from 'react'
 import type { ReactNode, UIEvent } from 'react'
 import { Button, languageForPath, useCodeHighlighter } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CodeHighlighter, HighlightSpan } from '@deepseek-ai/dsh-client-ui-primitives'
-import css from './css/file-diff.module.css'
+import css from '../css/file-diff.module.css'
 
 /** 一个 hunk：两侧行号区间与带 `+`/`-`/空格前缀的行。 */
 export interface WorkspaceDiffHunk {

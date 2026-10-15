@@ -7,7 +7,7 @@
 import React from 'react';
 import { AUTO_REFRESH_COOLDOWN_MS, hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
-import type { BusyEntry } from '../types.ts';
+import type { BusyEntry } from '../shared/types.ts';
 
 /** 事件窗口保留的事件数：一次写入的结果可能晚于调用到达。 */
 const EVENT_WINDOW = 400;

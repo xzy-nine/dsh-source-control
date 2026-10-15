@@ -32,10 +32,17 @@
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
-src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
-                    设置面板、图标、类型
+src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出
-  src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、忙碌分级、各目标右键菜单与 hooks
+  src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
+                    仓库树、语言判定、各目标右键菜单与 hooks
+  src/client/graph/ 泳道图：index.ts 组件与 lanes.ts 布局纯计算
+  src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
+                    better-sidebar-diff.ts 接入层
+  src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
+                    terminal-run.ts 终端执行
+  src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
+  src/client/shared/ 共享契约与声明：types.ts、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
@@ -50,8 +57,8 @@ assets/icons/       引用标记用的 SVG
 `git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
-克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`clone-command.ts`，纯函数），由
-`terminal-run.ts` 打开 DSH 终端页并在其中执行。
+克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
+`git/terminal-run.ts` 打开 DSH 终端页并在其中执行。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
@@ -62,7 +69,7 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
 404 归入无权限。
 
-`better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
+`diff/better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
 要求服务已装载、`diff` 类型已注册且未被设置页关闭（该插件的 `openTab` 对未注册或已关闭的类型是静默
 no-op，无法事后察觉，因此只能事前探测）；`toSidebarDiffRef` 把本插件的差异描述换算成它的两种引用
 （工作区单文件 / 整提交补丁），两提交区间对比没有等价引用而返回 null；换算失败或未安装即回退到本插件
@@ -76,7 +83,7 @@ better-sidebar 的 `editor` 以 `extension` 档注册 `dsh-resource://file/**`�
 回退由宿主的认领排名承担，插件不自行判断。该编辑器对宿主自带渲染器的格式（表格 / PDF / 图片 /
 Office）主动不认领，那些仍走宿主预览。
 
-分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
+分层：`src/client/panel/index.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
 ## 刷新与触发
@@ -127,7 +134,7 @@ Office）主动不认领，那些仍走宿主预览。
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
 | 会话级 | `sessionStorage`（`panel/storage.ts` 的 `loadSession` / `saveSession`） | 刷新保留，关闭标签页清除 | 与当前工作区绑定、换标签页重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`） |
-| 持久化 | `localStorage`（`loadPersistent` / `savePersistent`，`settings.ts`、`repo-tree.ts`） | 跨标签页与浏览器重启 | 用户偏好与布局：设置项、分区高度与展开态、仓库树展开与选中 |
+| 持久化 | `localStorage`（`loadPersistent` / `savePersistent`，`panel/settings.ts`、`panel/repo-tree.ts`） | 跨标签页与浏览器重启 | 用户偏好与布局：设置项、分区高度与展开态、仓库树展开与选中 |
 
 新状态先在此表定位，再选载体；不要为省事一律用 `localStorage`。
 

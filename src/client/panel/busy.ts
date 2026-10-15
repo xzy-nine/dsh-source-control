@@ -4,7 +4,7 @@
  * 同一条记录可并存多份（重复触发的同类操作各记一份），移除以一份为单位。
  * 无 React 依赖，可直接单测。
  */
-import type { BusyEntry, BusyFlags, BusyScope } from '../types.ts';
+import type { BusyEntry, BusyFlags, BusyScope } from '../shared/types.ts';
 
 /**
  * 记录一次操作开始。

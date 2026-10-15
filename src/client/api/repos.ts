@@ -1,7 +1,7 @@
 /**
  * 仓库发现、仓库同步状态与提交图查询。
  */
-import type { Commit, Remote, RepoNode, RepoSync } from '../types.ts';
+import type { Commit, Remote, RepoNode, RepoSync } from '../shared/types.ts';
 import { callApi } from './http.ts';
 
 /** 仓库发现结果。 */

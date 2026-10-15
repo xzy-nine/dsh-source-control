@@ -9,15 +9,15 @@ import {
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { CommitGraph } from '../graph.ts';
-import { PublishIcon, RepoIcon, TranslateIcon } from '../ref-icons.ts';
-import { GitGraphIcon } from '../plugin-icon.ts';
+import { CommitGraph } from '../graph/index.ts';
+import { PublishIcon, RepoIcon, TranslateIcon } from '../ui/ref-icons.ts';
+import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
 import { anyBusy } from './busy.ts';
 import type {
 	AiStats, BusyFlags, BusyScope, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
-} from '../types.ts';
+} from '../shared/types.ts';
 import css from '../css/sections.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';

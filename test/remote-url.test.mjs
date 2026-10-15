@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	isSshRemoteUrl, parseRemoteAddress, remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl,
-} from '../src/client/remote-url.ts';
+} from '../src/client/git/remote-url.ts';
 
 test('HTTPS 地址换算为 scp 形态的 SSH 地址', () => {
 	assert.equal(toSshRemoteUrl('https://github.com/owner/repo.git'), 'git@github.com:owner/repo.git');

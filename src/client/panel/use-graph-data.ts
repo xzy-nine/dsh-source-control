@@ -9,7 +9,7 @@ import { loadGraph, loadRepoSync, loadWorkingTree } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
-import type { BusyEntry, PanelState, RepoSync, Settings, WorkingTreeEntry } from '../types.ts';
+import type { BusyEntry, PanelState, RepoSync, Settings, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
  * 工作区变更的签名：路径与状态码逐条拼接，用于兜底轮询比对。

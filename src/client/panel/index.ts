@@ -2,8 +2,8 @@
  * 源代码管理面板主体：持有状态与数据加载，把三个分区组装成侧栏页。
  *
  * 布局为「源代码管理 + 图形」视图，控件使用 DSH 的
- * ui-primitives，因此外观与 Harness 本身一致。分区渲染在 ./panel/ 下，
- * 纯计算与 hooks 同样按职责拆分到该目录。
+ * ui-primitives，因此外观与 Harness 本身一致。分区组件、纯计算与 hooks
+ * 同目录按职责拆分。
  */
 import React from 'react';
 import {
@@ -13,34 +13,34 @@ import {
 	localExcludeState, loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
 	translateText, unstagePaths,
-} from './api/index.ts';
-import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
-import { cloneTerminalCommand } from './clone-command.ts';
-import { checkoutFailureText } from './panel/git-messages.ts';
-import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
-import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
-import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
-import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
-import { changeOf } from './panel/changes.ts';
-import { hasGitHubRemote } from './panel/github.ts';
+} from '../api/index.ts';
+import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { cloneTerminalCommand } from '../git/clone-command.ts';
+import { checkoutFailureText } from './git-messages.ts';
+import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from '../ui/dialog.ts';
+import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
+import { RefFilterDialog } from './ref-filter-dialog.ts';
+import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
+import { changeOf } from './changes.ts';
+import { hasGitHubRemote } from './github.ts';
 import { needsTranslation, splitCommitPrefix } from './language.ts';
-import { reportError } from './panel/errors.ts';
-import { showToast } from './panel/toast.ts';
-import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './panel/refs.ts';
-import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
-import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
-import { useAutoFetch } from './panel/use-auto-fetch.ts';
-import { useCommitStats } from './panel/use-commit-stats.ts';
-import { useFileChangeRefresh, type SessionsLike } from './panel/use-file-change-refresh.ts';
-import { useGraphData } from './panel/use-graph-data.ts';
-import { useRepos } from './panel/use-repos.ts';
-import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './panel/busy.ts';
+import { reportError } from './errors.ts';
+import { showToast } from './toast.ts';
+import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
+import { openCommitMenu, openRefMenu } from './commit-menu.ts';
+import { loadPersistent, loadSession, savePersistent, saveSession } from './storage.ts';
+import { useAutoFetch } from './use-auto-fetch.ts';
+import { useCommitStats } from './use-commit-stats.ts';
+import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
+import { useGraphData } from './use-graph-data.ts';
+import { useRepos } from './use-repos.ts';
+import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
-import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings } from './types.ts';
-import type { LocalExcludeState, IgnoreWriteResult } from './api/index.ts';
-import css from './css/panel.module.css';
-import shared from './css/shared.module.css';
-import { MENU_TARGET_CLASS } from './css/state-classes.ts';
+import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings } from '../shared/types.ts';
+import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
+import css from '../css/panel.module.css';
+import shared from '../css/shared.module.css';
+import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 
 /** 引用筛选的三种模式：自动、全部、手动勾选。 */
 type RefFilterMode = 'auto' | 'all' | 'manual';

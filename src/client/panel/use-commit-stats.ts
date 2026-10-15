@@ -4,7 +4,7 @@
 import React from 'react';
 import { loadCommitFiles, loadCommitMessage } from '../api/index.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
-import type { CommitStats } from '../types.ts';
+import type { CommitStats } from '../shared/types.ts';
 
 /** 提交改动统计 hook 的入参。 */
 export interface UseCommitStatsOptions {

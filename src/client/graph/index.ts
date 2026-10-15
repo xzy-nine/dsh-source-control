@@ -21,12 +21,12 @@ import {
 	REMOTE_REF_COLOUR, RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, HEAD_REF_COLOUR,
 	laneCentre, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
-import { RemoteRefIcon, TagRefIcon } from './ref-icons.ts';
-import { GitGraphIcon } from './plugin-icon.ts';
-import { copyText } from './context-menu.ts';
-import css from './css/graph.module.css';
-import shared from './css/shared.module.css';
-import { cx } from './css/cx.ts';
+import { RemoteRefIcon, TagRefIcon } from '../ui/ref-icons.ts';
+import { GitGraphIcon } from '../ui/plugin-icon.ts';
+import { copyText } from '../ui/context-menu.ts';
+import css from '../css/graph.module.css';
+import shared from '../css/shared.module.css';
+import { cx } from '../css/cx.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };

@@ -2,7 +2,7 @@ MIT License
 
 Copyright (c) 2026 xzy-nine
 
-The diff view (src/client/file-diff.tsx and src/client/file-diff.module.css) is copied from
+The diff view (src/client/diff/file-diff.tsx and src/client/css/file-diff.module.css) is copied from
 DeepSeek Harness ui-deliverables FileDiff
 Copyright (c) 2026 DeepSeek, https://github.com/DeepSeek-ai/deepseek-harness
 

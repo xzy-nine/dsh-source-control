@@ -1,7 +1,7 @@
 /**
  * 引用与提交图的纯计算：引用收集、自动分支集合、按引用过滤、领先/落后集合。
  */
-import type { Commit, RefItem } from '../types.ts';
+import type { Commit, RefItem } from '../shared/types.ts';
 
 /**
  * 从提交列表收集所有引用（分支、远程、标签），去重后按类型排序。
