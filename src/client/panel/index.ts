@@ -256,7 +256,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
-	const { state, setState, refresh, busyRef } = useGraphData({
+	const { state, setState, refresh, loadMore, busyRef } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
@@ -1429,7 +1429,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onToggleChange: toggleChange,
 			onOpenDiff: openDiff,
 			onToggleCommit: toggleCommit,
-			onLoadMore: () => setMaxCommits((previous) => previous + 200),
+			// 触底追加一个窗口：宿主按 offset 返回下一段，客户端不持有完整历史。
+	onLoadMore: () => { void loadMore(); },
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
 			onOpenFilter: () => setFilterOpen(true),

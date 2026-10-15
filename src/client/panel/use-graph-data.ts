@@ -45,6 +45,8 @@ export interface UseGraphDataResult {
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 重新加载选中仓库的提交图与工作区。 */
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
+	/** 追加下一个提交窗口。 */
+	readonly loadMore: () => Promise<void>;
 	/** 进行中的操作记录；后台刷新据此判断目标仓库是否繁忙。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 }
@@ -59,12 +61,16 @@ export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 }: UseGraphDataOptions): UseGraphDataResult {
 	const [state, setState] = React.useState<PanelState>({
-		phase: 'loading', error: null, commits: [], head: null, more: false,
+		phase: 'loading', error: null, commits: [], head: null, more: false, cursor: null,
 		entries: [], selectedHash: null, detail: null, busy: [], remotes: [],
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
 	const busyRef = React.useRef<readonly BusyEntry[]>([]);
+
+	/** 当前状态的引用：loadMore 在回调里读取已加载条数，避免把它列入依赖。 */
+	const stateRef = React.useRef(state);
+	stateRef.current = state;
 
 	/**
 	 * 重新加载选中仓库的提交图与工作区。
@@ -95,6 +101,7 @@ export function useGraphData({
 			setState((previous) => ({ ...previous, error: null }));
 		}
 		try {
+			// 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。
 			const graph = await loadGraph(workingTreePath, {
 				maxCommits,
 				commitOrdering: settings.commitOrdering,
@@ -110,8 +117,9 @@ export function useGraphData({
 			setState((previous) => ({
 				...previous, phase: 'ready', error: null,
 				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
+				// 下一页游标由宿主给出：它是本页最后一条的 hash。
+				cursor: graph.nextCursor,
 				remotes: graph.remotes, entries,
-				// 对账刷新时保留展开的提交详情：它的内容由选中哈希与文件列表各自维护。
 				detail: mode === 'full' ? null : previous.detail,
 			}));
 			// 刷新选中仓库的领先/落后状态
@@ -126,6 +134,45 @@ export function useGraphData({
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId, setSyncById]);
+
+	/**
+	 * 追加下一页。
+	 *
+	 * 用当前页最后一条的 hash 作游标：git 从该提交开始遍历，每页成本恒定为页大小，与已翻页数无关。
+	 * git 会重新输出游标那条本身，因此按 hash 去重后再追加。
+	 *
+	 * @returns 无。
+	 */
+	const loadMore = React.useCallback(async () => {
+		if (workingTreePath === null) return;
+		const cursor = stateRef.current.cursor;
+		if (cursor === null) return;
+		const generation = generationRef.current;
+		try {
+			const graph = await loadGraph(workingTreePath, {
+				maxCommits,
+				fromHash: cursor,
+				commitOrdering: settings.commitOrdering,
+				showStashes: settings.showStashes,
+				showTags: settings.showTags,
+				showRemoteBranches: settings.showRemoteBranches,
+				onlyFollowFirstParent: settings.onlyFollowFirstParent,
+				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+			});
+			if (generation !== generationRef.current) return;
+			setState((previous) => {
+				const known = new Set(previous.commits.map((commit) => commit.hash));
+				return {
+					...previous,
+					commits: [...previous.commits, ...graph.commits.filter((commit) => !known.has(commit.hash))],
+					more: graph.moreCommitsAvailable,
+					cursor: graph.nextCursor,
+				};
+			});
+		} catch (error) {
+			reportError(setState, error instanceof Error ? error.message : String(error));
+		}
+	}, [workingTreePath, maxCommits, settings]);
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 	React.useEffect(() => { busyRef.current = state.busy; }, [state.busy]);
@@ -165,5 +212,5 @@ export function useGraphData({
 		return () => { cancelled = true; window.clearInterval(intervalId); };
 	}, [workingTreePath, refresh, settings.autoRefresh]);
 
-	return { state, setState, refresh, busyRef };
+	return { state, setState, refresh, loadMore, busyRef };
 }

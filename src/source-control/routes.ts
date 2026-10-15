@@ -218,35 +218,50 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const remoteNames = arr<unknown>('remotes')
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
+				/*
+				 * 游标分页：客户端把上一页最后一条的 hash 作为 `fromHash` 传来，git 从该提交开始遍历。
+				 *
+				 * `--skip` 会让每页成本随页数线性增长（遍历前 N 条再丢弃），hash 游标则每页恒定为页大小。
+				 * 不缓存已取列表：提交会因 rebase / amend 变化，缓存会读到陈旧内容。
+				 */
+				const fromHash = typeof msg.fromHash === 'string' && msg.fromHash !== '' ? msg.fromHash : null;
+				const limit = num('limit', num('maxCommits', 32));
+				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
 					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
-					num('maxCommits', 300),
+					limit,
 					bool('showTags', true),
 					bool('showRemoteBranches', true),
 					bool('includeCommitsMentionedByReflogs'),
 					bool('onlyFollowFirstParent'),
 					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
 					remoteNames,
-					arr('hideRemotes'),
-					arr('stashes'),
+					arr<string>('hideRemotes'),
+					arr<never>('stashes'),
+					fromHash,
 				);
 				// 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。
 				const foreign = await branchesOfOtherWorktrees(repo);
-				const filtered = foreign.size === 0
-					? data
-					: {
-						...data,
-						commits: (data.commits ?? []).map((commit) => ({
-							...commit,
-							heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
-						})),
-					};
+				const all = foreign.size === 0
+					? (data.commits ?? [])
+					: (data.commits ?? []).map((commit) => ({
+						...commit,
+						heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
+					}));
+				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
+				const last = all[all.length - 1];
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
+					// 成功路径的 error 恒为 null：既有契约要求该字段存在。
+					error: null,
 					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
-					...filtered,
+					commits: all,
+					head: data.head,
+					tags: data.tags ?? [],
+					moreCommitsAvailable: data.moreCommitsAvailable === true,
+					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
 				});
 			}
 			break;
