@@ -4,7 +4,7 @@
  * 识别的地址形态：`https://github.com/owner/repo.git`、`git@github.com:owner/repo.git`
  * 与 `ssh://git@github.com/owner/repo.git`。
  */
-import type { Remote } from '../types.ts';
+import type { Remote } from '../shared/types.ts';
 
 /** 从远端 URL 里取 GitHub 的 `owner/repo`。 */
 const GITHUB_REMOTE = /^(?:https?:\/\/|ssh:\/\/|git@)(?:[^@/]+@)?github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/;

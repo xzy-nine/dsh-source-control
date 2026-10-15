@@ -31,10 +31,23 @@
 
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
-src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
-src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
-                    设置面板、图标、类型
-  src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
+src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现、
+                    插件状态持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/）
+src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
+  src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
+                    state.ts 是状态读写与旧数据迁移入口
+  src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
+                    仓库树、语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作
+                    元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型；变更区三个
+                    目标（文件夹行 / 文件行 / 分组标题）的菜单共用 change-menu.ts 的注册表，
+                    元数据在 change-menu-actions.json
+  src/client/graph/ 泳道图：index.ts 组件与 lanes.ts 布局纯计算
+  src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
+                    better-sidebar-diff.ts 接入层
+  src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
+                    terminal-run.ts 终端执行
+  src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
+  src/client/shared/ 共享契约与声明：types.ts、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
@@ -44,13 +57,28 @@ scripts/            客户端打包脚本
 assets/icons/       引用标记用的 SVG
 ```
 
+文案与操作元数据以 JSON 为唯一数据源，由薄层直接读入（`import … with { type: 'json' }`，两端构建都原生
+支持；宿主 tsc 会把 JSON 一并产出到 `lib/`）：
+
+| 数据源 | 薄层 | 内容 |
+|---|---|---|
+| `panel/menu-actions.json` | `panel/menu-actions.ts` | 图形区右键操作的 id、引用类型、菜单名称 |
+| `panel/change-menu-actions.json` | `panel/change-menu-actions.ts` | 变更区右键操作的 id、适用目标、分组、菜单名称 |
+| `source-control/ai-commit-prompts.json` | `source-control/ai-commit-prompts.ts` | AI 提交提示词 |
+
+两份菜单都按「JSON 给元数据与名称 + 代码按 id 绑处理函数」组织：新增操作 = JSON 加一条 + 在对应注册表
+里补一个同 id 的处理函数。变更区三个目标（文件夹行 / 文件行 / 分组标题）共用 `panel/change-menu.ts` 的
+注册表，操作声明适用的 `targets`，因此不会再出现「某个目标漏了某项操作」。
+JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），因此形状、占位符与各目标的必备操作由
+`test/data-sources.test.mjs` 校验。
+
 宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
 `git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，无 git 调用，可被测试直接导入；
 `git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
-克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`clone-command.ts`，纯函数），由
-`terminal-run.ts` 打开 DSH 终端页并在其中执行。
+克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
+`git/terminal-run.ts` 打开 DSH 终端页并在其中执行。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
@@ -61,7 +89,7 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
 404 归入无权限。
 
-`better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
+`diff/better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
 要求服务已装载、`diff` 类型已注册且未被设置页关闭（该插件的 `openTab` 对未注册或已关闭的类型是静默
 no-op，无法事后察觉，因此只能事前探测）；`toSidebarDiffRef` 把本插件的差异描述换算成它的两种引用
 （工作区单文件 / 整提交补丁），两提交区间对比没有等价引用而返回 null；换算失败或未安装即回退到本插件
@@ -75,7 +103,7 @@ better-sidebar 的 `editor` 以 `extension` 档注册 `dsh-resource://file/**`�
 回退由宿主的认领排名承担，插件不自行判断。该编辑器对宿主自带渲染器的格式（表格 / PDF / 图片 /
 Office）主动不认领，那些仍走宿主预览。
 
-分层：`src/client/panel.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
+分层：`src/client/panel/index.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
 
 ## 刷新与触发
@@ -100,19 +128,40 @@ Office）主动不认领，那些仍走宿主预览。
 `use-file-change-refresh.ts` 订阅事件源：窗口没聚焦、面板正忙时挂起，连续变更按冷却节流。
 `use-auto-fetch.ts` 是唯一的定时网络操作，按「聚焦 + 空闲」门控。`use-cache-cleanup.ts` 丢弃过期的
 悬停统计与完整提交信息缓存。以上 hook 与 `use-graph-data.ts` 的兜底轮询都从该 hook 暴露的
-`busyRef` 读忙碌标志。
+`busyRef` 读进行中的操作记录，只有**目标仓库**在忙时才挂起。
 
-## 状态持久化的三级
+## 忙碌状态
 
-按存活范围分三级，取值刻意不同，不可统一：选级别看该状态「丢了会不会烦」与「跨会话是否仍有意义」。
+进行中的操作按「仓库路径 + 影响面」记录在面板状态里（形状见 `types.ts` 的 `BusyEntry`，判据在
+`panel/busy.ts`，可直接单测）。影响面四档，互不阻塞：
+
+| 影响面 | 覆盖 | 禁用的控件 |
+|---|---|---|
+| `read` | 只读或只导出、不改动仓库的操作：提交图、工作区、差异内容、归档导出 | 目标仓库的刷新入口 |
+| `commit` | 暂存、取消暂存、丢弃、忽略规则、贮藏、提交 | 更改区与提交框 |
+| `history` | 检出、合并、变基、重置、拣选、分支/标签/远程配置 | 图形区与仓库行的操作 |
+| `network` | 抓取、推送、拉取、发布、创建 Pull Request、gh 查询 | 目标仓库的抓取/推送/发布/同步 |
+
+同一仓库的同类操作可并存多份记录，逐个移除；仓库行右键菜单按该行仓库判定，别的仓库在忙不影响它。
+打开文件、打开设置这类只读入口不因任何影响面禁用。宿主侧不串行化命令：每条请求独立执行，面板的
+阻塞只来自上述控件禁用。
+
+## 状态持久化的两级
+
+分两级，判据只有一条：该状态是否值得跨会话保留。**持久化一律落宿主**，浏览器端不承担存储 —— 
+换浏览器、换标签页、清缓存都不会丢；窗口级只活在本次挂载里，不进任何存储。
 
 | 级别 | 载体 | 存活范围 | 适用 |
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
-| 会话级 | `sessionStorage`（`panel/storage.ts` 的 `loadSession` / `saveSession`） | 刷新保留，关闭标签页清除 | 与当前工作区绑定、换标签页重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`） |
-| 持久化 | `localStorage`（`loadPersistent` / `savePersistent`，`settings.ts`、`repo-tree.ts`） | 跨标签页与浏览器重启 | 用户偏好与布局：设置项、分区高度与展开态、仓库树展开与选中 |
+| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`）、工作区仓库位置缓存 |
 
-新状态先在此表定位，再选载体；不要为省事一律用 `localStorage`。
+客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 在首屏预取一次到内存镜像，
+读走镜像（同步，供 `useState` 初始化），写更新镜像并异步落盘。仓库位置缓存在 `state.json` 的 `repos` 
+段按工作区路径分列，键值对在 `entries` 段。旧版本浏览器里的数据由 `api/state.ts` 的 `migrateLegacyState` 
+在首次进入时搬一次并清掉旧键。
+
+新状态先在此表定位；除窗口级外一律落宿主，不要用 `localStorage`。
 
 ## 构建
 
@@ -123,6 +172,9 @@ pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json
 pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
 ```
 
+- 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
+  JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
+  `src/` 里不出现生成文件。
 - 客户端外部化模块固定为 `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
   `@deepseek-ai/dsh-client-ui-primitives`；浏览器半边不得引入其他裸模块。
 - `jsx: 'automatic'`（复制的 FileDiff 不显式导入 React）；`charset: 'utf8'`（保留中文字面量）。
@@ -159,6 +211,8 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
+| `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
+| `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |

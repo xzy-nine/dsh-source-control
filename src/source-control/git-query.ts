@@ -73,6 +73,8 @@ export async function getRepoInfo(repo: string, showRemoteBranches: boolean, sho
  * @param remotes - 已知远程名，用于标注远程分支所属远程。
  * @param hideRemotes - 要隐藏的远程名。
  * @param stashes - 仓库中的贮藏。
+ * @param skip - 从起点跳过的提交数；双向分页都按绝对偏移取用。
+ * @param skip - 从起点跳过的提交数；反向翻页按绝对偏移取用。
  * @returns 提交图；读取失败时为空图且 `error` 为错误文本。
  */
 export async function getCommits(
@@ -87,10 +89,11 @@ export async function getCommits(
 	remotes: readonly string[],
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
+	skip = 0,
 ): Promise<CommitData> {
 	try {
 		const [records, refsOrError] = await Promise.all([
-			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes),
+			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip),
 			getRefs(repo, showRemoteBranches, false, hideRemotes).then((refs) => refs, (error: unknown) => errorText(error)),
 		]);
 
@@ -465,9 +468,12 @@ async function getLog(
 	remotes: readonly string[],
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
+	skip = 0,
 ): Promise<LogRecord[]> {
 	const args = ['-c', 'log.showSignature=false', 'log', '-z', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${order}-order`];
 	if (onlyFollowFirstParent) args.push('--first-parent');
+	// 偏移分页：跳过前 skip 条再输出本页；正反向都用它，因此上下滚动都能取。
+	if (skip > 0) args.push(`--skip=${skip}`);
 
 	if (branches !== null) {
 		args.push(...branches);
@@ -587,7 +593,8 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
  * @returns 变更条目数。
  */
 async function getUncommittedChanges(repo: string): Promise<number> {
-	const stdout = await gitOrThrow(['status', '--untracked-files=all', '--porcelain', '-z'], repo);
+	// 与 working-tree.ts 的 loadWorkingTree 保持同一参数顺序：同一份 status 在并发时共用子进程。
+	const stdout = await gitOrThrow(['status', '--porcelain', '-z', '--untracked-files=all'], repo);
 	return parseStatus(stdout).length;
 }
 

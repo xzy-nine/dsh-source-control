@@ -5,9 +5,9 @@ import React from 'react';
 import {
 	Button, Checkbox,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { RemoteRefIcon, TagRefIcon } from '../ref-icons.ts';
-import { GitGraphIcon } from '../plugin-icon.ts';
-import type { RefItem } from '../types.ts';
+import { RemoteRefIcon, TagRefIcon } from '../ui/ref-icons.ts';
+import { GitGraphIcon } from '../ui/plugin-icon.ts';
+import type { RefItem } from '../shared/types.ts';
 import css from '../css/ref-filter-dialog.module.css';
 import { cx } from '../css/cx.ts';
 

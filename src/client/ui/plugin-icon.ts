@@ -6,9 +6,9 @@
  * 内联进 lib/client.js，运行时不访问网络。
  */
 import React from 'react';
-import logo from '../../assets/icons/plugin-logo.svg';
-import css from './css/shared.module.css';
-import { cx } from './css/cx.ts';
+import logo from '../../../assets/icons/plugin-logo.svg';
+import css from '../css/shared.module.css';
+import { cx } from '../css/cx.ts';
 
 /** 插件图标的属性。 */
 export interface PluginIconProps {

@@ -12,8 +12,8 @@ importers:
         specifier: ^4.0.1
         version: 4.0.4
       '@deepseek-ai/dsh-client-ui-primitives':
-        specifier: 0.2.1-alpha.2
-        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.4)
+        specifier: 0.2.1-alpha.3
+        version: 0.2.1-alpha.3(@deepseek-ai/cordis@4.0.4)
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
@@ -56,10 +56,10 @@ packages:
   '@deepseek-ai/cosmokit@1.8.5':
     resolution: {integrity: sha512-LXsrlem9z8dq4sLflj2yuCuYX7KqhdzF5hZly3eZyuTo8d6oDSOXuEgC5DbQWKW+lksm6zmOutQLsP/ma6wR6A==}
 
-  '@deepseek-ai/dsh-client-ui-primitives@0.2.1-alpha.2':
-    resolution: {integrity: sha512-QwLpYqKxuDiszRLVC4da5LNirRW3XJmmxXrhPyjNS8hIoMRw5E1Nf58kjql35uCFvq2rbMyQYIkICtKgpU6Rzg==}
+  '@deepseek-ai/dsh-client-ui-primitives@0.2.1-alpha.3':
+    resolution: {integrity: sha512-snwDCvWt3dN99Uf9P74Cvn8ByCICkQbyxd3IWQE2kqz95yrEpbJcAMP9JtCouph79rgJPgC1K7Sd+SpzlSOnsw==}
     peerDependencies:
-      '@deepseek-ai/cordis': ~4.0.5-alpha.1
+      '@deepseek-ai/cordis': ~4.0.5-alpha.2
 
   '@esbuild/aix-ppc64@0.24.2':
     resolution: {integrity: sha512-thpVCb/rhxE/BnMLQ7GReQLLN8q9qbHmI55F4489/ByVg2aQaQ6kbcLb6FHkocZzQhxc4gx0sCk0tJkKBFzDhA==}
@@ -273,7 +273,7 @@ snapshots:
 
   '@deepseek-ai/cosmokit@1.8.5': {}
 
-  '@deepseek-ai/dsh-client-ui-primitives@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.4)':
+  '@deepseek-ai/dsh-client-ui-primitives@0.2.1-alpha.3(@deepseek-ai/cordis@4.0.4)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.4
 

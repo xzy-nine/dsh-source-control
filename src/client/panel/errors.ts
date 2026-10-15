@@ -2,7 +2,7 @@
  * 面板状态辅助：把错误文本写进面板状态。
  */
 import type { Dispatch, SetStateAction } from 'react';
-import type { PanelState } from '../types.ts';
+import type { PanelState } from '../shared/types.ts';
 
 /**
  * 把错误文本显示在面板上。

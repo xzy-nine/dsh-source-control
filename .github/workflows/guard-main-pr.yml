@@ -1,0 +1,50 @@
+# 拦截直接指向 main 的非作者 PR：留言说明规则并关闭。
+#
+# 用 pull_request_target 而不是 pull_request：来自 fork 的 PR 在 pull_request 下拿到的
+# GITHUB_TOKEN 只有只读权限，无法留言与关闭。本工作流不检出、不执行 PR 里的任何内容，
+# 且 pull_request_target 取的是基分支上的工作流文件，贡献者改不到它。
+name: 拦截指向 main 的 PR
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited]
+    branches: [main]
+
+permissions:
+  # 留言走 issues 评论接口，关闭 PR 走 pull requests 接口，两者都需要写权限。
+  issues: write
+  pull-requests: write
+
+jobs:
+  guard:
+    name: 留言并关闭
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 放行名单是封闭枚举，不按 [bot] 之类的前后缀通配放行。当前只有两类：仓库 owner
+    # （作者本人，本仓库 114 次提交）与历史里出现过的机器人提交者 semantic-release-bot；
+    # github-actions[bot] 是工作流用 GITHUB_TOKEN 开 PR 时的身份。放行更多机器人时逐条追加。
+    # 已关闭的 PR 直接跳过，避免编辑标题或正文时重复留言。
+    if: >-
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.user.login != 'github-actions[bot]' &&
+      github.event.pull_request.user.login != 'semantic-release-bot'
+    steps:
+      - name: 留言并关闭 PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BODY="$(cat <<'EOF'
+          > **禁止直接向 main 提交 PR，请将目标改为 dev。**
+          >
+          > **Direct PRs to main are not allowed. Please retarget your pull request to `dev`.**
+
+          本 PR 已被自动关闭，提交不会丢失：把目标分支改为 `dev` 后重新打开即可。
+
+          This pull request has been closed automatically. Your commits are kept: change the base branch to `dev` and reopen it.
+          EOF
+          )"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
+          gh pr close "$PR_NUMBER" --repo "$REPO"

@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTerminalCommand, repositoryNameOf } from '../src/client/clone-command.ts';
+import { cloneTerminalCommand, repositoryNameOf } from '../src/client/git/clone-command.ts';
 
 /** 一个可观察替身：手动触发订阅者。 */
 function observableOf(initial) {
@@ -75,13 +75,13 @@ test('空地址、选项式地址与无法转义的字符都拒绝', () => {
 
 test('终端就绪后写入命令并回车', async () => {
 	const { written, deps } = terminalDouble();
-	const { runInTerminal } = await import('../src/client/terminal-run.ts');
+	const { runInTerminal } = await import('../src/client/git/terminal-run.ts');
 	assert.equal(await runInTerminal(deps, 's1', 'git -C "C:\\repos" clone -- "u"'), true);
 	assert.deepEqual(written, ['git -C "C:\\repos" clone -- "u"\r']);
 });
 
 test('打开终端页失败或一直不可写时返回 false', async () => {
-	const { runInTerminal } = await import('../src/client/terminal-run.ts');
+	const { runInTerminal } = await import('../src/client/git/terminal-run.ts');
 	assert.equal(await runInTerminal({ sidebarRight: undefined, terminals: undefined }, 's1', 'git clone x'), false);
 	const throwing = terminalDouble({ openTabThrows: true });
 	assert.equal(await runInTerminal(throwing.deps, 's1', 'git clone x'), false);

@@ -2,11 +2,12 @@
  * 存储库发现：按会话工作区加载仓库树，并按可见行预取领先/落后。
  */
 import React from 'react';
-import { discoverRepositories, loadRepoSync } from '../api.ts';
+import { discoverRepositories, loadRepoSync } from '../api/index.ts';
+import { loadRepoLocations, primeRepoLocations, saveRepoLocations } from './repo-locations.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
-} from '../repo-tree.ts';
-import type { RepoNode, RepoSync } from '../types.ts';
+} from './repo-tree.ts';
+import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
 export interface UseReposOptions {
@@ -70,11 +71,17 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			return undefined;
 		}
 		const controller = new AbortController();
-		setTreeStatus('loading');
-		setTreeNote(null);
-		discoverRepositories(cwd as string, {}, controller.signal).then((result) => {
+		const root = cwd as string;
+		/**
+		 * 应用一次发现结果。
+		 *
+		 * @param result - 发现结果。
+		 * @param cacheLocations - 是否把顶层仓库位置写回缓存。
+		 * @returns 无。
+		 */
+		const apply = (result: { nodes: RepoNode[]; truncated: boolean }, cacheLocations: boolean): void => {
 			if (controller.signal.aborted) return;
-			const initial = selectInitial(result.nodes, cwd as string, loadSelection(sessionId));
+			const initial = selectInitial(result.nodes, root, loadSelection(sessionId));
 			setRepoNodes(result.nodes);
 			setSelectedId(initial === null ? null : initial.id);
 			setExpandedIds((previous) => {
@@ -83,13 +90,41 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 				return next;
 			});
 			setTreeStatus('ready');
-			if (result.truncated) setTreeNote('已达到扫描上限，仅显示部分仓库');
-		}).catch((error: unknown) => {
+			setTreeNote(result.truncated ? '已达到扫描上限，仅显示部分仓库' : null);
+			// 缓存只记顶层仓库：工作树与子模块依附于仓库，随 checkout 变化，运行时枚举即可。
+			if (cacheLocations) saveRepoLocations(root, result.nodes.filter((node) => node.kind === 'repo').map((node) => ({ path: node.path, name: node.name })));
+		};
+		const fail = (error: unknown): void => {
 			if (controller.signal.aborted) return;
 			setRepoNodes([]);
 			setTreeStatus('error');
 			setTreeNote(error instanceof Error ? error.message : String(error));
-		});
+		};
+
+		/**
+		 * 先取仓库位置缓存，再决定走快路径还是完整扫描。
+		 *
+		 * 缓存由宿主持有，因此这里 await 一次；完整扫描动辄上百毫秒，这次往返不构成瓶颈。
+		 *
+		 * @returns 无。
+		 */
+		const start = async (): Promise<void> => {
+			if (scanSeq === 0) await primeRepoLocations(root);
+			if (controller.signal.aborted) return;
+			const cached = scanSeq === 0 ? loadRepoLocations(root) : [];
+			if (cached.length > 0) {
+				// 命中缓存：先按已知路径取树（不扫目录），秒出界面；随后完整重扫一次纠正位置变化。
+				const quick = await discoverRepositories(root, { knownRepos: cached.map((repo) => repo.path) }, controller.signal);
+				apply(quick, false);
+				if (controller.signal.aborted) return;
+				apply(await discoverRepositories(root, {}, controller.signal), true);
+				return;
+			}
+			setTreeStatus('loading');
+			setTreeNote(null);
+			apply(await discoverRepositories(root, {}, controller.signal), true);
+		};
+		void start().catch(fail);
 		return () => { controller.abort(); };
 	}, [cwd, sessionId, hasWorkspace, scanSeq]);
 

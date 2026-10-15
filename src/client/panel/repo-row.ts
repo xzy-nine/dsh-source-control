@@ -6,9 +6,9 @@ import {
 	IconArchiveOutlineRegular, IconChevronDownOutlineRegular,
 	IconEllipsisOutlineRegular, IconEnhanceOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { RepoIcon } from '../ref-icons.ts';
-import { GitGraphIcon } from '../plugin-icon.ts';
-import type { RepoNode, RepoSync } from '../types.ts';
+import { RepoIcon } from '../ui/ref-icons.ts';
+import { GitGraphIcon } from '../ui/plugin-icon.ts';
+import type { RepoNode, RepoSync } from '../shared/types.ts';
 import css from '../css/repo-row.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';

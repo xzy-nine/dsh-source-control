@@ -18,13 +18,15 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
+import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
+import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -101,7 +103,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	switch (msg.command as string) {
 		/* --- 工作区变更（DSH 版新增：变更列表 / 暂存 / 提交 / 丢弃） --- */
 		case 'loadWorkingTree':
-			await respondResult('loadWorkingTree', async () => ({ repo, entries: await loadWorkingTree(repo) }));
+			await respondResult('loadWorkingTree', async () => {
+				// 写操作（暂存/提交/检出等）未结束时先等它结束：否则会读到写了一半的工作区。
+				await whenGitIdle(repo);
+				return { repo, entries: await loadWorkingTree(repo) };
+			});
 			break;
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
@@ -150,13 +156,42 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
+		/* --- 插件状态持久化：设置、布局、引用筛选、仓库位置缓存（落 $DSH_HOME/dsh-source-control/） --- */
+		case 'readState':
+			await respondResult('readState', async () => ({ entries: readEntries() }));
+			break;
+		case 'writeState':
+			await respondResult('writeState', async () => {
+				writeEntry(str('key'), msg.value === undefined ? null : msg.value);
+				return { repo };
+			});
+			break;
+		case 'readRepoLocations':
+			await respondResult('readRepoLocations', async () => ({ repos: readRepoLocations(repo) }));
+			break;
+		case 'writeRepoLocations':
+			await respondResult('writeRepoLocations', async () => {
+				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
+					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
+				writeRepoLocations(repo, repos);
+				return { repo };
+			});
+			break;
 		case 'discoverRepositories':
 			await respondResult('discoverRepositories', async () => {
-				const result = await discoverRepositories(repo, { maxDepth: num('maxDepth', 3) });
+				// knownRepos 命中时走快路径：只核对已知路径，不逐层扫描目录。
+				const knownRepos = arr<string>('knownRepos').filter((path) => typeof path === 'string' && path !== '');
+				const result = await discoverRepositories(repo, {
+					maxDepth: num('maxDepth', 3),
+					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
+				});
 				return { root: repo, nodes: result.nodes, truncated: result.truncated };
-			});			break;
+			});
+			break;
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
+				await whenGitIdle(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 			});
@@ -164,6 +199,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
+			await whenGitIdle(repo);
 			let repoInfo = await getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
 			let isRepo = true;
 			if (repoInfo.error) {
@@ -174,41 +210,59 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		}
 		case 'loadCommits':
+			// 提交图同样等写操作结束：写操作可能正在改写引用。
+			await whenGitIdle(repo);
 			{
 				// 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
 				// 直接传字符串数组的调用方同样接受。
 				const remoteNames = arr<unknown>('remotes')
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
+				/*
+				 * 偏移分页：客户端传 `skip`（已加载条数）与 `limit`，git 跳过前 skip 条再输出本页。
+				 *
+				 * 用偏移而不是 hash 游标：hash 游标只能从一个提交往更早方向走，向上回看时无法用它定位；
+				 * 偏移则正反向都能取，代价是 git 端多遍历 skip 条（纯指针跳转，无 IO）。
+				 * 不缓存已取列表：提交会因 rebase / amend 变化，缓存会读到陈旧内容。
+				 */
+				const limit = num('limit', num('maxCommits', 32));
+				const skip = num('skip', 0);
+				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
 					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
-					num('maxCommits', 300),
+					limit,
 					bool('showTags', true),
 					bool('showRemoteBranches', true),
 					bool('includeCommitsMentionedByReflogs'),
 					bool('onlyFollowFirstParent'),
 					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
 					remoteNames,
-					arr('hideRemotes'),
-					arr('stashes'),
+					arr<string>('hideRemotes'),
+					arr<never>('stashes'),
+					skip,
 				);
 				// 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。
 				const foreign = await branchesOfOtherWorktrees(repo);
-				const filtered = foreign.size === 0
-					? data
-					: {
-						...data,
-						commits: (data.commits ?? []).map((commit) => ({
-							...commit,
-							heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
-						})),
-					};
+				const all = foreign.size === 0
+					? (data.commits ?? [])
+					: (data.commits ?? []).map((commit) => ({
+						...commit,
+						heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
+					}));
+				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
+				const last = all[all.length - 1];
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
+					// 成功路径的 error 恒为 null：既有契约要求该字段存在。
+					error: null,
 					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
-					...filtered,
+					commits: all,
+					head: data.head,
+					tags: data.tags ?? [],
+					moreCommitsAvailable: data.moreCommitsAvailable === true,
+					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
 				});
 			}
 			break;
@@ -604,12 +658,6 @@ export interface AiCommitDeps {
 	getTranslator?: () => unknown;
 }
 
-/** AI 提交生成的系统提示词。 */
-const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定的 diff 内容，生成一条简洁的提交信息。'
-	+ '要求：第一行不超过 72 字符的 conventional commit 格式（如 `feat: ...`、`fix: ...`、`refactor: ...`）；'
-	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
-	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
-
 /**
  * 语言提示词：告知模型用哪种语言写提交信息。
  *
@@ -621,7 +669,7 @@ const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定
  */
 function languageDirective(language: string): string {
 	if (language === '') return '';
-	return `\n\n用 ${language} 书写提交信息，不要混用其他语言。`;
+	return '\n\n' + fillPrompt(AI_COMMIT_PROMPTS.language, { language });
 }
 
 /**
@@ -820,13 +868,11 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 					// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
 					const language = typeof body.language === 'string' ? body.language.trim() : '';
-					const systemPrompt = AI_COMMIT_SYSTEM_PROMPT
+					const systemPrompt = AI_COMMIT_PROMPTS.system
 						+ languageDirective(language)
 						+ (rules.length > 0 ? '\n\n' + rules : '');
 					const off = await canDisableReasoning(llm, provider, model);
-					const request = amend
-						? `请根据以下 diff 生成提交信息（这是修补上一次提交，diff 含上一次提交的改动与本次改动）：\n\n${diff}`
-						: `请根据以下 diff 生成提交信息：\n\n${diff}`;
+					const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
 					const streamOpts: Record<string, unknown> = {
 						provider,
 						model,

@@ -3,7 +3,7 @@
  *
  * 与 React 无关的纯变换，便于直接单测。
  */
-import type { WorkingTreeEntry } from '../types.ts';
+import type { WorkingTreeEntry } from '../shared/types.ts';
 
 /** 带路径的树条目：工作区条目与提交改动文件都满足。 */
 export interface TreeEntry {

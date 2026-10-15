@@ -2,9 +2,9 @@
  * 提交改动统计与完整提交信息：悬停某行时按需拉取并缓存。
  */
 import React from 'react';
-import { loadCommitFiles, loadCommitMessage } from '../api.ts';
+import { loadCommitFiles, loadCommitMessage } from '../api/index.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
-import type { CommitStats } from '../types.ts';
+import type { CommitStats } from '../shared/types.ts';
 
 /** 提交改动统计 hook 的入参。 */
 export interface UseCommitStatsOptions {

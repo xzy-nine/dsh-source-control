@@ -3,7 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "strict": false,
     "noImplicitAny": false,
     "noEmit": true,
@@ -15,5 +19,8 @@
     "forceConsistentCasingInFileNames": true,
     "types": []
   },
-  "include": ["src/client/**/*.ts", "src/client/**/*.tsx"]
+  "include": [
+    "src/client/**/*.ts",
+    "src/client/**/*.tsx"
+  ]
 }

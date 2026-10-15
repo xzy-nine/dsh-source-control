@@ -2,8 +2,8 @@
  * 源代码管理面板主体：持有状态与数据加载，把三个分区组装成侧栏页。
  *
  * 布局为「源代码管理 + 图形」视图，控件使用 DSH 的
- * ui-primitives，因此外观与 Harness 本身一致。分区渲染在 ./panel/ 下，
- * 纯计算与 hooks 同样按职责拆分到该目录。
+ * ui-primitives，因此外观与 Harness 本身一致。分区组件、纯计算与 hooks
+ * 同目录按职责拆分。
  */
 import React from 'react';
 import {
@@ -13,33 +13,41 @@ import {
 	localExcludeState, loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
 	translateText, unstagePaths,
-} from './api.ts';
-import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
-import { cloneTerminalCommand } from './clone-command.ts';
-import { checkoutFailureText } from './panel/git-messages.ts';
-import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from './dialog.ts';
-import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
-import { RefFilterDialog } from './panel/ref-filter-dialog.ts';
-import { ChangesSection, GraphSection, RepoSection } from './panel/sections.ts';
-import { changeOf } from './panel/changes.ts';
-import { hasGitHubRemote } from './panel/github.ts';
+} from '../api/index.ts';
+import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { cloneTerminalCommand } from '../git/clone-command.ts';
+import { checkoutFailureText } from './git-messages.ts';
+import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from '../ui/dialog.ts';
+import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
+import { RefFilterDialog } from './ref-filter-dialog.ts';
+import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
+import { ROW_HEIGHT } from '../graph/lanes.ts';
+import { changeOf } from './changes.ts';
+import { hasGitHubRemote } from './github.ts';
 import { needsTranslation, splitCommitPrefix } from './language.ts';
-import { reportError } from './panel/errors.ts';
-import { showToast } from './panel/toast.ts';
-import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './panel/refs.ts';
-import { openCommitMenu, openRefMenu } from './panel/commit-menu.ts';
-import { loadPersistent, loadSession, savePersistent, saveSession } from './panel/storage.ts';
-import { useAutoFetch } from './panel/use-auto-fetch.ts';
-import { useCommitStats } from './panel/use-commit-stats.ts';
-import { useFileChangeRefresh, type SessionsLike } from './panel/use-file-change-refresh.ts';
-import { useGraphData } from './panel/use-graph-data.ts';
-import { useRepos } from './panel/use-repos.ts';
+import { reportError } from './errors.ts';
+import { showToast } from './toast.ts';
+import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
+import { openCommitMenu, openRefMenu } from './commit-menu.ts';
+import { loadValue, primeStorage, saveValue } from './storage.ts';
+import { primeRepoLocations } from './repo-locations.ts';
+import { migrateLegacyState } from '../api/index.ts';
+import { useAutoFetch } from './use-auto-fetch.ts';
+import { useCommitStats } from './use-commit-stats.ts';
+import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
+import { useGraphData } from './use-graph-data.ts';
+import { useRepos } from './use-repos.ts';
+import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
+import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
-import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
-import type { LocalExcludeState, IgnoreWriteResult } from './api.ts';
-import css from './css/panel.module.css';
-import shared from './css/shared.module.css';
-import { MENU_TARGET_CLASS } from './css/state-classes.ts';
+import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings, WorkingTreeEntry } from '../shared/types.ts';
+import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
+import css from '../css/panel.module.css';
+import shared from '../css/shared.module.css';
+import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
+
+/** 初始加载的提交数；切换仓库时回到该值。 */
+const INITIAL_MAX_COMMITS = 200;
 
 /** 引用筛选的三种模式：自动、全部、手动勾选。 */
 type RefFilterMode = 'auto' | 'all' | 'manual';
@@ -104,7 +112,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
-	const [maxCommits, setMaxCommits] = React.useState(200);
+	/**
+	 * 已加载的提交数上限。
+	 *
+	 * 触底自动加载会持续累加，切换仓库时重置回初始值：否则浏览过多个仓库后，每次刷新都要按
+	 * 累积后的规模重新拉取与解析，内存与耗时都随浏览历史增长。
+	 */
+	const [maxCommits, setMaxCommits] = React.useState(INITIAL_MAX_COMMITS);
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
@@ -133,24 +147,48 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	);
 	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
 	// 存储库、图形两区可收起（默认展开）；跨会话持久化。
-	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-repo-open', true));
-	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-graph-open', true));
+	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-repo-open', true));
+	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-graph-open', true));
 	// 图形区高度（像素）；跨会话持久化，默认 320。
-	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-graph-height', 320));
+	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadValue('dsh-source-control-graph-height', 320));
 	// 存储库区高度（像素）；跨会话持久化，默认 200。
-	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-repo-height', 200));
+	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
+	/*
+	 * 宿主状态预取。
+	 *
+	 * 预取是异步的，而上面这些 useState 的初始值在挂载时同步取过；那时缓存还空着，拿到的是回退值，
+	 * 且 useState 的初始值不会随预取完成自动重算 —— 不显式回填，每次进入都会显示默认值（表现为
+	 * 「设置每次都被重置」）。预取完成后因此把这几项按真实值重新写入。
+	 */
+	React.useEffect(() => {
+		if (cwd === undefined || cwd === null) return undefined;
+		let cancelled = false;
+		void (async () => {
+			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
+			await migrateLegacyState(cwd);
+			await primeStorage(cwd);
+			await primeRepoLocations(cwd);
+			if (cancelled) return;
+			setSettings(loadSettings());
+			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));
+			setGraphSecOpen(loadValue('dsh-source-control-graph-open', true));
+			setGraphHeight(loadValue('dsh-source-control-graph-height', 320));
+			setRepoHeight(loadValue('dsh-source-control-repo-height', 200));
+		})();
+		return () => { cancelled = true; };
+	}, [cwd]);
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
 
 	const toggleRepoSec = React.useCallback(() => {
-		setRepoSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-repo-open', next); return next; });
+		setRepoSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-repo-open', next); return next; });
 	}, []);
 	const toggleGraphSec = React.useCallback(() => {
-		setGraphSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-graph-open', next); return next; });
+		setGraphSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-graph-open', next); return next; });
 	}, []);
 	const commitGraphHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(120, Math.min(value, 720));
 		setGraphHeight(clamped);
-		savePersistent('dsh-source-control-graph-height', clamped);
+		saveValue('dsh-source-control-graph-height', clamped);
 	}, []);
 	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
 	const startGraphResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -174,7 +212,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const commitRepoHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(80, Math.min(value, 600));
 		setRepoHeight(clamped);
-		savePersistent('dsh-source-control-repo-height', clamped);
+		saveValue('dsh-source-control-repo-height', clamped);
 	}, []);
 	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
 	const startRepoResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -212,7 +250,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 切换仓库时载入该仓库的筛选状态；没有记录就用默认的「自动」。
 	React.useEffect(() => {
 		if (filterKey === null) return;
-		const saved = loadPersistent<RefFilterState | null>(filterKey, null);
+		const saved = loadValue<RefFilterState | null>(filterKey, null);
 		setFilterState(saved === null || saved.mode === undefined
 			? { mode: 'auto', selected: new Set() }
 			: { mode: saved.mode, selected: new Set(saved.selected ?? []) });
@@ -221,12 +259,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 写入当前仓库的筛选状态并保留模式。 */
 	const patchFilter = React.useCallback((next: RefFilterState) => {
 		setFilterState(next);
-		if (filterKey !== null) savePersistent(filterKey, { mode: next.mode, selected: [...next.selected] });
+		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
-	const { state, setState, refresh, busyRef } = useGraphData({
+	const { state, setState, refresh, loadMore, busyRef } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
+	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
+	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
+
 	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
@@ -303,18 +344,37 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
-	// 会话级：按仓库/子模块/工作树路径存草稿，刷新保留、关闭标签页清除。
+  /*
+	 * 按仓库/子模块/工作树路径存提交信息草稿。
+	 *
+	 * 写入必须等草稿读完：message 初始为空串，若在预取完成前就写入，会把宿主里的草稿覆盖成空；
+	 * 而读取又发生在预取完成之前，于是草稿每次都丢。readDone 标记读完这一刻，之后才允许写。
+	 */
+	const [draftReadDone, setDraftReadDone] = React.useState(false);
 	React.useEffect(() => {
-		if (workingTreePath === null) return;
-		const saved = loadSession<string | null>('ggg-commit-msg:' + workingTreePath, null);
-		if (saved !== null) setMessage(saved);
+		if (workingTreePath === null) { setDraftReadDone(false); return; }
+		let cancelled = false;
+		setDraftReadDone(false);
+		void (async () => {
+			// 等预取完成，否则读到的是空缓存。
+			await primeStorage(workingTreePath);
+			if (cancelled) return;
+			const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
+			if (saved !== null) setMessage(saved);
+			setDraftReadDone(true);
+		})();
+		return () => { cancelled = true; };
 	}, [workingTreePath]);
 	React.useEffect(() => {
-		if (workingTreePath === null || aiBusy) return;
-		saveSession('ggg-commit-msg:' + workingTreePath, message);
-	}, [workingTreePath, message, aiBusy]);
+		if (workingTreePath === null || aiBusy || !draftReadDone) return;
+		saveValue('ggg-commit-msg:' + workingTreePath, message);
+	}, [workingTreePath, message, aiBusy, draftReadDone]);
 
-	/** 选中一个仓库节点并重置面板状态。 */
+	/**
+	 * 选中一个仓库节点并重置面板状态。
+	 *
+	 * 进入新仓库属于「用户主动切换」：清空旧仓库的数据并置加载态，随后的加载走 full 模式。
+	 */
 	const selectNodeAndReset = React.useCallback((node) => {
 		if (node.id === selectedId) return;
 		selectNode(node);
@@ -338,17 +398,35 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		setGroupExpanded((previous) => ({ ...previous, [key]: !previous[key as 'staged' | 'unstaged'] }));
 	}, []);
 
-	/** 执行一次工作区操作并刷新。 */
-	const run = React.useCallback(async (operation: () => Promise<void>) => {
-		if (workingTreePath === null) return;
-		setState((previous) => ({ ...previous, busy: true, error: null }));
+	/**
+	 * 执行一次操作并刷新。
+	 *
+	 * 忙碌按「目标仓库 + 影响面」记录：只禁用该仓库同类用途的控件，其它仓库与其它影响面不受
+	 * 影响。`read` 影响面的操作自身已经刷新，不再追加一次；目标是别的仓库时也不刷新当前仓库，
+	 * 选中项变化后由提交图数据自行加载。
+	 *
+	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
+	 * 用一次对账刷新纠正推算误差。对账是 reconcile 模式，不会清空现有列表。
+	 *
+	 * @param scope - 操作的影响面。
+	 * @param operation - 操作体。
+	 * @param repo - 目标仓库路径；省略时用当前选中的工作树。
+	 * @param optimistic - 写操作成功后对条目的推算；省略时不推算，只做对账刷新。
+	 */
+	const run = React.useCallback(async (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => {
+		const target = repo ?? workingTreePath;
+		if (target === null) return;
+		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope), error: null }));
 		try {
 			await operation();
-			await refresh();
+			if (optimistic !== undefined && target === workingTreePath) {
+				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
+			}
+			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {
-			setState((previous) => ({ ...previous, busy: false }));
+			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
 		}
 	}, [workingTreePath, refresh, setState]);
 
@@ -359,19 +437,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 若不置 busy，顶部不定进度条不会出现，界面看起来像卡住。失败时返回 null 而不抛错，
 	 * 由调用方决定降级路径。
 	 *
+	 * @param scope - 预备调用的影响面。
 	 * @param operation - 预备操作。
 	 * @returns 操作结果；失败时为 null。
 	 */
-	const withProgress = React.useCallback(async <T,>(operation: () => Promise<T>): Promise<T | null> => {
-		setState((previous) => ({ ...previous, busy: true }));
+	const withProgress = React.useCallback(async <T,>(scope: BusyScope, operation: () => Promise<T>): Promise<T | null> => {
+		const target = workingTreePath;
+		if (target !== null) setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope) }));
 		try {
 			return await operation();
 		} catch {
 			return null;
 		} finally {
-			setState((previous) => ({ ...previous, busy: false }));
+			if (target !== null) setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
 		}
-	}, [setState]);
+	}, [workingTreePath, setState]);
 
 	/**
 	 * 推送某个仓库的当前分支到其上游，失败时报错。
@@ -409,7 +489,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				placeholder: '例如：调试到一半',
 			});
 			if (label === null) return;
-			await run(async () => {
+			await run('commit', async () => {
 				const error = await pushStash(workingTreePath as string, label, true);
 				if (error !== null) throw new Error(error);
 			});
@@ -417,7 +497,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [run, workingTreePath]);
 
 	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
-	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）；查找是 O(提交数)，随滚动逐帧重渲染时须记忆化。 */
+	const headCommitHash = React.useMemo(
+		() => state.commits.find((commit) => commit.hash !== '*')?.hash ?? null,
+		[state.commits],
+	);
 
 	/** 当前分支可达的提交哈希集合；重置这类改写当前分支的操作据此显示。 */
 	const branchHashes = React.useMemo(
@@ -520,15 +604,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void selectCommit(hash);
 	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
 
-	/** 转到当前 HEAD 提交：选中并展开其改动文件。 */
+	/**
+	 * 转到当前 HEAD 提交：把滚动容器定位到该提交所在行。
+	 *
+	 * 图形区按可视区窗口化渲染，目标行可能尚未挂载，因此不能靠 `querySelector` 找行；
+	 * 直接按行号算出偏移并设置滚动位置，窗口随之把该行渲染出来。
+	 */
 	const goToHead = React.useCallback(() => {
 		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
 		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
 		if (target === undefined) return;
 		const container = graphScrollRef.current;
 		if (container === null) return;
-		const row = container.querySelector(`[data-hash="${target.hash}"]`);
-		if (row !== null) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+		const index = state.commits.indexOf(target);
+		if (index < 0) return;
+		// 真正滚动的是图区内部元素（`graphScrollRef` 给的是外层容器）。
+		const scroller = container.querySelector('[data-graph-scroll]') ?? container;
+		scroller.scrollTo({ top: index * ROW_HEIGHT, behavior: 'smooth' });
 	}, [state.commits, state.head]);
 
 	/** 加载仓库后自动滚动到 HEAD。 */
@@ -541,6 +633,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const timer = setTimeout(goToHead, 60);
 		return () => clearTimeout(timer);
 	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
+	// 切换仓库时把已加载提交数收回初始值，避免跨仓库累积。
+	React.useEffect(() => { setMaxCommits(INITIAL_MAX_COMMITS); }, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
@@ -570,12 +664,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/** 提交暂存区。 */
 	const submit = (): void => {
-		if (state.busy || message.trim() === '' || stagedPaths.length === 0) return;
-		void run(async () => {
+		if (busyFlags.commit || message.trim() === '' || stagedPaths.length === 0) return;
+		void run('commit', async () => {
 			await commitStaged(workingTreePath as string, message, amend);
 			setMessage('');
 			setAmend(false);
-		});
+		}, undefined, commitEntries);
 	};
 
 	/**
@@ -672,7 +766,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * @returns SSH 状态；没有工作区或请求失败时为 null。
 	 */
 	const handleCheckSsh = React.useCallback(async (host: string, refresh = false) => (
-		workingTreePath === null ? null : withProgress(() => sshStatus(workingTreePath, host, refresh))
+		workingTreePath === null ? null : withProgress('network', () => sshStatus(workingTreePath, host, refresh))
 	), [workingTreePath, withProgress]);
 
 	/**
@@ -707,7 +801,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		| { kind: 'github'; owner: string; name: string; private: boolean; description: string; protocol: 'https' | 'ssh' }
 		| null
 	> => {
-		const account = await withProgress(() => ghAccount(workingTreePath as string));
+		const account = await withProgress('network', () => ghAccount(workingTreePath as string));
 		const ghReady = account !== null && account.loggedIn
 			&& account.owners.length > 0
 			&& !account.unavailable.some((item) => item.feature === 'create-repo');
@@ -820,7 +914,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 单一远程直接推送；多个远程弹窗选择；没有远程时可选 GitHub 建仓或手工输入地址。
 	 */
 	const handlePublish = React.useCallback(() => {
-		if (state.busy || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
+		if (busyFlags.network || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
 		const branch = currentSync.branch;
 		const path = workingTreePath;
 		void (async () => {
@@ -839,7 +933,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				const source = await askRemoteSource(branch);
 				if (source === null) return;
 				if (source.kind === 'github') {
-					await run(async () => {
+					await run('network', async () => {
 						const url = await ghCreateRepo(path, {
 							name: source.name, owner: source.owner, private: source.private, description: source.description,
 							protocol: source.protocol,
@@ -848,7 +942,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 					});
 					return;
 				}
-				await run(async () => {
+				await run('network', async () => {
 					const addError = await addRemote(path, source.name, source.url, null, false);
 					if (addError !== null) throw new Error(addError);
 					const errors = await pushBranch(path, branch, [source.name]);
@@ -856,16 +950,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				});
 				return;
 			}
-			await run(async () => {
+			await run('network', async () => {
 				const errors = await pushBranch(path, branch, [remote]);
 				if (errors.length > 0) throw new Error(errors.join('\n'));
 			});
 		})();
-	}, [state.busy, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify]);
+	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify]);
 
 	const handleSync = (): void => {
-		if (state.busy || workingTreePath === null) return;
-		void run(async () => {
+		if (busyFlags.network || workingTreePath === null) return;
+		void run('network', async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
@@ -884,7 +978,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/** 删除远程并刷新。 */
 	const deleteRemoteByName = React.useCallback((name: string) => {
-		void run(async () => { throwIfError(await deleteRemote(workingTreePath as string, name)); });
+		void run('history', async () => { throwIfError(await deleteRemote(workingTreePath as string, name)); });
 	}, [workingTreePath, run]);
 
 	/* 打开设置时加载仓库配置（用户身份等）。 */
@@ -906,7 +1000,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	};
 
 	const handleEditUserDetails = React.useCallback((name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => {
-		void run(async () => {
+		void run('history', async () => {
 			const errors = await editUserDetails(workingTreePath as string, name, email, location, deleteLocalName, deleteLocalEmail);
 			if (errors.length > 0) throw new Error(errors[0]);
 			await reloadUserDetails();
@@ -914,7 +1008,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath, run, state.remotes]);
 
 	const handleDeleteUserDetails = React.useCallback((delName: boolean, delEmail: boolean, location: string) => {
-		void run(async () => {
+		void run('history', async () => {
 			const errors = await deleteUserDetails(workingTreePath as string, delName, delEmail, location);
 			if (errors.length > 0) throw new Error(errors[0]);
 			await reloadUserDetails();
@@ -923,12 +1017,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/** 添加远程并刷新。 */
 	const handleAddRemote = React.useCallback((name: string, url: string, pushUrl: string | null) => {
-		void run(async () => { throwIfError(await addRemote(workingTreePath as string, name, url, pushUrl, false)); });
+		void run('history', async () => { throwIfError(await addRemote(workingTreePath as string, name, url, pushUrl, false)); });
 	}, [workingTreePath, run]);
 
 	/** 编辑远程并刷新。 */
 	const handleEditRemote = React.useCallback((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => {
-		void run(async () => { throwIfError(await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew)); });
+		void run('history', async () => { throwIfError(await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew)); });
 	}, [workingTreePath, run]);
 
 	/**
@@ -940,7 +1034,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToGitignore = React.useCallback((path: string) => {
 		void (async () => {
 			let written: IgnoreWriteResult | null = null;
-			await run(async () => { written = await addToGitignore(workingTreePath as string, path); });
+			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
 			const result: IgnoreWriteResult | null = written;
 			if (result === null || result.file === '') return;
 			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
@@ -956,7 +1050,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
 		void (async () => {
 			let written: LocalExcludeState | null = null;
-			await run(async () => { written = await addToLocalExclude(workingTreePath as string, path); });
+			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
 			const state: LocalExcludeState | null = written;
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
 			if (state === null || state.path === '') return;
@@ -1032,11 +1126,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 当前分支没有上游时先说明原因；gh 不可用时给出降级提示而不是静默失败。
 	 */
 	const handleCreatePullRequest = React.useCallback(async () => {
-		if (workingTreePath === null || state.head === null || state.busy) return;
+		if (workingTreePath === null || state.head === null || busyFlags.network) return;
 		const path = workingTreePath;
 		const head = state.head;
 
-		const account = await withProgress(() => ghAccount(path));
+		const account = await withProgress('network', () => ghAccount(path));
 		if (account === null || !account.loggedIn) {
 			await notify('未检测到可用的 GitHub 登录，请先运行 gh auth login。');
 			return;
@@ -1047,7 +1141,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			return;
 		}
 
-		const info = await withProgress(() => ghRepoInfo(path));
+		const info = await withProgress('network', () => ghRepoInfo(path));
 		const branches = (info?.branches ?? []).filter((name) => name !== head);
 		if (branches.length === 0) {
 			await notify('没有可作为目标的分支，请先把分支推送到远程。');
@@ -1069,7 +1163,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (form === null) return;
 		const title = String(form.title ?? '').trim();
 		if (title === '') return;
-		await run(async () => {
+		await run('network', async () => {
 			const url = await ghCreatePullRequest(path, {
 				head,
 				base: String(form.base ?? base),
@@ -1079,7 +1173,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			});
 			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
 		});
-	}, [workingTreePath, state.head, state.busy, state.detail, run, notify, withProgress]);
+	}, [workingTreePath, state.head, busyFlags.network, state.detail, run, notify, withProgress]);
 
 	/** 导出仓库配置为 JSON 文件下载。 */
 	const handleExportConfig = React.useCallback(async () => {
@@ -1144,7 +1238,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			value: defaultName,
 		});
 		if (outputPath === null || outputPath === '') return;
-		void run(async () => {
+		void run('read', async () => {
 			const err = await createArchive(workingTreePath as string, ref, format, outputPath);
 			if (err !== null) reportError(setState, err);
 		});
@@ -1160,15 +1254,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
 		const isLinkedWorktree = node.kind === 'worktree';
 		const items: ContextMenuItem[] = [
-			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run(() => refresh()); } },
-			{ title: '抓取', disabled: state.busy, onClick: () => { selectNodeAndReset(node); void run(async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); } },
-			{ title: '推送', disabled: state.busy || branchName === '', onClick: () => { selectNodeAndReset(node); void run(() => pushCurrentBranch(node.path)); } },
+			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
+			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
+			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path), node.path); } },
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
 		if (isLinkedWorktree) {
 			items.push({ type: 'divider' }, {
-				title: '移除工作树…', danger: true, disabled: state.busy,
+				title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, workingTreePath, 'history'),
 				onClick: async () => {
 					const ok = await showCheckbox({
 						title: '移除工作树',
@@ -1176,7 +1270,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 						checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
 					});
 					if (!ok) return;
-					void run(async () => {
+					void run('history', async () => {
 						await removeWorktree(workingTreePath as string, node.path, true);
 						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
 						setSelectedId((previous) => (previous === node.id ? null : previous));
@@ -1205,7 +1299,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onClose: () => target.classList.remove(MENU_TARGET_CLASS),
 			items: [...branches].sort().map((name) => ({
 				title: name,
-				onClick: () => { selectNodeAndReset(node); void run(async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }); },
+				onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path); },
 			})),
 		});
 	}, [state.commits, selectNodeAndReset, run]);
@@ -1266,6 +1360,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 当前仓库的全部引用：全部模式与「全选」都以它为准。
 	const allRefs = React.useMemo(() => collectRefs(state.commits), [state.commits]);
 
+	// 排序后的引用与过滤后的提交列表：两者都是 O(提交数)，而滚动会逐帧重渲染，
+	// 必须在渲染体外记忆化，否则每次滚动都重算一份全量。
+	const sortedRefs = React.useMemo(
+		() => sortRefs(allRefs, state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
+		[allRefs, state.head, currentSync?.upstream, syncMarkers.baseHash],
+	);
+
 	// 按模式派生实际勾选集：自动与全部每次都按规则重算，不固化首次进入时的结果。
 	const filterSelected = React.useMemo(() => {
 		if (filterState.mode === 'auto') {
@@ -1274,6 +1375,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterState.mode === 'all') return new Set(allRefs.map((ref) => ref.name));
 		return filterState.selected;
 	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream, syncMarkers.baseHash]);
+
+	// 过滤后的提交列表：与引用一样是 O(提交数)，必须记忆化。
+	const visibleCommits = React.useMemo(
+		() => filterCommitsByRefs(state.commits, filterSelected),
+		[state.commits, filterSelected],
+	);
 
 	// 标题栏按钮文案即当前模式：模式名，或选中的分支/标签名。只看模式，不按勾选内容反推。
 	const filterSummary = React.useMemo(() => {
@@ -1298,7 +1405,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
-			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
+			refs: sortedRefs,
 			selected: filterSelected, search: filterSearch,
 			onSearch: setFilterSearch,
 			// 手动勾选一处即离开规则模式，此后由勾选决定。
@@ -1323,7 +1430,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 		// ── 存储库 ──────────────────────────────────────────────
 		React.createElement(RepoSection, {
-			open: repoSecOpen, height: repoHeight, busy: state.busy,
+			open: repoSecOpen, height: repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
 			onOpenSettings: () => setSettingsOpen(true),
@@ -1337,7 +1444,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {
-			entries: state.entries, busy: state.busy, phase: state.phase,
+			entries: state.entries, busy: busyFlags, phase: state.phase,
 			workingTreePath, head: state.head,
 			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
 			showTranslate, translateBusy, onTranslate: handleTranslate,
@@ -1347,7 +1454,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			stagedPaths, onSubmit: submit, onRefresh: () => { void run(() => refresh()); },
+			stagedPaths, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
@@ -1356,27 +1463,28 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 		// ── 图形 ────────────────────────────────────────────────
 		React.createElement(GraphSection, {
-			open: graphSecOpen, height: graphHeight, busy: state.busy, phase: state.phase,
+			open: graphSecOpen, height: graphHeight, busy: busyFlags, phase: state.phase,
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
-			commits: filterCommitsByRefs(state.commits, filterSelected),
+			commits: visibleCommits,
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
-			moreCommitsAvailable: state.more, statsByHash, messageByHash,
+					moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,
 			onOpenDiff: openDiff,
 			onToggleCommit: toggleCommit,
-			onLoadMore: () => setMaxCommits((previous) => previous + 200),
+			// 触底追加一个窗口：宿主按 offset 返回下一段，客户端不持有完整历史。
+	onLoadMore: () => { void loadMore(); },
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
 			onOpenFilter: () => setFilterOpen(true),
 			filterSummary,
 			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,
-			onFetch: () => { void run(async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
-			onRefresh: () => { void run(() => refresh()); },
+			onFetch: () => { void run('network', async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
+			onRefresh: () => { void run('read', () => refresh('full')); },
 			onResizeStart: startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
 			issueLinking: issueLinking(),

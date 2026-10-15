@@ -1,0 +1,213 @@
+{
+	"actions": [
+		{
+			"id": "checkoutBranch",
+			"title": "检出此分支",
+			"refTypes": [
+				"head"
+			],
+			"commitTitle": "签出到",
+			"commitCurrentTitle": "{name}（当前）",
+			"commitRemoteTitle": "{name}（远程）"
+		},
+		{
+			"id": "createBranchFromRef",
+			"title": "从此分支创建新分支…",
+			"refTypes": [
+				"head"
+			]
+		},
+		{
+			"id": "renameBranch",
+			"title": "重命名分支…",
+			"refTypes": [
+				"head"
+			]
+		},
+		{
+			"id": "mergeIntoBranch",
+			"title": "合并到选中分支…",
+			"refTypes": [
+				"head"
+			],
+			"commitTitle": "合并到分支",
+			"commitItemTitle": "合并到 {name}…"
+		},
+		{
+			"id": "rebaseOnto",
+			"title": "变基当前分支到此处…",
+			"refTypes": [
+				"head",
+				"remote"
+			]
+		},
+		{
+			"id": "copyBranchName",
+			"title": "复制分支名",
+			"refTypes": [
+				"head"
+			]
+		},
+		{
+			"id": "createPullRequest",
+			"title": "创建 Pull Request…",
+			"refTypes": [
+				"head"
+			]
+		},
+		{
+			"id": "createArchiveFromRef",
+			"title": "创建归档…",
+			"refTypes": [
+				"head",
+				"tag"
+			]
+		},
+		{
+			"id": "deleteBranch",
+			"title": "删除分支…",
+			"refTypes": [
+				"head"
+			],
+			"commitTitle": "删除分支",
+			"danger": true
+		},
+		{
+			"id": "checkoutRemoteBranch",
+			"title": "检出远程分支…",
+			"refTypes": [
+				"remote"
+			]
+		},
+		{
+			"id": "fetchIntoLocalBranch",
+			"title": "从远程分支创建本地分支…",
+			"refTypes": [
+				"remote"
+			]
+		},
+		{
+			"id": "mergeRemoteIntoCurrent",
+			"title": "合并到当前分支…",
+			"refTypes": [
+				"remote"
+			]
+		},
+		{
+			"id": "deleteRemoteBranch",
+			"title": "删除远程分支…",
+			"refTypes": [
+				"remote"
+			]
+		},
+		{
+			"id": "copyRemoteName",
+			"title": "复制远程分支名",
+			"refTypes": [
+				"remote"
+			]
+		},
+		{
+			"id": "checkoutTag",
+			"title": "检出此标签",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "createBranchFromTag",
+			"title": "从此标签创建分支…",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "pushTag",
+			"title": "推送标签到远程…",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "viewTagDetails",
+			"title": "查看标签详情…",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "copyTagName",
+			"title": "复制标签名",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "deleteTag",
+			"title": "删除标签…",
+			"refTypes": [
+				"tag"
+			],
+			"commitTarget": "tag"
+		},
+		{
+			"id": "applyStash",
+			"title": "应用贮藏",
+			"refTypes": [
+				"stash"
+			]
+		},
+		{
+			"id": "popStash",
+			"title": "弹出贮藏",
+			"refTypes": [
+				"stash"
+			]
+		},
+		{
+			"id": "branchFromStash",
+			"title": "从贮藏创建分支…",
+			"refTypes": [
+				"stash"
+			]
+		},
+		{
+			"id": "dropStash",
+			"title": "丢弃贮藏…",
+			"refTypes": [
+				"stash"
+			]
+		},
+		{
+			"id": "copyStashSelector",
+			"title": "复制选择器",
+			"refTypes": [
+				"stash"
+			]
+		}
+	],
+	"commitMenuTexts": {
+		"openOnGitHub": "在 GitHub 上打开",
+		"checkoutDetached": "签出（已分离）",
+		"createBranch": "创建分支…",
+		"createTag": "创建标签…",
+		"cherrypick": "挑拣此提交…",
+		"cherrypickHint": "将此提交挑拣到当前分支",
+		"revert": "重置此提交…",
+		"revertHint": "将此提交效果重置并创建重置提交",
+		"resetHere": "重置当前分支到此处",
+		"resetSoft": "暂存其他改动",
+		"resetSoftHint": "软重置：保留改动并已暂存",
+		"resetMixed": "不暂存其他改动",
+		"resetMixedHint": "混合重置：保留改动但不暂存",
+		"resetHard": "丢弃其他改动",
+		"resetHardHint": "硬重置：丢弃工作区与暂存区的改动",
+		"copyHash": "复制哈希",
+		"copyMessage": "复制提交信息"
+	}
+}

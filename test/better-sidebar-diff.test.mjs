@@ -8,7 +8,7 @@ import {
 	openDiffInBetterSidebar,
 	resolveBetterSidebarDiff,
 	toSidebarDiffRef,
-} from '../src/client/better-sidebar-diff.ts';
+} from '../src/client/diff/better-sidebar-diff.ts';
 
 /** 一个可用的服务桩，记录收到的打开请求。 */
 const service = (overrides = {}) => {

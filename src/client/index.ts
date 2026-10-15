@@ -9,13 +9,13 @@
  * 带行号的差异视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
  */
 import React from 'react';
-import { GitGraphPanel } from './panel.ts';
-import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
-import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
-import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-sidebar-diff.ts';
-import { fileDiffContent } from './api.ts';
-import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
-import { PluginLogoIcon } from './plugin-icon.ts';
+import { GitGraphPanel } from './panel/index.ts';
+import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
+import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
+import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './diff/better-sidebar-diff.ts';
+import { fileDiffContent } from './api/index.ts';
+import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
+import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import css from './css/index.module.css';
 import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */

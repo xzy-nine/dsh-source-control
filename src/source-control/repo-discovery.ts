@@ -48,6 +48,14 @@ export interface DiscoveryOptions {
 	readonly maxDepth?: number;
 	/** 最多访问的目录数。 */
 	readonly maxDirectories?: number;
+	/**
+	 * 已知的顶层仓库路径。
+	 *
+	 * 给出时不再逐层扫描：只核对这些路径是否仍是仓库，再补上工作树与子模块。仓库位置基本
+	 * 不变，扫描成本却随目录数增长（默认上限 5000 个目录），因此缓存命中时走这条快路径。
+	 * 核对不通过的路径被忽略；整个列表都失效时退回完整扫描。
+	 */
+	readonly knownRepos?: readonly string[];
 }
 
 /** 一个工作树的枚举结果。 */
@@ -276,6 +284,10 @@ async function repoNodeOf(dir: string, depth: number, submoduleIds: Set<string>)
  * @returns 仓库扁平列表与是否被截断。
  */
 export async function discoverRepositories(root: string, options: DiscoveryOptions = {}): Promise<DiscoveryResult> {
+	// 缓存命中：只核对已知路径，跳过整层目录扫描。
+	if (options.knownRepos !== undefined && options.knownRepos.length > 0) {
+		return discoverKnownRepositories(root, options.knownRepos);
+	}
 	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
 	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
 	const nodes: RepoNode[] = [];
@@ -308,6 +320,37 @@ export async function discoverRepositories(root: string, options: DiscoveryOptio
 	if (enclosing !== null) nodes.unshift(enclosing);
 	nodes.sort((left, right) => left.path.localeCompare(right.path));
 	return { nodes, truncated };
+}
+
+/**
+ * 按已知路径取仓库节点，不扫描目录。
+ *
+ * 每个路径核一次 `.git` 是否存在：仍是仓库就构造节点（含工作树与子模块），否则跳过。
+ * 已不是仓库的路径被忽略；整个列表都失效时退回完整扫描，避免仓库树空掉。
+ *
+ * @param root - 工作区根目录。
+ * @param known - 已知的顶层仓库路径。
+ * @returns 仓库扁平列表与是否被截断（快路径不截断）。
+ */
+async function discoverKnownRepositories(root: string, known: readonly string[]): Promise<DiscoveryResult> {
+	const nodes: RepoNode[] = [];
+	const submoduleIds = new Set<string>();
+	const visited = new Set<string>();
+	for (const candidate of known) {
+		const dir = resolve(candidate);
+		const id = nodeId(dir);
+		if (visited.has(id) || submoduleIds.has(id)) continue;
+		if (await gitEntryOf(dir) !== 'dir') continue;
+		visited.add(id);
+		nodes.push(await repoNodeOf(dir, 0, submoduleIds));
+	}
+	if (nodes.length === 0) {
+		return discoverRepositories(root, { maxDepth: DEFAULT_MAX_DEPTH, maxDirectories: DEFAULT_MAX_DIRECTORIES });
+	}
+	const enclosing = await enclosingRepo(root, visited, submoduleIds);
+	if (enclosing !== null) nodes.unshift(enclosing);
+	nodes.sort((left, right) => left.path.localeCompare(right.path));
+	return { nodes, truncated: false };
 }
 
 /**
