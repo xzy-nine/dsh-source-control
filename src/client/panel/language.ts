@@ -1,5 +1,5 @@
 /**
- * 提交信息语言判定：估算文本中「非当前语言」的字符占比。
+ * 提交信息语言判定与翻译：估算文本中「非当前语言」的字符占比，并按行翻译提交信息。
  *
  * 判定基于书写系统而不是逐词识别：CJK 统一表意文字与当前语言一致时算「同语言」，
  * 拉丁字母在中文界面下算「非当前语言」。这足以决定是否需要翻译，且不引入额外依赖。
@@ -92,4 +92,70 @@ export function splitCommitPrefix(line: string): CommitLineParts {
 	const match = /^([A-Za-z]+(?:\([^)]*\))?!?:[ \t]*)/.exec(line);
 	if (match === null) return { prefix: '', body: line };
 	return { prefix: match[1], body: line.slice(match[1].length) };
+}
+
+/**
+ * 当前界面语言标签。
+ *
+ * DSH 的语言服务把活动语言同步到 `<html lang>`（`zh` 写成 `zh-CN`），因此直接读它；
+ * 读取不到时按英文处理。
+ *
+ * @returns 语言标签，如 `zh-CN`、`en`。
+ */
+export function interfaceLanguage(): string {
+	if (typeof document === 'undefined') return 'en';
+	const lang = document.documentElement.lang;
+	return lang === '' ? 'en' : lang;
+}
+
+/** 翻译入口的判定事实。 */
+export interface TranslateEntryFacts {
+	/** 翻译服务是否可用；不可用时不给入口。 */
+	readonly ready: boolean;
+	/** 是否已有同类任务在进行；进行中不给入口。 */
+	readonly busy: boolean;
+	/** 待判定文本。 */
+	readonly text: string;
+	/** 当前语言标签。 */
+	readonly locale: string;
+	/** 已翻译过的原文；与 text 相同表示当前内容已是译文。 */
+	readonly translatedFrom?: string | null;
+}
+
+/**
+ * 判断是否给出翻译入口。
+ *
+ * 提交信息框与提交浮窗共用本判据：翻译服务可用、无进行中的同类任务、内容非空、
+ * 尚未翻译过（或翻译后内容已变），且以非当前语言为主。
+ *
+ * @param facts - 见 {@link TranslateEntryFacts}。
+ * @returns 应给出翻译入口时为 true。
+ */
+export function showTranslateEntry(facts: TranslateEntryFacts): boolean {
+	const { ready, busy, text, locale, translatedFrom = null } = facts;
+	return ready && !busy && text.trim() !== '' && text !== translatedFrom && needsTranslation(text, locale);
+}
+
+/**
+ * 逐行翻译提交信息文本，保留换行结构与 git 惯例前缀。
+ *
+ * 逐行而不是整段一次：整段会被翻译服务拼成一行，丢失标题与要点的分行。
+ * 空行保留为空行；每行的 git 惯例前缀（`feat:`、`fix(api):` 等）原样保留，只翻译其后的正文。
+ *
+ * @param source - 待翻译的提交信息。
+ * @param translateLine - 单行正文翻译函数。
+ * @returns 翻译后的文本。
+ */
+export async function translateCommitMessage(
+	source: string,
+	translateLine: (body: string) => Promise<string>,
+): Promise<string> {
+	const parts: string[] = [];
+	for (const line of source.split('\n')) {
+		if (line.trim() === '') { parts.push(''); continue; }
+		// git 惯例前缀不翻译：翻译会破坏 type/scope 的机器可读语义。
+		const { prefix, body } = splitCommitPrefix(line);
+		parts.push(body.trim() === '' ? line : prefix + await translateLine(body));
+	}
+	return parts.join('\n');
 }

@@ -320,6 +320,16 @@ export interface GraphSectionProps {
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 提交信息译文；未翻译过时缺省。 */
+	readonly translatedByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 已翻译的原文；与当前信息相同表示无需再译。 */
+	readonly translatedFromByHash: ReadonlyMap<string, string>;
+	/** 正在翻译的提交哈希；空闲时为 null。 */
+	readonly translatingHash: string | null;
+	/** 翻译服务是否可用；不可用时提交浮窗不给翻译入口。 */
+	readonly translateReady: boolean;
+	/** 翻译一个提交的提交信息。 */
+	readonly onTranslateCommit: (hash: string, text: string) => void;
 	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
@@ -356,6 +366,7 @@ export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
 	localTip, remoteTip, baseTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
+	translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit,
 	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
 	return React.createElement(
@@ -423,6 +434,11 @@ export function GraphSection({
 					graphColours: settings.graphColours,
 					commitStats: statsByHash,
 					commitMessages: messageByHash,
+					translatedMessages: translatedByHash,
+					translatedFrom: translatedFromByHash,
+					translatingHash,
+					translateReady,
+					onTranslateCommit,
 					onHoverCommit,
 					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
 						? React.createElement(

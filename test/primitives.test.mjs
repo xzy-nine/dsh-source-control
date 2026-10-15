@@ -343,7 +343,7 @@ test('未提交行用虚线且不画节点', () => {
 test('浮窗显示完整提交信息', () => {
 	// 列表的 message 来自 `%s`（只有标题），完整正文按需取回后传给卡片。
 	const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-	assert.match(graphSource, /const fullMessage = typeof message === 'string'/, '卡片优先使用完整提交信息');
+	assert.match(graphSource, /const original = typeof message === 'string'/, '卡片优先使用完整提交信息');
 	const apiSource = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(apiSource, /export async function loadCommitMessage/, '应有取完整信息的函数');
 	assert.match(apiSource, /details\.body/, '应取 commitDetails 的 body');

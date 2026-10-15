@@ -24,7 +24,7 @@ import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { ROW_HEIGHT } from '../graph/lanes.ts';
 import { changeOf } from './changes.ts';
 import { hasGitHubRemote } from './github.ts';
-import { needsTranslation, splitCommitPrefix } from './language.ts';
+import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
@@ -78,20 +78,6 @@ export interface GitGraphPanelProps {
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
 function issueLinkingConfigOf(settings: Settings): unknown {
 	return settings.issueLinkingConfig ?? null;
-}
-
-/**
- * 当前界面语言。
- *
- * DSH 的语言服务把活动语言同步到 `<html lang>`（`zh` 写成 `zh-CN`），因此直接读它；
- * 读取不到时按英文处理。
- *
- * @returns 语言标签，如 `zh-CN`、`en`。
- */
-function interfaceLanguage(): string {
-	if (typeof document === 'undefined') return 'en';
-	const lang = document.documentElement.lang;
-	return lang === '' ? 'en' : lang;
 }
 
 /**
@@ -268,7 +254,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
 
-	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
+	const {
+		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
+		hoverCommit, translateCommit,
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -713,15 +702,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void (async () => {
 			try {
 				// 空行保留为空行，其余每行单独翻译。
-				const lines = source.split('\n');
-				const parts: string[] = [];
-				for (const line of lines) {
-					if (line.trim() === '') { parts.push(''); continue; }
-					// git 惯例前缀不翻译：翻译会破坏 type/scope 的机器可读语义。
-					const { prefix, body } = splitCommitPrefix(line);
-					parts.push(body.trim() === '' ? line : prefix + await translateText(workingTreePath, body, locale));
-				}
-				setMessage(parts.join('\n'));
+				setMessage(await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale)));
 				setTranslatedFrom(source);
 			} catch (error) {
 				await notify(error instanceof Error ? error.message : String(error));
@@ -749,14 +730,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
 
 	/**
-	 * 是否显示翻译入口。
+	 * 是否显示提交信息框的翻译入口。
 	 *
-	 * 三个条件同时满足才显示：翻译服务已装载（否则点了也失败）、当前无生成任务、
-	 * 且内容以非当前语言为主。已翻译过的内容不再重复提示。
+	 * 判据与提交浮窗共用 {@link showTranslateEntry}：翻译服务已装载（否则点了也失败）、
+	 * 当前无生成或翻译任务、内容非空且以非当前语言为主。已翻译过的内容不再重复提示。
 	 */
-	const showTranslate = translateReady && !aiBusy && !translateBusy
-		&& message.trim() !== '' && message !== translatedFrom
-		&& needsTranslation(message, interfaceLanguage());
+	const showTranslate = showTranslateEntry({
+		ready: translateReady, busy: aiBusy || translateBusy, text: message,
+		locale: interfaceLanguage(), translatedFrom,
+	});
 
 	/**
 	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
@@ -1470,6 +1452,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
 					moreCommitsAvailable: state.more, statsByHash, messageByHash,
+			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,

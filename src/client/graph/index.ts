@@ -21,9 +21,10 @@ import {
 	REMOTE_REF_COLOUR, RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, HEAD_REF_COLOUR,
 	laneCentre, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
-import { RemoteRefIcon, TagRefIcon } from '../ui/ref-icons.ts';
+import { RemoteRefIcon, TagRefIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { copyText } from '../ui/context-menu.ts';
+import { interfaceLanguage, showTranslateEntry } from '../panel/language.ts';
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
@@ -329,23 +330,34 @@ function displayMessage(commit) {
 }
 
 /**
- * 悬停卡片的正文：作者与时间、完整提交信息、改动统计、引用标记、短哈希。
+ * 悬停卡片的正文：作者与时间（时间右侧是翻译入口）、完整提交信息、改动统计、引用标记、短哈希。
  *
  * @param props.commit - 提交。
  * @param props.labels - refLabels 给出的引用标记。
  * @param props.stats - 改动统计 { files, additions, deletions }，未知时为 null。
  * @param props.formatDate - 日期格式化函数（unixSeconds -> 文本），沿用设置里的格式。
  * @param props.formatDetail - 详细时间格式化函数（unixSeconds -> 日期与时间）。
+ * @param props.translation - 该提交的提交信息译文；未翻译过时为 null。
+ * @param props.translatedFrom - 译文对应的原文；与当前信息相同表示当前显示的就是译文。
+ * @param props.translating - 该提交是否正在翻译。
+ * @param props.translateReady - 翻译服务是否可用。
+ * @param props.onTranslate - 请求翻译该提交的提交信息。
  * @returns 卡片正文元素。
  */
-function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown, showAvatars, message }) {
+function CommitCard({
+	commit, labels, stats, formatDate, formatDetail, markdown, showAvatars, message,
+	translation, translatedFrom, translating, translateReady, onTranslate,
+}) {
 	const isUncommitted = commit.hash === '*';
 	const dated = typeof commit.date === 'number' && Number.isFinite(commit.date);
 	const timeText = dated ? formatDate(commit.date) : '';
 	const detail = dated ? formatDetail(commit.date) : '';
 	const timeLabel = detail === '' || detail === timeText ? timeText : `${timeText}（${detail}）`;
 	// 完整提交信息优先：列表里的 message 来自 `%s`，只有标题一行。
-	const fullMessage = typeof message === 'string' && message !== '' ? message : String(commit.message ?? '');
+	const original = typeof message === 'string' && message !== '' ? message : String(commit.message ?? '');
+	// 已翻译且内容未变时显示译文；原文一改即回到原文，等待重新翻译。
+	const translated = translation !== null && translation !== undefined && translatedFrom === original;
+	const fullMessage = translated ? translation : original;
 	// 首行是标题，保持卡片自身字号；其余是正文，字号更小、行距更紧，且不留空行。
 	const [titleLine, ...bodyLines] = fullMessage.split('\n');
 	const body = bodyLines.filter((line) => line.trim() !== '');
@@ -354,6 +366,11 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown,
 	const avatarEl = avatars.length > 0
 		? React.createElement(AvatarImage, { key: avatars[0], urls: avatars })
 		: React.createElement(IconUserOutlineRegular, { size: 13, className: css.cardIcon });
+	// 判定与提交信息框共用同一函数：服务可用、无进行中的翻译、内容非空且以非当前语言为主。
+	const showTranslate = !isUncommitted && showTranslateEntry({
+		ready: translateReady === true, busy: translating === true, text: original,
+		locale: interfaceLanguage(), translatedFrom,
+	});
 	return React.createElement(
 		'div',
 		{ className: css.card },
@@ -364,6 +381,14 @@ function CommitCard({ commit, labels, stats, formatDate, formatDetail, markdown,
 			React.createElement('span', { className: css.cardAuthor }, commit.author ?? ''),
 			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: css.cardIcon }),
 			dated && React.createElement('span', { className: css.cardTime }, timeLabel),
+			// 翻译入口排在时间右侧：只在该提交需要翻译时出现。
+			showTranslate && React.createElement('button', {
+				type: 'button',
+				className: css.cardAction,
+				title: '把提交信息翻译为当前语言',
+				'aria-label': '翻译',
+				onClick: () => onTranslate?.(original),
+			}, React.createElement(TranslateIcon), '翻译'),
 		),
 		React.createElement(
 			'div',
@@ -467,6 +492,7 @@ function CommitRow({
 	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits,
 	stats, message, onHover, widthAnchorRef,
+	translation, translatedFrom, translating, translateReady, onTranslate,
 }) {
 	const isUncommitted = commit.hash === '*';
 	// 贮藏标记行不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
@@ -519,7 +545,10 @@ function CommitRow({
 	if (isUncommitted || stashSelector !== null) return anchor;
 	return React.createElement(HoverCard, {
 		anchor,
-		content: React.createElement(CommitCard, { commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars }),
+		content: React.createElement(CommitCard, {
+			commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars,
+			translation, translatedFrom, translating, translateReady, onTranslate,
+		}),
 		variant: 'preview',
 		widthAnchorRef,
 	});
@@ -591,6 +620,7 @@ export function CommitGraph({
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	localTip, remoteTip, baseTip, upstream,
 	markdown, showAvatars, muteMergeCommits, graphColours,
+	translatedMessages, translatedFrom, translatingHash, translateReady, onTranslateCommit,
 }) {
 	const layout = React.useMemo(
 		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
@@ -782,6 +812,11 @@ export function CommitGraph({
 			muteMergeCommits,
 			stats: commitStats?.get(commit.hash) ?? null,
 			message: commitMessages?.get(commit.hash) ?? null,
+			translation: translatedMessages?.get(commit.hash) ?? null,
+			translatedFrom: translatedFrom?.get(commit.hash) ?? null,
+			translating: translatingHash === commit.hash,
+			translateReady,
+			onTranslate: (text: string) => { onTranslateCommit?.(commit.hash, text); },
 			onHover: hoverOrDefer,
 			widthAnchorRef: graphRef,
 		}));

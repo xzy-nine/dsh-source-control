@@ -1,15 +1,20 @@
 /**
- * 提交改动统计与完整提交信息：悬停某行时按需拉取并缓存。
+ * 提交改动统计与完整提交信息：悬停某行时按需拉取并缓存；提交浮窗的译文同样按提交缓存。
  */
 import React from 'react';
-import { loadCommitFiles, loadCommitMessage } from '../api/index.ts';
+import { loadCommitFiles, loadCommitMessage, translateText } from '../api/index.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
+import { interfaceLanguage, translateCommitMessage } from './language.ts';
 import type { CommitStats } from '../shared/types.ts';
 
 /** 提交改动统计 hook 的入参。 */
 export interface UseCommitStatsOptions {
 	/** 当前工作树路径；未选中时为 null。 */
 	readonly workingTreePath: string | null;
+	/** 翻译服务是否可用；不可用时浮窗不给翻译入口。 */
+	readonly translateReady: boolean;
+	/** 翻译失败时的提示出口。 */
+	readonly onTranslateError: (message: string) => void;
 }
 
 /** 提交改动统计 hook 的返回值。 */
@@ -18,33 +23,53 @@ export interface UseCommitStatsResult {
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；未取到时缺省。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 译文；未翻译过时缺省。 */
+	readonly translatedByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 已翻译的原文；与当前信息相同表示无需再译。 */
+	readonly translatedFromByHash: ReadonlyMap<string, string>;
+	/** 正在翻译的提交哈希；空闲时为 null。 */
+	readonly translatingHash: string | null;
 	/** 悬停某行：延时预取统计与完整信息；离开时传 null。 */
 	readonly hoverCommit: (hash: string | null) => void;
+	/** 翻译一个提交的提交信息并缓存译文。 */
+	readonly translateCommit: (hash: string, text: string) => void;
 }
 
 /**
- * 拉取并缓存提交的改动统计与完整提交信息。
+ * 拉取并缓存提交的改动统计、完整提交信息与译文。
  *
  * @param options - 见 {@link UseCommitStatsOptions}。
- * @returns 统计缓存、完整信息缓存与悬停回调。
+ * @returns 三份缓存、悬停回调与翻译回调。
  */
-export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseCommitStatsResult {
+export function useCommitStats({ workingTreePath, translateReady, onTranslateError }: UseCommitStatsOptions): UseCommitStatsResult {
 	// 悬停卡片的改动统计与完整信息：按提交哈希缓存，悬停时按需拉取。
 	const [statsByHash, setStatsByHash] = React.useState<Map<string, CommitStats>>(() => new Map());
 	const [messageByHash, setMessageByHash] = React.useState<Map<string, string>>(() => new Map());
+	// 译文与译文对应的原文：后者用于判断当前信息是否已经翻译过。
+	const [translatedByHash, setTranslatedByHash] = React.useState<Map<string, string>>(() => new Map());
+	const [translatedFromByHash, setTranslatedFromByHash] = React.useState<Map<string, string>>(() => new Map());
+	const [translatingHash, setTranslatingHash] = React.useState<string | null>(null);
 	const statsInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const messageInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const hoverTimer = React.useRef<number | null>(null);
 	// 缓存写入时间：定时清理据此丢弃过期项。
 	const statsStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
 	const messageStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
+	const translationStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
+	// 翻译回调经 ref 读取：调用方每次渲染都传新函数，直接进依赖会让回调重建。
+	const onTranslateErrorRef = React.useRef(onTranslateError);
+	onTranslateErrorRef.current = onTranslateError;
 
-	// 换仓库后旧的统计与信息不再适用。
+	// 换仓库后旧的统计、信息与译文都不再适用。
 	React.useEffect(() => {
 		setStatsByHash(new Map());
 		setMessageByHash(new Map());
+		setTranslatedByHash(new Map());
+		setTranslatedFromByHash(new Map());
+		setTranslatingHash(null);
 		statsStamps.current = new Map();
 		messageStamps.current = new Map();
+		translationStamps.current = new Map();
 	}, [workingTreePath]);
 
 	useCacheCleanup({
@@ -61,6 +86,21 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 		stamps: messageStamps,
 		drop: (hashes) => {
 			setMessageByHash((previous) => {
+				const next = new Map(previous);
+				for (const hash of hashes) next.delete(hash);
+				return next;
+			});
+		},
+	});
+	useCacheCleanup({
+		stamps: translationStamps,
+		drop: (hashes) => {
+			setTranslatedByHash((previous) => {
+				const next = new Map(previous);
+				for (const hash of hashes) next.delete(hash);
+				return next;
+			});
+			setTranslatedFromByHash((previous) => {
 				const next = new Map(previous);
 				for (const hash of hashes) next.delete(hash);
 				return next;
@@ -144,5 +184,36 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 		}, 220);
 	}, [requestCommitStats, requestCommitMessage]);
 
-	return { statsByHash, messageByHash, hoverCommit };
+	/**
+	 * 翻译一个提交的提交信息并缓存译文。
+	 *
+	 * 与提交信息框同一套逐行翻译：空行保留，git 惯例前缀原样保留，只译正文。
+	 *
+	 * @param hash - 提交哈希。
+	 * @param text - 该提交的完整提交信息。
+	 * @returns 无。
+	 */
+	const translateCommit = React.useCallback((hash: string, text: string) => {
+		if (workingTreePath === null || !translateReady || translatingHash !== null || text.trim() === '') return;
+		const source = text;
+		const locale = interfaceLanguage();
+		setTranslatingHash(hash);
+		void (async () => {
+			try {
+				const translated = await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale));
+				translationStamps.current = new Map(translationStamps.current).set(hash, Date.now());
+				setTranslatedByHash((previous) => new Map(previous).set(hash, translated));
+				setTranslatedFromByHash((previous) => new Map(previous).set(hash, source));
+			} catch (error) {
+				onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+			} finally {
+				setTranslatingHash(null);
+			}
+		})();
+	}, [workingTreePath, translateReady, translatingHash]);
+
+	return {
+		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
+		hoverCommit, translateCommit,
+	};
 }
