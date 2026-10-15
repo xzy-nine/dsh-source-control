@@ -23,8 +23,6 @@ export interface ChangeMenuActionMeta {
 	readonly groupFor: Partial<Record<ChangeMenuTarget, string>>;
 	/** 通用菜单名称。 */
 	readonly title: string;
-	/** 新增文件时的名称；JSON 未给出时用 title。 */
-	readonly newTitle: string;
 	/** 按目标覆盖的名称；未给出的目标用 title。 */
 	readonly titles: Partial<Record<ChangeMenuTarget, string>>;
 	/** 是否是危险操作。 */
@@ -64,7 +62,6 @@ export const CHANGE_MENU_ACTIONS: readonly ChangeMenuActionMeta[] = source.actio
 		targets,
 		groupFor,
 		title: action.title,
-		newTitle: action.newTitle ?? action.title,
 		titles: action.titles ?? {},
 		danger: action.danger === true,
 	};

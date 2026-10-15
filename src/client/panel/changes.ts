@@ -94,7 +94,7 @@ export function ChangeNodeRow({
 			target.classList.add(MENU_TARGET_CLASS);
 			const items = changeMenuItems({
 				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
-				entry: null, isNew: false, untracked: false,
+				entry: null, untracked: false,
 			});
 			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 		};
@@ -126,7 +126,7 @@ export function ChangeNodeRow({
 		target.classList.add(MENU_TARGET_CLASS);
 		const items = changeMenuItems({
 			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
-			entry, isNew, untracked,
+			entry, untracked,
 		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
@@ -351,6 +351,8 @@ export function ChangeGroup({
 		})();
 	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
+	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
+	const onOpenFile = (item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
@@ -359,7 +361,7 @@ export function ChangeGroup({
 	const menu: ChangeMenuDeps = {
 		busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder,
 		onDiscardGroup: () => { onDiscardAll(); },
-		onOpen, onAddToGitignore, onAddToLocalExclude,
+		onOpenFile, onAddToGitignore, onAddToLocalExclude,
 		onCopyPath: (path: string) => { void copyText(path); },
 	};
 	const handleHeadContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -369,7 +371,7 @@ export function ChangeGroup({
 		target.classList.add(MENU_TARGET_CLASS);
 		const items = changeMenuItems({
 			target: 'group', deps: menu, path: null, paths: allPaths,
-			entry: null, isNew: false, untracked: false,
+			entry: null, untracked: false,
 		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
