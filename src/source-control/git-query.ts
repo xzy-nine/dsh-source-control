@@ -587,7 +587,8 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
  * @returns 变更条目数。
  */
 async function getUncommittedChanges(repo: string): Promise<number> {
-	const stdout = await gitOrThrow(['status', '--untracked-files=all', '--porcelain', '-z'], repo);
+	// 与 working-tree.ts 的 loadWorkingTree 保持同一参数顺序：同一份 status 在并发时共用子进程。
+	const stdout = await gitOrThrow(['status', '--porcelain', '-z', '--untracked-files=all'], repo);
 	return parseStatus(stdout).length;
 }
 

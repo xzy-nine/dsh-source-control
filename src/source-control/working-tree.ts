@@ -6,6 +6,14 @@
  */
 import { spawn } from 'node:child_process';
 
+/**
+ * 工作区变更的解析上限。
+ *
+ * 超大仓库（几十万未跟踪文件）的 status 输出会让解析本身成为负担，截断即可 —— 面板本就
+ * 无法展示这么多条目。取值与 VSCode 的 `git.statusLimit` 一致。
+ */
+const STATUS_LIMIT = 10000;
+
 /** 一次 git 调用的结果。 */
 export interface GitResult {
 	/** 退出码；被信号终止时为 -1。 */
@@ -33,6 +41,11 @@ export function gitEnvironment(): NodeJS.ProcessEnv {
 		GIT_TERMINAL_PROMPT: '0',
 		GIT_PAGER: 'cat',
 		GIT_EDITOR: 'true',
+		// 远程操作挂在网络或凭据等待上时自行失败，而不是无限占住子进程。
+		GIT_HTTP_LOW_SPEED_LIMIT: '1000',
+		GIT_HTTP_LOW_SPEED_TIME: '30',
+		GIT_ASKPASS: '',
+		SSH_ASKPASS: '',
 	};
 }
 
@@ -49,34 +62,439 @@ export interface WorkingTreeEntry {
 }
 
 /**
+/**
+ * 本地只读查询的超时上限。
+ *
+ * 单条 status 在本机约 80ms，但大仓库、冷启动、杀毒软件实时扫描下会明显变慢；
+ * 这里的取值只用于兜住「永久挂住」，不用于限制正常慢查询。
+ */
+const GIT_TIMEOUT_LOCAL_MS = 30000;
+
+/**
+ * 远程操作的超时上限。
+ *
+ * fetch/push/pull 受网络与凭据影响，按本地查询的 10s 会误杀正常操作，因此单独放宽；
+ * 但仍必须有上限，否则卡住的远程操作会永久占住子进程。
+ */
+const GIT_TIMEOUT_REMOTE_MS = 120000;
+
+/** 一定访问远端的子命令。 */
+const NETWORK_SUBCOMMANDS = new Set(['fetch', 'push', 'pull', 'clone', 'ls-remote']);
+
+/**
+ * 判断一条命令是否会访问远端（网络与凭据都可能让它长时间等待）。
+ *
+ * 不能只看子命令名：`git remote`（列远程）、`git remote add/set-url`（改配置）都是纯本地，
+ * 只有 `remote prune/update` 才联网；`git submodule` 单独用是本地，带 update 才联网。
+ *
+ * @param args - 完整参数数组。
+ * @returns 需要长超时时为 true。
+ */
+function isNetworkCommand(args: readonly string[]): boolean {
+	const subcommand = args[0] ?? '';
+	if (NETWORK_SUBCOMMANDS.has(subcommand)) return true;
+	if (subcommand === 'remote') return args.slice(1).some((arg) => arg === 'prune' || arg === 'update');
+	if (subcommand === 'submodule') return args.includes('update');
+	return false;
+}
+
+/**
+ * 规范化仓库路径，作为闸门与缓存的键。
+ *
+ * 大小写与结尾分隔符在 Windows 上等价，不归一会被当成两个仓库，各自占用一份并发额度。
+ *
+ * @param cwd - 工作目录。
+ * @returns 规范化后的路径。
+ */
+function normalizeRepo(cwd: string): string {
+	return cwd.replace(/[\\/]+$/, '').toLowerCase();
+}
+
+/** 一条在跑的子进程：截止时刻、子命令名与超时后的收尾回调。 */
+interface LiveChild {
+	deadline: number;
+	readonly label: string;
+	/** 超时后调用：终止进程树并让调用方拿到失败结果，不依赖 close 事件。 */
+	readonly onTimeout: () => void;
+}
+
+/**
+ * 已启动且未结束的子进程；宿主退出时逐个终止，避免留下孤儿 git.exe。
+ *
+ * 值里带截止时刻，超时由一个共享的看护定时器统一检查：每个子进程各挂一个 setTimeout 时，
+ * 定时器数量会随并发数增长（100 个在跑就有 100 个待触发的定时器）。
+ */
+const liveChildren = new Map<ReturnType<typeof spawn>, LiveChild>();
+
+/** 超时看护定时器；有在跑的子进程时才会存在。 */
+let watchdog: ReturnType<typeof setInterval> | null = null;
+
+/** 看护检查间隔。 */
+const WATCHDOG_INTERVAL_MS = 1000;
+
+/**
+ * 检查是否有子进程超过截止时刻，超时就整树终止。
+ *
+ * @returns 无。
+ */
+function sweepTimeouts(): void {
+	if (liveChildren.size === 0) {
+		if (watchdog !== null) { clearInterval(watchdog); watchdog = null; }
+		return;
+	}
+	const now = Date.now();
+	for (const [child, info] of liveChildren) {
+		if (now < info.deadline) continue;
+		// 标记为已超时，避免下一轮重复触发。
+		info.deadline = Number.POSITIVE_INFINITY;
+		killTree(child);
+		info.onTimeout();
+	}
+}
+
+/**
+ * 按需启动看护定时器。
+ *
+ * @returns 无。
+ */
+function ensureWatchdog(): void {
+	if (watchdog !== null || liveChildren.size === 0) return;
+	watchdog = setInterval(sweepTimeouts, WATCHDOG_INTERVAL_MS);
+	// 看护本身不应阻止宿主退出。
+	if (typeof watchdog.unref === 'function') watchdog.unref();
+}
+
+/**
+ * 按进程树终止一个 git 子进程。
+ *
+ * Windows 上 kill 只终止直接子进程，而 git 会再派生 git.exe（子模块、凭据助手、lfs），
+ * 遗留的孙进程同样占 CPU 与仓库句柄，因此按 /t 整树终止。
+ *
+ * @param child - 子进程。
+ * @returns 无。
+ */
+function killTree(child: ReturnType<typeof spawn>): void {
+	if (process.platform === 'win32' && child.pid !== undefined) {
+		spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+		return;
+	}
+	try {
+		child.kill();
+	} catch {
+		/* 进程已退出 */
+	}
+}
+
+/**
+ * 终止所有在跑的 git 子进程。
+ *
+ * Windows 上父进程退出不会连带结束子进程，遗留的 git.exe 会持有仓库句柄并占 CPU。
+ *
+ * @returns 无。
+ */
+export function killRunningGit(): void {
+	for (const child of liveChildren.keys()) killTree(child);
+	liveChildren.clear();
+}
+
+/* 宿主退出与终止信号下都收尾；重复调用无副作用。 */
+process.once('exit', killRunningGit);
+process.once('SIGINT', killRunningGit);
+process.once('SIGTERM', killRunningGit);
+process.once('beforeExit', killRunningGit);
+
+/** 一次操作的类别；只读操作之间自由并发，写操作参与 idle 判定。 */
+export type GitOperationKind = 'status' | 'log' | 'refs' | 'config' | 'diff' | 'write' | 'network' | 'other';
+
+/** 操作类别中哪些属于只读；只读操作不参与 idle 判定，可自由并发。 */
+const READ_ONLY_KINDS = new Set<GitOperationKind>(['status', 'log', 'refs', 'config', 'diff', 'other']);
+
+/** 一条在跑的操作。 */
+interface GitOperation {
+	readonly kind: GitOperationKind;
+	readonly readOnly: boolean;
+	readonly repo: string;
+}
+
+/**
+ * 运行中的操作登记：按仓库与类别跟踪。
+ *
+ * 不做队列、不做硬限流（并发限制会把正常的多仓库刷新串行化）：只读操作自由并发，
+ * 写操作通过 {@link isIdle} 参与刷新门控 —— 写操作未完成时，由文件变更触发的刷新会等待。
+ */
+const runningOperations = new Map<string, Set<GitOperation>>();
+
+/** 操作结束时的通知者；idle 门控据此唤醒等待方。 */
+const idleListeners = new Set<() => void>();
+
+/**
+ * 登记一条操作开始。
+ *
+ * @param repo - 规范化后的仓库路径。
+ * @param kind - 操作类别。
+ * @returns 该操作的句柄，用于结束登记。
+ */
+function startOperation(repo: string, kind: GitOperationKind): GitOperation {
+	const operation: GitOperation = { kind, readOnly: READ_ONLY_KINDS.has(kind), repo };
+	let set = runningOperations.get(repo);
+	if (set === undefined) { set = new Set(); runningOperations.set(repo, set); }
+	set.add(operation);
+	return operation;
+}
+
+/**
+ * 注销一条操作，并唤醒 idle 等待者。
+ *
+ * @param repo - 规范化后的仓库路径。
+ * @param operation - 操作句柄。
+ * @returns 无。
+ */
+function endOperation(repo: string, operation: GitOperation): void {
+	const set = runningOperations.get(repo);
+	if (set === undefined) return;
+	set.delete(operation);
+	if (set.size === 0) runningOperations.delete(repo);
+	for (const notify of idleListeners) notify();
+}
+
+/**
+ * 是否没有写操作在跑。
+ *
+ * 只读操作（status / log / diff / refs / config）不算忙：它们之间互不冲突，
+ * 让它们参与判定会让刷新在只读查询期间一直等待。
+ *
+ * @param repo - 限定仓库；省略时检查所有仓库。
+ * @returns 没有写操作在跑时为 true。
+ */
+export function isGitIdle(repo?: string): boolean {
+	for (const [key, set] of runningOperations) {
+		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
+		for (const operation of set) {
+			if (!operation.readOnly) return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * 等到没有写操作在跑。
+ *
+ * @param repo - 限定仓库；省略时等待所有仓库。
+ * @param signal - 取消信号。
+ * @returns 无。
+ */
+export async function whenGitIdle(repo?: string, signal?: AbortSignal): Promise<void> {
+	while (!isGitIdle(repo)) {
+		if (signal?.aborted === true) return;
+		await new Promise<void>((resolve) => {
+			const notify = (): void => { idleListeners.delete(notify); resolve(); };
+			idleListeners.add(notify);
+		});
+	}
+}
+
+/**
+ * 按命令推断操作类别。
+ *
+ * @param args - 完整参数数组。
+ * @returns 操作类别。
+ */
+function kindOf(args: readonly string[]): GitOperationKind {
+	const subcommand = args[0] ?? '';
+	if (subcommand === 'status') return 'status';
+	if (subcommand === 'log' || subcommand === 'show' || subcommand === 'rev-list') return 'log';
+	if (subcommand === 'for-each-ref' || subcommand === 'rev-parse' || subcommand === 'symbolic-ref' || subcommand === 'reflog') return 'refs';
+	if (subcommand === 'config') return 'config';
+	if (subcommand === 'diff') return 'diff';
+	if (isNetworkCommand(args)) return 'network';
+	if (!isReadOnly(args)) return 'write';
+	return 'other';
+}
+
+/**
+ * 诊断用限流器：只记录、不阻断。
+ *
+ * 按调用方分组统计每秒调用数，超过阈值时记一条日志。用途是发现「谁在刷屏调 git」，
+ * 而不是限制正常使用 —— 硬限流会把多仓库并行刷新串行化。
+ */
+const CALL_WINDOW_MS = 1000;
+const CALL_WARN_THRESHOLD = 100;
+const CALL_WARN_COOLDOWN_MS = 10000;
+const callTimestamps = new Map<string, number[]>();
+const lastWarnAt = new Map<string, number>();
+
+/**
+ * 记一次调用；超阈值时按调用点输出一条告警。
+ *
+ * @param args - 完整参数数组。
+ * @returns 无。
+ */
+function checkCallRate(args: readonly string[]): void {
+	const caller = new Error().stack?.split('\n')[3]?.trim() ?? 'unknown';
+	const now = Date.now();
+	const recent = (callTimestamps.get(caller) ?? []).filter((at) => now - at < CALL_WINDOW_MS);
+	recent.push(now);
+	callTimestamps.set(caller, recent);
+	if (recent.length < CALL_WARN_THRESHOLD) return;
+	const warnedAt = lastWarnAt.get(caller) ?? 0;
+	if (now - warnedAt < CALL_WARN_COOLDOWN_MS) return;
+	lastWarnAt.set(caller, now);
+	console.warn(`[source-control] git 调用过于频繁（${recent.length} 次/秒）：git ${args.join(' ')} ← ${caller}`);
+}
+
+/** 只读子命令的结果缓存：键为仓库与参数，值为结果与过期时间。 */
+const resultCache = new Map<string, { result: GitResult; expiresAt: number }>();
+
+/**
+ * 只读查询结果缓存时长。
+ *
+ * 面板在编辑期间会按节拍反复读同一份不变的数据；一次 git 约 70–90ms，若调用间隔大于
+ * 执行时间，在途复用命不中，缓存按节拍命中即可避免整轮重复起进程。
+ */
+const CACHE_TTL_MS = 200;
+
+/**
+ * 只读命令的精确形态：子命令 + 允许出现的开关前缀。
+ *
+ * 不能只看第一个子命令名：`git remote`（读远程列表）与 `git remote add/remove/prune`（写）同首参，
+ * `branch`/`tag`/`worktree`/`config` 也都如此；按名字放行会把写操作当只读缓存，写后读到旧值。
+ * 因此这里逐一列出确认只读的形态，未列出的一律当作写操作（不缓存、并失效该仓库缓存）。
+ */
+const READ_ONLY_FORMS: ReadonlyArray<{ subcommand: string; allow?: readonly string[]; deny?: readonly string[] }> = [
+	// 总是只读：这些子命令没有写形态。
+	{ subcommand: 'status' },
+	{ subcommand: 'diff' },
+	{ subcommand: 'log' },
+	{ subcommand: 'show' },
+	{ subcommand: 'for-each-ref' },
+	{ subcommand: 'rev-list' },
+	{ subcommand: 'reflog' },
+	{ subcommand: 'ls-files' },
+	{ subcommand: 'cat-file' },
+	{ subcommand: 'describe' },
+	{ subcommand: 'symbolic-ref' },
+	{ subcommand: 'rev-parse' },
+	{ subcommand: 'remote', deny: ['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'prune', 'update'] },
+	{ subcommand: 'branch', deny: ['-d', '-D', '-m', '-M', '-c', '-C', '--delete', '--move', '--copy', '--set-upstream-to', '--unset-upstream', '--edit-description'] },
+	{ subcommand: 'tag', deny: ['-d', '-a', '-s', '-m', '-f', '--delete', '--annotate', '--force'] },
+	{ subcommand: 'worktree', deny: ['add', 'remove', 'prune', 'move', 'lock', 'unlock', 'repair'] },
+	{ subcommand: 'config', allow: ['--list', '-l', '--get', '--get-all', '--get-regexp', '--get-urlmatch'] },
+];
+
+/**
+ * 判断一条命令是否只读。
+ *
+ * @param args - 完整参数数组。
+ * @returns 确认只读时为 true。
+ */
+function isReadOnly(args: readonly string[]): boolean {
+	const form = READ_ONLY_FORMS.find((entry) => entry.subcommand === (args[0] ?? ''));
+	if (form === undefined) return false;
+	const rest = args.slice(1);
+	if (form.deny !== undefined && rest.some((arg) => form.deny?.includes(arg))) return false;
+	// 有 allow 清单的子命令必须命中其一，避免 `git config key value`（写）被放行。
+	if (form.allow !== undefined && !rest.some((arg) => form.allow?.includes(arg))) return false;
+	return true;
+}
+
+/**
+ * 清掉某个仓库的只读缓存。
+ *
+ * @param repo - 规范化后的仓库路径。
+ * @returns 无。
+ */
+function invalidateRepo(repo: string): void {
+	const prefix = repo + '\u0000';
+	for (const key of resultCache.keys()) {
+		if (key.startsWith(prefix)) resultCache.delete(key);
+	}
+}
+
+/** 进行中的调用：键为仓库与参数的组合，值共享同一个子进程。 */
+const inFlightGit = new Map<string, Promise<GitResult>>();
+
+/**
  * 运行一次 git。
  *
  * 子进程无法启动（git 不在 PATH、工作目录不存在）时不抛错，而是以退出码 -1 与
  * stderr 为异常文本返回，使调用方的错误处理与 git 自身失败走同一条路径。
  *
+ * 同一仓库上参数完全相同的并发调用共享一个子进程；只读命令另有短时结果缓存。
+ * 并发受全局与单仓库两层闸门限制，超时按子命令分流。
+ *
  * @param args - 参数数组，按原样传给 git（不经过 shell）。
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 退出码与输出。
  */
-export function runGit(args: readonly string[], cwd: string): Promise<GitResult> {
+export async function runGit(args: readonly string[], cwd: string): Promise<GitResult> {
+	const readOnly = isReadOnly(args);
+	const repo = normalizeRepo(cwd);
+	// 参数用 JSON 序列化：join(' ') 会让 ['a b'] 与 ['a','b'] 撞成同一个键。
+	const key = `${repo}\u0000${JSON.stringify(args)}`;
+
+	if (readOnly) {
+		const cached = resultCache.get(key);
+		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
+		const pendingCached = inFlightGit.get(key);
+		if (pendingCached !== undefined) return pendingCached;
+	}
+
+	// 只记录不阻断：并发限制会把正常的多仓库刷新串行化，稀疏化靠刷新侧的门控与冷却。
+	checkCallRate(args);
+	const operation = startOperation(repo, kindOf(args));
+	const task = (async (): Promise<GitResult> => {
+		try {
+			return await spawnGit(args, cwd);
+		} finally {
+			endOperation(repo, operation);
+		}
+	})();
+
+	// 写操作先失效该仓库的只读缓存：否则「写 → 立刻读」的序列会命中写前缓存。
+	// 所有 git 调用都经这里，因此无需在二十余处写操作里各自挂失效。
+	if (!readOnly) invalidateRepo(repo);
+
+	inFlightGit.set(key, task);
+	try {
+		const result = await task;
+		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
+		if (readOnly && result.code === 0) resultCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+		return result;
+	} finally {
+		inFlightGit.delete(key);
+	}
+}
+
+function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
 	return new Promise((resolve) => {
 		const child = spawn('git', [...args], { cwd, windowsHide: true, env: gitEnvironment() });
+		// 只有联网命令需要放宽超时；本地查询在正常机器上远快于上限。
+		const deadline = Date.now() + (isNetworkCommand(args) ? GIT_TIMEOUT_REMOTE_MS : GIT_TIMEOUT_LOCAL_MS);
 		let stdout = '';
 		let stderr = '';
 		let settled = false;
+		const finish = (result: GitResult): void => {
+			if (settled) return;
+			settled = true;
+			liveChildren.delete(child);
+			resolve(result);
+		};
+		// 超时由看护统一触发；收尾不依赖 close，避免 kill 不掉时调用方永久挂起。
+		liveChildren.set(child, {
+			deadline,
+			label: args[0] ?? '',
+			onTimeout: () => { finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : `git ${args[0] ?? ''} 超时未结束` }); },
+		});
+		ensureWatchdog();
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
 		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
 		child.on('error', (error: Error) => {
-			if (settled) return;
-			settled = true;
-			resolve({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message });
+			finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message });
 		});
 		child.on('close', (code) => {
-			if (settled) return;
-			settled = true;
-			resolve({ code: code === null ? -1 : code, stdout, stderr });
+			finish({ code: code === null ? -1 : code, stdout, stderr });
 		});
 	});
 }
@@ -103,13 +521,14 @@ export async function gitOrThrow(args: readonly string[], cwd: string): Promise<
  * 记录格式为 `XY PATH`，重命名/复制时追加 `ORIG` 记录；`-z` 以 NUL 分隔，路径不做转义。
  *
  * @param stdout - git 的标准输出。
+ * @param limit - 最多解析的记录数；超出即截断，避免超大仓库解析出巨量条目。
  * @returns 工作区变更列表。
  */
-export function parseStatus(stdout: string): WorkingTreeEntry[] {
+export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEntry[] {
 	const fields = stdout.split('\0');
 	const entries: WorkingTreeEntry[] = [];
 	let index = 0;
-	while (index < fields.length) {
+	while (index < fields.length && entries.length < limit) {
 		const record = fields[index];
 		index++;
 		if (record === undefined || record.length < 4) break;

@@ -18,7 +18,7 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
@@ -102,7 +102,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	switch (msg.command as string) {
 		/* --- 工作区变更（DSH 版新增：变更列表 / 暂存 / 提交 / 丢弃） --- */
 		case 'loadWorkingTree':
-			await respondResult('loadWorkingTree', async () => ({ repo, entries: await loadWorkingTree(repo) }));
+			await respondResult('loadWorkingTree', async () => {
+				// 写操作（暂存/提交/检出等）未结束时先等它结束：否则会读到写了一半的工作区。
+				await whenGitIdle(repo);
+				return { repo, entries: await loadWorkingTree(repo) };
+			});
 			break;
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
@@ -158,6 +162,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			});			break;
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
+				await whenGitIdle(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 			});
@@ -165,6 +170,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
+			await whenGitIdle(repo);
 			let repoInfo = await getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
 			let isRepo = true;
 			if (repoInfo.error) {
@@ -175,6 +181,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		}
 		case 'loadCommits':
+			// 提交图同样等写操作结束：写操作可能正在改写引用。
+			await whenGitIdle(repo);
 			{
 				// 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
 				// 直接传字符串数组的调用方同样接受。
