@@ -25,6 +25,7 @@ import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
+import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -604,12 +605,6 @@ export interface AiCommitDeps {
 	getTranslator?: () => unknown;
 }
 
-/** AI 提交生成的系统提示词。 */
-const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定的 diff 内容，生成一条简洁的提交信息。'
-	+ '要求：第一行不超过 72 字符的 conventional commit 格式（如 `feat: ...`、`fix: ...`、`refactor: ...`）；'
-	+ '如果改动较复杂，空一行后附 2-5 条要点说明，每条以 `- ` 开头。'
-	+ '只输出提交信息本身，不要输出 diff、解释、markdown 代码块标记或其他内容。';
-
 /**
  * 语言提示词：告知模型用哪种语言写提交信息。
  *
@@ -621,7 +616,7 @@ const AI_COMMIT_SYSTEM_PROMPT = '你是 Git 提交信息生成器。根据给定
  */
 function languageDirective(language: string): string {
 	if (language === '') return '';
-	return `\n\n用 ${language} 书写提交信息，不要混用其他语言。`;
+	return '\n\n' + fillPrompt(AI_COMMIT_PROMPTS.language, { language });
 }
 
 /**
@@ -820,13 +815,11 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 					// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
 					const language = typeof body.language === 'string' ? body.language.trim() : '';
-					const systemPrompt = AI_COMMIT_SYSTEM_PROMPT
+					const systemPrompt = AI_COMMIT_PROMPTS.system
 						+ languageDirective(language)
 						+ (rules.length > 0 ? '\n\n' + rules : '');
 					const off = await canDisableReasoning(llm, provider, model);
-					const request = amend
-						? `请根据以下 diff 生成提交信息（这是修补上一次提交，diff 含上一次提交的改动与本次改动）：\n\n${diff}`
-						: `请根据以下 diff 生成提交信息：\n\n${diff}`;
+					const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
 					const streamOpts: Record<string, unknown> = {
 						provider,
 						model,

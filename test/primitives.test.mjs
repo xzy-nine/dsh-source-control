@@ -387,7 +387,7 @@ test('差异面板默认自动换行', () => {
 test('删除分支只列以该提交为尖端的分支', () => {
 	// 包含该提交的分支是它的后代，删除后不影响该提交：作为候选会让「删除分支」指向无关分支。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	const build = menu.slice(menu.indexOf("id: 'deleteBranch'"), menu.indexOf("id: 'checkoutRemoteBranch'"));
+	const build = menu.slice(menu.indexOf('deleteBranch: (ctx, meta) =>'), menu.indexOf('checkoutRemoteBranch: (ctx, meta) =>'));
 	assert.match(build, /ctx\.tipBranches\.filter/, '本地候选取自尖端分支');
 	assert.match(build, /ctx\.tipRemoteBranches/, '远程候选取自尖端远程分支');
 	assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
@@ -441,7 +441,7 @@ test('删除当前分支时提示而非静默失败', () => {
 	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
 	assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
 	// 删除项不再置灰，改为点击后提示。
-	const deleteItem = /title: '删除分支…', danger: true, onClick/.exec(menu);
+	const deleteItem = /return \{ title: meta\.title, danger: meta\.danger, onClick/.exec(menu);
 	assert.ok(deleteItem !== null, '未找到删除分支项');
 	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
 	// 提示走顶部轻量横幅，不再使用需要关闭的模态弹窗。
@@ -453,7 +453,14 @@ test('删除当前分支时提示而非静默失败', () => {
 test('提交菜单与引用菜单共用同一份操作注册表', () => {
 	// 两处菜单由 ACTIONS 驱动：引用菜单按 refTypes 过滤，不再各自维护一份定义。
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	assert.match(menu, /refTypes: \[/, '每项操作应声明适用的引用类型');
+	// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按 id 绑在本文件。
+	const { actions } = JSON.parse(readFileSync(join(panelDir, 'menu-actions.json'), 'utf8'));
+	assert.ok(Array.isArray(actions) && actions.length > 0, '注册表数据源应有操作');
+	for (const action of actions) {
+		assert.ok(Array.isArray(action.refTypes) && action.refTypes.length > 0, `${action.id} 应声明适用的引用类型`);
+		assert.ok(typeof action.title === 'string' && action.title !== '', `${action.id} 应有菜单名称`);
+		assert.match(menu, new RegExp(`${action.id}: \\(ctx, meta\\) =>`), `${action.id} 应有对应的处理函数`);
+	}
 	assert.match(menu, /export async function openCommitMenu/, '应导出提交菜单');
 	assert.match(menu, /export async function openRefMenu/, '应导出引用菜单');
 	assert.match(menu, /action\.refTypes\.includes\(refInfo\.type\)/, '引用菜单应按引用类型过滤');
