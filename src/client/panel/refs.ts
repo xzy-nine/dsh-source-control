@@ -30,19 +30,26 @@ export function collectRefs(commits: readonly Commit[]): RefItem[] {
 }
 
 /**
- * 计算「自动」模式应显示的分支：当前分支、它的上游，以及两者的合并基。
+ * 计算「自动」模式应显示的分支：当前分支、它的上游，以及合并基所在提交上的引用。
  *
  * 与「全部」模式的差别是只遍历当前历史，不包含无关分支。
  *
  * @param commits - 提交列表。
  * @param head - 当前分支名。
  * @param upstream - 上游远程跟踪分支名（如 origin/main）。
+ * @param baseHash - 本地与上游的合并基提交哈希；无上游时省略。
  * @returns 引用名称集合；无法确定当前分支时为空集。
  */
-export function computeAutoRefs(commits: readonly Commit[], head: string | null, upstream: string | null = null): Set<string> {
+export function computeAutoRefs(
+	commits: readonly Commit[], head: string | null, upstream: string | null = null, baseHash: string | null = null,
+): Set<string> {
 	if (head === null) return new Set();
 	const result = new Set<string>([head]);
 	if (upstream !== null) result.add(upstream);
+	// 合并基提交通常没有引用；有引用时一并纳入，与 VS Code 的 auto 遍历范围一致。
+	if (baseHash !== null) {
+		for (const ref of collectRefs(commits)) if (ref.hash === baseHash) result.add(ref.name);
+	}
 	return result;
 }
 
@@ -54,12 +61,16 @@ export function computeAutoRefs(commits: readonly Commit[], head: string | null,
  * @param refs - 引用列表。
  * @param head - 当前分支名。
  * @param upstream - 上游远程跟踪分支名。
+ * @param baseHash - 合并基提交哈希；无上游时省略。
  * @returns 排序后的新数组。
  */
-export function sortRefs(refs: readonly RefItem[], head: string | null, upstream: string | null): RefItem[] {
+export function sortRefs(
+	refs: readonly RefItem[], head: string | null, upstream: string | null, baseHash: string | null = null,
+): RefItem[] {
 	const rank = (ref: RefItem): number => {
 		if (head !== null && ref.name === head) return 1;
 		if (upstream !== null && ref.name === upstream) return 2;
+		if (baseHash !== null && ref.hash === baseHash) return 3;
 		return ref.type === 'branch' || ref.type === 'remote' ? 4 : 99;
 	};
 	return [...refs].sort((a, b) => rank(a) - rank(b));
@@ -150,8 +161,8 @@ export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: R
  */
 export function computeSyncMarkers(
 	commits: readonly Commit[], head: string | null, upstream: string | null,
-): { ahead: Set<string>; behind: Set<string>; localTip: string | null; remoteTip: string | null } {
-	const none = { ahead: new Set<string>(), behind: new Set<string>(), localTip: null, remoteTip: null };
+): { ahead: Set<string>; behind: Set<string>; baseHash: string | null; localTip: string | null; remoteTip: string | null } {
+	const none = { ahead: new Set<string>(), behind: new Set<string>(), baseHash: null, localTip: null, remoteTip: null };
 	if (head === null || upstream === null) return none;
 	const commitByHash = new Map<string, Commit>();
 	for (const commit of commits) {
@@ -187,10 +198,17 @@ export function computeSyncMarkers(
 	const behind = new Set<string>();
 	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);
 	for (const hash of remoteAncestors) if (!localAncestors.has(hash)) behind.add(hash);
+	// 合并基是两侧共同祖先里最新的那个：列表按新到旧排列，首个落在交集内的即为它。
+	let baseHash: string | null = null;
+	for (const commit of commits) {
+		if (commit.hash === '*') continue;
+		if (localAncestors.has(commit.hash) && remoteAncestors.has(commit.hash)) { baseHash = commit.hash; break; }
+	}
 	// 指示节点只在实际领先/落后时出现：本地领先标 HEAD，云端领先标上游尖端。
 	return {
 		ahead,
 		behind,
+		baseHash,
 		localTip: ahead.size > 0 ? localHash : null,
 		remoteTip: behind.size > 0 ? remoteHash : null,
 	};

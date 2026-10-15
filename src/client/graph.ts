@@ -561,12 +561,12 @@ function DetailGutter({ row }) {
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
-	localTip, remoteTip, upstream,
+	localTip, remoteTip, baseTip, upstream,
 	markdown, showAvatars, muteMergeCommits, graphColours,
 }) {
 	const layout = React.useMemo(
-		() => layoutCommits(commits, { head, upstream, localTip, remoteTip }),
-		[commits, head, upstream, localTip, remoteTip],
+		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
+		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
 	const graphRef = React.useRef(null);
 	/** 一次加载完成前不重复请求下一页。 */

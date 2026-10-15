@@ -1268,10 +1268,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	// 按模式派生实际勾选集：自动与全部每次都按规则重算，不固化首次进入时的结果。
 	const filterSelected = React.useMemo(() => {
-		if (filterState.mode === 'auto') return computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null);
+		if (filterState.mode === 'auto') {
+			return computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null, syncMarkers.baseHash);
+		}
 		if (filterState.mode === 'all') return new Set(allRefs.map((ref) => ref.name));
 		return filterState.selected;
-	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream]);
+	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream, syncMarkers.baseHash]);
 
 	// 标题栏按钮文案即当前模式：模式名，或选中的分支/标签名。只看模式，不按勾选内容反推。
 	const filterSummary = React.useMemo(() => {
@@ -1296,7 +1298,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
-			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null),
+			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
 			selected: filterSelected, search: filterSearch,
 			onSearch: setFilterSearch,
 			// 手动勾选一处即离开规则模式，此后由勾选决定。
@@ -1358,7 +1360,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
 			commits: filterCommitsByRefs(state.commits, filterSelected),
 			head: state.head, selectedHash: state.selectedHash,
-			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip,
+			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
 			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
