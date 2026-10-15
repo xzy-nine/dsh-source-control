@@ -11,7 +11,7 @@ import {
 import { copyText, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
 import { showConfirmation } from '../dialog.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
-import type { CommitFile, WorkingTreeEntry } from '../types.ts';
+import type { BusyScope, CommitFile, WorkingTreeEntry } from '../types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
@@ -269,7 +269,7 @@ export interface ChangeGroupProps {
 	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
-	readonly run: (operation: () => Promise<void>) => Promise<void>;
+	readonly run: (scope: BusyScope, operation: () => Promise<void>) => Promise<void>;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
@@ -298,8 +298,8 @@ export function ChangeGroup({
 	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
-	const onStage = (paths: readonly string[]): void => { void run(async () => { await stagePaths(workingTreePath, paths); }); };
-	const onUnstage = (paths: readonly string[]): void => { void run(async () => { await unstagePaths(workingTreePath, paths); }); };
+	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }); };
+	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }); };
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
 		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
 		void (async () => {
@@ -316,7 +316,7 @@ export function ChangeGroup({
 				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
 			});
 			if (!ok) return;
-			await run(async () => { await discardPaths(workingTreePath, paths, untracked); });
+			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); });
 		})();
 	};
 	/**
@@ -337,7 +337,7 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
-			await run(async () => {
+			await run('commit', async () => {
 				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
 				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
 			});

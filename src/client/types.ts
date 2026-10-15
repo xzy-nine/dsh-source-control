@@ -170,6 +170,30 @@ export interface RefInfo {
 /** 面板加载阶段。 */
 export type PanelPhase = 'loading' | 'ready' | 'no-workspace';
 
+/**
+ * 忙碌范围：按操作的影响面分级。
+ *
+ * - read：只读取或导出仓库数据、不改动仓库的操作（提交图、工作区、差异内容、归档导出）。
+ * - commit：工作区与暂存区的写入（暂存、取消暂存、丢弃、忽略规则、贮藏、提交）。
+ * - history：分支、标签、远程配置与历史改写（检出、合并、变基、重置、远程增删改）。
+ * - network：与远端或 gh 的往返（抓取、推送、拉取、发布、创建 Pull Request）。
+ */
+export type BusyScope = 'read' | 'commit' | 'history' | 'network';
+
+/** 一条进行中的操作：目标仓库路径与影响面。 */
+export interface BusyEntry {
+	readonly repo: string;
+	readonly scope: BusyScope;
+}
+
+/** 某个仓库四个影响面各自的忙碌标志；供分区按控件用途取用。 */
+export interface BusyFlags {
+	readonly read: boolean;
+	readonly commit: boolean;
+	readonly history: boolean;
+	readonly network: boolean;
+}
+
 /** 面板状态。 */
 export interface PanelState {
 	phase: PanelPhase;
@@ -186,7 +210,8 @@ export interface PanelState {
 	 * `loading` 为 true 表示文件列表仍在读取；空提交读取完成后为 false 且 files 为空。
 	 */
 	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
-	busy: boolean;
+	/** 进行中的操作；不同仓库、不同影响面之间互不阻塞。 */
+	busy: readonly BusyEntry[];
 	remotes: Remote[];
 }
 

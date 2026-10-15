@@ -6,6 +6,8 @@
  */
 import React from 'react';
 import { AUTO_REFRESH_COOLDOWN_MS, hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
+import { isRepoBusy } from './busy.ts';
+import type { BusyEntry } from '../types.ts';
 
 /** 事件窗口保留的事件数：一次写入的结果可能晚于调用到达。 */
 const EVENT_WINDOW = 400;
@@ -53,8 +55,8 @@ export interface UseFileChangeRefreshOptions {
 	readonly cwd: string | null;
 	/** 是否启用；关闭时不订阅。 */
 	readonly enabled: boolean;
-	/** 面板忙碌标志；忙时挂起刷新。 */
-	readonly busyRef: React.MutableRefObject<boolean>;
+	/** 进行中的操作记录；目标仓库忙时挂起刷新。 */
+	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 重载选中仓库的提交图与工作区。 */
 	readonly refresh: () => Promise<void>;
 }
@@ -89,7 +91,7 @@ export function useFileChangeRefresh({
 		/** 重载一次；面板忙时挂起到空闲。 */
 		const runRefresh = (): void => {
 			if (disposed) return;
-			if (busyRef.current) {
+			if (isRepoBusy(busyRef.current, targetRef.current.path)) {
 				if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, BUSY_RETRY_MS);
 				return;
 			}

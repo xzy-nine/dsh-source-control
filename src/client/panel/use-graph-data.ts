@@ -8,7 +8,8 @@ import React from 'react';
 import { loadGraph, loadRepoSync, loadWorkingTree } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh } from './change-events.ts';
-import type { PanelState, RepoSync, Settings, WorkingTreeEntry } from '../types.ts';
+import { isRepoBusy } from './busy.ts';
+import type { BusyEntry, PanelState, RepoSync, Settings, WorkingTreeEntry } from '../types.ts';
 
 /**
  * 工作区变更的签名：路径与状态码逐条拼接，用于兜底轮询比对。
@@ -44,8 +45,8 @@ export interface UseGraphDataResult {
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 重新加载选中仓库的提交图与工作区。 */
 	readonly refresh: () => Promise<void>;
-	/** 面板忙碌标志；自动刷新据此挂起。 */
-	readonly busyRef: React.MutableRefObject<boolean>;
+	/** 进行中的操作记录；后台刷新据此判断目标仓库是否繁忙。 */
+	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 }
 
 /**
@@ -59,11 +60,11 @@ export function useGraphData({
 }: UseGraphDataOptions): UseGraphDataResult {
 	const [state, setState] = React.useState<PanelState>({
 		phase: 'loading', error: null, commits: [], head: null, more: false,
-		entries: [], selectedHash: null, detail: null, busy: false, remotes: [],
+		entries: [], selectedHash: null, detail: null, busy: [], remotes: [],
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
-	const busyRef = React.useRef(false);
+	const busyRef = React.useRef<readonly BusyEntry[]>([]);
 
 	/** 重新加载选中仓库的提交图与工作区。 */
 	const refresh = React.useCallback(async () => {
@@ -129,7 +130,7 @@ export function useGraphData({
 		let lastSeen = '';
 		let seenCount = 0;
 		const intervalId = window.setInterval(() => {
-			if (cancelled || polling || document.visibilityState !== 'visible' || busyRef.current) return;
+			if (cancelled || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
 			polling = true;
 			void (async () => {
 				try {

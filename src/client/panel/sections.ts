@@ -14,8 +14,9 @@ import { PublishIcon, RepoIcon, TranslateIcon } from '../ref-icons.ts';
 import { GitGraphIcon } from '../plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
 import { RepoRow } from './repo-row.ts';
+import { anyBusy } from './busy.ts';
 import type {
-	AiStats, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
+	AiStats, BusyFlags, BusyScope, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../types.ts';
 import css from '../css/sections.module.css';
 import shared from '../css/shared.module.css';
@@ -30,7 +31,7 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 export interface RepoSectionProps {
 	readonly open: boolean;
 	readonly height: number;
-	readonly busy: boolean;
+	readonly busy: BusyFlags;
 	readonly treeStatus: 'loading' | 'ready' | 'empty' | 'error';
 	readonly treeNote: string | null;
 	readonly visibleRows: ReadonlyArray<{ node: RepoNode; depth: number }>;
@@ -74,11 +75,12 @@ export function RepoSection({
 			React.createElement('span', { className: css.headActions },
 				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy || cloneBusy,
+					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy.network || cloneBusy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onClone(); },
 				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				// 设置是本地入口，不随仓库操作禁用。
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '设置', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '设置',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },
 				}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
 			),
@@ -112,7 +114,7 @@ export function RepoSection({
 /** 更改分区。 */
 export interface ChangesSectionProps {
 	readonly entries: readonly WorkingTreeEntry[];
-	readonly busy: boolean;
+	readonly busy: BusyFlags;
 	readonly phase: PanelPhase;
 	readonly workingTreePath: string | null;
 	readonly head: string | null;
@@ -144,7 +146,7 @@ export interface ChangesSectionProps {
 	readonly groupExpanded: { staged: boolean; unstaged: boolean };
 	readonly toggleChange: (key: string, path: string) => void;
 	readonly toggleGroup: (key: string) => void;
-	readonly run: (operation: () => Promise<void>) => Promise<void>;
+	readonly run: (scope: BusyScope, operation: () => Promise<void>) => Promise<void>;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
@@ -184,7 +186,7 @@ export function ChangesSection({
 			'更改',
 			React.createElement('span', { className: css.headActions },
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy.read,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
 				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 			),
@@ -196,7 +198,7 @@ export function ChangesSection({
 			React.createElement(
 				'div',
 				{ className: css.commitBox },
-				(aiBusy || busy || phase === 'loading') && React.createElement('div', { className: css.aiLoadingBar }),
+				(aiBusy || anyBusy(busy) || phase === 'loading') && React.createElement('div', { className: css.aiLoadingBar }),
 				React.createElement('div', { className: css.commitInputWrap },
 					React.createElement('textarea', {
 						className: css.commitInput,
@@ -214,7 +216,7 @@ export function ChangesSection({
 					React.createElement('div', { className: css.commitInputActions },
 						React.createElement('button', {
 							type: 'button', className: cx(css.commitInputBtn, aiBusy && css.isBusy), title: 'AI 辅助提交',
-							disabled: aiBusy || busy,
+							disabled: aiBusy || busy.commit,
 							onClick: onAiCommit,
 						}, React.createElement(IconSparkleRegular, { size: 14 })),
 						React.createElement('button', {
@@ -236,7 +238,7 @@ export function ChangesSection({
 					React.createElement('span', { className: css.commitActionsRight },
 						// 本地排除有内容时给出打开入口：图标取 .gitignore 的文件图标。
 						hasLocalExclude && React.createElement(Button, {
-							variant: 'ghost', size: 'sm', disabled: busy,
+							variant: 'ghost', size: 'sm',
 							className: css.stashBtn, onClick: onShowLocalExclude,
 							title: '打开本地排除文件', 'aria-label': '本地排除',
 						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 })),
@@ -247,14 +249,14 @@ export function ChangesSection({
 							title: '把提交信息翻译为当前语言', 'aria-label': '翻译',
 						}, React.createElement(TranslateIcon)),
 						React.createElement(Button, {
-							variant: 'ghost', size: 'sm', disabled: busy || entries.length === 0,
+							variant: 'ghost', size: 'sm', disabled: busy.commit || entries.length === 0,
 							className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
 						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
 					),
 				),
 				showSyncButton
 					? React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: busy,
+						variant: 'primary', size: 'sm', disabled: busy.network || busy.history,
 						onClick: onSync,
 					}, '同步更改',
 						syncBehind > 0 && React.createElement('span', null, ` ↓${syncBehind}`),
@@ -262,12 +264,12 @@ export function ChangesSection({
 					)
 					: showPublishButton
 						? React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy,
+							variant: 'primary', size: 'sm', disabled: busy.network,
 							title: '把当前分支推送到远程并建立跟踪',
 							onClick: onPublish,
 						}, React.createElement(PublishIcon), '发布')
 						: React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy || message.trim() === '' || stagedPaths.length === 0,
+							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || stagedPaths.length === 0,
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),
@@ -276,13 +278,13 @@ export function ChangesSection({
 				'div',
 				{ className: css.changesScroll },
 				ChangeGroup({
-					staged: true, entries, busy, workingTreePath: workingTreePath as string,
+					staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
 				}),
 				ChangeGroup({
-					staged: false, entries, busy, workingTreePath: workingTreePath as string,
+					staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
@@ -297,7 +299,7 @@ export function ChangesSection({
 export interface GraphSectionProps {
 	readonly open: boolean;
 	readonly height: number;
-	readonly busy: boolean;
+	readonly busy: BusyFlags;
 	readonly phase: PanelPhase;
 	readonly commitCount: number;
 	readonly selectedNode: RepoNode | null;
@@ -381,11 +383,11 @@ export function GraphSection({
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },
 				}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy.network,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
 				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
 				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy,
+					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy.read,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
 				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 			),
@@ -431,7 +433,7 @@ export function GraphSection({
 									`按住 ${COMPARE_MODIFIER} 点击另一个提交可对比两者`),
 							React.createElement(CommitDetail, {
 								files: detail.files,
-								busy,
+								busy: busy.read,
 								loading: detail.loading,
 								collapsed: detailCollapsed,
 								onToggle: (path: string) => onToggleChange('detail', path),

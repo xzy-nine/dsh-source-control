@@ -35,7 +35,7 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
                     设置面板、图标、类型
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出
-  src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
+  src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、忙碌分级、各目标右键菜单与 hooks
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
@@ -101,7 +101,23 @@ Office）主动不认领，那些仍走宿主预览。
 `use-file-change-refresh.ts` 订阅事件源：窗口没聚焦、面板正忙时挂起，连续变更按冷却节流。
 `use-auto-fetch.ts` 是唯一的定时网络操作，按「聚焦 + 空闲」门控。`use-cache-cleanup.ts` 丢弃过期的
 悬停统计与完整提交信息缓存。以上 hook 与 `use-graph-data.ts` 的兜底轮询都从该 hook 暴露的
-`busyRef` 读忙碌标志。
+`busyRef` 读进行中的操作记录，只有**目标仓库**在忙时才挂起。
+
+## 忙碌状态
+
+进行中的操作按「仓库路径 + 影响面」记录在面板状态里（形状见 `types.ts` 的 `BusyEntry`，判据在
+`panel/busy.ts`，可直接单测）。影响面四档，互不阻塞：
+
+| 影响面 | 覆盖 | 禁用的控件 |
+|---|---|---|
+| `read` | 只读或只导出、不改动仓库的操作：提交图、工作区、差异内容、归档导出 | 目标仓库的刷新入口 |
+| `commit` | 暂存、取消暂存、丢弃、忽略规则、贮藏、提交 | 更改区与提交框 |
+| `history` | 检出、合并、变基、重置、拣选、分支/标签/远程配置 | 图形区与仓库行的操作 |
+| `network` | 抓取、推送、拉取、发布、创建 Pull Request、gh 查询 | 目标仓库的抓取/推送/发布/同步 |
+
+同一仓库的同类操作可并存多份记录，逐个移除；仓库行右键菜单按该行仓库判定，别的仓库在忙不影响它。
+打开文件、打开设置这类只读入口不因任何影响面禁用。宿主侧不串行化命令：每条请求独立执行，面板的
+阻塞只来自上述控件禁用。
 
 ## 状态持久化的三级
 
@@ -160,6 +176,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
+| `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |

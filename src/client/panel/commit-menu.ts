@@ -16,7 +16,7 @@ import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '.
 import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
-import type { Commit, Remote } from '../types.ts';
+import type { BusyScope, Commit, Remote } from '../types.ts';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 /** 引用菜单识别出的目标。 */
 export interface RefMenuTarget {
@@ -32,8 +32,8 @@ export interface RefMenuTarget {
 export interface GraphMenuDeps {
 	/** 当前工作树路径。 */
 	readonly workingTreePath: string | null;
-	/** 执行一次工作区操作并刷新。 */
-	readonly run: (operation: () => Promise<void>) => Promise<void>;
+	/** 执行一次仓库操作并刷新；菜单里的操作都属于 history 影响面。 */
+	readonly run: (scope: BusyScope, operation: () => Promise<void>) => Promise<void>;
 	/** 远端列表。 */
 	readonly remotes: readonly Remote[];
 	/** 创建归档。 */
@@ -148,7 +148,7 @@ const ACTIONS: readonly MenuAction[] = [
 				const name = ctx.ref.name;
 				return {
 					title: '检出此分支', disabled: name === deps.head,
-					onClick: () => { void deps.run(async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
+					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
 				};
 			}
 			/*
@@ -164,11 +164,11 @@ const ACTIONS: readonly MenuAction[] = [
 					...ctx.tipBranches.map((name) => ({
 						title: name === deps.head ? `${name}（当前）` : name,
 						disabled: name === deps.head,
-						onClick: () => { void deps.run(async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
+						onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
 					})),
 					...remoteTips.map((name) => ({
 						title: `${name}（远程）`,
-						onClick: () => { void deps.run(async () => { throwIfError(await checkoutBranch(ctx.repo, shortBranchName(name), null), checkoutFailureText); }); },
+						onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, shortBranchName(name), null), checkoutFailureText); }); },
 					})),
 				],
 			};
@@ -184,7 +184,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '从此分支创建新分支…',
 				onClick: async () => {
 					const newName = await showText({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' });
-					if (newName !== null && newName !== '') void ctx.deps.run(async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
+					if (newName !== null && newName !== '') void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
 				},
 			};
 		},
@@ -199,7 +199,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '重命名分支…', disabled: name === ctx.deps.head,
 				onClick: async () => {
 					const newName = await showText({ title: '重命名分支', label: '新分支名', value: name });
-					if (newName !== null && newName !== '' && newName !== name) void ctx.deps.run(async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
+					if (newName !== null && newName !== '' && newName !== name) void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
 				},
 			};
 		},
@@ -219,7 +219,7 @@ const ACTIONS: readonly MenuAction[] = [
 				if (!ok) return;
 				// 冲突提示放在刷新之后：run 内部先刷新面板，提示框不应挡住刷新。
 				let conflicted = false;
-				await deps.run(async () => {
+				await deps.run('history', async () => {
 					const result = await mergeIntoBranch(ctx.repo, name, ctx.commit.hash);
 					if (result.error !== null) throw new Error(result.error);
 					if (result.mergeMessage !== null) deps.setCommitMessage(result.mergeMessage);
@@ -253,7 +253,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '变基当前分支到此处…', disabled: ctx.isUncommitted,
 				onClick: async () => {
 					const ok = await showConfirmation({ title: '变基', message: `把当前分支变基到 ${label}？`, confirmLabel: '变基', danger: true });
-					if (ok) void ctx.deps.run(async () => { throwIfError(await rebase(ctx.repo, obj)); });
+					if (ok) void ctx.deps.run('history', async () => { throwIfError(await rebase(ctx.repo, obj)); });
 				},
 			};
 		},
@@ -304,7 +304,7 @@ const ACTIONS: readonly MenuAction[] = [
 					title: '删除本地分支', message: `确定删除本地分支 ${name}？`,
 					checkboxLabel: '同时强制删除未合并分支', danger: true,
 				});
-				if (ok) void deps.run(async () => { throwIfError(await deleteBranch(ctx.repo, name, true)); });
+				if (ok) void deps.run('history', async () => { throwIfError(await deleteBranch(ctx.repo, name, true)); });
 			};
 			const removeRemote = (name: string) => async (): Promise<void> => {
 				const remote = remoteNameOfBranch(name);
@@ -313,7 +313,7 @@ const ACTIONS: readonly MenuAction[] = [
 					title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
 					checkboxLabel: '我已知晓并继续', danger: true,
 				});
-				if (ok) void deps.run(async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); });
+				if (ok) void deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); });
 			};
 			if (ctx.ref !== null) {
 				return { title: '删除分支…', danger: true, onClick: remove(ctx.ref.name) };
@@ -346,7 +346,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '检出远程分支…',
 				onClick: async () => {
 					const localName = await showText({ title: '检出远程分支', label: '本地分支名', value: short, placeholder: 'feature/xxx' });
-					if (localName !== null && localName !== '') void ctx.deps.run(async () => { throwIfError(await checkoutBranch(ctx.repo, localName, name), checkoutFailureText); });
+					if (localName !== null && localName !== '') void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localName, name), checkoutFailureText); });
 				},
 			};
 		},
@@ -363,7 +363,7 @@ const ACTIONS: readonly MenuAction[] = [
 				onClick: async () => {
 					const localName = await showText({ title: '创建本地分支', label: '本地分支名', value: short });
 					if (localName !== null && localName !== '') {
-						void ctx.deps.run(async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, ctx.ref!.remote ?? '', short, localName, false)); });
+						void ctx.deps.run('history', async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, ctx.ref!.remote ?? '', short, localName, false)); });
 					}
 				},
 			};
@@ -379,7 +379,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '合并到当前分支…',
 				onClick: async () => {
 					const ok = await showConfirmation({ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true });
-					if (ok) void ctx.deps.run(async () => { throwIfError(await merge(ctx.repo, name), checkoutFailureText); });
+					if (ok) void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, name), checkoutFailureText); });
 				},
 			};
 		},
@@ -398,7 +398,7 @@ const ACTIONS: readonly MenuAction[] = [
 						title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
 						checkboxLabel: '我已知晓并继续', danger: true,
 					});
-					if (ok) void ctx.deps.run(async () => { throwIfError(await deleteRemoteBranch(ctx.repo, short, ctx.ref!.remote ?? '')); });
+					if (ok) void ctx.deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, short, ctx.ref!.remote ?? '')); });
 				},
 			};
 		},
@@ -419,7 +419,7 @@ const ACTIONS: readonly MenuAction[] = [
 			if (targets.length === 0) return null;
 			return tagItem(targets, '检出标签', () => ({
 				title: '检出此标签',
-				onClick: () => { void ctx.deps.run(async () => { throwIfError(await checkoutCommit(ctx.repo, ctx.commit.hash), checkoutFailureText); }); },
+				onClick: () => { void ctx.deps.run('history', async () => { throwIfError(await checkoutCommit(ctx.repo, ctx.commit.hash), checkoutFailureText); }); },
 			}));
 		},
 	},
@@ -434,7 +434,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '从此标签创建分支…',
 				onClick: async () => {
 					const newName = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
-					if (newName !== null && newName !== '') void ctx.deps.run(async () => { throwIfError(await createBranch(ctx.repo, newName, ctx.commit.hash, true)); });
+					if (newName !== null && newName !== '') void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, ctx.commit.hash, true)); });
 				},
 			}));
 		},
@@ -455,7 +455,7 @@ const ACTIONS: readonly MenuAction[] = [
 					const remote = remotes.length === 1 ? remotes[0].name : await showSelect({
 						title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })),
 					});
-					if (remote !== null && remote !== '') void ctx.deps.run(async () => { throwIfError(await pushTag(ctx.repo, tagName, [remote], ctx.commit.hash, false)); });
+					if (remote !== null && remote !== '') void ctx.deps.run('history', async () => { throwIfError(await pushTag(ctx.repo, tagName, [remote], ctx.commit.hash, false)); });
 				},
 			}));
 		},
@@ -501,7 +501,7 @@ const ACTIONS: readonly MenuAction[] = [
 						title: '删除标签', message: `确定删除标签 ${tagName}？`,
 						checkboxLabel: '同时删除远程标签', danger: true,
 					});
-					if (ok) void ctx.deps.run(async () => { throwIfError(await deleteTag(ctx.repo, tagName, remotes.length > 0 ? remotes[0].name : null)); });
+					if (ok) void ctx.deps.run('history', async () => { throwIfError(await deleteTag(ctx.repo, tagName, remotes.length > 0 ? remotes[0].name : null)); });
 				},
 			}));
 		},
@@ -511,14 +511,14 @@ const ACTIONS: readonly MenuAction[] = [
 		refTypes: ['stash'],
 		build: (ctx) => (ctx.ref === null
 			? null
-			: { title: '应用贮藏', onClick: () => { void ctx.deps.run(async () => { throwIfError(await applyStash(ctx.repo, ctx.ref!.name, false)); }); } }),
+			: { title: '应用贮藏', onClick: () => { void ctx.deps.run('history', async () => { throwIfError(await applyStash(ctx.repo, ctx.ref!.name, false)); }); } }),
 	},
 	{
 		id: 'popStash',
 		refTypes: ['stash'],
 		build: (ctx) => (ctx.ref === null
 			? null
-			: { title: '弹出贮藏', onClick: () => { void ctx.deps.run(async () => { throwIfError(await popStash(ctx.repo, ctx.ref!.name, false)); }); } }),
+			: { title: '弹出贮藏', onClick: () => { void ctx.deps.run('history', async () => { throwIfError(await popStash(ctx.repo, ctx.ref!.name, false)); }); } }),
 	},
 	{
 		id: 'branchFromStash',
@@ -530,7 +530,7 @@ const ACTIONS: readonly MenuAction[] = [
 				title: '从贮藏创建分支…',
 				onClick: async () => {
 					const newName = await showText({ title: '从贮藏创建分支', label: '新分支名', placeholder: 'feature/xxx' });
-					if (newName !== null && newName !== '') void ctx.deps.run(async () => { throwIfError(await branchFromStash(ctx.repo, selector, newName)); });
+					if (newName !== null && newName !== '') void ctx.deps.run('history', async () => { throwIfError(await branchFromStash(ctx.repo, selector, newName)); });
 				},
 			};
 		},
@@ -548,7 +548,7 @@ const ACTIONS: readonly MenuAction[] = [
 						title: '丢弃贮藏', message: `确定丢弃贮藏 ${selector}？`,
 						checkboxLabel: '我已知晓并继续', danger: true,
 					});
-					if (ok) void ctx.deps.run(async () => { throwIfError(await dropStash(ctx.repo, selector)); });
+					if (ok) void ctx.deps.run('history', async () => { throwIfError(await dropStash(ctx.repo, selector)); });
 				},
 			};
 		},
@@ -639,11 +639,11 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	// 首项隐藏时不留一条悬空的分隔线在菜单顶部。
 	items.push({ type: 'divider', visible: githubUrl !== null });
 	push(items, byId('checkoutBranch'));
-	push(items, { title: '签出（已分离）', disabled: isUncommitted, onClick: () => { void deps.run(async () => { throwIfError(await checkoutCommit(ctx.repo, commit.hash), checkoutFailureText); }); } });
+	push(items, { title: '签出（已分离）', disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutCommit(ctx.repo, commit.hash), checkoutFailureText); }); } });
 	items.push({ type: 'divider' });
 	push(items, { title: '创建分支…', disabled: isUncommitted, onClick: async () => {
 		const name = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
-		if (name !== null && name !== '') void deps.run(async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); });
+		if (name !== null && name !== '') void deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); });
 	} });
 	push(items, byId('deleteBranch'));
 	// PR 是分支级操作，作用于当前分支而非选中的提交；条件不满足时该项自身返回 null。
@@ -654,25 +654,25 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		items.push({ type: 'divider' });
 		push(items, { title: '创建标签…', onClick: async () => {
 			const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
-			if (name !== null && name !== '') void deps.run(async () => { throwIfError(await addTag(ctx.repo, name, commit.hash, 0, '', false, null)); });
+			if (name !== null && name !== '') void deps.run('history', async () => { throwIfError(await addTag(ctx.repo, name, commit.hash, 0, '', false, null)); });
 		} });
 		for (const item of tagItems) items.push(item);
 	}
 	items.push({ type: 'divider' });
-	push(items, { title: '挑拣此提交…', hint: '将此提交挑拣到当前分支', disabled: isUncommitted, onClick: () => { void deps.run(async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
-	push(items, { title: '重置此提交…', hint: '将此提交效果重置并创建重置提交', disabled: isUncommitted, onClick: () => { void deps.run(async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
+	push(items, { title: '挑拣此提交…', hint: '将此提交挑拣到当前分支', disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
+	push(items, { title: '重置此提交…', hint: '将此提交效果重置并创建重置提交', disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
 	items.push({ type: 'divider' });
 	// 重置只对当前分支可达的提交有意义：重置到其他分支的提交会改写当前分支。
 	push(items, ctx.onCurrentBranch ? { title: '重置当前分支到此处', danger: true, disabled: isUncommitted, children: [
-		{ title: '暂存其他改动', hint: '软重置：保留改动并已暂存', onClick: () => { void deps.run(async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
-		{ title: '不暂存其他改动', hint: '混合重置：保留改动但不暂存', onClick: () => { void deps.run(async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'mixed')); }); } },
+		{ title: '暂存其他改动', hint: '软重置：保留改动并已暂存', onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
+		{ title: '不暂存其他改动', hint: '混合重置：保留改动但不暂存', onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'mixed')); }); } },
 		{ title: '丢弃其他改动', hint: '硬重置：丢弃工作区与暂存区的改动', danger: true, onClick: async () => {
 			const ok = await showCheckbox({
 				title: '重置当前分支',
 				message: `当前分支将重置到 ${commit.hash.slice(0, 7)}（硬重置）。未提交的改动会丢失。`,
 				checkboxLabel: '我已知晓并继续', danger: true,
 			});
-			if (ok) void deps.run(async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'hard')); });
+			if (ok) void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'hard')); });
 		} },
 	] } : null);
 	push(items, byId('rebaseOnto'));

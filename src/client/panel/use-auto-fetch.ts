@@ -6,6 +6,8 @@
  */
 import React from 'react';
 import { AUTO_REFRESH_COOLDOWN_MS, autoFetchPeriodMs } from './change-events.ts';
+import { isRepoBusy } from './busy.ts';
+import type { BusyEntry } from '../types.ts';
 
 /** 等待聚焦/空闲的复核节拍（毫秒）。 */
 const GATE_RETRY_MS = 1000;
@@ -18,8 +20,8 @@ export interface UseAutoFetchOptions {
 	readonly enabled: boolean;
 	/** 抓取间隔（秒）。 */
 	readonly periodSeconds: number;
-	/** 面板忙碌标志；忙时等待。 */
-	readonly busyRef: React.MutableRefObject<boolean>;
+	/** 进行中的操作记录；目标仓库忙时等待。 */
+	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 执行一次抓取。 */
 	readonly fetch: (path: string) => Promise<void>;
 }
@@ -52,7 +54,7 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 
 		/** 等到窗口聚焦且面板空闲。 */
 		const whenIdleAndFocused = async (): Promise<void> => {
-			while (!cancelled && !(focused() && !busyRef.current)) await sleep(GATE_RETRY_MS);
+			while (!cancelled && !(focused() && !isRepoBusy(busyRef.current, workingTreePath))) await sleep(GATE_RETRY_MS);
 		};
 
 		void (async () => {
