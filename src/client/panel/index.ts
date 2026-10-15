@@ -29,7 +29,7 @@ import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { loadValue, primeStorage, saveValue, storageReady } from './storage.ts';
+import { loadValue, primeStorage, saveValue } from './storage.ts';
 import { primeRepoLocations } from './repo-locations.ts';
 import { migrateLegacyState } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
@@ -153,22 +153,27 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadValue('dsh-source-control-graph-height', 320));
 	// 存储库区高度（像素）；跨会话持久化，默认 200。
 	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
-	/**
+	/*
 	 * 宿主状态预取。
 	 *
-	 * 持久化统一落在宿主，本组件挂载时先取回一次到内存缓存；取回前各 useState 拿到的是回退值，
-	 * 因此完成后再触发一次渲染让它们按真实值重算。
+	 * 预取是异步的，而上面这些 useState 的初始值在挂载时同步取过；那时缓存还空着，拿到的是回退值，
+	 * 且 useState 的初始值不会随预取完成自动重算 —— 不显式回填，每次进入都会显示默认值（表现为
+	 * 「设置每次都被重置」）。预取完成后因此把这几项按真实值重新写入。
 	 */
-	const [, bumpStorage] = React.useState(0);
 	React.useEffect(() => {
-		if (cwd === undefined || cwd === null || storageReady()) return undefined;
+		if (cwd === undefined || cwd === null) return undefined;
 		let cancelled = false;
 		void (async () => {
 			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
 			await primeRepoLocations(cwd);
-			if (!cancelled) bumpStorage((previous) => previous + 1);
+			if (cancelled) return;
+			setSettings(loadSettings());
+			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));
+			setGraphSecOpen(loadValue('dsh-source-control-graph-open', true));
+			setGraphHeight(loadValue('dsh-source-control-graph-height', 320));
+			setRepoHeight(loadValue('dsh-source-control-repo-height', 200));
 		})();
 		return () => { cancelled = true; };
 	}, [cwd]);
@@ -339,16 +344,31 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
-	// 会话级：按仓库/子模块/工作树路径存草稿，刷新保留、关闭标签页清除。
+  /*
+	 * 按仓库/子模块/工作树路径存提交信息草稿。
+	 *
+	 * 写入必须等草稿读完：message 初始为空串，若在预取完成前就写入，会把宿主里的草稿覆盖成空；
+	 * 而读取又发生在预取完成之前，于是草稿每次都丢。readDone 标记读完这一刻，之后才允许写。
+	 */
+	const [draftReadDone, setDraftReadDone] = React.useState(false);
 	React.useEffect(() => {
-		if (workingTreePath === null) return;
-		const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
-		if (saved !== null) setMessage(saved);
+		if (workingTreePath === null) { setDraftReadDone(false); return; }
+		let cancelled = false;
+		setDraftReadDone(false);
+		void (async () => {
+			// 等预取完成，否则读到的是空缓存。
+			await primeStorage(workingTreePath);
+			if (cancelled) return;
+			const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
+			if (saved !== null) setMessage(saved);
+			setDraftReadDone(true);
+		})();
+		return () => { cancelled = true; };
 	}, [workingTreePath]);
 	React.useEffect(() => {
-		if (workingTreePath === null || aiBusy) return;
+		if (workingTreePath === null || aiBusy || !draftReadDone) return;
 		saveValue('ggg-commit-msg:' + workingTreePath, message);
-	}, [workingTreePath, message, aiBusy]);
+	}, [workingTreePath, message, aiBusy, draftReadDone]);
 
 	/**
 	 * 选中一个仓库节点并重置面板状态。
