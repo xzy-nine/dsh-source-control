@@ -6,6 +6,8 @@ DSH 插件：在 DSH Web GUI 内置右侧 Sidebar 中以「源代码管理」页
 
 [English](README.en.md)
 
+![源代码管理页：存储库、更改与提交图](.github/assets/panel-overview.jpeg)
+
 ## 功能
 
 - **提交图**：泳道图显示提交与引用标记，分页自动加载，悬停出卡片，点击就地展开改动文件，右键完成检出、
