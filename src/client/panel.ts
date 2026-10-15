@@ -13,7 +13,7 @@ import {
 	localExcludeState, loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
 	translateText, unstagePaths,
-} from './api.ts';
+} from './api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from './context-menu.ts';
 import { cloneTerminalCommand } from './clone-command.ts';
 import { checkoutFailureText } from './panel/git-messages.ts';
@@ -36,7 +36,7 @@ import { useGraphData } from './panel/use-graph-data.ts';
 import { useRepos } from './panel/use-repos.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import type { AiStats, Commit, CommitFile, RefInfo, Settings } from './types.ts';
-import type { LocalExcludeState, IgnoreWriteResult } from './api.ts';
+import type { LocalExcludeState, IgnoreWriteResult } from './api/index.ts';
 import css from './css/panel.module.css';
 import shared from './css/shared.module.css';
 import { MENU_TARGET_CLASS } from './css/state-classes.ts';

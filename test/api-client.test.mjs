@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { callApi, callApiRaw, pushUpstream, resetToCommit } from '../src/client/api.ts';
+import { callApi, callApiRaw, pushUpstream, resetToCommit } from '../src/client/api/index.ts';
 
 /**
  * 以给定的响应替换全局 fetch 跑一次调用。

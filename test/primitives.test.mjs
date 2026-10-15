@@ -344,7 +344,7 @@ test('浮窗显示完整提交信息', () => {
 	// 列表的 message 来自 `%s`（只有标题），完整正文按需取回后传给卡片。
 	const graphSource = readFileSync(join(clientDir, 'graph.ts'), 'utf8');
 	assert.match(graphSource, /const fullMessage = typeof message === 'string'/, '卡片优先使用完整提交信息');
-	const apiSource = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	const apiSource = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(apiSource, /export async function loadCommitMessage/, '应有取完整信息的函数');
 	assert.match(apiSource, /details\.body/, '应取 commitDetails 的 body');
 	const hookSource = readFileSync(join(panelDir, 'use-commit-stats.ts'), 'utf8');
@@ -394,7 +394,7 @@ test('删除分支只列以该提交为尖端的分支', () => {
 	// 远程分支名自带远程名前缀，不再另加后缀。
 	assert.ok(!/（远程）/.test(build), '远程分支不另加后缀');
 
-	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	const api = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
@@ -428,7 +428,7 @@ test('工作树右键提供移除入口', () => {
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
 	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
-	const api = readFileSync(join(clientDir, 'api.ts'), 'utf8');
+	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
 	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');

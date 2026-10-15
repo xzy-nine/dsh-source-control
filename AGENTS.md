@@ -34,6 +34,7 @@ src/index.ts        宿主入口：注册 web 路由与 AI 依赖
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
 src/client/         客户端侧：侧栏页入口、面板状态与组装、泳道图、差异页、右键菜单与弹窗、
                     设置面板、图标、类型
+  src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出
   src/client/panel/ 面板的细分：三个分区组件、变更树、引用计算、各目标右键菜单与 hooks
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、

@@ -11,11 +11,11 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown } from './ui/dropdown.ts';
 import { AUTO_FETCH_PERIOD_SECONDS_DEFAULT, AUTO_FETCH_PERIOD_SECONDS_MAX, AUTO_FETCH_PERIOD_SECONDS_MIN } from './panel/change-events.ts';
-import { fetchAiModels } from './api.ts';
+import { fetchAiModels } from './api/index.ts';
 import { showConfirmation, showMessage } from './dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from './remote-url.ts';
 import type { RemoteProtocolSlot } from './remote-url.ts';
-import type { AiModelCatalog, SshStatusInfo } from './api.ts';
+import type { AiModelCatalog, SshStatusInfo } from './api/index.ts';
 import type { DateFormat, IssueLinkingConfig, Remote, Settings } from './types.ts';
 import css from './css/settings.module.css';
 import { cx } from './css/cx.ts';

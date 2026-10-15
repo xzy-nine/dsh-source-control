@@ -2,7 +2,7 @@
  * 存储库发现：按会话工作区加载仓库树，并按可见行预取领先/落后。
  */
 import React from 'react';
-import { discoverRepositories, loadRepoSync } from '../api.ts';
+import { discoverRepositories, loadRepoSync } from '../api/index.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from '../repo-tree.ts';

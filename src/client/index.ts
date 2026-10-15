@@ -13,7 +13,7 @@ import { GitGraphPanel } from './panel.ts';
 import { FileDiff, type ChangesDiffState } from './file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './resource-path.ts';
 import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './better-sidebar-diff.ts';
-import { fileDiffContent } from './api.ts';
+import { fileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './terminal-run.ts';
 import { PluginLogoIcon } from './plugin-icon.ts';
 import css from './css/index.module.css';

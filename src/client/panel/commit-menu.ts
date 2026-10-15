@@ -11,7 +11,7 @@ import {
 	cherrypickCommit, createBranch, deleteBranch, deleteRemoteBranch, deleteTag, dropStash,
 	fetchIntoLocalBranch, merge, mergeIntoBranch, popStash, pushTag, rebase, renameBranch,
 	resetToCommit, revertCommit, throwIfError,
-} from '../api.ts';
+} from '../api/index.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../context-menu.ts';
 import { showCheckbox, showConfirmation, showSelect, showText } from '../dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';

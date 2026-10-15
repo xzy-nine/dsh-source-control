@@ -5,7 +5,7 @@
  * 轮询，覆盖事件窗口之外的外部写入。
  */
 import React from 'react';
-import { loadGraph, loadRepoSync, loadWorkingTree } from '../api.ts';
+import { loadGraph, loadRepoSync, loadWorkingTree } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh } from './change-events.ts';
 import type { PanelState, RepoSync, Settings, WorkingTreeEntry } from '../types.ts';
