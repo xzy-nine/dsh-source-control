@@ -3,6 +3,7 @@
  */
 import React from 'react';
 import { loadCommitFiles, loadCommitMessage } from '../api.ts';
+import { useCacheCleanup } from './use-cache-cleanup.ts';
 import type { CommitStats } from '../types.ts';
 
 /** 提交改动统计 hook 的入参。 */
@@ -34,12 +35,38 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 	const statsInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const messageInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const hoverTimer = React.useRef<number | null>(null);
+	// 缓存写入时间：定时清理据此丢弃过期项。
+	const statsStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
+	const messageStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
 
 	// 换仓库后旧的统计与信息不再适用。
 	React.useEffect(() => {
 		setStatsByHash(new Map());
 		setMessageByHash(new Map());
+		statsStamps.current = new Map();
+		messageStamps.current = new Map();
 	}, [workingTreePath]);
+
+	useCacheCleanup({
+		stamps: statsStamps,
+		drop: (hashes) => {
+			setStatsByHash((previous) => {
+				const next = new Map(previous);
+				for (const hash of hashes) next.delete(hash);
+				return next;
+			});
+		},
+	});
+	useCacheCleanup({
+		stamps: messageStamps,
+		drop: (hashes) => {
+			setMessageByHash((previous) => {
+				const next = new Map(previous);
+				for (const hash of hashes) next.delete(hash);
+				return next;
+			});
+		},
+	});
 
 	// 卸载时取消未完成的请求与悬停计时。
 	React.useEffect(() => () => {
@@ -69,6 +96,7 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 				additions += typeof file.additions === 'number' ? file.additions : 0;
 				deletions += typeof file.deletions === 'number' ? file.deletions : 0;
 			}
+			statsStamps.current = new Map(statsStamps.current).set(hash, Date.now());
 			setStatsByHash((previous) => new Map(previous).set(hash, { files: files.length, additions, deletions }));
 		}).catch(() => {
 			// 统计失败只影响卡片上的那一行，不再提示。
@@ -89,6 +117,7 @@ export function useCommitStats({ workingTreePath }: UseCommitStatsOptions): UseC
 		loadCommitMessage(workingTreePath, hash, controller.signal).then((message) => {
 			messageInFlight.current.delete(hash);
 			if (controller.signal.aborted || message === null) return;
+			messageStamps.current = new Map(messageStamps.current).set(hash, Date.now());
 			setMessageByHash((previous) => new Map(previous).set(hash, message));
 		}).catch(() => {
 			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。

@@ -4,6 +4,8 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 
 [中文文档](README.md)
 
+![Source Control page: repositories, changes, and commit graph](.github/assets/panel-overview.jpeg)
+
 ## Features
 
 - **Commit graph**: a lane graph of commits and ref markers, with automatic paging, hover cards, in-place changed-file expansion, and right-click checkout, branch, and tag actions.

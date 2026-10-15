@@ -110,6 +110,8 @@ export interface LaneRefs {
 	readonly head?: string | null;
 	/** 上游远程跟踪分支名（如 origin/main）。 */
 	readonly upstream?: string | null;
+	/** 本地与上游的合并基提交哈希；无上游或无共同祖先时为 null。 */
+	readonly baseTip?: string | null;
 	/** 本地领先时的 HEAD 尖端哈希；无领先为 null。 */
 	readonly localTip?: string | null;
 	/** 云端领先时的上游尖端哈希；无落后为 null。 */
@@ -148,7 +150,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 
 	/** 无引用的泳道按 5 色池轮转分配。 */
 	const poolColour = (): string => LANE_COLOURS[nextColour++ % LANE_COLOURS.length];
-	/** 引用色优先级：本地 HEAD 蓝 → 上游紫；提交不承载引用时为 null。 */
+	/** 引用色优先级：本地 HEAD 蓝 → 上游紫 → 合并基橙；提交不承载引用时为 null。 */
 	const refColour = (hash: string | null): string | null => {
 		if (hash === null) return null;
 		const commit = commitByHash.get(hash);
@@ -159,6 +161,9 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 		if (refs.upstream !== undefined && refs.upstream !== null
 			&& (commit.remotes ?? []).some((remote) => remote.name === refs.upstream)) {
 			return REMOTE_REF_COLOUR;
+		}
+		if (refs.baseTip !== undefined && refs.baseTip !== null && hash === refs.baseTip) {
+			return BASE_REF_COLOUR;
 		}
 		return null;
 	};
@@ -266,8 +271,16 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 	};
 
 	// 云端领先插在远端尖端之前；本地领先插在 HEAD 之前。
+	// 远端尖端哈希在行数组中可能复现（同一提交在远端泳道再次出现），取最后一次出现
+	// 才落在该尖端真正所在的那一段；从头找首次会让 incoming 指示行偏上。
+	const lastRowOf = (hash: string): number => {
+		for (let index = rows.length - 1; index >= 0; index--) {
+			if (rows[index].hash === hash) return index;
+		}
+		return -1;
+	};
 	const remoteTip = refs.remoteTip ?? null;
-	if (remoteTip !== null) insertIndicator(rows.findIndex((row) => row.hash === remoteTip), 'incoming');
+	if (remoteTip !== null) insertIndicator(lastRowOf(remoteTip), 'incoming');
 	const localTip = refs.localTip ?? null;
 	if (localTip !== null) insertIndicator(rows.findIndex((row) => row.hash === localTip), 'outgoing');
 
@@ -286,6 +299,13 @@ export const HEAD_REF_COLOUR = 'var(--dsw-alias-lane-0, #2f7bff)';
 
 /** 远端引用色，与 `.ggg-ref-remote` 同源。 */
 export const REMOTE_REF_COLOUR = 'var(--dsw-alias-lane-4, #8b5cf6)';
+
+/**
+ * 合并基引用色。
+ *
+ * 取值对应 VS Code 提交图的 `scmGraph.historyItemBaseRefColor` 默认值。
+ */
+export const BASE_REF_COLOUR = '#EA5C00';
 
 /**
  * 取泳道颜色。

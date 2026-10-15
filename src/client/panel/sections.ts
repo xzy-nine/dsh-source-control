@@ -308,6 +308,8 @@ export interface GraphSectionProps {
 	/** 领先/落后标记：云端领先的上游尖端与本地领先的 HEAD。 */
 	readonly localTip: string | null;
 	readonly remoteTip: string | null;
+	/** 本地与上游的合并基提交哈希；分叉点据此单独着色。 */
+	readonly baseTip: string | null;
 	/** 上游远程跟踪分支名，决定泳道引用色。 */
 	readonly upstream: string | null;
 	readonly moreCommitsAvailable: boolean;
@@ -346,7 +348,7 @@ export interface GraphSectionProps {
  */
 export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
-	localTip, remoteTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
+	localTip, remoteTip, baseTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
 	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
@@ -400,6 +402,7 @@ export function GraphSection({
 					selectedHash,
 					localTip,
 					remoteTip,
+					baseTip,
 					upstream,
 					onSelect: (hash: string, additive?: boolean) => { onToggleCommit(hash, additive); },
 					onLoadMore,

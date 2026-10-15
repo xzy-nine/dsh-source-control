@@ -132,6 +132,12 @@ export interface Settings {
 	muteMergeCommits: boolean;
 	fetchAndPrune: boolean;
 	fetchAndPruneTags: boolean;
+	/** 文件改动事件是否触发自动刷新。 */
+	autoRefresh: boolean;
+	/** 是否定时抓取远程。 */
+	autoFetch: boolean;
+	/** 定时抓取的间隔（秒）。 */
+	autoFetchPeriod: number;
 	onRepoLoadScrollToHead: boolean;
 	showAvatars: boolean;
 	graphColours: readonly string[] | null;

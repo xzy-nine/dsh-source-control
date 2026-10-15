@@ -175,6 +175,25 @@ function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 }
 
 /**
+ * 贮藏标记的文本：取贮藏消息。
+ *
+ * git 在有消息时把贮藏的 reflog 主题写成 `On <分支>: <消息>`，展示取用户写的那一段；
+ * 没有消息（如自动贮藏）或取不到主题时，退回短引用名。
+ *
+ * @param commit - 带贮藏标记的提交。
+ * @returns 展示文本。
+ */
+function stashMessage(commit) {
+	const text = String(commit.message ?? '').trim();
+	if (text === '') {
+		const selector = String(commit.stash?.selector ?? 'stash');
+		return selector.startsWith('refs/') ? selector.slice('refs/'.length) : selector;
+	}
+	const match = /^On [^:]*: (.*)$/.exec(text);
+	return match !== null && match[1].trim() !== '' ? match[1].trim() : text;
+}
+
+/**
  * 取提交的引用标记，并附上用于右键识别的类型与名称。
  *
  * 本地分支与远程分支各自成标记：同名的一对分别显示，便于确认远程分支的存在。
@@ -210,9 +229,10 @@ function refLabels(commit, head) {
 	}
 	if (commit.stash !== null && commit.stash !== undefined) {
 		const selector = commit.stash.selector ?? 'stash';
+		const message = stashMessage(commit);
 		labels.push({
-			key: 'stash', kind: 'stash', text: selector,
-			title: `贮藏 ${selector}`, refType: 'stash', refName: selector,
+			key: 'stash', kind: 'stash', text: message,
+			title: `贮藏 ${message}`, refType: 'stash', refName: selector,
 		});
 	}
 	return labels;
@@ -220,6 +240,9 @@ function refLabels(commit, head) {
 
 /** 默认只显示图标、名称进 title 的种类；本地分支、HEAD 与标记始终带名称。 */
 const ROUND_KINDS = new Set(['remote', 'stash']);
+
+/** 只显示图标、独占一行也不带名称的种类：贮藏行的提交信息已经说明它的来源。 */
+const ICON_ONLY_KINDS = new Set(['stash']);
 
 /** 引用种类到样式类名的对应；种类来自 refLabels。 */
 const REF_CLASSES: Record<string, string> = {
@@ -243,7 +266,7 @@ function RefChip({ label, expanded = false }) {
 				: label.kind === 'head'
 					? React.createElement(IconGoalOutlineRegular, { size: 12 })
 					: React.createElement(GitGraphIcon, { size: 12 });
-	const named = expanded || !ROUND_KINDS.has(label.kind);
+	const named = !ICON_ONLY_KINDS.has(label.kind) && (expanded || !ROUND_KINDS.has(label.kind));
 	return React.createElement(
 		'span',
 		{
@@ -263,12 +286,13 @@ function RefChip({ label, expanded = false }) {
 const UNCOMMITTED_MESSAGE = /^Uncommitted Changes(?: \((\d+)\))?$/;
 
 /**
- * 取一行显示的提交信息：未提交伪提交的英文文案译成中文。
+ * 取一行显示的提交信息：贮藏行取贮藏消息，未提交伪提交的英文文案译成中文。
  *
  * @param commit - 提交。
  * @returns 显示用文本。
  */
 function displayMessage(commit) {
+	if (commit.stash !== null && commit.stash !== undefined) return stashMessage(commit);
 	const message = String(commit.message ?? '');
 	if (commit.hash !== '*') return message;
 	const match = UNCOMMITTED_MESSAGE.exec(message);
@@ -537,12 +561,12 @@ function DetailGutter({ row }) {
 export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
-	localTip, remoteTip, upstream,
+	localTip, remoteTip, baseTip, upstream,
 	markdown, showAvatars, muteMergeCommits, graphColours,
 }) {
 	const layout = React.useMemo(
-		() => layoutCommits(commits, { head, upstream, localTip, remoteTip }),
-		[commits, head, upstream, localTip, remoteTip],
+		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
+		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
 	const graphRef = React.useRef(null);
 	/** 一次加载完成前不重复请求下一页。 */
