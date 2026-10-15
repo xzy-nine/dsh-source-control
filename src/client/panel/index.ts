@@ -35,8 +35,9 @@ import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refre
 import { useGraphData } from './use-graph-data.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
+import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
-import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings } from '../shared/types.ts';
+import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
@@ -318,7 +319,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		saveSession('ggg-commit-msg:' + workingTreePath, message);
 	}, [workingTreePath, message, aiBusy]);
 
-	/** 选中一个仓库节点并重置面板状态。 */
+	/**
+	 * 选中一个仓库节点并重置面板状态。
+	 *
+	 * 进入新仓库属于「用户主动切换」：清空旧仓库的数据并置加载态，随后的加载走 full 模式。
+	 */
 	const selectNodeAndReset = React.useCallback((node) => {
 		if (node.id === selectedId) return;
 		selectNode(node);
@@ -349,17 +354,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 影响。`read` 影响面的操作自身已经刷新，不再追加一次；目标是别的仓库时也不刷新当前仓库，
 	 * 选中项变化后由提交图数据自行加载。
 	 *
+	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
+	 * 用一次对账刷新纠正推算误差。对账是 reconcile 模式，不会清空现有列表。
+	 *
 	 * @param scope - 操作的影响面。
 	 * @param operation - 操作体。
 	 * @param repo - 目标仓库路径；省略时用当前选中的工作树。
+	 * @param optimistic - 写操作成功后对条目的推算；省略时不推算，只做对账刷新。
 	 */
-	const run = React.useCallback(async (scope: BusyScope, operation: () => Promise<void>, repo?: string) => {
+	const run = React.useCallback(async (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => {
 		const target = repo ?? workingTreePath;
 		if (target === null) return;
 		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope), error: null }));
 		try {
 			await operation();
-			if (scope !== 'read' && target === workingTreePath) await refresh();
+			if (optimistic !== undefined && target === workingTreePath) {
+				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
+			}
+			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {
@@ -592,7 +604,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			await commitStaged(workingTreePath as string, message, amend);
 			setMessage('');
 			setAmend(false);
-		});
+		}, undefined, commitEntries);
 	};
 
 	/**
@@ -957,7 +969,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToGitignore = React.useCallback((path: string) => {
 		void (async () => {
 			let written: IgnoreWriteResult | null = null;
-			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); });
+			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
 			const result: IgnoreWriteResult | null = written;
 			if (result === null || result.file === '') return;
 			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
@@ -973,7 +985,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
 		void (async () => {
 			let written: LocalExcludeState | null = null;
-			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); });
+			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
 			const state: LocalExcludeState | null = written;
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
 			if (state === null || state.path === '') return;
@@ -1177,7 +1189,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
 		const isLinkedWorktree = node.kind === 'worktree';
 		const items: ContextMenuItem[] = [
-			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh(), node.path); } },
+			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
 			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
 			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path), node.path); } },
 			{ type: 'divider' },
@@ -1364,7 +1376,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			stagedPaths, onSubmit: submit, onRefresh: () => { void run('read', () => refresh()); },
+			stagedPaths, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
@@ -1393,7 +1405,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,
 			onFetch: () => { void run('network', async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
-			onRefresh: () => { void run('read', () => refresh()); },
+			onRefresh: () => { void run('read', () => refresh('full')); },
 			onResizeStart: startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
 			issueLinking: issueLinking(),

@@ -3,6 +3,7 @@
  */
 import React from 'react';
 import { discoverRepositories, loadRepoSync } from '../api/index.ts';
+import { loadRepoLocations, saveRepoLocations } from './repo-locations.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from './repo-tree.ts';
@@ -70,11 +71,17 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			return undefined;
 		}
 		const controller = new AbortController();
-		setTreeStatus('loading');
-		setTreeNote(null);
-		discoverRepositories(cwd as string, {}, controller.signal).then((result) => {
+		const root = cwd as string;
+		/**
+		 * 应用一次发现结果。
+		 *
+		 * @param result - 发现结果。
+		 * @param cacheLocations - 是否把顶层仓库位置写回缓存。
+		 * @returns 无。
+		 */
+		const apply = (result: { nodes: RepoNode[]; truncated: boolean }, cacheLocations: boolean): void => {
 			if (controller.signal.aborted) return;
-			const initial = selectInitial(result.nodes, cwd as string, loadSelection(sessionId));
+			const initial = selectInitial(result.nodes, root, loadSelection(sessionId));
 			setRepoNodes(result.nodes);
 			setSelectedId(initial === null ? null : initial.id);
 			setExpandedIds((previous) => {
@@ -83,13 +90,30 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 				return next;
 			});
 			setTreeStatus('ready');
-			if (result.truncated) setTreeNote('已达到扫描上限，仅显示部分仓库');
-		}).catch((error: unknown) => {
+			setTreeNote(result.truncated ? '已达到扫描上限，仅显示部分仓库' : null);
+			// 缓存只记顶层仓库：工作树与子模块依附于仓库，随 checkout 变化，运行时枚举即可。
+			if (cacheLocations) saveRepoLocations(root, result.nodes.filter((node) => node.kind === 'repo').map((node) => ({ path: node.path, name: node.name })));
+		};
+		const fail = (error: unknown): void => {
 			if (controller.signal.aborted) return;
 			setRepoNodes([]);
 			setTreeStatus('error');
 			setTreeNote(error instanceof Error ? error.message : String(error));
-		});
+		};
+
+		const cached = scanSeq === 0 ? loadRepoLocations(root) : [];
+		if (cached.length > 0) {
+			// 命中缓存：先按已知路径取树（不扫目录），秒出界面；随后后台完整重扫一次纠正位置变化。
+			discoverRepositories(root, { knownRepos: cached.map((repo) => repo.path) }, controller.signal)
+				.then((result) => { apply(result, false); return discoverRepositories(root, {}, controller.signal); })
+				.then((result) => { apply(result, true); })
+				.catch(fail);
+			return () => { controller.abort(); };
+		}
+
+		setTreeStatus('loading');
+		setTreeNote(null);
+		discoverRepositories(root, {}, controller.signal).then((result) => { apply(result, true); }).catch(fail);
 		return () => { controller.abort(); };
 	}, [cwd, sessionId, hasWorkspace, scanSeq]);
 

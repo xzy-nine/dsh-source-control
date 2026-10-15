@@ -146,7 +146,7 @@ export interface ChangesSectionProps {
 	readonly groupExpanded: { staged: boolean; unstaged: boolean };
 	readonly toggleChange: (key: string, path: string) => void;
 	readonly toggleGroup: (key: string) => void;
-	readonly run: (scope: BusyScope, operation: () => Promise<void>) => Promise<void>;
+	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => Promise<void>;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;

@@ -44,7 +44,7 @@ export interface UseGraphDataResult {
 	/** 面板状态写入器。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 重新加载选中仓库的提交图与工作区。 */
-	readonly refresh: () => Promise<void>;
+	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 进行中的操作记录；后台刷新据此判断目标仓库是否繁忙。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 }
@@ -66,8 +66,16 @@ export function useGraphData({
 	const controllerRef = React.useRef<AbortController | null>(null);
 	const busyRef = React.useRef<readonly BusyEntry[]>([]);
 
-	/** 重新加载选中仓库的提交图与工作区。 */
-	const refresh = React.useCallback(async () => {
+	/**
+	 * 重新加载选中仓库的提交图与工作区。
+	 *
+	 * `full` 用于用户主动刷新与进入仓库：置加载态、先清空再填充。`reconcile` 用于写操作后的
+	 * 对账与后台自动刷新：保留现有数据，只把新结果合并进去，避免列表闪烁与滚动位置丢失。
+	 *
+	 * @param mode - 刷新模式。
+	 * @returns 无。
+	 */
+	const refresh = React.useCallback(async (mode: 'full' | 'reconcile' = 'reconcile') => {
 		if (workingTreePath === null) {
 			setState((previous) => ({
 				...previous, phase: hasWorkspace ? 'loading' : 'no-workspace', error: null,
@@ -79,7 +87,13 @@ export function useGraphData({
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
-		setState((previous) => ({ ...previous, phase: 'loading', error: null }));
+		if (mode === 'full') {
+			setState((previous) => ({
+				...previous, phase: 'loading', error: null, commits: [], entries: [], detail: null, selectedHash: null,
+			}));
+		} else {
+			setState((previous) => ({ ...previous, error: null }));
+		}
 		try {
 			const graph = await loadGraph(workingTreePath, {
 				maxCommits,
@@ -97,6 +111,8 @@ export function useGraphData({
 				...previous, phase: 'ready', error: null,
 				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
 				remotes: graph.remotes, entries,
+				// 对账刷新时保留展开的提交详情：它的内容由选中哈希与文件列表各自维护。
+				detail: mode === 'full' ? null : previous.detail,
 			}));
 			// 刷新选中仓库的领先/落后状态
 			try {

@@ -157,9 +157,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
 		case 'discoverRepositories':
 			await respondResult('discoverRepositories', async () => {
-				const result = await discoverRepositories(repo, { maxDepth: num('maxDepth', 3) });
+				// knownRepos 命中时走快路径：只核对已知路径，不逐层扫描目录。
+				const knownRepos = arr<string>('knownRepos').filter((path) => typeof path === 'string' && path !== '');
+				const result = await discoverRepositories(repo, {
+					maxDepth: num('maxDepth', 3),
+					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
+				});
 				return { root: repo, nodes: result.nodes, truncated: result.truncated };
-			});			break;
+			});
+			break;
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
 				await whenGitIdle(repo);

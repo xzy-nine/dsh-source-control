@@ -14,12 +14,12 @@ export interface DiscoveryResult {
  * 发现工作区根下的仓库及其工作树与子模块。
  *
  * @param cwd - 工作区根路径。
- * @param options - 发现选项。
+ * @param options - 发现选项；`knownRepos` 命中时宿主只核对已知路径，不扫描目录。
  * @param signal - 取消信号。
  * @returns 节点列表与是否被截断。
  */
-export async function discoverRepositories(cwd: string, { maxDepth }: { maxDepth?: number } = {}, signal?: AbortSignal): Promise<DiscoveryResult> {
-	const payload = await callApi(cwd, { command: 'discoverRepositories', maxDepth }, signal);
+export async function discoverRepositories(cwd: string, { maxDepth, knownRepos }: { maxDepth?: number; knownRepos?: readonly string[] } = {}, signal?: AbortSignal): Promise<DiscoveryResult> {
+	const payload = await callApi(cwd, { command: 'discoverRepositories', maxDepth, knownRepos }, signal);
 	return {
 		nodes: (Array.isArray(payload.nodes) ? payload.nodes : []) as RepoNode[],
 		truncated: payload.truncated === true,
