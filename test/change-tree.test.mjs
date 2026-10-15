@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changeRowsOf } from '../src/client/panel/change-tree.ts';
+import { absolutePathOf, changeRowsOf } from '../src/client/panel/change-tree.ts';
 
 /** 造一个条目。 */
 const entry = (path) => ({ path });
@@ -70,4 +70,25 @@ test('同级目录按名称排序，文件排在目录之后', () => {
 
 test('条目为空时不产生任何行', () => {
 	assert.deepEqual(changeRowsOf([], new Set()), []);
+});
+
+test('复制路径给出绝对路径', () => {
+	// 菜单里的路径相对仓库根；复制时拼上仓库根，便于直接粘进终端或编辑器。
+	assert.equal(absolutePathOf('E:\\repo', 'src/a.ts'), 'E:\\repo\\src\\a.ts', 'Windows 用原生分隔符');
+	assert.equal(absolutePathOf('E:/repo', 'src/a.ts'), 'E:/repo/src/a.ts', '仓库根用斜杠时沿用');
+	assert.equal(absolutePathOf('E:/repo/', 'src/a.ts'), 'E:/repo/src/a.ts', '尾斜杠不重复');
+	assert.equal(absolutePathOf('/home/me/repo', 'src/a.ts'), '/home/me/repo/src/a.ts', 'POSIX');
+	// 目录行的路径同样按仓库根拼接。
+	assert.equal(absolutePathOf('E:\\repo', 'src/client'), 'E:\\repo\\src\\client');
+	// 反斜杠形态的相对路径也归一为仓库根的分隔符。
+	assert.equal(absolutePathOf('E:\\repo', 'src\\a.ts'), 'E:\\repo\\src\\a.ts');
+});
+
+test('已是绝对路径的目标原样复制', () => {
+	// 本地排除文件在 .git 目录内，客户端持有的就是绝对路径。
+	assert.equal(absolutePathOf('E:\\repo', 'E:\\repo\\.git\\info\\exclude'), 'E:\\repo\\.git\\info\\exclude');
+	assert.equal(absolutePathOf('E:/repo', 'D:/other/a.ts'), 'D:/other/a.ts', '跨盘符原样');
+	assert.equal(absolutePathOf('/home/me/repo', '/etc/hosts'), '/etc/hosts');
+	// 仓库根未知时无从拼接，原样给出。
+	assert.equal(absolutePathOf('', 'src/a.ts'), 'src/a.ts');
 });

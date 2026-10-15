@@ -12,7 +12,7 @@ import { copyText, showContextMenu } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
-import { changeRowsOf, type ChangeRow } from './change-tree.ts';
+import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { BusyScope, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
@@ -362,7 +362,8 @@ export function ChangeGroup({
 		busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder,
 		onDiscardGroup: () => { onDiscardAll(); },
 		onOpenFile, onAddToGitignore, onAddToLocalExclude,
-		onCopyPath: (path: string) => { void copyText(path); },
+		// 菜单里的路径相对仓库根；复制时给出绝对路径，便于直接粘进终端或编辑器。
+		onCopyPath: (path: string) => { void copyText(absolutePathOf(workingTreePath, path)); },
 	};
 	const handleHeadContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
