@@ -159,3 +159,26 @@ export async function translateCommitMessage(
 	}
 	return parts.join('\n');
 }
+
+/**
+ * 取某行的标题译文。
+ *
+ * 译文有两个来源，据此判断它是否适用于该行：批量翻译译的是行标题，悬停单条翻译译的是
+ * 完整提交信息；两者都以译文的首行为标题。原文与两者都不符时（内容已变）视为无译文。
+ *
+ * @param title - 该行显示的标题。
+ * @param fullMessage - 该提交的完整信息；未取回时为 null。
+ * @param translation - 该提交的译文；无译文时为 null。
+ * @param translatedFrom - 译文对应的原文；无译文时为 null。
+ * @returns 标题译文；无可用译文时为 null。
+ */
+export function translatedTitle(
+	title: string,
+	fullMessage: string | null,
+	translation: string | null,
+	translatedFrom: string | null,
+): string | null {
+	if (translation === null || translation === '' || translatedFrom === null) return null;
+	if (translatedFrom !== title && translatedFrom !== fullMessage) return null;
+	return translation.split('\n')[0];
+}

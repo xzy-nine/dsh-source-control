@@ -256,7 +256,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	const {
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
-		hoverCommit, translateCommit,
+		graphTranslated, graphTranslating,
+		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
 	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
@@ -1453,6 +1454,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			upstream: currentSync?.upstream ?? null,
 					moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
+			onCancelTranslateCommit: cancelTranslateCommit,
+			graphTranslated, graphTranslating,
+			onTranslateVisible: translateCommits, onCancelTranslate: cancelTranslateCommits,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,

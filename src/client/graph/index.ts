@@ -24,7 +24,7 @@ import {
 import { RemoteRefIcon, TagRefIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { copyText } from '../ui/context-menu.ts';
-import { interfaceLanguage, showTranslateEntry } from '../panel/language.ts';
+import { interfaceLanguage, showTranslateEntry, translatedTitle } from '../panel/language.ts';
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
@@ -342,11 +342,12 @@ function displayMessage(commit) {
  * @param props.translating - 该提交是否正在翻译。
  * @param props.translateReady - 翻译服务是否可用。
  * @param props.onTranslate - 请求翻译该提交的提交信息。
+ * @param props.onCancelTranslate - 取消该提交的翻译，回到原文。
  * @returns 卡片正文元素。
  */
 function CommitCard({
 	commit, labels, stats, formatDate, formatDetail, markdown, showAvatars, message,
-	translation, translatedFrom, translating, translateReady, onTranslate,
+	translation, translatedFrom, translating, translateReady, onTranslate, onCancelTranslate,
 }) {
 	const isUncommitted = commit.hash === '*';
 	const dated = typeof commit.date === 'number' && Number.isFinite(commit.date);
@@ -355,22 +356,28 @@ function CommitCard({
 	const timeLabel = detail === '' || detail === timeText ? timeText : `${timeText}（${detail}）`;
 	// 完整提交信息优先：列表里的 message 来自 `%s`，只有标题一行。
 	const original = typeof message === 'string' && message !== '' ? message : String(commit.message ?? '');
-	// 已翻译且内容未变时显示译文；原文一改即回到原文，等待重新翻译。
-	const translated = translation !== null && translation !== undefined && translatedFrom === original;
-	const fullMessage = translated ? translation : original;
+	// 整条信息已翻译且内容未变时正文用译文；只译了标题时正文仍用原文。
+	const fullTranslated = translation !== null && translation !== undefined && translatedFrom === original;
+	const fullMessage = fullTranslated ? translation : original;
 	// 首行是标题，保持卡片自身字号；其余是正文，字号更小、行距更紧，且不留空行。
-	const [titleLine, ...bodyLines] = fullMessage.split('\n');
+	const [originalTitle, ...bodyLines] = fullMessage.split('\n');
+	// 标题：批量翻译只译标题，单条翻译译整条信息；两者都取译文首行。
+	const titleLine = translatedTitle(
+		displayMessage(commit), original, translation ?? null, translatedFrom ?? null,
+	) ?? originalTitle;
 	const body = bodyLines.filter((line) => line.trim() !== '');
 	const avatars = showAvatars && !isUncommitted ? avatarUrls(commit.email ?? commit.author, 40) : [];
 	// key 取首个候选：换作者时重建，尝试进度不跨提交沿用。
 	const avatarEl = avatars.length > 0
 		? React.createElement(AvatarImage, { key: avatars[0], urls: avatars })
 		: React.createElement(IconUserOutlineRegular, { size: 13, className: css.cardIcon });
-	// 判定与提交信息框共用同一函数：服务可用、无进行中的翻译、内容非空且以非当前语言为主。
-	const showTranslate = !isUncommitted && showTranslateEntry({
-		ready: translateReady === true, busy: translating === true, text: original,
+	// 判定与提交信息框共用同一函数：服务可用、内容非空且以非当前语言为主。
+	const translatable = !isUncommitted && showTranslateEntry({
+		ready: translateReady === true, busy: false, text: original,
 		locale: interfaceLanguage(), translatedFrom,
 	});
+	// 已翻译或正在翻译时一律保留入口：进行中隐藏会让按钮在点击后消失，取消无处可点。
+	const showTranslate = !isUncommitted && (fullTranslated || translating === true || translatable);
 	return React.createElement(
 		'div',
 		{ className: css.card },
@@ -381,14 +388,23 @@ function CommitCard({
 			React.createElement('span', { className: css.cardAuthor }, commit.author ?? ''),
 			dated && React.createElement(IconClockOutlineRegular, { size: 13, className: css.cardIcon }),
 			dated && React.createElement('span', { className: css.cardTime }, timeLabel),
-			// 翻译入口排在时间右侧：只在该提交需要翻译时出现。
+			// 翻译入口排在时间右侧：未译时发起翻译，已译时反色并再点即取消。
 			showTranslate && React.createElement('button', {
 				type: 'button',
-				className: css.cardAction,
-				title: '把提交信息翻译为当前语言',
-				'aria-label': '翻译',
-				onClick: () => onTranslate?.(original),
-			}, React.createElement(TranslateIcon), '翻译'),
+				className: cx(css.cardAction, fullTranslated && css.cardActionOn),
+				title: fullTranslated
+					? '取消翻译，显示原文'
+					: (translating === true ? '正在翻译…' : '把提交信息翻译为当前语言'),
+				'aria-label': fullTranslated ? '取消翻译' : '翻译',
+				'data-translated': fullTranslated ? '1' : undefined,
+				'data-translating': translating === true ? '1' : undefined,
+				onClick: () => {
+					// 进行中或已译时再点即取消；否则发起翻译。
+					if (translating === true || fullTranslated) onCancelTranslate?.();
+					else onTranslate?.(original);
+				},
+			}, React.createElement(TranslateIcon, { inverted: fullTranslated }),
+				fullTranslated ? '取消翻译' : (translating === true ? '翻译中…' : '翻译')),
 		),
 		React.createElement(
 			'div',
@@ -492,7 +508,7 @@ function CommitRow({
 	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits,
 	stats, message, onHover, widthAnchorRef,
-	translation, translatedFrom, translating, translateReady, onTranslate,
+	translation, translatedFrom, translating, translateReady, onTranslate, onCancelTranslate,
 }) {
 	const isUncommitted = commit.hash === '*';
 	// 贮藏标记行不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
@@ -501,6 +517,9 @@ function CommitRow({
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
 	const isMuted = muteMergeCommits && isMerge && !isHead;
+	// 行标题：批量翻译或单条翻译的译文首行可用时用它，否则用原文。
+	const title = displayMessage(commit);
+	const shownTitle = translatedTitle(title, message, translation, translatedFrom) ?? title;
 	const anchor = React.createElement(
 		'div',
 		{
@@ -527,7 +546,7 @@ function CommitRow({
 		React.createElement(
 			'span',
 			{ className: css.subject },
-			...renderSubject(displayMessage(commit), issueLinking),
+			...renderSubject(shownTitle, issueLinking),
 			!isUncommitted && React.createElement('span', { className: css.author }, commit.author),
 		),
 		labels.length > 0 && React.createElement(
@@ -547,7 +566,7 @@ function CommitRow({
 		anchor,
 		content: React.createElement(CommitCard, {
 			commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars,
-			translation, translatedFrom, translating, translateReady, onTranslate,
+			translation, translatedFrom, translating, translateReady, onTranslate, onCancelTranslate,
 		}),
 		variant: 'preview',
 		widthAnchorRef,
@@ -620,7 +639,8 @@ export function CommitGraph({
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	localTip, remoteTip, baseTip, upstream,
 	markdown, showAvatars, muteMergeCommits, graphColours,
-	translatedMessages, translatedFrom, translatingHash, translateReady, onTranslateCommit,
+	translatedMessages, translatedFrom, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
+	onVisibleCommits,
 }) {
 	const layout = React.useMemo(
 		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
@@ -775,16 +795,39 @@ export function CommitGraph({
 		}
 		return out;
 	}, [rows, selectedIndex, detailHeight]);
+	/*
+	 * 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。
+	 *
+	 * 同一区间也作为「当前可见窗口」上报：图形区标题栏的批量翻译只译这一段内的提交。
+	 */
+	const range = React.useMemo(() => {
+		let first = 0;
+		while (first < rows.length && offsets[first + 1] <= scrollTop) first++;
+		first = Math.max(0, first - OVERSCAN_ROWS);
+		let last = first;
+		while (last < rows.length && offsets[last] < scrollTop + viewportHeight) last++;
+		return { first, last: Math.min(rows.length, last + OVERSCAN_ROWS) };
+	}, [rows, offsets, scrollTop, viewportHeight]);
+	// 上报可见窗口内的提交：标题栏的批量翻译按这一批下发。
+	const visibleCommits = React.useMemo(() => {
+		const out: { hash: string; text: string }[] = [];
+		for (let index = range.first; index < range.last; index++) {
+			const row = rows[index];
+			if (row === undefined || row.indicator !== undefined) continue;
+			const commit = commitByHash.get(row.hash);
+			// 未提交行与贮藏行不是提交，没有可翻译的提交信息。
+			if (commit === undefined || commit.hash === '*' || commit.stash !== null && commit.stash !== undefined) continue;
+			out.push({ hash: commit.hash, text: displayMessage(commit) });
+		}
+		return out;
+	}, [rows, range, commitByHash]);
+	const onVisibleCommitsRef = React.useRef(onVisibleCommits);
+	onVisibleCommitsRef.current = onVisibleCommits;
+	React.useEffect(() => { onVisibleCommitsRef.current?.(visibleCommits); }, [visibleCommits]);
 	if (commits.length === 0) {
 		return React.createElement('div', { className: shared.empty }, '这个仓库还没有提交');
 	}
-	// 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。
-	let first = 0;
-	while (first < rows.length && offsets[first + 1] <= scrollTop) first++;
-	first = Math.max(0, first - OVERSCAN_ROWS);
-	let last = first;
-	while (last < rows.length && offsets[last] < scrollTop + viewportHeight) last++;
-	last = Math.min(rows.length, last + OVERSCAN_ROWS);
+	const { first, last } = range;
 	const items = [];
 	for (let index = first; index < last; index++) {
 		const row = rows[index];
@@ -817,6 +860,7 @@ export function CommitGraph({
 			translating: translatingHash === commit.hash,
 			translateReady,
 			onTranslate: (text: string) => { onTranslateCommit?.(commit.hash, text); },
+			onCancelTranslate: () => { onCancelTranslateCommit?.(commit.hash); },
 			onHover: hoverOrDefer,
 			widthAnchorRef: graphRef,
 		}));

@@ -102,11 +102,23 @@
 
 .cardCopy:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 
-/* 翻译入口：排在作者时间的右侧。 */
+/* 翻译入口：排在作者时间的右侧。已翻译时高亮，进行中呼吸。 */
 
 .cardAction{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;cursor:pointer}
 
 .cardAction:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+/* 已翻译：入口保持高亮，一眼可见当前显示的不是原文。 */
+
+.cardActionOn{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+.cardAction[data-translating]{opacity:0.6;animation:cardTranslatePulse 1s ease-in-out infinite}
+
+@keyframes cardTranslatePulse{0%,100%{opacity:0.45}50%{opacity:0.9}}
+
+@media (prefers-reduced-motion: reduce){
+	.cardAction[data-translating]{animation:none;opacity:0.6}
+}
 
 /* 错误与提示改由顶部轻量横幅呈现（见 panel/toast.ts），面板内不再有错误条。 */
 

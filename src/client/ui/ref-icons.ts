@@ -34,6 +34,26 @@ function iconMarkup(svg: string, size: number): string {
 		.trim();
 }
 
+/** 图标资源使用的画布尺寸；反色时以此铺满底。 */
+const ICON_CANVAS = 960;
+
+/**
+ * 把图标反色：整幅画布与图标路径并入同一路径并按 evenodd 填充，填充与留白互换。
+ *
+ * 画布矩形的终点回到原点，因此紧随其后的相对起点 `m` 与单独渲染时一致，图标形状不变。
+ *
+ * @param svg - 资源文件内容。
+ * @param size - 图标边长（像素）。
+ * @returns HTML 字符串。
+ */
+function invertMarkup(svg: string, size: number): string {
+	const inverted = svg.replace(/<path\b([^>]*)>/, (_all, attrs: string) => {
+		const path = /d="([^"]*)"/.exec(attrs)?.[1] ?? '';
+		return `<path fill-rule="evenodd" d="M0 0H${ICON_CANVAS}V${-ICON_CANVAS}H0Z ${path}">`;
+	});
+	return iconMarkup(inverted, size);
+}
+
 /**
  * 画一个本地资源图标。
  *
@@ -58,6 +78,8 @@ const BOOK_MARKUP = iconMarkup(bookSvg, REPO_ICON_SIZE);
 const CLOUD_UPLOAD_MARKUP = iconMarkup(cloudUploadSvg, ACTION_ICON_SIZE);
 /** 翻译图标的行内标记。 */
 const TRANSLATE_MARKUP = iconMarkup(translateSvg, ACTION_ICON_SIZE);
+/** 翻译图标的反色标记：填充与留白互换，表示该范围已翻译。 */
+const TRANSLATE_INVERTED_MARKUP = invertMarkup(translateSvg, ACTION_ICON_SIZE);
 
 /**
  * 标签引用图标。
@@ -98,8 +120,9 @@ export function PublishIcon(): React.ReactElement {
 /**
  * 翻译图标（译）。
  *
+ * @param inverted - 是否反色；反色表示该范围已翻译，也是取消翻译的入口。
  * @returns 图标元素。
  */
-export function TranslateIcon(): React.ReactElement {
-	return ResourceIcon(TRANSLATE_MARKUP);
+export function TranslateIcon({ inverted = false }: { inverted?: boolean } = {}): React.ReactElement {
+	return ResourceIcon(inverted ? TRANSLATE_INVERTED_MARKUP : TRANSLATE_MARKUP);
 }

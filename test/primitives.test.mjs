@@ -356,7 +356,7 @@ test('卡片正文更紧凑且不留空行', () => {
 	// 只有正文收紧：标题（首行）沿用卡片自身字号。
 	const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
 	assert.match(graphSource, /variant: 'compact'/, 'markdown 应用 compact 变体');
-	assert.match(graphSource, /const \[titleLine, \.\.\.bodyLines\] = fullMessage\.split\('\\n'\)/, '首行作标题、其余作正文');
+	assert.match(graphSource, /const \[originalTitle, \.\.\.bodyLines\] = fullMessage\.split\('\\n'\)/, '首行作标题、其余作正文');
 	assert.match(graphSource, /bodyLines\.filter\(\(line\) => line\.trim\(\) !== ''\)/, '正文应滤掉空行');
 	assert.match(graphSource, /className: css\.cardTitle/, '标题单独渲染');
 	assert.match(graphSource, /className: css\.cardBody/, '正文单独渲染');
