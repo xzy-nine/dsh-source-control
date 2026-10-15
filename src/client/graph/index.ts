@@ -701,15 +701,25 @@ export function CommitGraph({
 	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
 
 	const rows = layout.rows;
-	const commitByHash = new Map();
-	for (const commit of commits) commitByHash.set(commit.hash, commit);
+	/*
+	 * 提交按哈希索引与选中行下标都记忆化：两者都是 O(提交数)，而滚动会逐帧重渲染，
+	 * 放在渲染体内会让每次滚动都重建一份（上万条时每帧约 1MB，持续滚动即上百 MB 垃圾）。
+	 */
+	const commitByHash = React.useMemo(() => {
+		const map = new Map();
+		for (const commit of commits) map.set(commit.hash, commit);
+		return map;
+	}, [commits]);
+	const selectedIndex = React.useMemo(
+		() => (selectedHash === null ? -1 : rows.findIndex((row) => row.hash === selectedHash)),
+		[rows, selectedHash],
+	);
 	/*
 	 * 窗口化渲染：只挂载可视区附近的行，未渲染部分用等高空占位撑起滚动条。
 	 *
 	 * 不这样做时每条提交都是一个真实 DOM 行（含泳道 SVG 与引用标记），翻到几百条就是几百个节点常驻。
 	 * 行偏移按 ROW_HEIGHT 累加，展开详情的那一行额外加上它的实测高度，下方各行因此不会错位。
 	 */
-	const selectedIndex = selectedHash === null ? -1 : rows.findIndex((row) => row.hash === selectedHash);
 	const offsets = React.useMemo(() => {
 		const out = new Float64Array(rows.length + 1);
 		for (let index = 0; index < rows.length; index++) {

@@ -477,7 +477,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [run, workingTreePath]);
 
 	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
-	const headCommitHash = state.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）；查找是 O(提交数)，随滚动逐帧重渲染时须记忆化。 */
+	const headCommitHash = React.useMemo(
+		() => state.commits.find((commit) => commit.hash !== '*')?.hash ?? null,
+		[state.commits],
+	);
 
 	/** 当前分支可达的提交哈希集合；重置这类改写当前分支的操作据此显示。 */
 	const branchHashes = React.useMemo(
@@ -1336,6 +1340,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 当前仓库的全部引用：全部模式与「全选」都以它为准。
 	const allRefs = React.useMemo(() => collectRefs(state.commits), [state.commits]);
 
+	// 排序后的引用与过滤后的提交列表：两者都是 O(提交数)，而滚动会逐帧重渲染，
+	// 必须在渲染体外记忆化，否则每次滚动都重算一份全量。
+	const sortedRefs = React.useMemo(
+		() => sortRefs(allRefs, state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
+		[allRefs, state.head, currentSync?.upstream, syncMarkers.baseHash],
+	);
+
 	// 按模式派生实际勾选集：自动与全部每次都按规则重算，不固化首次进入时的结果。
 	const filterSelected = React.useMemo(() => {
 		if (filterState.mode === 'auto') {
@@ -1344,6 +1355,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterState.mode === 'all') return new Set(allRefs.map((ref) => ref.name));
 		return filterState.selected;
 	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream, syncMarkers.baseHash]);
+
+	// 过滤后的提交列表：与引用一样是 O(提交数)，必须记忆化。
+	const visibleCommits = React.useMemo(
+		() => filterCommitsByRefs(state.commits, filterSelected),
+		[state.commits, filterSelected],
+	);
 
 	// 标题栏按钮文案即当前模式：模式名，或选中的分支/标签名。只看模式，不按勾选内容反推。
 	const filterSummary = React.useMemo(() => {
@@ -1368,7 +1385,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
-			refs: sortRefs(collectRefs(state.commits), state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
+			refs: sortedRefs,
 			selected: filterSelected, search: filterSearch,
 			onSearch: setFilterSearch,
 			// 手动勾选一处即离开规则模式，此后由勾选决定。
@@ -1428,7 +1445,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		React.createElement(GraphSection, {
 			open: graphSecOpen, height: graphHeight, busy: busyFlags, phase: state.phase,
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
-			commits: filterCommitsByRefs(state.commits, filterSelected),
+			commits: visibleCommits,
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
