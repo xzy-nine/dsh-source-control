@@ -13,7 +13,9 @@
 
 .graph{flex:1;min-height:0;overflow:auto;padding:0 0 12px}
 
-.row{display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap}
+/* 行：宽度由内容决定，随图区一起横向滚动。 */
+
+.row{display:flex;align-items:center;gap:8px;height:22px;padding:0 8px;font-size:12px;cursor:default;white-space:nowrap;width:max-content;min-width:100%}
 
 .row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 
@@ -23,11 +25,24 @@
 
 .lane{flex:none;height:22px;overflow:visible}
 
-.subject{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.subject{flex:0 0 auto;text-align:left}
 
 .author{margin-left:6px;color:var(--dsw-alias-label-secondary)}
 
-.refs{display:inline-flex;align-items:center;gap:4px;flex:none}
+/*
+ * 引用标记固定在可视区右侧：横向滚动泳道与标题时它们不动。
+ *
+ * 行自身宽度由内容决定（width:max-content），整行随图区横向滚动；refs 用 sticky 吸在右侧，
+ * 并靠 margin-left:auto 在行内容窄于视口时仍贴右。背景色不可省略，否则滚动时下方的泳道线会透出。
+ */
+
+.refs{position:sticky;right:0;margin-left:auto;display:inline-flex;align-items:center;gap:4px;flex:none;padding:0 0 0 8px;background:var(--dsw-alias-bg-base)}
+
+/* 选中与悬停时行的背景更深，refs 需跟随，否则吸住的那一块颜色与整行不一致。 */
+
+.row:hover .refs{background:var(--dsw-alias-interactive-bg-hover)}
+
+.row.isSelected .refs,.row:global(.ggg-menu-target) .refs{background:var(--dsw-alias-interactive-bg-active)}
 
 .ref{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:17px;border-radius:999px;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
 

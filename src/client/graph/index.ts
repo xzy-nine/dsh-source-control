@@ -125,25 +125,43 @@ function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 	const nodeKind = indicator ?? (isHead ? 'head' : isMerge ? 'merge' : 'plain');
 	// 未提交行没有对应提交：不画节点，线因此贯穿整行（不留断口）。
 	const node = isUncommitted ? null : { x: cx, radius: nodeOuterRadius(nodeKind) };
-	const segments = (row.segments ?? []).flatMap((segment, index) => {
+	/*
+	 * 同色的直线合并成一条 <path>：直通竖线占线段总数的九成以上（并分支多的仓库实测 99%），
+	 * 逐条建元素会让可见区的 SVG 元素数达到数千，滚动时每帧重建即成为内存与耗时的主要来源。
+	 * 每条直线对应一个 M-L 子路径，样式与位置与逐条绘制完全一致。
+	 */
+	const lineParts = new Map<string, string[]>();
+	const curves = [];
+	// 未提交行的线用虚线，与真实提交区分。
+	const dash = isUncommitted ? { strokeDasharray: '2 2' } : {};
+	(row.segments ?? []).forEach((segment, index) => {
 		// 未提交行不画节点，其出线因此从行顶起画、贯穿整行，不留节点处的断口。
 		const shaped = isUncommitted && !segment.fromTop ? { ...segment, fromTop: true } : segment;
 		const geometry = segmentGeometry(shaped, node);
-		if (geometry === null) return [];
-		const stroke = segment.colour;
-		// 未提交行的线用虚线，与真实提交区分。
-		const common = { stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round', ...(isUncommitted ? { strokeDasharray: '2 2' } : {}) };
+		if (geometry === null) return;
 		if (geometry.kind === 'path') {
-			return [React.createElement('path', { key: `c${index}`, d: geometry.d, fill: 'none', ...common })];
+			curves.push(React.createElement('path', {
+				key: `c${index}`, d: geometry.d, fill: 'none',
+				stroke: segment.colour, strokeWidth: LANE_STROKE, strokeLinecap: 'round', ...dash,
+			}));
+			return;
 		}
+		const parts = lineParts.get(segment.colour) ?? [];
 		if (geometry.kind === 'gap') {
-			return [
-				React.createElement('line', { key: `u${index}`, ...geometry.upper, ...common }),
-				React.createElement('line', { key: `l${index}`, ...geometry.lower, ...common }),
-			];
+			parts.push(`M ${geometry.upper.x1} ${geometry.upper.y1} L ${geometry.upper.x2} ${geometry.upper.y2}`);
+			parts.push(`M ${geometry.lower.x1} ${geometry.lower.y1} L ${geometry.lower.x2} ${geometry.lower.y2}`);
+		} else {
+			parts.push(`M ${geometry.x1} ${geometry.y1} L ${geometry.x2} ${geometry.y2}`);
 		}
-		return [React.createElement('line', { key: `s${index}`, x1: geometry.x1, y1: geometry.y1, x2: geometry.x2, y2: geometry.y2, ...common })];
+		lineParts.set(segment.colour, parts);
 	});
+	const segments = [
+		...[...lineParts].map(([stroke, parts]) => React.createElement('path', {
+			key: `l${stroke}`, d: parts.join(' '), fill: 'none',
+			stroke, strokeWidth: LANE_STROKE, strokeLinecap: 'round', ...dash,
+		})),
+		...curves,
+	];
 	const ring = (radius, key) => React.createElement('circle', {
 		key, cx, cy: half, r: radius, fill: 'none', stroke: colour, strokeWidth: RING_STROKE,
 	});
