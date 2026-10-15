@@ -96,14 +96,31 @@ export interface LaneRow {
 	readonly indicator?: 'incoming' | 'outgoing';
 }
 
+/**
+ * 泳道状态：某个边界处的泳道占用。
+ *
+ * null 表示空位；位置有意义（泳道下标即横向位置），因此不能压缩掉。
+ */
+export type LaneSeed = ReadonlyArray<{ readonly hash: string | null; readonly colour: string } | null>;
+
+/** 续算所需的完整状态：泳道占用与色池游标。 */
+export interface LaneCursor {
+	/** 各泳道当前等待的提交与颜色。 */
+	readonly lanes: LaneSeed;
+	/** 色池下一次取用的下标；不带它续算会让新泳道换色。 */
+	readonly nextColour: number;
+}
+
 /** 布局结果。 */
 export interface LaneLayout {
 	/** 每行布局。 */
 	readonly rows: LaneRow[];
 	/** 泳道总数。 */
 	readonly laneCount: number;
-}
+	/** 末行之后的完整状态；续算或裁头后可从它接续。 */
+	readonly endCursor: LaneCursor;
 
+}
 /** 决定引用色的分支名与领先/落后尖端。 */
 export interface LaneRefs {
 	/** 本地当前分支名。 */
@@ -141,12 +158,18 @@ interface Lane {
  *
  * @param commits - 提交序列，按图上的从上到下顺序。
  * @param refs - 决定引用色的本地分支与上游，以及领先/落后的两侧尖端。
+ *
+ * 单遍扫描：逐提交顺序处理、无回溯，泳道在提交离开后被后续复用，因此泳道数只与并发分支数有关。
+ * 起始泳道可由 `seed` 给出，用于续接上一段：裁头后保留的部分因此不会整体左移。
+ *
+ * @returns 每行布局、泳道总数与末态泳道。
  * @returns 每行布局与泳道总数。
  */
-export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs = {}): LaneLayout {
+export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs = {}, seed: LaneCursor | null = null): LaneLayout {
 	const commitByHash = new Map<string, LayoutCommit>();
 	for (const commit of commits) commitByHash.set(commit.hash, commit);
-	let nextColour = 0;
+	// 色池游标随种子续接：否则裁头后新分配的泳道会与裁之前不同色。
+	let nextColour = seed?.nextColour ?? 0;
 
 	/** 无引用的泳道按 5 色池轮转分配。 */
 	const poolColour = (): string => LANE_COLOURS[nextColour++ % LANE_COLOURS.length];
@@ -168,7 +191,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 		return null;
 	};
 
-	let lanes: Array<Lane | null> = [];
+	let lanes: Array<Lane | null> = (seed?.lanes ?? []).map((lane) => (lane === null ? null : { ...lane }));
 	let laneCount = 0;
 	const baseRows: LaneRow[] = [];
 
@@ -284,7 +307,11 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 	const localTip = refs.localTip ?? null;
 	if (localTip !== null) insertIndicator(rows.findIndex((row) => row.hash === localTip), 'outgoing');
 
-	return { rows, laneCount };
+	return {
+		rows,
+		laneCount,
+		endCursor: { lanes: lanes.map((lane) => (lane === null ? null : { ...lane })), nextColour },
+	};
 }
 
 /**

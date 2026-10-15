@@ -49,14 +49,13 @@ export interface GraphData {
 	readonly head: string | null;
 	readonly remotes: Remote[];
 	/** 下一页的游标（本页最后一条的 hash）；无更多时为 null。 */
-	readonly nextCursor: string | null;
 	readonly moreCommitsAvailable: boolean;
 }
 
 /** 提交图读取选项。 */
 export interface LoadGraphOptions {
-	/** 翻页游标：从该提交开始取下一页；省略时从头。 */
-	readonly fromHash?: string | null;
+	/** 从起点跳过的提交数；反向（往更新方向）翻页按绝对偏移取用。 */
+	readonly skip?: number;
 	readonly maxCommits?: number;
 	readonly commitOrdering?: string;
 	readonly showStashes?: boolean;
@@ -77,7 +76,7 @@ export interface LoadGraphOptions {
  * @returns 提交、HEAD、远程与是否还有更多提交。
  */
 export async function loadGraph(cwd: string, {
-	maxCommits = 200, fromHash = null, commitOrdering = 'topo',
+	maxCommits = 200, skip = 0, commitOrdering = 'topo',
 	showStashes = true, showTags = true, showRemoteBranches = true,
 	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
@@ -87,7 +86,8 @@ export async function loadGraph(cwd: string, {
 	const remotes = (Array.isArray(repoInfo.remotes) ? repoInfo.remotes : []) as Remote[];
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
-		command: 'loadCommits', branches: null, fromHash, limit: maxCommits, showTags, showRemoteBranches,
+		// 偏移分页：skip 是已加载条数，正反向都用它。
+		command: 'loadCommits', branches: null, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering,
 		remotes, hideRemotes: [], stashes: Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [],
 	}, signal);
@@ -96,7 +96,6 @@ export async function loadGraph(cwd: string, {
 		commits: (Array.isArray(commitsPayload.commits) ? commitsPayload.commits : []) as Commit[],
 		head,
 		remotes,
-		nextCursor: typeof commitsPayload.nextCursor === 'string' ? commitsPayload.nextCursor : null,
 		moreCommitsAvailable: commitsPayload.moreCommitsAvailable === true,
 	};
 }

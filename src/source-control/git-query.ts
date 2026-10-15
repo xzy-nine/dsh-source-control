@@ -73,7 +73,8 @@ export async function getRepoInfo(repo: string, showRemoteBranches: boolean, sho
  * @param remotes - 已知远程名，用于标注远程分支所属远程。
  * @param hideRemotes - 要隐藏的远程名。
  * @param stashes - 仓库中的贮藏。
- * @param fromHash - 翻页游标：从该提交开始遍历；null 表示从头。
+ * @param skip - 从起点跳过的提交数；双向分页都按绝对偏移取用。
+ * @param skip - 从起点跳过的提交数；反向翻页按绝对偏移取用。
  * @returns 提交图；读取失败时为空图且 `error` 为错误文本。
  */
 export async function getCommits(
@@ -88,11 +89,11 @@ export async function getCommits(
 	remotes: readonly string[],
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
-	fromHash: string | null = null,
+	skip = 0,
 ): Promise<CommitData> {
 	try {
 		const [records, refsOrError] = await Promise.all([
-			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, fromHash),
+			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip),
 			getRefs(repo, showRemoteBranches, false, hideRemotes).then((refs) => refs, (error: unknown) => errorText(error)),
 		]);
 
@@ -453,7 +454,6 @@ async function getRemoteNames(repo: string): Promise<string[]> {
  * @param remotes - 已知远程名。
  * @param hideRemotes - 要隐藏的远程名。
  * @param stashes - 仓库中的贮藏。
- * @param fromHash - 翻页游标：从该提交开始遍历；null 表示从头。
  * @returns 提交记录。
  */
 async function getLog(
@@ -468,15 +468,14 @@ async function getLog(
 	remotes: readonly string[],
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
-	fromHash: string | null = null,
+	skip = 0,
 ): Promise<LogRecord[]> {
 	const args = ['-c', 'log.showSignature=false', 'log', '-z', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${order}-order`];
 	if (onlyFollowFirstParent) args.push('--first-parent');
+	// 偏移分页：跳过前 skip 条再输出本页；正反向都用它，因此上下滚动都能取。
+	if (skip > 0) args.push(`--skip=${skip}`);
 
-	if (fromHash !== null) {
-		/* 游标翻页：从该提交开始向后遍历，每页成本恒定为 O(页大小)。 */
-		args.push(fromHash);
-	} else if (branches !== null) {
+	if (branches !== null) {
 		args.push(...branches);
 	} else {
 		args.push('--branches');

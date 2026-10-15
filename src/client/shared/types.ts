@@ -202,8 +202,6 @@ export interface PanelState {
 	head: string | null;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
-	/** 下一页游标（本页最后一条的 hash）；无更多时为 null。 */
-	cursor: string | null;
 	entries: WorkingTreeEntry[];
 	selectedHash: string | null;
 	/**

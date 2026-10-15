@@ -34,6 +34,17 @@ const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, foo
 /** 距底部不足该像素数时自动取下一页。 */
 const AUTO_LOAD_THRESHOLD = 120;
 
+/** 可视区之外额外渲染的行数：滚动时留出缓冲，避免边缘出现空白。 */
+const OVERSCAN_ROWS = 12;
+
+/**
+ * 滚动停止判定的静默时长。
+ *
+ * 悬浮卡片的改动统计与完整提交信息按哈希单独取回，滚动期间行在变、取了也多半用不上；
+ * 因此滚动停止这段时间之后才真正发起请求。
+ */
+const SCROLL_SETTLE_MS = 160;
+
 /** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
 const LOAD_MORE_SETTLE_MS = 10000;
 
@@ -52,9 +63,9 @@ const GITHUB_NOREPLY = /^(?:(\d+)\+)?([^@+]+)@users\.noreply\.github\.com$/i;
  */
 function avatarUrls(email, size = 40) {
 	if (typeof email !== 'string') return [];
+	const urls = [];
 	const trimmed = email.trim();
 	if (trimmed === '') return [];
-	const urls = [];
 	const noreply = GITHUB_NOREPLY.exec(trimmed);
 	if (noreply !== null) {
 		const [, id, username] = noreply;
@@ -63,7 +74,6 @@ function avatarUrls(email, size = 40) {
 			? `https://avatars.githubusercontent.com/u/${id}?s=${size}&v=4`
 			: `https://avatars.githubusercontent.com/${encodeURIComponent(username)}?s=${size}&v=4`);
 	}
-	urls.push(`https://www.gravatar.com/avatar/${md5(trimmed.toLowerCase())}?s=${size}&d=mp`);
 	return urls;
 }
 
@@ -569,6 +579,14 @@ export function CommitGraph({
 		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
 	const graphRef = React.useRef(null);
+	/** 可视区高度；窗口化渲染据此决定渲染哪一段。 */
+	const [viewportHeight, setViewportHeight] = React.useState(0);
+	/** 当前滚动位置。 */
+	const [scrollTop, setScrollTop] = React.useState(0);
+	/** 展开详情的实测高度；没有展开时为 0。 */
+	const [detailHeight, setDetailHeight] = React.useState(0);
+	/** 详情块的尺寸观察者。 */
+	const detailObserverRef = React.useRef(null);
 	/** 一次加载完成前不重复请求下一页。 */
 	const loadPendingRef = React.useRef(false);
 	/** 兜底解除占用的定时器：失败时提交列表不变，靠它恢复可重试。 */
@@ -581,6 +599,14 @@ export function CommitGraph({
 	moreRef.current = moreCommitsAvailable;
 	const onLoadMoreRef = React.useRef(onLoadMore);
 	onLoadMoreRef.current = onLoadMore;
+	/** 一次取更早完成前不重复请求；取回后按 commits 变化复位。 */
+	/** 悬停回调：滚动期间只记住哈希，停止后由 handleScroll 补取。 */
+	const hoverOrDefer = React.useCallback((hash: string | null) => {
+		pendingHoverRef.current = hash;
+		if (scrollSettleRef.current !== null) return;
+		onHoverCommit?.(hash);
+	}, [onHoverCommit]);
+
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 
@@ -607,6 +633,63 @@ export function CommitGraph({
 		onLoadMoreRef.current();
 	}, [releasePending]);
 
+	/** 记录展开详情的实测高度，供行偏移计算使用。 */
+	const measureDetail = React.useCallback((node) => {
+		if (detailObserverRef.current !== null) {
+			detailObserverRef.current.disconnect();
+			detailObserverRef.current = null;
+		}
+		if (node === null) { setDetailHeight(0); return; }
+		setDetailHeight(node.clientHeight);
+		if (typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(() => setDetailHeight(node.clientHeight));
+		observer.observe(node);
+		detailObserverRef.current = observer;
+	}, []);
+
+	React.useEffect(() => () => {
+		if (detailObserverRef.current !== null) detailObserverRef.current.disconnect();
+	}, []);
+
+	/*
+	 * 滚动期间的悬停请求推迟到停止之后。
+	 *
+	 * 滚动时行在快速更替，按当时指针下的行取回数据多半用不上；记录最近一次悬停的哈希，
+	 * 静默 SCROLL_SETTLE_MS 后再补取。
+	 */
+	const pendingHoverRef = React.useRef<string | null>(null);
+	const scrollSettleRef = React.useRef<number | null>(null);
+
+	/** 记录滚动位置、触发窗口重算，并推迟滚动期间的悬停请求。 */
+	const handleScroll = React.useCallback(() => {
+		const element = graphRef.current;
+		if (element === null) return;
+		setScrollTop(element.scrollTop);
+		maybeLoadMore();
+		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
+		scrollSettleRef.current = window.setTimeout(() => {
+			scrollSettleRef.current = null;
+			const hash = pendingHoverRef.current;
+			if (hash !== null) onHoverCommit?.(hash);
+		}, SCROLL_SETTLE_MS);
+	}, [maybeLoadMore, onHoverCommit]);
+
+	React.useEffect(() => () => {
+		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
+	}, []);
+
+	// 记录可视高度：窗口化渲染据此决定渲染哪一段；容器尺寸变化时重算。
+	React.useEffect(() => {
+		const element = graphRef.current;
+		if (element === null) return undefined;
+		const update = (): void => { setViewportHeight(element.clientHeight); };
+		update();
+		if (typeof ResizeObserver === 'undefined') return undefined;
+		const observer = new ResizeObserver(update);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
+
 	// 取回新数据后解除占用，并补取：内容仍未填满容器时继续取下一页。
 	React.useEffect(() => {
 		if (commits === requestedForRef.current) return;
@@ -617,13 +700,37 @@ export function CommitGraph({
 
 	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
 
+	const rows = layout.rows;
+	const commitByHash = new Map();
+	for (const commit of commits) commitByHash.set(commit.hash, commit);
+	/*
+	 * 窗口化渲染：只挂载可视区附近的行，未渲染部分用等高空占位撑起滚动条。
+	 *
+	 * 不这样做时每条提交都是一个真实 DOM 行（含泳道 SVG 与引用标记），翻到几百条就是几百个节点常驻。
+	 * 行偏移按 ROW_HEIGHT 累加，展开详情的那一行额外加上它的实测高度，下方各行因此不会错位。
+	 */
+	const selectedIndex = selectedHash === null ? -1 : rows.findIndex((row) => row.hash === selectedHash);
+	const offsets = React.useMemo(() => {
+		const out = new Float64Array(rows.length + 1);
+		for (let index = 0; index < rows.length; index++) {
+			out[index + 1] = out[index] + ROW_HEIGHT + (index === selectedIndex ? detailHeight : 0);
+		}
+		return out;
+	}, [rows, selectedIndex, detailHeight]);
 	if (commits.length === 0) {
 		return React.createElement('div', { className: shared.empty }, '这个仓库还没有提交');
 	}
-	const commitByHash = new Map();
-	for (const commit of commits) commitByHash.set(commit.hash, commit);
+	// 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。
+	let first = 0;
+	while (first < rows.length && offsets[first + 1] <= scrollTop) first++;
+	first = Math.max(0, first - OVERSCAN_ROWS);
+	let last = first;
+	while (last < rows.length && offsets[last] < scrollTop + viewportHeight) last++;
+	last = Math.min(rows.length, last + OVERSCAN_ROWS);
 	const items = [];
-	for (const [index, row] of layout.rows.entries()) {
+	for (let index = first; index < last; index++) {
+		const row = rows[index];
+		if (row === undefined) continue;
 		// 领先/落后为虚拟行：没有对应提交，只画指示节点。
 		if (row.indicator !== undefined) {
 			items.push(React.createElement(IndicatorRow, { key: `indicator:${index}`, row, indicator: row.indicator }));
@@ -647,7 +754,7 @@ export function CommitGraph({
 			muteMergeCommits,
 			stats: commitStats?.get(commit.hash) ?? null,
 			message: commitMessages?.get(commit.hash) ?? null,
-			onHover: onHoverCommit,
+			onHover: hoverOrDefer,
 			widthAnchorRef: graphRef,
 		}));
 		// 改动文件区是图形区的一部分：展开在该提交行下方。
@@ -655,7 +762,7 @@ export function CommitGraph({
 		if (detail !== null && detail !== undefined) {
 			items.push(React.createElement(
 				'div',
-				{ key: `${commit.hash}:detail`, className: css.detailInline },
+				{ key: `${commit.hash}:detail`, className: css.detailInline, ref: measureDetail },
 				React.createElement(DetailGutter, { row }),
 				React.createElement('div', { className: css.detailBody }, detail),
 			));
@@ -663,11 +770,14 @@ export function CommitGraph({
 	}
 	return React.createElement(
 		'div',
-		{ className: css.graph, ref: graphRef, onScroll: maybeLoadMore },
+		{ className: css.graph, ref: graphRef, onScroll: handleScroll, 'data-graph-scroll': '' },
+		// 未渲染部分用等高空占位撑起滚动条：提交行高固定，高度可直接由行数算出。
+		first > 0 && React.createElement('div', { key: 'spacerTop', style: { height: offsets[first] } }),
 		...items,
+		last < rows.length && React.createElement('div', { key: 'spacerBottom', style: { height: offsets[rows.length] - offsets[last] } }),
 		moreCommitsAvailable && React.createElement(
 			'div',
-			{ className: css.pager },
+			{ key: 'pager', className: css.pager },
 			loadingMore ? '正在加载更多提交…' : '滚动到底部自动加载更多',
 		),
 	);

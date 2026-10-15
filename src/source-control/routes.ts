@@ -219,13 +219,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
 				/*
-				 * 游标分页：客户端把上一页最后一条的 hash 作为 `fromHash` 传来，git 从该提交开始遍历。
+				 * 偏移分页：客户端传 `skip`（已加载条数）与 `limit`，git 跳过前 skip 条再输出本页。
 				 *
-				 * `--skip` 会让每页成本随页数线性增长（遍历前 N 条再丢弃），hash 游标则每页恒定为页大小。
+				 * 用偏移而不是 hash 游标：hash 游标只能从一个提交往更早方向走，向上回看时无法用它定位；
+				 * 偏移则正反向都能取，代价是 git 端多遍历 skip 条（纯指针跳转，无 IO）。
 				 * 不缓存已取列表：提交会因 rebase / amend 变化，缓存会读到陈旧内容。
 				 */
-				const fromHash = typeof msg.fromHash === 'string' && msg.fromHash !== '' ? msg.fromHash : null;
 				const limit = num('limit', num('maxCommits', 32));
+				const skip = num('skip', 0);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
@@ -239,7 +240,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					remoteNames,
 					arr<string>('hideRemotes'),
 					arr<never>('stashes'),
-					fromHash,
+					skip,
 				);
 				// 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。
 				const foreign = await branchesOfOtherWorktrees(repo);

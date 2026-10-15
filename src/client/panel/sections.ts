@@ -315,6 +315,8 @@ export interface GraphSectionProps {
 	/** 上游远程跟踪分支名，决定泳道引用色。 */
 	readonly upstream: string | null;
 	readonly moreCommitsAvailable: boolean;
+	/** 因留存封顶而丢弃的提交总数。 */
+	/** 留存提交之前的泳道状态；裁头后由此续算。 */
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
@@ -326,6 +328,8 @@ export interface GraphSectionProps {
 	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string) => Promise<void>;
 	readonly onToggleCommit: (hash: string, additive?: boolean) => void;
 	readonly onLoadMore: () => void;
+	/** 取回更早的一段（窗口头部之前）。 */
+	/** 窗口头部之前是否还有更早的提交。 */
 	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
 	readonly onHoverCommit: (hash: string | null) => void;
 	readonly onOpenFilter: () => void;

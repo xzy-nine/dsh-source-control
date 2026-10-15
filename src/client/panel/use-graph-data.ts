@@ -9,6 +9,7 @@ import { loadGraph, loadRepoSync, loadWorkingTree } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
+
 import type { BusyEntry, PanelState, RepoSync, Settings, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
@@ -20,6 +21,7 @@ import type { BusyEntry, PanelState, RepoSync, Settings, WorkingTreeEntry } from
 function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
 	return entries.map((entry) => `${entry.path}:${entry.index}${entry.worktree}`).join('\n');
 }
+
 
 /** 提交图数据 hook 的入参。 */
 export interface UseGraphDataOptions {
@@ -47,6 +49,7 @@ export interface UseGraphDataResult {
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 追加下一个提交窗口。 */
 	readonly loadMore: () => Promise<void>;
+	/** 取回更早的一段（窗口头部之前）；裁头后回看用。 */
 	/** 进行中的操作记录；后台刷新据此判断目标仓库是否繁忙。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 }
@@ -61,12 +64,19 @@ export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 }: UseGraphDataOptions): UseGraphDataResult {
 	const [state, setState] = React.useState<PanelState>({
-		phase: 'loading', error: null, commits: [], head: null, more: false, cursor: null,
+		phase: 'loading', error: null, commits: [], head: null, more: false,
 		entries: [], selectedHash: null, detail: null, busy: [], remotes: [],
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
 	const busyRef = React.useRef<readonly BusyEntry[]>([]);
+	/**
+	 * 已留存提交之前的泳道状态。
+	 *
+	 * 裁头后保留的行若从空泳道重算会整体左移，用该状态续算才能与裁之前一致；
+	 * 只加载首页时为 null。
+	 */
+	/** 同一份状态的 ref：loadMore 内读种子，避免把它列入依赖。 */
 
 	/** 当前状态的引用：loadMore 在回调里读取已加载条数，避免把它列入依赖。 */
 	const stateRef = React.useRef(state);
@@ -117,8 +127,7 @@ export function useGraphData({
 			setState((previous) => ({
 				...previous, phase: 'ready', error: null,
 				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
-				// 下一页游标由宿主给出：它是本页最后一条的 hash。
-				cursor: graph.nextCursor,
+				// 重载后回到首屏：已裁计数归零。
 				remotes: graph.remotes, entries,
 				detail: mode === 'full' ? null : previous.detail,
 			}));
@@ -138,20 +147,19 @@ export function useGraphData({
 	/**
 	 * 追加下一页。
 	 *
-	 * 用当前页最后一条的 hash 作游标：git 从该提交开始遍历，每页成本恒定为页大小，与已翻页数无关。
-	 * git 会重新输出游标那条本身，因此按 hash 去重后再追加。
+	 * 偏移分页：下一页的起点是已加载条数。客户端保留从最新提交开始的完整前缀，因此向上滚动不需要
+	 * 再取数 —— 反向取回只在「从头部淘汰」时才需要，而这里不做淘汰。
 	 *
 	 * @returns 无。
 	 */
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
-		const cursor = stateRef.current.cursor;
-		if (cursor === null) return;
+		const skip = stateRef.current.commits.length;
 		const generation = generationRef.current;
 		try {
 			const graph = await loadGraph(workingTreePath, {
 				maxCommits,
-				fromHash: cursor,
+				skip,
 				commitOrdering: settings.commitOrdering,
 				showStashes: settings.showStashes,
 				showTags: settings.showTags,
@@ -160,13 +168,12 @@ export function useGraphData({
 				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
 			});
 			if (generation !== generationRef.current) return;
-			setState((previous) => {
-				const known = new Set(previous.commits.map((commit) => commit.hash));
+			setState((current) => {
+				const known = new Set(current.commits.map((commit) => commit.hash));
 				return {
-					...previous,
-					commits: [...previous.commits, ...graph.commits.filter((commit) => !known.has(commit.hash))],
+					...current,
+					commits: [...current.commits, ...graph.commits.filter((commit) => !known.has(commit.hash))],
 					more: graph.moreCommitsAvailable,
-					cursor: graph.nextCursor,
 				};
 			});
 		} catch (error) {
@@ -213,4 +220,5 @@ export function useGraphData({
 	}, [workingTreePath, refresh, settings.autoRefresh]);
 
 	return { state, setState, refresh, loadMore, busyRef };
+
 }

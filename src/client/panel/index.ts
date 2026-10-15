@@ -21,6 +21,7 @@ import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showTe
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
+import { ROW_HEIGHT } from '../graph/lanes.ts';
 import { changeOf } from './changes.ts';
 import { hasGitHubRemote } from './github.ts';
 import { needsTranslation, splitCommitPrefix } from './language.ts';
@@ -579,15 +580,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void selectCommit(hash);
 	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
 
-	/** 转到当前 HEAD 提交：选中并展开其改动文件。 */
+	/**
+	 * 转到当前 HEAD 提交：把滚动容器定位到该提交所在行。
+	 *
+	 * 图形区按可视区窗口化渲染，目标行可能尚未挂载，因此不能靠 `querySelector` 找行；
+	 * 直接按行号算出偏移并设置滚动位置，窗口随之把该行渲染出来。
+	 */
 	const goToHead = React.useCallback(() => {
 		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
 		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
 		if (target === undefined) return;
 		const container = graphScrollRef.current;
 		if (container === null) return;
-		const row = container.querySelector(`[data-hash="${target.hash}"]`);
-		if (row !== null) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+		const index = state.commits.indexOf(target);
+		if (index < 0) return;
+		// 真正滚动的是图区内部元素（`graphScrollRef` 给的是外层容器）。
+		const scroller = container.querySelector('[data-graph-scroll]') ?? container;
+		scroller.scrollTo({ top: index * ROW_HEIGHT, behavior: 'smooth' });
 	}, [state.commits, state.head]);
 
 	/** 加载仓库后自动滚动到 HEAD。 */
@@ -1423,7 +1432,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
-			moreCommitsAvailable: state.more, statsByHash, messageByHash,
+					moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,

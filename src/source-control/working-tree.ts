@@ -346,12 +346,45 @@ function checkCallRate(args: readonly string[]): void {
 const resultCache = new Map<string, { result: GitResult; expiresAt: number }>();
 
 /**
+ * 结果缓存的条数上限。
+ *
+ * 游标分页的每页 key 都不同（含起始 hash），且取回后不会再读第二次；不设上限时翻几百页就会
+ * 把每页结果永久留在宿主内存里。上限按「同时活跃的查询数」定，够覆盖面板的重复读，又不随
+ * 翻页数增长。
+ */
+const MAX_CACHE_ENTRIES = 64;
+
+/**
  * 只读查询结果缓存时长。
  *
  * 面板在编辑期间会按节拍反复读同一份不变的数据；一次 git 约 70–90ms，若调用间隔大于
  * 执行时间，在途复用命不中，缓存按节拍命中即可避免整轮重复起进程。
  */
 const CACHE_TTL_MS = 200;
+
+/**
+ * 写入一条只读结果，并维持缓存上限。
+ *
+ * 淘汰顺序：先删过期项，仍超上限时按插入序删最旧。Map 保持插入序，因此无需额外维护 LRU 链。
+ *
+ * @param key - 缓存键。
+ * @param result - 结果。
+ * @returns 无。
+ */
+function setCachedResult(key: string, result: GitResult): void {
+	const now = Date.now();
+	resultCache.set(key, { result, expiresAt: now + CACHE_TTL_MS });
+	if (resultCache.size <= MAX_CACHE_ENTRIES) return;
+	for (const [existing, entry] of resultCache) {
+		if (resultCache.size <= MAX_CACHE_ENTRIES) break;
+		if (entry.expiresAt <= now) resultCache.delete(existing);
+	}
+	while (resultCache.size > MAX_CACHE_ENTRIES) {
+		const oldest = resultCache.keys().next();
+		if (oldest.done === true) break;
+		resultCache.delete(oldest.value);
+	}
+}
 
 /**
  * 只读命令的精确形态：子命令 + 允许出现的开关前缀。
@@ -458,7 +491,7 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 	try {
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
-		if (readOnly && result.code === 0) resultCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+		if (readOnly && result.code === 0) setCachedResult(key, result);
 		return result;
 	} finally {
 		inFlightGit.delete(key);
