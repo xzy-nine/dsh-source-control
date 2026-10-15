@@ -6,10 +6,11 @@
 import React from 'react';
 import {
 	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular,
-	IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
+	IconFolderCloseRegular, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { copyText, showContextMenu } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
+import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { BusyScope, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
@@ -66,10 +67,8 @@ export interface ChangeNodeRowProps {
 	/** 打开文件：isNew 为 true 时按普通文件打开（新文件没有可比差异）。 */
 	readonly onOpen: (entry: WorkingTreeEntry, isNew: boolean) => void;
 	readonly descendantsOf: (folderPath: string) => string[];
-	/** 把路径加入 .gitignore。 */
-	readonly onAddToGitignore: (path: string) => void;
-	/** 把路径加入本地排除文件。 */
-	readonly onAddToLocalExclude: (path: string) => void;
+	/** 右键菜单的依赖面；文件夹行与文件行共用同一份注册表。 */
+	readonly menu: ChangeMenuDeps;
 }
 
 /**
@@ -84,8 +83,7 @@ export function isNewFile(entry: WorkingTreeEntry): boolean {
 
 /** 文件夹行或文件行（变更树内）。 */
 export function ChangeNodeRow({
-	row, busy, open, staged, onToggle, onStage, onUnstage, onDiscard, onOpen, descendantsOf,
-	onAddToGitignore, onAddToLocalExclude,
+	row, busy, open, staged, onToggle, onStage, onUnstage, onDiscard, onOpen, descendantsOf, menu,
 }: ChangeNodeRowProps): React.ReactElement {
 	if (row.kind === 'folder') {
 		const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -93,20 +91,10 @@ export function ChangeNodeRow({
 			event.stopPropagation();
 			const target = event.currentTarget;
 			target.classList.add(MENU_TARGET_CLASS);
-			const paths = descendantsOf(row.path);
-			const items: ContextMenuItem[] = [];
-			if (staged) {
-				items.push({ title: `取消暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onUnstage(paths) });
-			} else {
-				items.push({ title: `暂存此文件夹（${paths.length}）`, disabled: busy || paths.length === 0, onClick: () => onStage(paths) });
-				// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
-				items.push(
-					{ type: 'divider' },
-					{ title: '添加到 .gitignore', disabled: busy, onClick: () => onAddToGitignore(row.path) },
-					{ title: '添加到本地排除', disabled: busy, onClick: () => onAddToLocalExclude(row.path) },
-				);
-			}
-			items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(row.path); } });
+			const items = changeMenuItems({
+				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
+				entry: null, isNew: false, untracked: false,
+			});
 			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 		};
 		return React.createElement(
@@ -119,7 +107,7 @@ export function ChangeNodeRow({
 			React.createElement('span', {
 				className: cx(shared.repoChevron, !open && shared.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-			React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
+			React.createElement(open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
 			React.createElement('span', { className: css.changeName }, row.name),
 			React.createElement('span', { className: cx(css.rowTail, css.count) }, String(row.count)),
 		);
@@ -135,20 +123,10 @@ export function ChangeNodeRow({
 		event.preventDefault();
 		const target = event.currentTarget;
 		target.classList.add(MENU_TARGET_CLASS);
-		const items: ContextMenuItem[] = [{ title: isNew ? '打开文件' : '打开', onClick: () => onOpen(entry, isNew) }, { type: 'divider' }];
-		if (fileStaged) {
-			items.push({ title: '取消暂存', disabled: busy, onClick: () => onUnstage([entry.path]) });
-		} else {
-			items.push({ title: '暂存改动', disabled: busy, onClick: () => onStage([entry.path]) });
-			items.push({ title: '丢弃改动', danger: true, disabled: busy, onClick: () => onDiscard([entry.path], untracked) });
-			// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
-			items.push(
-				{ type: 'divider' },
-				{ title: '添加到 .gitignore', disabled: busy, onClick: () => onAddToGitignore(entry.path) },
-				{ title: '添加到本地排除', disabled: busy, onClick: () => onAddToLocalExclude(entry.path) },
-			);
-		}
-		items.push({ type: 'divider' }, { title: '复制路径', onClick: () => { void copyText(entry.path); } });
+		const items = changeMenuItems({
+			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
+			entry, isNew, untracked,
+		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
@@ -226,7 +204,7 @@ export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen
 					React.createElement('span', {
 						className: cx(shared.repoChevron, !row.open && shared.isCollapsed),
 					}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-					React.createElement(IconFolderOpenOutlineRegular, { size: 14 }),
+					React.createElement(row.open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
 					React.createElement('span', { className: css.changeName }, row.name),
 					React.createElement('span', { className: css.count }, String(row.count)),
 				);
@@ -300,6 +278,34 @@ export function ChangeGroup({
 	const allPaths = visible.map((entry) => entry.path);
 	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }); };
 	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }); };
+	/**
+	 * 丢弃某个文件夹下的全部改动。
+	 *
+	 * 与「丢弃全部」同一套分拣：文件夹下的已跟踪条目经 `git restore` 还原、未跟踪条目经
+	 * `git clean` 删除，混在一批里下发会让 `git restore` 因无效 pathspec 整体失败。
+	 *
+	 * @param folderPath - 文件夹路径，相对仓库根。
+	 */
+	const onDiscardFolder = (folderPath: string): void => {
+		const prefix = `${folderPath}/`;
+		const inside = visible.filter((entry) => entry.path.startsWith(prefix));
+		const tracked = inside.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
+		const untrackedPaths = inside.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
+		void (async () => {
+			const ok = await showConfirmation({
+				title: '丢弃改动',
+				message: untrackedPaths.length > 0
+					? `确定丢弃 ${folderPath} 下这 ${inside.length} 个文件的改动？其中 ${untrackedPaths.length} 个未跟踪文件会被删除，均无法恢复。`
+					: `确定丢弃 ${folderPath} 下这 ${inside.length} 个文件的改动？未提交的改动会丢失，且无法恢复。`,
+				confirmLabel: '丢弃', danger: true,
+			});
+			if (!ok) return;
+			await run('commit', async () => {
+				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
+				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
+			});
+		})();
+	};
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
 		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
 		void (async () => {
@@ -348,18 +354,22 @@ export function ChangeGroup({
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
 	};
+	/** 右键菜单的依赖面；文件夹行、文件行与分组标题行共用同一份注册表。 */
+	const menu: ChangeMenuDeps = {
+		busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder,
+		onDiscardGroup: () => { onDiscardAll(); },
+		onOpen, onAddToGitignore, onAddToLocalExclude,
+		onCopyPath: (path: string) => { void copyText(path); },
+	};
 	const handleHeadContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
 		event.stopPropagation();
 		const target = event.currentTarget;
 		target.classList.add(MENU_TARGET_CLASS);
-		const items: ContextMenuItem[] = staged
-			? [{ title: `取消暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onUnstage(allPaths) }]
-			: [
-				{ title: `暂存全部（${allPaths.length}）`, disabled: busy, onClick: () => onStage(allPaths) },
-				{ type: 'divider' },
-				{ title: `丢弃全部（${allPaths.length}）`, danger: true, disabled: busy, onClick: onDiscardAll },
-			];
+		const items = changeMenuItems({
+			target: 'group', deps: menu, path: null, paths: allPaths,
+			entry: null, isNew: false, untracked: false,
+		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
 	return React.createElement(
@@ -388,8 +398,7 @@ export function ChangeGroup({
 				staged,
 				onToggle: (path: string) => toggleChange(groupKey, path),
 				onStage, onUnstage, onDiscard, onOpen,
-				descendantsOf,
-				onAddToGitignore, onAddToLocalExclude,
+				descendantsOf, menu,
 			})),
 		),
 	);

@@ -1,0 +1,86 @@
+{
+	"actions": [
+		{
+			"id": "open",
+			"targets": [
+				"file"
+			],
+			"group": "open",
+			"title": "打开",
+			"newTitle": "打开文件"
+		},
+		{
+			"id": "stage",
+			"targets": [
+				"folder",
+				"file",
+				"group"
+			],
+			"group": "edit",
+			"title": "暂存改动",
+			"titles": {
+				"folder": "暂存此文件夹（{count}）",
+				"group": "暂存全部（{count}）"
+			}
+		},
+		{
+			"id": "discard",
+			"targets": [
+				"folder",
+				"file",
+				"group"
+			],
+			"group": "edit",
+			"danger": true,
+			"groupByTarget": {
+				"group": "danger"
+			},
+			"title": "丢弃改动",
+			"titles": {
+				"folder": "丢弃此文件夹（{count}）",
+				"group": "丢弃全部（{count}）"
+			}
+		},
+		{
+			"id": "unstage",
+			"targets": [
+				"folder",
+				"file",
+				"group"
+			],
+			"group": "edit",
+			"title": "取消暂存",
+			"titles": {
+				"folder": "取消暂存此文件夹（{count}）",
+				"group": "取消暂存全部（{count}）"
+			}
+		},
+		{
+			"id": "addToGitignore",
+			"targets": [
+				"folder",
+				"file"
+			],
+			"group": "ignore",
+			"title": "添加到 .gitignore"
+		},
+		{
+			"id": "addToLocalExclude",
+			"targets": [
+				"folder",
+				"file"
+			],
+			"group": "ignore",
+			"title": "添加到本地排除"
+		},
+		{
+			"id": "copyPath",
+			"targets": [
+				"folder",
+				"file"
+			],
+			"group": "copy",
+			"title": "复制路径"
+		}
+	]
+}

@@ -36,7 +36,9 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
                     仓库树、语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作
-                    元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型
+                    元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型；变更区三个
+                    目标（文件夹行 / 文件行 / 分组标题）的菜单共用 change-menu.ts 的注册表，
+                    元数据在 change-menu-actions.json
   src/client/graph/ 泳道图：index.ts 组件与 lanes.ts 布局纯计算
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
@@ -53,11 +55,19 @@ scripts/            客户端打包脚本
 assets/icons/       引用标记用的 SVG
 ```
 
-两处文案以 JSON 为唯一数据源，由薄层直接读入（`import … with { type: 'json' }`，两端构建都原生支持；
-宿主 tsc 会把 JSON 一并产出到 `lib/`）：右键菜单的元数据与菜单名称在 `src/client/panel/menu-actions.json`，
-由 `panel/menu-actions.ts` 补缺省并给出类型；AI 提交信息的基础提示词在
-`src/source-control/ai-commit-prompts.json`，由 `source-control/ai-commit-prompts.ts` 读入并代入占位符。
-JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），因此形状与占位符由
+文案与操作元数据以 JSON 为唯一数据源，由薄层直接读入（`import … with { type: 'json' }`，两端构建都原生
+支持；宿主 tsc 会把 JSON 一并产出到 `lib/`）：
+
+| 数据源 | 薄层 | 内容 |
+|---|---|---|
+| `panel/menu-actions.json` | `panel/menu-actions.ts` | 图形区右键操作的 id、引用类型、菜单名称 |
+| `panel/change-menu-actions.json` | `panel/change-menu-actions.ts` | 变更区右键操作的 id、适用目标、分组、菜单名称 |
+| `source-control/ai-commit-prompts.json` | `source-control/ai-commit-prompts.ts` | AI 提交提示词 |
+
+两份菜单都按「JSON 给元数据与名称 + 代码按 id 绑处理函数」组织：新增操作 = JSON 加一条 + 在对应注册表
+里补一个同 id 的处理函数。变更区三个目标（文件夹行 / 文件行 / 分组标题）共用 `panel/change-menu.ts` 的
+注册表，操作声明适用的 `targets`，因此不会再出现「某个目标漏了某项操作」。
+JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），因此形状、占位符与各目标的必备操作由
 `test/data-sources.test.mjs` 校验。
 
 宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
@@ -195,7 +205,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
-| `data-sources.test.mjs` | JSON 数据源形状：菜单操作的 id/标题/引用类型、名称占位符、提示词四段齐全 |
+| `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |

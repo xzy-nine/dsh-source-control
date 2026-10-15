@@ -68,3 +68,49 @@ test('AI 提交提示词四段齐全且占位符可用', () => {
 	// 语言为（含）时点与不指定时分别成立：不指定语言不追加。
 	assert.ok(!prompts.system.includes('{'), '系统提示词不应含占位符');
 });
+
+test('变更区菜单元数据每项都有 id、标题与适用目标', () => {
+	const { actions } = readJson('src', 'client', 'panel', 'change-menu-actions.json');
+	assert.ok(Array.isArray(actions) && actions.length > 0, 'actions 应为非空数组');
+
+	const targets = ['folder', 'file', 'group'];
+	const ids = new Set();
+	for (const [at, action] of actions.entries()) {
+		const where = `第 ${at + 1} 项`;
+		assert.equal(typeof action.id, 'string', `${where}的 id 应为字符串`);
+		assert.ok(action.id !== '', `${where}的 id 不应为空`);
+		assert.ok(!ids.has(action.id), `id 重复：${action.id}`);
+		ids.add(action.id);
+		assert.ok(typeof action.title === 'string' && action.title !== '', `${action.id} 应有菜单名称`);
+		assert.ok(typeof action.group === 'string' && action.group !== '', `${action.id} 应声明所在分组`);
+		assert.ok(Array.isArray(action.targets) && action.targets.length > 0, `${action.id} 应声明适用目标`);
+		assert.ok(action.targets.every((target) => targets.includes(target)), `${action.id} 的 targets 只支持 ${targets.join(' / ')}`);
+		if (action.danger !== undefined) assert.equal(typeof action.danger, 'boolean', `${action.id} 的 danger 应为布尔值`);
+		for (const [target, text] of Object.entries(action.titles ?? {})) {
+			assert.ok(targets.includes(target), `${action.id} 的 titles 出现未知目标：${target}`);
+			assert.ok(typeof text === 'string' && text !== '', `${action.id} 的 ${target} 标题不应为空`);
+		}
+		for (const target of Object.keys(action.groupByTarget ?? {})) {
+			assert.ok(action.targets.includes(target), `${action.id} 的 groupByTarget 覆盖了不适用目标：${target}`);
+		}
+	}
+
+	// 三个目标都应有暂存与丢弃：曾因各自手写菜单而漏掉文件夹行的丢弃。
+	for (const target of targets) {
+		const applicable = actions.filter((action) => action.targets.includes(target)).map((action) => action.id);
+		assert.ok(applicable.includes('stage'), `${target} 菜单应有暂存`);
+		assert.ok(applicable.includes('discard'), `${target} 菜单应有丢弃`);
+		assert.ok(applicable.includes('unstage'), `${target} 菜单应有取消暂存`);
+	}
+});
+
+test('变更区菜单名称的占位符只有 count', () => {
+	const { actions } = readJson('src', 'client', 'panel', 'change-menu-actions.json');
+	const texts = actions.flatMap((action) => [action.title, action.newTitle, ...Object.values(action.titles ?? {})]);
+	for (const text of texts) {
+		if (typeof text !== 'string') continue;
+		for (const [placeholder] of text.matchAll(/\{[^}]*\}/g)) {
+			assert.equal(placeholder, '{count}', `未知占位符 ${placeholder}：${text}`);
+		}
+	}
+});
