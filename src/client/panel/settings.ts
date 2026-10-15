@@ -12,6 +12,7 @@ import {
 import { Dropdown } from '../ui/dropdown.ts';
 import { AUTO_FETCH_PERIOD_SECONDS_DEFAULT, AUTO_FETCH_PERIOD_SECONDS_MAX, AUTO_FETCH_PERIOD_SECONDS_MIN } from './change-events.ts';
 import { fetchAiModels } from '../api/index.ts';
+import { loadValue, saveValue } from './storage.ts';
 import { showConfirmation, showMessage } from '../ui/dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import type { RemoteProtocolSlot } from '../git/remote-url.ts';
@@ -21,7 +22,7 @@ import css from '../css/settings.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 用户身份配置位置选项。 */
-/** localStorage 键。 */
+/** 设置键。 */
 export const SETTINGS_KEY = 'dsh-source-control-settings';
 
 /** 提交排序选项，三档与 git 的 `--order` 参数一致。 */
@@ -74,44 +75,35 @@ export function defaultSettings(): Settings {
 		aiCommitRules: '',
 	};
 }
-
 /**
- * 从 localStorage 读取设置，缺项以默认补齐。
+ * 读取设置，缺项以默认补齐。
+ *
+ * 设置由宿主持久化（见 ./storage.ts 的预取），因此换浏览器与标签页都保留。
  *
  * @returns 设置对象。
  */
 export function loadSettings(): Settings {
 	const base = defaultSettings();
-	try {
-		const raw = localStorage.getItem(SETTINGS_KEY);
-		if (!raw) return base;
-		const parsed = JSON.parse(raw) as Partial<Settings>;
-		return {
-			...base,
-			...parsed,
-			dateFormat: { ...base.dateFormat, ...(parsed.dateFormat ?? {}) },
-			issueLinkingConfig: parsed.issueLinkingConfig ?? null,
-			graphColours: Array.isArray(parsed.graphColours) ? parsed.graphColours : null,
-		};
-	} catch {
-		return base;
-	}
+	const parsed = loadValue<Partial<Settings> | null>(SETTINGS_KEY, null);
+	if (parsed === null || typeof parsed !== 'object') return base;
+	return {
+		...base,
+		...parsed,
+		dateFormat: { ...base.dateFormat, ...(parsed.dateFormat ?? {}) },
+		issueLinkingConfig: parsed.issueLinkingConfig ?? null,
+		graphColours: Array.isArray(parsed.graphColours) ? parsed.graphColours : null,
+	};
 }
 
 /**
- * 把设置写入 localStorage。
+ * 把设置写入宿主。
  *
  * @param settings - 设置对象。
  * @returns 无。
  */
 export function saveSettings(settings: Settings): void {
-	try {
-		localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-	} catch {
-		/* 持久化失败时静默回退到内存态 */
-	}
+	saveValue(SETTINGS_KEY, settings);
 }
-
 /**
  * 把时间戳格式化为提交行展示文本。
  *

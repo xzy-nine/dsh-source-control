@@ -26,6 +26,7 @@ import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } fr
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
+import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -155,6 +156,28 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
+		/* --- 插件状态持久化：设置、布局、引用筛选、仓库位置缓存（落 $DSH_HOME/dsh-source-control/） --- */
+		case 'readState':
+			await respondResult('readState', async () => ({ entries: readEntries() }));
+			break;
+		case 'writeState':
+			await respondResult('writeState', async () => {
+				writeEntry(str('key'), msg.value === undefined ? null : msg.value);
+				return { repo };
+			});
+			break;
+		case 'readRepoLocations':
+			await respondResult('readRepoLocations', async () => ({ repos: readRepoLocations(repo) }));
+			break;
+		case 'writeRepoLocations':
+			await respondResult('writeRepoLocations', async () => {
+				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
+					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
+				writeRepoLocations(repo, repos);
+				return { repo };
+			});
+			break;
 		case 'discoverRepositories':
 			await respondResult('discoverRepositories', async () => {
 				// knownRepos 命中时走快路径：只核对已知路径，不逐层扫描目录。

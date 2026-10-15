@@ -31,9 +31,11 @@
 
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖
-src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
+src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现、
+                    插件状态持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
-  src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出
+  src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
+                    state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
                     仓库树、语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作
                     元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型；变更区三个
@@ -144,17 +146,22 @@ Office）主动不认领，那些仍走宿主预览。
 打开文件、打开设置这类只读入口不因任何影响面禁用。宿主侧不串行化命令：每条请求独立执行，面板的
 阻塞只来自上述控件禁用。
 
-## 状态持久化的三级
+## 状态持久化的两级
 
-按存活范围分三级，取值刻意不同，不可统一：选级别看该状态「丢了会不会烦」与「跨会话是否仍有意义」。
+分两级，判据只有一条：该状态是否值得跨会话保留。**持久化一律落宿主**，浏览器端不承担存储 —— 
+换浏览器、换标签页、清缓存都不会丢；窗口级只活在本次挂载里，不进任何存储。
 
 | 级别 | 载体 | 存活范围 | 适用 |
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
-| 会话级 | `sessionStorage`（`panel/storage.ts` 的 `loadSession` / `saveSession`） | 刷新保留，关闭标签页清除 | 与当前工作区绑定、换标签页重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`） |
-| 持久化 | `localStorage`（`loadPersistent` / `savePersistent`，`panel/settings.ts`、`panel/repo-tree.ts`） | 跨标签页与浏览器重启 | 用户偏好与布局：设置项、分区高度与展开态、仓库树展开与选中 |
+| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`）、工作区仓库位置缓存 |
 
-新状态先在此表定位，再选载体；不要为省事一律用 `localStorage`。
+客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 在首屏预取一次到内存镜像，
+读走镜像（同步，供 `useState` 初始化），写更新镜像并异步落盘。仓库位置缓存在 `state.json` 的 `repos` 
+段按工作区路径分列，键值对在 `entries` 段。旧版本浏览器里的数据由 `api/state.ts` 的 `migrateLegacyState` 
+在首次进入时搬一次并清掉旧键。
+
+新状态先在此表定位；除窗口级外一律落宿主，不要用 `localStorage`。
 
 ## 构建
 

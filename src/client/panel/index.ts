@@ -28,7 +28,9 @@ import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { loadPersistent, loadSession, savePersistent, saveSession } from './storage.ts';
+import { loadValue, primeStorage, saveValue, storageReady } from './storage.ts';
+import { primeRepoLocations } from './repo-locations.ts';
+import { migrateLegacyState } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
@@ -42,6 +44,9 @@ import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
+
+/** 初始加载的提交数；切换仓库时回到该值。 */
+const INITIAL_MAX_COMMITS = 200;
 
 /** 引用筛选的三种模式：自动、全部、手动勾选。 */
 type RefFilterMode = 'auto' | 'all' | 'manual';
@@ -106,7 +111,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
-	const [maxCommits, setMaxCommits] = React.useState(200);
+	/**
+	 * 已加载的提交数上限。
+	 *
+	 * 触底自动加载会持续累加，切换仓库时重置回初始值：否则浏览过多个仓库后，每次刷新都要按
+	 * 累积后的规模重新拉取与解析，内存与耗时都随浏览历史增长。
+	 */
+	const [maxCommits, setMaxCommits] = React.useState(INITIAL_MAX_COMMITS);
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
@@ -135,24 +146,43 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	);
 	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
 	// 存储库、图形两区可收起（默认展开）；跨会话持久化。
-	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-repo-open', true));
-	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadPersistent('dsh-source-control-graph-open', true));
+	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-repo-open', true));
+	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-graph-open', true));
 	// 图形区高度（像素）；跨会话持久化，默认 320。
-	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-graph-height', 320));
+	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadValue('dsh-source-control-graph-height', 320));
 	// 存储库区高度（像素）；跨会话持久化，默认 200。
-	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadPersistent('dsh-source-control-repo-height', 200));
+	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
+	/**
+	 * 宿主状态预取。
+	 *
+	 * 持久化统一落在宿主，本组件挂载时先取回一次到内存缓存；取回前各 useState 拿到的是回退值，
+	 * 因此完成后再触发一次渲染让它们按真实值重算。
+	 */
+	const [, bumpStorage] = React.useState(0);
+	React.useEffect(() => {
+		if (cwd === undefined || cwd === null || storageReady()) return undefined;
+		let cancelled = false;
+		void (async () => {
+			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
+			await migrateLegacyState(cwd);
+			await primeStorage(cwd);
+			await primeRepoLocations(cwd);
+			if (!cancelled) bumpStorage((previous) => previous + 1);
+		})();
+		return () => { cancelled = true; };
+	}, [cwd]);
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
 
 	const toggleRepoSec = React.useCallback(() => {
-		setRepoSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-repo-open', next); return next; });
+		setRepoSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-repo-open', next); return next; });
 	}, []);
 	const toggleGraphSec = React.useCallback(() => {
-		setGraphSecOpen((previous) => { const next = !previous; savePersistent('dsh-source-control-graph-open', next); return next; });
+		setGraphSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-graph-open', next); return next; });
 	}, []);
 	const commitGraphHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(120, Math.min(value, 720));
 		setGraphHeight(clamped);
-		savePersistent('dsh-source-control-graph-height', clamped);
+		saveValue('dsh-source-control-graph-height', clamped);
 	}, []);
 	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
 	const startGraphResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -176,7 +206,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const commitRepoHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(80, Math.min(value, 600));
 		setRepoHeight(clamped);
-		savePersistent('dsh-source-control-repo-height', clamped);
+		saveValue('dsh-source-control-repo-height', clamped);
 	}, []);
 	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
 	const startRepoResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -214,7 +244,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 切换仓库时载入该仓库的筛选状态；没有记录就用默认的「自动」。
 	React.useEffect(() => {
 		if (filterKey === null) return;
-		const saved = loadPersistent<RefFilterState | null>(filterKey, null);
+		const saved = loadValue<RefFilterState | null>(filterKey, null);
 		setFilterState(saved === null || saved.mode === undefined
 			? { mode: 'auto', selected: new Set() }
 			: { mode: saved.mode, selected: new Set(saved.selected ?? []) });
@@ -223,7 +253,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 写入当前仓库的筛选状态并保留模式。 */
 	const patchFilter = React.useCallback((next: RefFilterState) => {
 		setFilterState(next);
-		if (filterKey !== null) savePersistent(filterKey, { mode: next.mode, selected: [...next.selected] });
+		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
 	const { state, setState, refresh, busyRef } = useGraphData({
@@ -311,12 +341,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 会话级：按仓库/子模块/工作树路径存草稿，刷新保留、关闭标签页清除。
 	React.useEffect(() => {
 		if (workingTreePath === null) return;
-		const saved = loadSession<string | null>('ggg-commit-msg:' + workingTreePath, null);
+		const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
 		if (saved !== null) setMessage(saved);
 	}, [workingTreePath]);
 	React.useEffect(() => {
 		if (workingTreePath === null || aiBusy) return;
-		saveSession('ggg-commit-msg:' + workingTreePath, message);
+		saveValue('ggg-commit-msg:' + workingTreePath, message);
 	}, [workingTreePath, message, aiBusy]);
 
 	/**
@@ -570,6 +600,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const timer = setTimeout(goToHead, 60);
 		return () => clearTimeout(timer);
 	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
+	// 切换仓库时把已加载提交数收回初始值，避免跨仓库累积。
+	React.useEffect(() => { setMaxCommits(INITIAL_MAX_COMMITS); }, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);

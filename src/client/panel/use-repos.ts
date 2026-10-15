@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { discoverRepositories, loadRepoSync } from '../api/index.ts';
-import { loadRepoLocations, saveRepoLocations } from './repo-locations.ts';
+import { loadRepoLocations, primeRepoLocations, saveRepoLocations } from './repo-locations.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from './repo-tree.ts';
@@ -101,19 +101,30 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			setTreeNote(error instanceof Error ? error.message : String(error));
 		};
 
-		const cached = scanSeq === 0 ? loadRepoLocations(root) : [];
-		if (cached.length > 0) {
-			// 命中缓存：先按已知路径取树（不扫目录），秒出界面；随后后台完整重扫一次纠正位置变化。
-			discoverRepositories(root, { knownRepos: cached.map((repo) => repo.path) }, controller.signal)
-				.then((result) => { apply(result, false); return discoverRepositories(root, {}, controller.signal); })
-				.then((result) => { apply(result, true); })
-				.catch(fail);
-			return () => { controller.abort(); };
-		}
-
-		setTreeStatus('loading');
-		setTreeNote(null);
-		discoverRepositories(root, {}, controller.signal).then((result) => { apply(result, true); }).catch(fail);
+		/**
+		 * 先取仓库位置缓存，再决定走快路径还是完整扫描。
+		 *
+		 * 缓存由宿主持有，因此这里 await 一次；完整扫描动辄上百毫秒，这次往返不构成瓶颈。
+		 *
+		 * @returns 无。
+		 */
+		const start = async (): Promise<void> => {
+			if (scanSeq === 0) await primeRepoLocations(root);
+			if (controller.signal.aborted) return;
+			const cached = scanSeq === 0 ? loadRepoLocations(root) : [];
+			if (cached.length > 0) {
+				// 命中缓存：先按已知路径取树（不扫目录），秒出界面；随后完整重扫一次纠正位置变化。
+				const quick = await discoverRepositories(root, { knownRepos: cached.map((repo) => repo.path) }, controller.signal);
+				apply(quick, false);
+				if (controller.signal.aborted) return;
+				apply(await discoverRepositories(root, {}, controller.signal), true);
+				return;
+			}
+			setTreeStatus('loading');
+			setTreeNote(null);
+			apply(await discoverRepositories(root, {}, controller.signal), true);
+		};
+		void start().catch(fail);
 		return () => { controller.abort(); };
 	}, [cwd, sessionId, hasWorkspace, scanSeq]);
 

@@ -1,10 +1,12 @@
+import { loadValue, saveValue } from './storage.ts';
+
 /**
  * 存储库树的纯函数：路径规范化、可见节点展开、选中持久化。
  *
  * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。
  */
 
-/** localStorage 键前缀。 */
+/** 存储键前缀。 */
 const SELECTION_KEY = 'dsh-source-control-selection';
 const EXPANDED_KEY = 'dsh-source-control-expanded';
 
@@ -165,11 +167,8 @@ export function saveExpanded(sessionId, ids) {
  * @returns {string|null} 存储值。
  */
 function readStored(prefix, sessionId) {
-	try {
-		return localStorage.getItem(`${prefix}:${sessionId ?? ''}`);
-	} catch {
-		return null;
-	}
+	const value = loadValue(`${prefix}:${sessionId ?? ''}`, null);
+	return typeof value === 'string' ? value : null;
 }
 
 /**
@@ -181,11 +180,5 @@ function readStored(prefix, sessionId) {
  * @returns {void}
  */
 function writeStored(prefix, sessionId, value) {
-	try {
-		const key = `${prefix}:${sessionId ?? ''}`;
-		if (value === null || value === undefined) localStorage.removeItem(key);
-		else localStorage.setItem(key, value);
-	} catch {
-		/* 持久化失败时退回内存态 */
-	}
+	saveValue(`${prefix}:${sessionId ?? ''}`, value ?? null);
 }
