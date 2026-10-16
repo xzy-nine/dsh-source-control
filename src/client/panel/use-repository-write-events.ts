@@ -9,6 +9,7 @@
  */
 import React from 'react';
 import { matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
+import { dropGraphWindows } from './use-graph-data.ts';
 import { AUTO_REFRESH_COOLDOWN_MS } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
@@ -61,6 +62,8 @@ export function useRepositoryWriteEvents({
 				return;
 			}
 			lastRefreshAt = Date.now();
+			// 写操作已改动该仓库：作废其提交图窗口与已知仓库信息，避免复用陈旧的一页。
+			dropGraphWindows(target);
 			void refreshRef.current().catch(() => { /* 重载失败由面板自身提示 */ });
 		};
 

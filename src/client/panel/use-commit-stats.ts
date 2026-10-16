@@ -81,6 +81,9 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	const graphAbortRef = React.useRef<AbortController | null>(null);
 	// 单条翻译的取消信号。
 	const singleAbortRef = React.useRef<AbortController | null>(null);
+	// 当前单条翻译的提交哈希：与 translatingHash 同步，取消时据此判断是否为同一条。
+	const translatingHashRef = React.useRef<string | null>(translatingHash);
+	translatingHashRef.current = translatingHash;
 	// 缓存写入时间：定时清理据此丢弃过期项。
 	const statsStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
 	const messageStamps = React.useRef<ReadonlyMap<string, number>>(new Map());
@@ -347,8 +350,8 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	 * @returns 无。
 	 */
 	const cancelTranslateCommit = React.useCallback((hash: string) => {
-		// 该条正在翻译时中止请求，并让它在途结果作废。
-		if (singleAbortRef.current !== null) {
+		// 仅当该条正是当前在译的一条时中止请求并清空状态；取消别的提交不影响它。
+		if (translatingHashRef.current === hash && singleAbortRef.current !== null) {
 			singleAbortRef.current.abort();
 			singleAbortRef.current = null;
 			setTranslatingHash(null);

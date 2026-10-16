@@ -798,7 +798,7 @@ export async function primeCachedWorkspaces(): Promise<void> {
 		try {
 			const known = readRepoLocations(root).map((repo) => repo.path);
 			if (known.length === 0) continue;
-			await discoverRepositories(root, { knownRepos: known });
+			await discoverRepositories(root, { knownRepos: known, shallow: true });
 		} catch {
 			/* 预扫失败不影响后续请求 */
 		}

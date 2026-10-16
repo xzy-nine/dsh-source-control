@@ -4,16 +4,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	clearSessionValue, draftKeyOf, loadSessionValue, saveSessionValue,
+	clearSessionValue, draftKeyOf, loadSessionValue, migrateLegacyDrafts, saveSessionValue,
 } from '../src/client/panel/storage.ts';
 
-/** 最小 sessionStorage 桩：Map 实现三个方法。 */
+/** 最小存储桩：Map 实现 Storage 的读、写、删、枚举。 */
 function makeStore() {
 	const data = new Map();
 	return {
 		getItem: (key) => (data.has(key) ? data.get(key) : null),
 		setItem: (key, value) => { data.set(key, String(value)); },
 		removeItem: (key) => { data.delete(key); },
+		clear: () => { data.clear(); },
+		key: (index) => [...data.keys()][index] ?? null,
+		get length() { return data.size; },
+		keys: () => [...data.keys()],
 		/** 直接查看底层条目数，用于断言删除。 */
 		size: () => data.size,
 		/** 直接查看原始文本，用于断言写入形状。 */
@@ -21,19 +25,25 @@ function makeStore() {
 	};
 }
 
-/** 装上桩，返回卸载函数。 */
+/** 装上 sessionStorage 桩，返回卸载函数。 */
 function install(store) {
 	globalThis.sessionStorage = store;
 	return () => { delete globalThis.sessionStorage; };
 }
 
-test('读写往返', () => {
+/** 装上 localStorage 桩，返回卸载函数。 */
+function installLocal(store) {
+	globalThis.localStorage = store;
+	return () => { delete globalThis.localStorage; };
+}
+
+test('字符串读写往返', () => {
 	const store = makeStore();
 	const uninstall = install(store);
 	try {
-		saveSessionValue('k', { a: 1, b: '中文' });
-		assert.deepEqual(loadSessionValue('k', null), { a: 1, b: '中文' });
-		assert.equal(store.raw('k'), JSON.stringify({ a: 1, b: '中文' }));
+		saveSessionValue('k', '草稿内容');
+		assert.equal(loadSessionValue('k', ''), '草稿内容');
+		assert.equal(store.raw('k'), JSON.stringify('草稿内容'));
 	} finally {
 		uninstall();
 	}
@@ -136,5 +146,73 @@ test('草稿按仓库根分别存取', () => {
 		assert.equal(loadSessionValue(draftKeyOf('E:\\b'), ''), '仓库 b 的草稿');
 	} finally {
 		uninstall();
+	}
+});
+
+test('存储里是非字符串 JSON 时给回退值', () => {
+	const store = makeStore();
+	const uninstall = install(store);
+	try {
+		store.setItem('num', '123');
+		store.setItem('obj', JSON.stringify({ a: 1 }));
+		store.setItem('nil', 'null');
+		store.setItem('str', JSON.stringify('草稿'));
+		assert.equal(loadSessionValue('num', 'fallback'), 'fallback');
+		assert.equal(loadSessionValue('obj', 'fallback'), 'fallback');
+		assert.equal(loadSessionValue('nil', 'fallback'), 'fallback');
+		assert.equal(loadSessionValue('str', 'fallback'), '草稿');
+	} finally {
+		uninstall();
+	}
+});
+
+test('migrateLegacyDrafts 把两个 store 里的旧草稿转入会话键并清掉旧键', () => {
+	const session = makeStore();
+	const local = makeStore();
+	const uninstallSession = install(session);
+	const uninstallLocal = installLocal(local);
+	try {
+		const keyA = draftKeyOf('E:\\a');
+		const keyB = draftKeyOf('E:\\b');
+		local.setItem(keyA, 'local-draft');
+		local.setItem('dsh-source-control-repo-open', 'true');
+		session.setItem(keyB, 'session-draft');
+
+		let hostCalls = 0;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => { hostCalls += 1; throw new Error('不应发起宿主请求'); };
+		try {
+			migrateLegacyDrafts();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		// 转入：旧值出现在会话键上。
+		assert.equal(session.getItem(keyA), 'local-draft');
+		assert.equal(session.getItem(keyB), 'session-draft');
+		// 清掉 localStorage 残留；会话键是转入目标，值保留。
+		assert.equal(local.getItem(keyA), null);
+		assert.equal(session.getItem(keyA), 'local-draft');
+		assert.equal(session.getItem(keyB), 'session-draft');
+		// 非草稿键不动。
+		assert.equal(local.getItem('dsh-source-control-repo-open'), 'true');
+		// 草稿不经过宿主。
+		assert.equal(hostCalls, 0);
+	} finally {
+		uninstallLocal();
+		uninstallSession();
+	}
+});
+
+test('migrateLegacyDrafts 在 sessionStorage 缺失时保留旧键', () => {
+	const local = makeStore();
+	const uninstallLocal = installLocal(local);
+	delete globalThis.sessionStorage;
+	try {
+		local.setItem(draftKeyOf('E:\\a'), 'local-draft');
+		assert.doesNotThrow(() => migrateLegacyDrafts());
+		assert.equal(local.getItem(draftKeyOf('E:\\a')), 'local-draft');
+	} finally {
+		uninstallLocal();
 	}
 });

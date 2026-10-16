@@ -144,6 +144,8 @@ export function useGraphData({
 
 	/** 上一次取图的仓库；与当前不同时窗口缓存一律作废。 */
 	const loadedRepoRef = React.useRef<string | null>(null);
+	/** 已加载提交图对应的 HEAD：取自同一轮快照，兜底轮询据此判断 HEAD 是否移动。 */
+	const loadedHeadRef = React.useRef<string | null>(null);
 
 	/**
 	 * 重新加载选中仓库的提交图与工作区。
@@ -168,7 +170,10 @@ export function useGraphData({
 		const controller = new AbortController();
 		controllerRef.current = controller;
 		// 换仓库后旧的窗口与已知仓库信息不再适用；用户主动刷新同样作废。
-		if (mode === 'full' || loadedRepoRef.current !== workingTreePath) dropGraphWindows(workingTreePath);
+		const repoChanged = loadedRepoRef.current !== workingTreePath;
+		if (mode === 'full' || repoChanged) dropGraphWindows(workingTreePath);
+		// 换仓库后旧 HEAD 不再适用；full 刷新沿用同仓库的旧值，直到本轮快照返回后写入。
+		if (repoChanged) loadedHeadRef.current = null;
 		loadedRepoRef.current = workingTreePath;
 		if (mode === 'full') {
 			setState((previous) => ({
@@ -220,6 +225,8 @@ export function useGraphData({
 			});
 			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal).then((snapshot) => {
 				if (generation !== generationRef.current || controller.signal.aborted) return snapshot;
+				// 提交列表与快照同轮写入：HEAD 以快照为准，不从提交列表首条推导。
+				loadedHeadRef.current = snapshot.head;
 				/*
 				 * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。用户主动刷新不做短路，
 				 * 它必须真正重建。
@@ -410,9 +417,8 @@ export function useGraphData({
 		let timerId: number | undefined;
 		let timerInterval = 0;
 
-		/** 已加载提交图的 HEAD：取自提交列表首条真实提交。 */
-		const loadedHead = (): string | null =>
-			stateRef.current.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+		/** 已加载提交图的 HEAD：取自最近一轮快照。 */
+		const loadedHead = (): string | null => loadedHeadRef.current;
 
 		const poll = (): void => {
 			if (cancelled || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
@@ -452,10 +458,18 @@ export function useGraphData({
 						void refresh();
 						return;
 					}
-					setState((previous) => ({
-						...previous,
-						phase: 'ready', error: null, entries: snapshot.entries,
-					}));
+					setState((previous) => {
+						const entriesSame = entriesEqual(previous.entries, snapshot.entries);
+						const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
+						const commits = entriesSame
+							? previous.commits
+							: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
+						return {
+							...previous, error: null,
+							entries: entriesSame ? previous.entries : snapshot.entries,
+							commits,
+						};
+					});
 				} catch { /* 忽略兜底轮询失败 */ } finally {
 					polling = false;
 				}

@@ -173,6 +173,32 @@ test('取消时写入不会被调用', async () => {
 	assert.equal(claims.has('/a'), false);
 });
 
+test('取消时抛错不累计失败次数、不驱动重试，且释放占用', async () => {
+	const claims = createEnrichClaims();
+	let retried = 0;
+	const result = await runEnrichBatch(['/a'], {
+		claims,
+		isCancelled: () => true,
+		requestRetry: () => { retried += 1; },
+		write: () => { throw new Error('取消不应写入'); },
+		fetchEnriched: async () => { throw new Error('请求被取消'); },
+	});
+	assert.equal(result, 'cancelled');
+	assert.equal(retried, 0, '取消不应请求重试');
+	assert.equal(claims.inFlightSize, 0, '取消必须释放占用');
+	assert.equal(claims.settledSize, 0, '取消不应记入已完成');
+	assert.equal(claims.has('/a'), false, '释放后该路径可再次下发');
+	// 取消未累计失败次数：下一次正常请求一次即补齐。
+	const settled = await runEnrichBatch(['/a'], {
+		claims,
+		isCancelled: () => false,
+		requestRetry: () => {},
+		write: () => {},
+		fetchEnriched: async () => [{ path: '/a', children: [{}] }],
+	});
+	assert.equal(settled, 'settled');
+});
+
 test('失败上限是一个小的正整数（兜底必须能在有限轮内生效）', () => {
 	assert.ok(Number.isInteger(ENRICH_FAILURE_LIMIT), '上限必须是整数');
 	// 1 与 2 语义合法但产品上不可取：宿主一次瞬时失败就会让工作树消失，因此下限取 3。

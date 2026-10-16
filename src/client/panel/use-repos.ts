@@ -245,6 +245,8 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		if (!hasWorkspace) return undefined;
 		const root = cwd as string;
 		let cancelled = false;
+		// 本轮请求的取消信号：依赖变化或卸载时中止在途补齐。
+		const controller = new AbortController();
 		const idle = typeof window.requestIdleCallback === 'function'
 			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
 			: (fn: () => void): number => window.setTimeout(fn, 120);
@@ -264,7 +266,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 				await runEnrichBatch(paths, {
 					claims: enrichClaims.current,
 					isCancelled: () => cancelled,
-					fetchEnriched: (batch) => enrichRepositories(root, batch),
+					fetchEnriched: (batch) => enrichRepositories(root, batch, controller.signal),
 					requestRetry: () => { setEnrichRetrySeq((previous) => previous + 1); },
 					write: (batch, enriched) => {
 						// 宿主按入参顺序回投节点，这里按 path 对齐：id 的大小写归一化不必重复推导。
@@ -295,6 +297,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		 */
 		return () => {
 			cancelled = true;
+			controller.abort();
 			cancelIdle(handle);
 			if (issued.length > 0) {
 				enrichClaims.current.release(issued);
@@ -318,6 +321,8 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		if (!hasWorkspace) return undefined;
 		const root = cwd as string;
 		let cancelled = false;
+		// 本轮请求的取消信号：依赖变化或卸载时中止在途预取。
+		const controller = new AbortController();
 		const idle = typeof window.requestIdleCallback === 'function'
 			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
 			: (fn: () => void): number => window.setTimeout(fn, 120);
@@ -339,7 +344,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 				const paths = [...idsByPath.keys()];
 				for (const path of paths) syncInFlight.current.add(path);
 				try {
-					const entries = await loadReposSync(root, paths);
+					const entries = await loadReposSync(root, paths, controller.signal);
 					for (const path of paths) syncInFlight.current.delete(path);
 					if (cancelled) return;
 					const patch = new Map<string, RepoSync>();
@@ -357,13 +362,14 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 						return next;
 					});
 				} catch {
-					// 整批失败不写入缓存：清除在途后由下一轮空闲回调重试。
+					// 整批失败不写入缓存：清除在途后由下一轮空闲回调重试；被取消则不再重试。
 					for (const path of paths) syncInFlight.current.delete(path);
+					if (cancelled) return;
 					setSyncRetrySeq((previous) => previous + 1);
 				}
 			})();
 		});
-		return () => { cancelled = true; cancelIdle(handle); };
+		return () => { cancelled = true; controller.abort(); cancelIdle(handle); };
 	}, [visibleRows, syncById, cwd, hasWorkspace, syncRetrySeq]);
 
 	return {

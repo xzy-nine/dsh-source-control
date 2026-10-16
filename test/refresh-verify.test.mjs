@@ -2,7 +2,8 @@
  * 刷新验证：提交图与工作区读取的一致性、提交集合的独立推导，以及草稿的会话级绑定。
  *
  * 宿主侧经真实路由 handler 发请求（从 lib/ 产物导入）；草稿侧直连 src/ 的 TS 模块，
- * 在 Node 下用最小 sessionStorage 桩与 fetch 桩替代浏览器环境。
+ * 在 Node 下用最小 sessionStorage 桩与 fetch 桩替代浏览器环境。草稿键不落宿主，宿主里遗留的
+ * 旧草稿只由调用方显式取回与删除。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -374,7 +375,7 @@ test('切换仓库：上一个仓库的草稿写回它自己的键', async () =>
 });
 
 test('草稿不落宿主：宿主 entries 不出现 ggg-commit-msg:* 新写入', async () => {
-	const { storage, state } = await loadDraftModules();
+	const { storage, state, sessionStorage } = await loadDraftModules();
 	const cwd = join(tmpdir(), 'gg-refresh-host');
 	const repoA = join(cwd, 'repo-a');
 	const keyA = storage.draftKeyOf(repoA);
@@ -386,14 +387,28 @@ test('草稿不落宿主：宿主 entries 不出现 ggg-commit-msg:* 新写入',
 		assert.equal(fetchStub.calls.length, 0, '写草稿不应发起宿主请求');
 		assert.equal(hostEntries[keyA], undefined);
 
-		// 宿主里遗留的旧草稿可被取回一次，并在宿主侧删除。
+		// 宿主里遗留的旧草稿：读取本身不写宿主，也不删键。
 		hostEntries[keyA] = 'persisted';
 		const first = await state.takePersistedDraft(cwd, keyA);
 		assert.equal(first, 'persisted');
-		const writeCall = fetchStub.calls.find((call) => call.command === 'writeState' && call.key === keyA);
-		assert.ok(writeCall !== undefined, '取回后应写一次删除');
+		assert.equal(hostEntries[keyA], 'persisted', '取回不应删除宿主键');
+		assert.equal(
+			fetchStub.calls.some((call) => call.command === 'writeState'),
+			false,
+			'取回不应发起写请求',
+		);
+
+		// 草稿落到会话存储后由调用方删除宿主旧键；删除是一次显式写入。
+		storage.saveSessionValue(keyA, first);
+		const writeCountBefore = fetchStub.calls.length;
+		await state.clearPersistedDraft(cwd, keyA);
+		const writeCall = fetchStub.calls.slice(writeCountBefore)
+			.find((call) => call.command === 'writeState' && call.key === keyA);
+		assert.ok(writeCall !== undefined, '删除应写一次 writeState');
 		assert.equal(writeCall.value, null);
-		assert.equal(hostEntries[keyA], undefined, '取回后宿主键应被删除');
+		assert.equal(hostEntries[keyA], undefined, '删除后宿主键应被清掉');
+		assert.equal(sessionStorage.getItem(keyA), JSON.stringify('persisted'), '草稿留在会话存储');
+
 		const second = await state.takePersistedDraft(cwd, keyA);
 		assert.equal(second, null);
 	} finally {
