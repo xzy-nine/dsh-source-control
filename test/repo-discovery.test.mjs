@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -22,8 +22,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 const statePath = join(root, 'lib', 'src', 'source-control', 'state-store.js');
-const built = existsSync(discoveryPath) && existsSync(routesPath);
-const skip = built ? false : '未找到宿主产物 lib/src/source-control/repo-discovery.js';
 
 /** 临时目录登记表；文件级 after 统一删除。 */
 const temps = [];
@@ -202,7 +200,7 @@ function makeMixedTree() {
 	return { root: rootDir, plain, sub, wt };
 }
 
-test('discoverRepositories：节点排序、depth、children 与 truncated', { skip }, async () => {
+test('discoverRepositories：节点排序、depth、children 与 truncated', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -236,7 +234,7 @@ test('discoverRepositories：节点排序、depth、children 与 truncated', { s
 	assert.deepEqual(submodules[0].children, []);
 });
 
-test('discoverRepositories：maxDirectories 极小值时 truncated 为 true', { skip }, async () => {
+test('discoverRepositories：maxDirectories 极小值时 truncated 为 true', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -247,7 +245,7 @@ test('discoverRepositories：maxDirectories 极小值时 truncated 为 true', { 
 	assert.equal(result.nodes.filter((node) => node.kind === 'repo').length, 0);
 });
 
-test('discoverRepositories：TTL 缓存返回同一对象，clearDiscoveryCache 后失效', { skip }, async () => {
+test('discoverRepositories：TTL 缓存返回同一对象，clearDiscoveryCache 后失效', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -266,7 +264,7 @@ test('discoverRepositories：TTL 缓存返回同一对象，clearDiscoveryCache 
 	assert.notEqual(scoped, first, '不同 maxDepth 不共用缓存');
 });
 
-test('discoverRepositories：knownRepos 快路径与全部失效时回退完整扫描', { skip }, async () => {
+test('discoverRepositories：knownRepos 快路径与全部失效时回退完整扫描', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -297,7 +295,7 @@ test('discoverRepositories：knownRepos 快路径与全部失效时回退完整�
  * 快路径按已知路径构造节点，不经过层序遍历，因此拿不到目录层数；客户端不消费该字段
  * （仓库树的缩进由 flattenVisible 按嵌套层级自算），故不作为缺陷处理。
  */
-test('discoverRepositories：快路径 depth 恒 0，客户端不消费该字段', { skip }, async () => {
+test('discoverRepositories：快路径 depth 恒 0，客户端不消费该字段', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -317,7 +315,7 @@ test('discoverRepositories：快路径 depth 恒 0，客户端不消费该字段
 	);
 });
 
-test('discoverRepositories：同层目录多时结果与串行语义一致', { skip }, async () => {
+test('discoverRepositories：同层目录多时结果与串行语义一致', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	const wide = makeTemp('gg-disc-wide-');
 	const expected = [];
@@ -336,7 +334,7 @@ test('discoverRepositories：同层目录多时结果与串行语义一致', { s
 	assert.ok(result.nodes.every((node) => node.depth === 1 && node.kind === 'repo'), '同层仓库 depth 均为 1');
 });
 
-test('loadReposSync：空数组返回空、path 原样回显、重复入参去重', { skip }, async () => {
+test('loadReposSync：空数组返回空、path 原样回显、重复入参去重', async () => {
 	const { loadReposSync, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	assert.deepEqual(await loadReposSync([]), []);
@@ -365,7 +363,7 @@ test('loadReposSync：空数组返回空、path 原样回显、重复入参去�
 	assert.equal(variants[1].branch, 'main');
 });
 
-test('loadReposSync：单个仓库失败以空值兜底', { skip }, async () => {
+test('loadReposSync：单个仓库失败以空值兜底', async () => {
 	const { loadReposSync } = await import(pathToFileURL(discoveryPath).href);
 	const rootDir = makeTemp('gg-sync-miss-');
 	const repo = makeBareRepoAt(rootDir, 'real');
@@ -381,7 +379,7 @@ test('loadReposSync：单个仓库失败以空值兜底', { skip }, async () => 
 	);
 });
 
-test('loadReposSync 命令：经真实路由 handler 的空列表与多仓库', { skip }, async () => {
+test('loadReposSync 命令：经真实路由 handler 的空列表与多仓库', async () => {
 	const { registerGgRoutes } = await import(pathToFileURL(routesPath).href);
 	const routes = new Map();
 	registerGgRoutes({
@@ -430,7 +428,7 @@ test('loadReposSync 命令：经真实路由 handler 的空列表与多仓库', 
 	}
 });
 
-test('discoverRepositories：shallow 只产出顶层仓库节点，children 一律为空', { skip }, async () => {
+test('discoverRepositories：shallow 只产出顶层仓库节点，children 一律为空', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -461,7 +459,7 @@ test('discoverRepositories：shallow 只产出顶层仓库节点，children 一�
 	);
 });
 
-test('enrichRepositories：按顶层路径补齐的结构与完整扫描一致', { skip }, async () => {
+test('enrichRepositories：按顶层路径补齐的结构与完整扫描一致', async () => {
 	const { discoverRepositories, enrichRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -479,7 +477,7 @@ test('enrichRepositories：按顶层路径补齐的结构与完整扫描一致',
 	assert.deepEqual(input, paths, '不修改入参数组');
 });
 
-test('discoverWorkspace：命中持久化位置时 usedCache 为 true，fullScan 回填并跳过缓存', { skip }, async () => {
+test('discoverWorkspace：命中持久化位置时 usedCache 为 true，fullScan 回填并跳过缓存', async () => {
 	const { discoverWorkspace, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	await resetState();
 	clearDiscoveryCache();
@@ -508,7 +506,7 @@ test('discoverWorkspace：命中持久化位置时 usedCache 为 true，fullScan
 	assert.ok(worktreesOf(deep.nodes.find((node) => node.path === tree.top)).length > 0, 'shallow 命中不污染完整发现的缓存');
 });
 
-test('findEnclosingRepoDir：工作区根即仓库 / 在仓库子目录内 / 不在仓库内', { skip }, async () => {
+test('findEnclosingRepoDir：工作区根即仓库 / 在仓库子目录内 / 不在仓库内', async () => {
 	const { findEnclosingRepoDir } = await import(pathToFileURL(discoveryPath).href);
 	const parent = makeTemp('gg-enclose-');
 	const repo = makeRepoAt(parent, 'repo');
@@ -524,7 +522,7 @@ test('findEnclosingRepoDir：工作区根即仓库 / 在仓库子目录内 / 不
 	assert.equal(gitSpawns, 0, '判定只走文件系统');
 });
 
-test('branchesOfOtherWorktrees：无链接工作树时零 git 调用', { skip }, async () => {
+test('branchesOfOtherWorktrees：无链接工作树时零 git 调用', async () => {
 	const { branchesOfOtherWorktrees } = await import(pathToFileURL(discoveryPath).href);
 	const tree = makeTree();
 
@@ -540,7 +538,7 @@ test('branchesOfOtherWorktrees：无链接工作树时零 git 调用', { skip },
 	assert.deepEqual([...await branchesOfOtherWorktrees(tree.linked)].sort(), ['main'], '查看链接工作树时排除主工作树的当前分支');
 });
 
-test('enrichRepositories：三类仓库的结构与完整扫描一致，无来源时零 git 调用', { skip }, async () => {
+test('enrichRepositories：三类仓库的结构与完整扫描一致，无来源时零 git 调用', async () => {
 	const { discoverRepositories, enrichRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeMixedTree();
@@ -584,7 +582,7 @@ test('enrichRepositories：三类仓库的结构与完整扫描一致，无来�
 	);
 });
 
-test('enrichRepositories：链接工作树路径不再返回空，且与发现层节点一致', { skip }, async () => {
+test('enrichRepositories：链接工作树路径不再返回空，且与发现层节点一致', async () => {
 	const { discoverRepositories, enrichRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();
@@ -622,7 +620,7 @@ test('enrichRepositories：链接工作树路径不再返回空，且与发现�
 	assert.deepEqual(worktreesOf(mainEnriched[0]).map((node) => resolve(node.path)), [resolve(tree.linked)]);
 });
 
-test('enrichRepositories：子模块路径与发现层一致，bare 仓库两处判据一致', { skip }, async () => {
+test('enrichRepositories：子模块路径与发现层一致，bare 仓库两处判据一致', async () => {
 	const { discoverRepositories, enrichRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();
 	const tree = makeTree();

@@ -8,15 +8,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
-const built = existsSync(routesPath);
-const skip = built ? false : '未找到宿主产物 lib/src/source-control/routes.js';
 
 /**
  * 提交图取数参数：与面板首屏一致。
@@ -115,7 +113,7 @@ function gitLines(git, args) {
 	return git(...args).split('\n').map((line) => line.trim()).filter((line) => line !== '');
 }
 
-test('快照条目与 loadWorkingTree 条目逐条一致', { skip }, async () => {
+test('快照条目与 loadWorkingTree 条目逐条一致', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -140,7 +138,7 @@ test('快照条目与 loadWorkingTree 条目逐条一致', { skip }, async () =>
 	}
 });
 
-test('提交集合与顺序由 git log 独立推导，标记与伪提交符合契约', { skip }, async () => {
+test('提交集合与顺序由 git log 独立推导，标记与伪提交符合契约', async () => {
 	const { repo, git, write } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-refresh-remote-'));
 	try {
@@ -219,7 +217,7 @@ test('提交集合与顺序由 git log 独立推导，标记与伪提交符合�
 	}
 });
 
-test('无提交的仓库：提交图为空且无伪提交', { skip }, async () => {
+test('无提交的仓库：提交图为空且无伪提交', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);

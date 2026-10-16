@@ -7,16 +7,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { BRANCH_SYNC_FORMAT, parseBranchSync } from '../src/source-control/git-parse.ts';
+import { importHostModule } from './lib-import.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
-const built = existsSync(discoveryPath);
-const skip = built ? false : '未找到宿主产物 lib/src/source-control/repo-discovery.js';
+const { BRANCH_SYNC_FORMAT, parseBranchSync } = await importHostModule('source-control/git-parse.js');
 
 /** 临时目录登记表；文件级 after 统一删除。 */
 const temps = [];
@@ -208,7 +207,7 @@ test('独立预言机：领先且落后时 for-each-ref 解析与 rev-list 推�
 	assert.deepEqual({ ahead: parsed.ahead, behind: parsed.behind }, oracleSync(repo));
 });
 
-test('loadRepoSync（lib 产物）：与 rev-list 推导一致', { skip }, async () => {
+test('loadRepoSync（lib 产物）：与 rev-list 推导一致', async () => {
 	const { loadRepoSync } = await import(pathToFileURL(discoveryPath).href);
 	const repo = makeUpstreamRepo(2, 1);
 
@@ -217,7 +216,7 @@ test('loadRepoSync（lib 产物）：与 rev-list 推导一致', { skip }, async
 	assert.deepEqual({ ahead: sync.ahead, behind: sync.behind }, oracleSync(repo));
 });
 
-test('loadRepoSync（lib 产物）：上游引用被删除后 upstream 为 null 且不抛错', { skip }, async () => {
+test('loadRepoSync（lib 产物）：上游引用被删除后 upstream 为 null 且不抛错', async () => {
 	const { loadRepoSync } = await import(pathToFileURL(discoveryPath).href);
 	const repo = makeUpstreamRepo(0, 0);
 	gitIn(repo, 'update-ref', '-d', 'refs/remotes/origin/main');
@@ -230,7 +229,7 @@ test('loadRepoSync（lib 产物）：上游引用被删除后 upstream 为 null 
 	assert.deepEqual(sync, { branch: 'main', upstream: null, ahead: 0, behind: 0 });
 });
 
-test('loadRepoSync（lib 产物）：无提交仓库给出分支名与空上游', { skip }, async () => {
+test('loadRepoSync（lib 产物）：无提交仓库给出分支名与空上游', async () => {
 	const { loadRepoSync } = await import(pathToFileURL(discoveryPath).href);
 	const repo = makeRepo('gg-branch-empty-');
 
@@ -238,7 +237,7 @@ test('loadRepoSync（lib 产物）：无提交仓库给出分支名与空上游'
 	assert.deepEqual(sync, { branch: 'main', upstream: null, ahead: 0, behind: 0 });
 });
 
-test('loadRepoSync（lib 产物）：分离头指针时分支为 null', { skip }, async () => {
+test('loadRepoSync（lib 产物）：分离头指针时分支为 null', async () => {
 	const { loadRepoSync } = await import(pathToFileURL(discoveryPath).href);
 	const repo = makeRepo();
 	commitFile(repo, 'a.txt', 'one\n', 'base');

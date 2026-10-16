@@ -263,10 +263,17 @@ Office）主动不认领，那些仍走宿主预览。
 
 ```bash
 pnpm install
-pnpm build        # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
-pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
-pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
+pnpm build              # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
+pnpm typecheck          # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
+pnpm check:duplication  # jscpd 扫描 src/，出现基线之外的重复即失败
+pnpm test               # pretest 先跑完整 build 与重复门禁，再 node --test test/*.test.mjs
 ```
+
+**重复代码门禁**：`scripts/check-duplication.mjs` 用 jscpd 扫 `src/`，与 `duplication-baseline.json`
+里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹只含「文件对 + 片段行数」，不含行号，
+因此无关改动不会让基线失效。基线只允许调低；确实无法消除的（如跨构建目标的类型镜像）才用
+`node scripts/check-duplication.mjs --update` 调高，并在提交信息里说明理由。
+门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
 
 - 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
   JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
@@ -286,8 +293,12 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 
 ## 测试
 
-测试从 `src/` 直接导入（Node 原生 TS 支持），因此**被测模块不得有内部 `.js` 相对导入**——那会让直连
-`.ts` 时报 `ERR_MODULE_NOT_FOUND`；带这类导入的逻辑要么抽成无依赖的纯模块，要么改用 `lib/` 产物验证。
+**宿主侧测试一律从 `lib/` 产物导入**（经 `test/lib-import.mjs` 的 `importHostModule`）：宿主模块普遍带
+内部 `.js` 相对导入，由 `src/` 直连 `.ts` 会报 `ERR_MODULE_NOT_FOUND`。因此 `pretest` 必须先把宿主产物
+构建出来，缺产物即导入失败、测试报错——构建失败本身就是问题，不用 skip 掩盖。
+**客户端测试仍从 `src/` 直连 `.ts`**：客户端没有逐模块产物，只有打包后的 `lib/client.js`（ModuleLoader
+包络，仅暴露插件入口），无法取到内部纯函数。少数按外部环境跳过的用例（非 git 目录、ui-primitives
+源码检出、jsdom 缺失）保留 skip，它们不依赖本仓库构建。
 
 | 文件 | 覆盖 |
 |---|---|

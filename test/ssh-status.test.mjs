@@ -2,10 +2,15 @@
  * SSH 状态检测的纯逻辑测试。
  *
  * 覆盖版本行提取、私钥筛选与探测输出归类；真实探测需要本机安装 ssh 并联网，不在此测试内。
+ *
+ * `ssh-status.ts` 有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入；
+ * `pretest` 会先重建产物。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifySshProbe, parseSshVersion, sshKeyNames } from '../src/source-control/ssh-status.ts';
+import { importHostModule } from './lib-import.mjs';
+
+const { classifySshProbe, parseSshVersion, sshKeyNames } = await importHostModule('source-control/ssh-status.js');
 
 test('版本行取 OpenSSH 那一行', () => {
 	assert.equal(

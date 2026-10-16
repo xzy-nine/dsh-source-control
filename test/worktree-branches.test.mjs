@@ -12,7 +12,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { parseWorktreeList, foreignWorktreeBranches, parseHeadRef, readHeadRef, resolveGitDir } from '../src/source-control/worktree-branches.ts';
+import { importHostModule } from './lib-import.mjs';
+
+const mod = await importHostModule('source-control/worktree-branches.js');
+const { parseWorktreeList, foreignWorktreeBranches, parseHeadRef, readHeadRef, resolveGitDir } = mod;
 
 /**
  * 路径规范化：宿主 nodeId 的替身，统一分隔符并小写。
