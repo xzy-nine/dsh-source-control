@@ -124,7 +124,7 @@ export function formatDate(unixSeconds: number, dateFormat: DateFormat): string 
 		return `${Math.floor(diff / (86400 * 365))} 年前`;
 	}
 	let text: string;
-	if (dateFormat?.iso === true) {
+	if (dateFormat?.iso) {
 		text = date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
 	} else {
 		const pad = (n: number): string => String(n).padStart(2, '0');
@@ -204,8 +204,8 @@ function NumberRow({ label, value, min, max, onChange }: {
 		React.createElement('span', { className: css.setRowText }, label),
 		React.createElement(Input, {
 			value: draft, type: 'number', min, max,
-			onChange: (event: React.ChangeEvent<HTMLInputElement>) => setDraft(event.target.value),
-			onBlur: (event: React.FocusEvent<HTMLInputElement>) => commit(event.target.value),
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setDraft(event.target.value); },
+			onBlur: (event: React.FocusEvent<HTMLInputElement>) => { commit(event.target.value); },
 		}),
 	);
 }
@@ -317,13 +317,13 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 				{ value: '', label: '（使用当前会话模型）' },
 				...providers.map((p) => ({ value: p.id, label: p.name || p.id })),
 			],
-			onChange: (next: string) => onChange(next, ''),
+			onChange: (next: string) => { onChange(next, ''); },
 		}),
 		provider !== '' && React.createElement(DropdownRow, {
 			label: '模型',
 			value: model,
 			options: models.map((m) => ({ value: m, label: m })),
-			onChange: (next: string) => onChange(provider, next),
+			onChange: (next: string) => { onChange(provider, next); },
 		}),
 		React.createElement('div', { className: css.setRow },
 			React.createElement('label', { className: css.setLabel }, '规则'),
@@ -331,7 +331,7 @@ function AiModelConfigSection({ provider, model, rules, onChange, onRulesChange 
 				className: css.setTextarea,
 				value: rules,
 				placeholder: '自定义规则提示词，追加到系统提示词末尾。例如：使用中文；提交信息不超过 50 字符。',
-				onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => onRulesChange(e.currentTarget.value),
+				onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => { onRulesChange(e.currentTarget.value); },
 				rows: 3,
 			}),
 		),
@@ -380,7 +380,7 @@ export function SettingsPanel({
 }: SettingsPanelProps): React.ReactElement | null {
 	const [tab, setTab] = React.useState<SettingsTab>('repo');
 	if (!open) return null;
-	const patch = (partial: Partial<Settings>): void => onChange({ ...settings, ...partial });
+	const patch = (partial: Partial<Settings>): void => { onChange({ ...settings, ...partial }); };
 	const userSection = (scope: SettingsTab): React.ReactElement => React.createElement(Section, { title: 'User Details' },
 		React.createElement(UserDetailsForm, {
 			userDetails,
@@ -395,96 +395,96 @@ export function SettingsPanel({
 				label: '提交排序',
 				options: ORDERING.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 				value: settings.commitOrdering,
-				onChange: (value) => patch({ commitOrdering: value }),
+				onChange: (value) => { patch({ commitOrdering: value }); },
 			}),
 			React.createElement(SelectRow, {
 				label: '日期格式',
 				options: DATE_FORMAT_TYPE,
 				value: String(settings.dateFormat.type),
-				onChange: (type) => patch({ dateFormat: { ...settings.dateFormat, type: Number(type) } }),
+				onChange: (type) => { patch({ dateFormat: { ...settings.dateFormat, type: Number(type) } }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '使用 ISO 日期格式',
 				checked: settings.dateFormat.iso,
-				onChange: (iso) => patch({ dateFormat: { ...settings.dateFormat, iso } }),
+				onChange: (iso) => { patch({ dateFormat: { ...settings.dateFormat, iso } }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '显示贮藏',
 				checked: settings.showStashes,
-				onChange: (showStashes) => patch({ showStashes }),
+				onChange: (showStashes) => { patch({ showStashes }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '显示标签',
 				checked: settings.showTags,
-				onChange: (showTags) => patch({ showTags }),
+				onChange: (showTags) => { patch({ showTags }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '显示远程分支',
 				checked: settings.showRemoteBranches,
-				onChange: (showRemoteBranches) => patch({ showRemoteBranches }),
+				onChange: (showRemoteBranches) => { patch({ showRemoteBranches }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '只跟随第一个父提交',
 				checked: settings.onlyFollowFirstParent,
-				onChange: (onlyFollowFirstParent) => patch({ onlyFollowFirstParent }),
+				onChange: (onlyFollowFirstParent) => { patch({ onlyFollowFirstParent }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '包含 reflog 提到的提交',
 				checked: settings.includeCommitsMentionedByReflogs,
-				onChange: (includeCommitsMentionedByReflogs) => patch({ includeCommitsMentionedByReflogs }),
+				onChange: (includeCommitsMentionedByReflogs) => { patch({ includeCommitsMentionedByReflogs }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: 'Markdown 渲染提交信息',
 				checked: settings.markdown,
-				onChange: (markdown) => patch({ markdown }),
+				onChange: (markdown) => { patch({ markdown }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '显示作者头像',
 				checked: settings.showAvatars,
-				onChange: (showAvatars) => patch({ showAvatars }),
+				onChange: (showAvatars) => { patch({ showAvatars }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '静音合并提交',
 				checked: settings.muteMergeCommits,
-				onChange: (muteMergeCommits) => patch({ muteMergeCommits }),
+				onChange: (muteMergeCommits) => { patch({ muteMergeCommits }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '抓取时修剪已删除远程分支',
 				checked: settings.fetchAndPrune,
-				onChange: (fetchAndPrune) => patch({ fetchAndPrune }),
+				onChange: (fetchAndPrune) => { patch({ fetchAndPrune }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '抓取时修剪远程标签',
 				checked: settings.fetchAndPruneTags,
-				onChange: (fetchAndPruneTags) => patch({ fetchAndPruneTags }),
+				onChange: (fetchAndPruneTags) => { patch({ fetchAndPruneTags }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '文件改动时自动刷新',
 				checked: settings.autoRefresh,
-				onChange: (autoRefresh) => patch({ autoRefresh }),
+				onChange: (autoRefresh) => { patch({ autoRefresh }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '自动抓取远程',
 				checked: settings.autoFetch,
-				onChange: (autoFetch) => patch({ autoFetch }),
+				onChange: (autoFetch) => { patch({ autoFetch }); },
 			}),
 			React.createElement(NumberRow, {
 				label: '自动抓取间隔（秒）',
 				value: settings.autoFetchPeriod,
 				min: AUTO_FETCH_PERIOD_SECONDS_MIN,
 				max: AUTO_FETCH_PERIOD_SECONDS_MAX,
-				onChange: (autoFetchPeriod) => patch({ autoFetchPeriod }),
+				onChange: (autoFetchPeriod) => { patch({ autoFetchPeriod }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '加载仓库后滚动到 HEAD',
 				checked: settings.onRepoLoadScrollToHead,
-				onChange: (onRepoLoadScrollToHead) => patch({ onRepoLoadScrollToHead }),
+				onChange: (onRepoLoadScrollToHead) => { patch({ onRepoLoadScrollToHead }); },
 			}),
 		),
 		React.createElement(Section, { title: 'Issue Linking', key: 'issue' },
 			React.createElement(IssueLinkingForm, {
 				config: settings.issueLinkingConfig,
-				onChange: (issueLinkingConfig) => patch({ issueLinkingConfig }),
+				onChange: (issueLinkingConfig) => { patch({ issueLinkingConfig }); },
 			}),
 		),
 		React.createElement(Section, { title: 'AI 提交信息', key: 'ai' },
@@ -492,8 +492,8 @@ export function SettingsPanel({
 				provider: settings.aiCommitProvider,
 				model: settings.aiCommitModel,
 				rules: settings.aiCommitRules,
-				onChange: (aiCommitProvider, aiCommitModel) => patch({ aiCommitProvider, aiCommitModel }),
-				onRulesChange: (aiCommitRules) => patch({ aiCommitRules }),
+				onChange: (aiCommitProvider, aiCommitModel) => { patch({ aiCommitProvider, aiCommitModel }); },
+				onRulesChange: (aiCommitRules) => { patch({ aiCommitRules }); },
 			}),
 		),
 	];
@@ -511,7 +511,7 @@ export function SettingsPanel({
 		React.createElement(Section, { title: '仓库配置', key: 'export' },
 			React.createElement(Button, {
 				variant: 'outline', size: 'sm',
-				onClick: () => { void onExportConfig?.(); },
+				onClick: () => {  onExportConfig?.(); },
 			}, '导出仓库配置'),
 		),
 	];
@@ -532,7 +532,7 @@ export function SettingsPanel({
 			React.createElement(SegmentedTabs, {
 				label: '设置范围',
 				value: tab,
-				onChange: (value: SettingsTab) => setTab(value),
+				onChange: (value: SettingsTab) => { setTab(value); },
 				items: [
 					{ value: 'repo', label: '仓库设置', id: 'ggg-set-tab-repo', panelId: 'ggg-set-panel-repo' },
 					{ value: 'global', label: '全局设置', id: 'ggg-set-tab-global', panelId: 'ggg-set-panel-global' },
@@ -692,14 +692,14 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		{ className: css.setForm },
 		React.createElement('label', { className: css.setRowBlock },
 			React.createElement('span', { className: css.setRowText }, '名称'),
-			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value) }),
+			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setName(e.target.value); } }),
 		),
 		React.createElement('label', { className: css.setRowBlock },
 			React.createElement('span', { className: css.setRowText }, 'URL'),
 			React.createElement(Input, {
 				value: url,
 				placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
-				onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value),
+				onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setUrl(e.target.value); },
 			}),
 		),
 		React.createElement('div', { className: css.setRow },
@@ -713,7 +713,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 		),
 		React.createElement('label', { className: css.setRowBlock },
 			React.createElement('span', { className: css.setRowText }, '推送 URL（可选）'),
-			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setPushUrl(e.target.value) }),
+			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setPushUrl(e.target.value); } }),
 		),
 		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
@@ -733,7 +733,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 					React.createElement('span', { className: css.setRemoteUrl }, remote.url ?? ''),
 					React.createElement('button', {
 						type: 'button', className: css.setRemoteEdit, title: '编辑远程',
-						onClick: () => beginEdit(remote),
+						onClick: () => { beginEdit(remote); },
 					}, React.createElement(IconEditOutlineRegular, { size: 18 })),
 					React.createElement('button', {
 						type: 'button', className: css.setRemoteDel, title: '删除远程',
@@ -750,7 +750,7 @@ function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEditRemot
 			)
 			: React.createElement('div', { className: css.setNote }, '没有配置远程仓库'),
 		!adding && editing === null
-			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => setAdding(true) }, '添加远程')
+			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => { setAdding(true); } }, '添加远程')
 			: form,
 		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, {
@@ -783,7 +783,7 @@ function IssueLinkingForm({ config, onChange }: {
 			React.createElement(Input, {
 				value: regex,
 				placeholder: '如 #(\\d+)',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: event.target.value, issueUrlTemplate: url }),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onChange({ issueRegex: event.target.value, issueUrlTemplate: url }); },
 			}),
 		),
 		React.createElement('label', { className: css.setRowBlock },
@@ -791,7 +791,7 @@ function IssueLinkingForm({ config, onChange }: {
 			React.createElement(Input, {
 				value: url,
 				placeholder: '如 https://github.com/owner/repo/issues/%ID%',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }); },
 			}),
 		),
 		React.createElement('div', { className: css.setNote }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
@@ -895,7 +895,7 @@ function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 					React.createElement(Input, {
 						value: name,
 						placeholder: 'git user.name',
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setName(event.target.value),
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setName(event.target.value); },
 					}),
 				),
 				React.createElement('label', { className: css.setRowBlock, key: 'email' },
@@ -903,7 +903,7 @@ function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 					React.createElement(Input, {
 						value: email,
 						placeholder: 'git user.email',
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setEmail(event.target.value),
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setEmail(event.target.value); },
 					}),
 				),
 				React.createElement('div', { className: cx(css.setRow, css.setRowInline), key: 'actions' },

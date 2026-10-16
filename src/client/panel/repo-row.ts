@@ -45,9 +45,9 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 	return React.createElement(
 		'div',
 		{
-			className: cx(css.repo, active && css.isActive, node.available === false && css.isMissing),
+			className: cx(css.repo, active && css.isActive, !node.available && css.isMissing),
 			title: node.path,
-			onClick: () => onSelect(node),
+			onClick: () => { onSelect(node); },
 			onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => { event.preventDefault(); onMoreActions?.(node, event); },
 		},
 		...guides,

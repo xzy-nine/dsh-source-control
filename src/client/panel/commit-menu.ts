@@ -592,7 +592,7 @@ export async function openCommitMenu(
 	target.classList.add(MENU_TARGET_CLASS);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove(MENU_TARGET_CLASS),
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
 		items: buildCommitItems(ctx),
 	});
 }
@@ -624,7 +624,7 @@ export async function openRefMenu(
 	target.classList.add(MENU_TARGET_CLASS);
 	showContextMenu({
 		x: clientX, y: clientY,
-		onClose: () => target.classList.remove(MENU_TARGET_CLASS),
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
 		items,
 	});
 }

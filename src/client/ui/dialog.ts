@@ -145,9 +145,9 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 		function Content(): React.ReactElement {
 			return dialogModal(
 				title,
-				() => finish(false),
+				() => { finish(false); },
 				React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, message),
-				confirmFooter(() => finish(false), () => finish(true), confirmLabel, cancelLabel, false, danger),
+				confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger),
 			);
 		}
 		return React.createElement(Content);
@@ -175,9 +175,9 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 		function Content(): React.ReactElement {
 			return dialogModal(
 				title,
-				() => finish(),
+				() => { finish(); },
 				React.createElement('div', { className: css.dialogHint }, message),
-				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => finish() }, closeLabel),
+				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(); } }, closeLabel),
 			);
 		}
 		return React.createElement(Content);
@@ -214,8 +214,8 @@ export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '�
 				acknowledged,
 				acknowledgeLabel: checkboxLabel,
 				onAcknowledgedChange: setAcknowledged,
-				onCancel: () => finish(false),
-				onConfirm: () => finish(true),
+				onCancel: () => { finish(false); },
+				onConfirm: () => { finish(true); },
 			});
 		}
 		return React.createElement(Content);
@@ -245,7 +245,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 			const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
 			return dialogModal(
 				title,
-				() => finish(null),
+				() => { finish(null); },
 				dialogBody(
 					message,
 					label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
@@ -253,14 +253,14 @@ export function showText({ title, message = '', label = '', value = '', placehol
 						id: 'ggg-text-input',
 						value: text,
 						placeholder,
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setText(event.target.value),
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
 						// 单行输入框里回车即确认：换行没有意义。
 						onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
 							if (event.key === 'Enter') { event.preventDefault(); submit(); }
 						},
 					}),
 				),
-				confirmFooter(() => finish(null), submit, confirmLabel, '取消', text.trim() === ''),
+				confirmFooter(() => { finish(null); }, submit, confirmLabel, '取消', text.trim() === ''),
 			);
 		}
 		return React.createElement(Content);
@@ -288,7 +288,7 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 			const [selected, setSelected] = React.useState(value ?? options[0]?.value ?? '');
 			return dialogModal(
 				title,
-				() => finish(null),
+				() => { finish(null); },
 				dialogBody(
 					message,
 					React.createElement(SegmentedControl, {
@@ -299,7 +299,7 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 						options: options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 					}),
 				),
-				confirmFooter(() => finish(null), () => finish(selected), confirmLabel),
+				confirmFooter(() => { finish(null); }, () => { finish(selected); }, confirmLabel),
 			);
 		}
 		return React.createElement(Content);
@@ -357,13 +357,13 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 	return runDialog<Record<string, unknown> | null>((finish) => {
 		function Content(): React.ReactElement {
 			const [values, setValues] = React.useState<Record<string, unknown>>(() => initialValues(fields));
-			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
-			const submit = (): void => finish(values);
+			const setField = (name: string, value: unknown): void => { setValues((previous) => ({ ...previous, [name]: value })); };
+			const submit = (): void => { finish(values); };
 			return dialogModal(
 				title,
-				() => finish(null),
+				() => { finish(null); },
 				dialogBody(message, ...fields.map((field) => buildField(field, values, setField, submit))),
-				confirmFooter(() => finish(null), submit, confirmLabel),
+				confirmFooter(() => { finish(null); }, submit, confirmLabel),
 			);
 		}
 		return React.createElement(Content);
@@ -418,10 +418,10 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 			const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
 			const active = pages.find((page) => page.value === activeValue) ?? pages[0];
 			const activeValues = values[active.value] ?? {};
-			const setField = (name: string, value: unknown): void => setValues((previous) => ({
+			const setField = (name: string, value: unknown): void => { setValues((previous) => ({
 				...previous,
 				[active.value]: { ...(previous[active.value] ?? {}), [name]: value },
-			}));
+			})); };
 			// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 			const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 				{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
@@ -430,10 +430,10 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
 				})),
 			];
-			const submit = (): void => finish({ page: active.value, ...activeValues });
+			const submit = (): void => { finish({ page: active.value, ...activeValues }); };
 			return dialogModal(
 				title,
-				() => finish(null),
+				() => { finish(null); },
 				dialogNodes(
 					pages.length > 1 && React.createElement(SegmentedTabs, {
 						label: title,
@@ -444,7 +444,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					hintNode(active.message ?? ''),
 					...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
 				),
-				confirmFooter(() => finish(null), submit, confirmLabel),
+				confirmFooter(() => { finish(null); }, submit, confirmLabel),
 			);
 		}
 		return React.createElement(Content);
@@ -511,7 +511,7 @@ function buildField(
 		return labeledField(field, React.createElement(Input, {
 			value: typeof current === 'string' ? current : '',
 			placeholder: field.placeholder ?? '',
-			onChange: (event: React.ChangeEvent<HTMLInputElement>) => setField(field.name, event.target.value),
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setField(field.name, event.target.value); },
 			// 单行字段里回车即确认：该位置没有换行语义。
 			onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
 				if (event.key === 'Enter') { event.preventDefault(); onEnter(); }
@@ -524,7 +524,7 @@ function buildField(
 			value: typeof current === 'string' ? current : '',
 			placeholder: field.placeholder ?? '',
 			rows: 4,
-			onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => setField(field.name, event.target.value),
+			onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setField(field.name, event.target.value); },
 			// 有换行语义的字段：回车确认，Shift+回车插入换行。
 			onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
 				if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onEnter(); }
@@ -538,7 +538,7 @@ function buildField(
 			{ key: field.name, className: cx(css.field, css.fieldInline) },
 			React.createElement(Checkbox, {
 				checked: current === true,
-				onChange: (next: boolean) => setField(field.name, next),
+				onChange: (next: boolean) => { setField(field.name, next); },
 				label: field.label ?? '',
 			}),
 		);
@@ -548,7 +548,7 @@ function buildField(
 			id: `ggg-field-${field.name}`,
 			label: field.label ?? field.name,
 			value: typeof current === 'string' ? current : '',
-			onChange: (next: string) => setField(field.name, next),
+			onChange: (next: string) => { setField(field.name, next); },
 			options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 		}));
 	}
@@ -559,7 +559,7 @@ function buildField(
 			label: field.label,
 			options: field.options,
 			value: typeof current === 'string' ? current : '',
-			onChange: (next: string) => setField(field.name, next),
+			onChange: (next: string) => { setField(field.name, next); },
 		});
 	}
 	if (field.type === 'multiselect') {

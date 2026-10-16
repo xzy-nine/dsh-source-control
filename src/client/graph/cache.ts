@@ -61,7 +61,7 @@ function flag(value: boolean): string {
  * @returns 缓存实例。
  */
 export function createCommitGraphCache<T>(capacity?: number): CommitGraphCache<T> {
-	const limit = Math.max(1, Math.floor(Number.isFinite(capacity as number) ? (capacity as number) : DEFAULT_CAPACITY));
+	const limit = Math.max(1, Math.floor(Number.isFinite(capacity) ? (capacity as number) : DEFAULT_CAPACITY));
 	const store = new Map<string, T>();
 
 	return {

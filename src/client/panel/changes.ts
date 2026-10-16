@@ -68,7 +68,7 @@ function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => Co
 	target.classList.add(MENU_TARGET_CLASS);
 	showContextMenu({
 		x: event.clientX, y: event.clientY, items: build(),
-		onClose: () => target.classList.remove(MENU_TARGET_CLASS),
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
 	});
 }
 
@@ -149,7 +149,7 @@ export function ChangeNodeRow({
 			'div',
 			{
 				className: cx(css.change, css.folder), title: row.path,
-				onClick: () => onToggle(row.path), onContextMenu: handleContextMenu,
+				onClick: () => { onToggle(row.path); }, onContextMenu: handleContextMenu,
 			},
 			...guidesOf(row.depth),
 			React.createElement('span', {
@@ -242,7 +242,7 @@ export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen
 					'div',
 					{
 						key: `f:${row.path}`, className: cx(css.change, css.folder), title: row.path,
-						onClick: () => onToggle(row.path),
+						onClick: () => { onToggle(row.path); },
 					},
 					...guidesOf(row.depth),
 					React.createElement('span', {
@@ -308,7 +308,7 @@ export function ChangeGroup({
 		? (entry.index !== ' ' && entry.index !== '?')
 		: (entry.worktree !== ' '));
 	if (visible.length === 0 && !forceShow) return [];
-	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
+	const rows: ChangeRow[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
@@ -417,7 +417,7 @@ export function ChangeGroup({
 			'div',
 			{
 				className: cx(css.change, css.groupRoot),
-				onClick: () => onToggleGroup(),
+				onClick: () => { onToggleGroup(); },
 				onContextMenu: handleHeadContextMenu,
 			},
 			React.createElement('span', {
@@ -434,7 +434,7 @@ export function ChangeGroup({
 				row, busy,
 				open: row.kind === 'folder' && !collapsed.has(row.path),
 				staged,
-				onToggle: (path: string) => toggleChange(groupKey, path),
+				onToggle: (path: string) => { toggleChange(groupKey, path); },
 				onStage, onUnstage, onDiscard, onOpen,
 				descendantsOf, menu,
 			})),

@@ -476,7 +476,7 @@ function renderSubject(message, issueLinking) {
 		if (match.index > last) parts.push(message.slice(last, match.index));
 		parts.push(React.createElement(
 			'a',
-			{ key: `issue-${key++}`, className: css.issueLink, href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => event.stopPropagation() },
+			{ key: `issue-${key++}`, className: css.issueLink, href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => { event.stopPropagation(); } },
 			match[0],
 		));
 		last = match.index + match[0].length;
@@ -710,7 +710,7 @@ export function CommitGraph({
 		if (node === null) { setDetailHeight(0); return; }
 		setDetailHeight(node.clientHeight);
 		if (typeof ResizeObserver === 'undefined') return;
-		const observer = new ResizeObserver(() => setDetailHeight(node.clientHeight));
+		const observer = new ResizeObserver(() => { setDetailHeight(node.clientHeight); });
 		observer.observe(node);
 		detailObserverRef.current = observer;
 	}, []);
@@ -755,7 +755,7 @@ export function CommitGraph({
 		if (typeof ResizeObserver === 'undefined') return undefined;
 		const observer = new ResizeObserver(update);
 		observer.observe(element);
-		return () => observer.disconnect();
+		return () => { observer.disconnect(); };
 	}, []);
 
 	// 取回新数据后解除占用，并补取：内容仍未填满容器时继续取下一页。

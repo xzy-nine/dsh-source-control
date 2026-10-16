@@ -130,17 +130,17 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	try {
 		msg = await readBody(req);
 	} catch {
-		return sendBadRequest(res, '请求体不是合法 JSON');
+		 sendBadRequest(res, '请求体不是合法 JSON');; return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
 	if (!repo) {
-		return sendBadRequest(res, '缺少 repo');
+		 sendBadRequest(res, '缺少 repo');; return;
 	}
 
-	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k] as string) : '');
-	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? (msg[k] as string) : null);
-	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? (msg[k] as boolean) : dflt);
-	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? (msg[k] as number) : dflt);
+	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k]) : '');
+	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? (msg[k]) : null);
+	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? (msg[k]) : dflt);
+	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? (msg[k]) : dflt);
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
@@ -243,7 +243,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'writeRepoLocations':
 			await respondResult('writeRepoLocations', async () => {
 				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
-					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.filter((item) => typeof item?.path === 'string' && (item.path) !== '')
 					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
 				writeRepoLocations(repo, repos);
 				return { repo };
@@ -407,8 +407,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					commits: all,
 					head: data.head,
 					tags: data.tags ?? [],
-					moreCommitsAvailable: data.moreCommitsAvailable === true,
-					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
+					moreCommitsAvailable: data.moreCommitsAvailable,
+					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});
@@ -502,7 +502,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch'), bool('createNewCommit'), bool('squash'), bool('noCommit')),
 			});
 			break;
 		case 'mergeIntoBranch': {
@@ -530,13 +530,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				command: 'rebase',
 				actionOn: msg.actionOn,
 				interactive: bool('interactive'),
-				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
+				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch'), bool('ignoreDate', true), bool('interactive')),
 			});
 			break;
 
 		/* --- 标签 --- */
 		case 'addTag': {
-			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
+			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0), str('message'), bool('force'))];
 			if (errors[0] === null && strOrNull('pushToRemote') !== null) {
 				errors.push(...(await pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
 			}

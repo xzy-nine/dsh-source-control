@@ -82,7 +82,7 @@ function flattenChangeTree<Entry extends TreeEntry>(
 		let path = prefix === '' ? name : `${prefix}/${name}`;
 		let child = node.folders.get(name) as ChangeTreeNode<Entry>;
 		while (child.files.length === 0 && child.folders.size === 1) {
-			const [onlyName, onlyChild] = [...child.folders.entries()][0] as [string, ChangeTreeNode<Entry>];
+			const [onlyName, onlyChild] = [...child.folders.entries()][0];
 			label = `${label}/${onlyName}`;
 			path = `${path}/${onlyName}`;
 			child = onlyChild;

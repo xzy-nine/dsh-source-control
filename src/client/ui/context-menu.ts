@@ -263,7 +263,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 	function MenuContent(): React.ReactElement {
 		const [open, setOpen] = React.useState(true);
 		React.useEffect(() => {
-			if (open === false) close();
+			if (!open) close();
 		}, [open]);
 		return React.createElement(Menu, {
 			open,
@@ -276,7 +276,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 				setOpen(false);
 				handlers.get(id)?.();
 			},
-			onClose: () => setOpen(false),
+			onClose: () => { setOpen(false); },
 		});
 	}
 	root.render(React.createElement(MenuContent));

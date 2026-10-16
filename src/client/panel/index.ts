@@ -692,7 +692,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (state.phase !== 'ready' || state.commits.length === 0) return undefined;
 		didAutoScrollRef.current = true;
 		const timer = setTimeout(goToHead, 60);
-		return () => clearTimeout(timer);
+		return () => { clearTimeout(timer); };
 	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
 	// 切换仓库时把已加载提交数收回初始值，避免跨仓库累积。
 	React.useEffect(() => { setMaxCommits(INITIAL_MAX_COMMITS); }, [workingTreePath]);
@@ -752,12 +752,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		aiAbortRef.current = controller;
 		generateCommitMessage(workingTreePath, settings.aiCommitProvider ?? '', settings.aiCommitModel ?? '', settings.aiCommitRules ?? '', {
 			signal: controller.signal,
-			onChunk: (text) => setMessage((prev) => prev + text),
-			onWarning: (text) => setAiWarning(text),
-			onError: (text) => setAiWarning(text),
-			onStats: (stats) => setAiStats(stats as AiStats),
+			onChunk: (text) => { setMessage((prev) => prev + text); },
+			onWarning: (text) => { setAiWarning(text); },
+			onError: (text) => { setAiWarning(text); },
+			onStats: (stats) => { setAiStats(stats as AiStats); },
 		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
-		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
+		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => { setAiWarning(String((err as Error)?.message ?? err)); });
 	};
 
 	/**
@@ -1374,7 +1374,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const dateFmt = React.useCallback((seconds: number) => formatDate(seconds, settings.dateFormat), [settings.dateFormat]);
 	// 悬停卡片的括号内始终是详细时间：与主标签同源比较，相同就不重复。
 	const dateDetail = React.useCallback(
-		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso === true }),
+		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso }),
 		[settings.dateFormat.iso],
 	);
 	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);
@@ -1428,7 +1428,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		{ className: css.root },
 
 		React.createElement(SettingsPanel, {
-			open: settingsOpen, onClose: () => setSettingsOpen(false),
+			open: settingsOpen, onClose: () => { setSettingsOpen(false); },
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
 			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
 			onCheckSsh: handleCheckSsh,
@@ -1446,17 +1446,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				else next.add(name);
 				patchFilter({ mode: 'manual', selected: next });
 			},
-			onSelectAll: (checked: boolean) => patchFilter({
+			onSelectAll: (checked: boolean) => { patchFilter({
 				mode: checked ? 'all' : 'manual',
 				selected: checked ? new Set(allRefs.map((ref) => ref.name)) : new Set(),
-			}),
+			}); },
 			// 勾选态一律由模式决定，不看勾选内容反推：模式是唯一事实来源。
 			allChecked: filterState.mode === 'all',
 			autoChecked: filterState.mode === 'auto',
-			onToggleAuto: (checked: boolean) => patchFilter(checked
+			onToggleAuto: (checked: boolean) => { patchFilter(checked
 				? { mode: 'auto', selected: new Set() }
-				: { mode: 'manual', selected: new Set() }),
-			onClose: () => setFilterOpen(false),
+				: { mode: 'manual', selected: new Set() }); },
+			onClose: () => { setFilterOpen(false); },
 		}),
 
 		// ── 存储库 ──────────────────────────────────────────────
@@ -1464,7 +1464,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			open: repoSecOpen, height: repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
-			onOpenSettings: () => setSettingsOpen(true),
+			onOpenSettings: () => { setSettingsOpen(true); },
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
@@ -1514,7 +1514,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	onLoadMore: () => { void loadMore(); },
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
-			onOpenFilter: () => setFilterOpen(true),
+			onOpenFilter: () => { setFilterOpen(true); },
 			filterSummary,
 			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,

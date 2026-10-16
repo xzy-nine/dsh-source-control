@@ -200,12 +200,12 @@ function GitDiffTab(props) {
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
-				onClick: () => setSplit((value) => !value),
+				onClick: () => { setSplit((value) => !value); },
 			}, split ? '并排' : '统一'),
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
-				onClick: () => setWrap((value) => !value),
+				onClick: () => { setWrap((value) => !value); },
 			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(
