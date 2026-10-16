@@ -53,6 +53,19 @@ const LOAD_MORE_SETTLE_MS = 10000;
 const GITHUB_NOREPLY = /^(?:(\d+)\+)?([^@+]+)@users\.noreply\.github\.com$/i;
 
 /**
+ * 取正则捕获组的文本。
+ *
+ * 未参与匹配的捕获组读出 `undefined`，而 `RegExpExecArray` 的元素类型声明为 `string`。
+ *
+ * @param match - 匹配结果。
+ * @param index - 捕获组序号。
+ * @returns 该组文本；该组未参与匹配时为 undefined。
+ */
+function groupText(match: RegExpExecArray, index: number): string | undefined {
+	return match.at(index);
+}
+
+/**
  * 构造作者头像的候选地址，按优先次序排列。
  *
  * GitHub 邮箱由 GitHub 直接提供头像；其余邮箱用 Gravatar。GitHub 在前，取不到时由
@@ -69,7 +82,8 @@ function avatarUrls(email, size = 40) {
 	if (trimmed === '') return [];
 	const noreply = GITHUB_NOREPLY.exec(trimmed);
 	if (noreply !== null) {
-		const [, id, username] = noreply;
+		const id = groupText(noreply, 1);
+		const username = noreply[2];
 		// 带数字 id 时按 id 取；只有用户名时按用户名取。
 		urls.push(id !== undefined
 			? `https://avatars.githubusercontent.com/u/${id}?s=${size}&v=4`
@@ -326,7 +340,7 @@ function displayMessage(commit) {
 	if (commit.hash !== '*') return message;
 	const match = UNCOMMITTED_MESSAGE.exec(message);
 	if (match === null) return message;
-	return match[1] === undefined ? '未提交的更改' : `未提交的更改（${match[1]}）`;
+	return groupText(match, 1) === undefined ? '未提交的更改' : `未提交的更改（${match[1]}）`;
 }
 
 /**
@@ -471,12 +485,12 @@ function renderSubject(message, issueLinking) {
 	let match;
 	let key = 0;
 	while ((match = regex.exec(message)) !== null) {
-		const id = match[1] ?? match[0];
+		const id = groupText(match, 1) ?? match[0];
 		const url = template.replace(/%ID%/g, encodeURIComponent(id));
 		if (match.index > last) parts.push(message.slice(last, match.index));
 		parts.push(React.createElement(
 			'a',
-			{ key: `issue-${key++}`, className: css.issueLink, href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => event.stopPropagation() },
+			{ key: `issue-${key++}`, className: css.issueLink, href: url, target: '_blank', rel: 'noreferrer', onClick: (event) => { event.stopPropagation(); } },
 			match[0],
 		));
 		last = match.index + match[0].length;
@@ -533,7 +547,7 @@ function CommitRow({
 				const target = event.target as HTMLElement;
 				const refElement = target.closest('[data-ref-type]');
 				// 点在引用标记上取该标记；点在贮藏行的其他位置时等价于它的贮藏标记。
-				const refInfo = refElement !== null && refElement !== undefined
+				const refInfo = refElement !== null
 					? { type: refElement.getAttribute('data-ref-type'), name: refElement.getAttribute('data-ref-name') }
 					: (stashSelector === null ? null : { type: 'stash', name: stashSelector });
 				onContextMenu?.({ commit, refInfo, event });
@@ -646,7 +660,7 @@ export function CommitGraph({
 		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
 		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
-	const graphRef = React.useRef(null);
+	const graphRef = React.useRef<HTMLDivElement | null>(null);
 	/** 可视区高度；窗口化渲染据此决定渲染哪一段。 */
 	const [viewportHeight, setViewportHeight] = React.useState(0);
 	/** 当前滚动位置。 */
@@ -654,11 +668,11 @@ export function CommitGraph({
 	/** 展开详情的实测高度；没有展开时为 0。 */
 	const [detailHeight, setDetailHeight] = React.useState(0);
 	/** 详情块的尺寸观察者。 */
-	const detailObserverRef = React.useRef(null);
+	const detailObserverRef = React.useRef<ResizeObserver | null>(null);
 	/** 一次加载完成前不重复请求下一页。 */
 	const loadPendingRef = React.useRef(false);
 	/** 兜底解除占用的定时器：失败时提交列表不变，靠它恢复可重试。 */
-	const settleTimerRef = React.useRef(null);
+	const settleTimerRef = React.useRef<number | null>(null);
 	/** 上次请求时的提交列表：引用变化说明确实取回了新数据。 */
 	const requestedForRef = React.useRef(commits);
 	const [loadingMore, setLoadingMore] = React.useState(false);
@@ -710,7 +724,7 @@ export function CommitGraph({
 		if (node === null) { setDetailHeight(0); return; }
 		setDetailHeight(node.clientHeight);
 		if (typeof ResizeObserver === 'undefined') return;
-		const observer = new ResizeObserver(() => setDetailHeight(node.clientHeight));
+		const observer = new ResizeObserver(() => { setDetailHeight(node.clientHeight); });
 		observer.observe(node);
 		detailObserverRef.current = observer;
 	}, []);
@@ -755,7 +769,7 @@ export function CommitGraph({
 		if (typeof ResizeObserver === 'undefined') return undefined;
 		const observer = new ResizeObserver(update);
 		observer.observe(element);
-		return () => observer.disconnect();
+		return () => { observer.disconnect(); };
 	}, []);
 
 	// 取回新数据后解除占用，并补取：内容仍未填满容器时继续取下一页。
@@ -813,7 +827,7 @@ export function CommitGraph({
 		const out: { hash: string; text: string }[] = [];
 		for (let index = range.first; index < range.last; index++) {
 			const row = rows[index];
-			if (row === undefined || row.indicator !== undefined) continue;
+			if (row.indicator !== undefined) continue;
 			const commit = commitByHash.get(row.hash);
 			// 未提交行与贮藏行不是提交，没有可翻译的提交信息。
 			if (commit === undefined || commit.hash === '*' || commit.stash !== null && commit.stash !== undefined) continue;
@@ -831,7 +845,6 @@ export function CommitGraph({
 	const items = [];
 	for (let index = first; index < last; index++) {
 		const row = rows[index];
-		if (row === undefined) continue;
 		// 领先/落后为虚拟行：没有对应提交，只画指示节点。
 		if (row.indicator !== undefined) {
 			items.push(React.createElement(IndicatorRow, { key: `indicator:${index}`, row, indicator: row.indicator }));

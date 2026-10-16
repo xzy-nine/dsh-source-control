@@ -75,8 +75,8 @@ function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> 
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
 		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-		child.on('error', (error: Error) => finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message }));
-		child.on('close', (code) => finish({ code: code === null ? -1 : code, stdout, stderr }));
+		child.on('error', (error: Error) => { finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message }); });
+		child.on('close', (code) => { finish({ code: code === null ? -1 : code, stdout, stderr }); });
 	});
 }
 
@@ -91,7 +91,7 @@ function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> 
  */
 export function parseSshVersion(stdout: string, stderr: string): string | null {
 	const lines = `${stderr}\n${stdout}`.split('\n').map((line) => line.trim()).filter((line) => line !== '');
-	return lines.find((line) => /^OpenSSH/i.test(line)) ?? lines[0] ?? null;
+	return lines.find((line) => /^OpenSSH/i.test(line)) ?? lines.at(0) ?? null;
 }
 
 /**

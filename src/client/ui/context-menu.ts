@@ -19,7 +19,7 @@ import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
  * @returns 写入成功返回 true。
  */
 export async function copyText(text: string): Promise<boolean> {
-	if (navigator.clipboard?.writeText) {
+	if (typeof navigator.clipboard.writeText === 'function') {
 		try {
 			await navigator.clipboard.writeText(text);
 			return true;
@@ -259,7 +259,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 				setOpen(false);
 				handlers.get(id)?.();
 			},
-			onClose: () => setOpen(false),
+			onClose: () => { setOpen(false); },
 		});
 	}
 	root.render(React.createElement(MenuContent));

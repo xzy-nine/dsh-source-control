@@ -46,7 +46,7 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 			try {
 				resolve(chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>) : {});
 			} catch (e) {
-				reject(e);
+				reject(e instanceof Error ? e : new Error(String(e)));
 			}
 		});
 		req.on('error', reject);
@@ -130,11 +130,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	try {
 		msg = await readBody(req);
 	} catch {
-		return sendBadRequest(res, '请求体不是合法 JSON');
+		sendBadRequest(res, '请求体不是合法 JSON');
+		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
 	if (!repo) {
-		return sendBadRequest(res, '缺少 repo');
+		sendBadRequest(res, '缺少 repo');
+		return;
 	}
 
 	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k] as string) : '');
@@ -243,7 +245,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'writeRepoLocations':
 			await respondResult('writeRepoLocations', async () => {
 				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
-					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.filter((item) => typeof item.path === 'string' && (item.path as string) !== '')
 					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
 				writeRepoLocations(repo, repos);
 				return { repo };
@@ -369,7 +371,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
 				const remoteNames: readonly string[] | Promise<readonly string[]> = batchSource !== null
-					? batchSource.then((batch) => batch?.info?.remotes?.map((remote) => remote.name) ?? givenRemotes)
+					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
 					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
@@ -391,13 +393,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
 				const foreign = await foreignSource;
 				const all = foreign.size === 0
-					? (data.commits ?? [])
-					: (data.commits ?? []).map((commit) => ({
+					? data.commits
+					: data.commits.map((commit) => ({
 						...commit,
-						heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
+						heads: commit.heads.filter((name: string) => !foreign.has(name)),
 					}));
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
-				const last = all[all.length - 1];
+				const last = all.at(-1);
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
@@ -406,7 +408,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
 					commits: all,
 					head: data.head,
-					tags: data.tags ?? [],
+					tags: data.tags,
 					moreCommitsAvailable: data.moreCommitsAvailable === true,
 					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
@@ -849,9 +851,9 @@ async function canDisableReasoning(llm: unknown, provider: string, model: string
 	if (!provider || !model || typeof svc.resolveModelInfo !== 'function') return false;
 	try {
 		const info = await svc.resolveModelInfo(provider, model) as { reasoning?: { efforts?: Array<{ id?: string }> } };
-		const efforts = info?.reasoning?.efforts;
+		const efforts = info.reasoning?.efforts;
 		if (!Array.isArray(efforts)) return false;
-		return efforts.some((e) => e?.id === 'off');
+		return efforts.some((e) => e.id === 'off');
 	} catch {
 		return false;
 	}
@@ -866,7 +868,7 @@ function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provi
 	if (typeof getAgentDefaultModel !== 'function') return null;
 	try {
 		const svc = getAgentDefaultModel() as { currentSelection?: () => unknown };
-		const sel = svc?.currentSelection?.() as { provider?: string; model?: string } | null;
+		const sel = svc.currentSelection?.() as { provider?: string; model?: string } | null;
 		if (sel === null || typeof sel !== 'object') return null;
 		const provider = typeof sel.provider === 'string' ? sel.provider : '';
 		const model = typeof sel.model === 'string' ? sel.model : '';
@@ -967,8 +969,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				try {
 					const raw = llm.listProviders();
 					for (const p of (Array.isArray(raw) ? raw : [])) {
-						const id = (p as { id?: string })?.id ?? '';
-						if (id.length > 0) providers.push({ id, name: (p as { name?: string })?.name ?? id });
+						const id = (p as { id?: string }).id ?? '';
+						if (id.length > 0) providers.push({ id, name: (p as { name?: string }).name ?? id });
 					}
 				} catch { /* 目录不可用 */ }
 				void (async () => {
@@ -977,7 +979,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 						try {
 							const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
 							modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
-								.map((m) => (m as { id?: string })?.id ?? '')
+								.map((m) => (m as { id?: string }).id ?? '')
 								.filter((id) => id.length > 0);
 						} catch { modelsByProvider[p.id] = []; }
 					}

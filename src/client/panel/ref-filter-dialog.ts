@@ -39,14 +39,14 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 		{ className: css.filterBackdrop, onClick: onClose },
 		React.createElement(
 			'div',
-			{ className: css.filterDialog, onClick: (event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation() },
+			{ className: css.filterDialog, onClick: (event: React.MouseEvent<HTMLDivElement>) => { event.stopPropagation(); } },
 			// 顶部：搜索框 + 已选徽章 + 确定按钮
 			React.createElement(
 				'div',
 				{ className: css.filterTop },
 				React.createElement('input', {
 					type: 'text', className: css.filterSearch, placeholder: '搜索分支、标签…',
-					value: search, onChange: (event: React.ChangeEvent<HTMLInputElement>) => onSearch(event.currentTarget.value),
+					value: search, onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onSearch(event.currentTarget.value); },
 				}),
 				React.createElement('span', { className: css.filterBadge }, `${selected.size}`),
 				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: onClose }, '确定'),
@@ -56,7 +56,7 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 				'div',
 				{ className: css.filterQuick },
 				React.createElement('label', { className: css.filterQuickItem },
-					React.createElement(Checkbox, { checked: allChecked, onChange: () => onSelectAll(!allChecked), label: '' }),
+					React.createElement(Checkbox, { checked: allChecked, onChange: () => { onSelectAll(!allChecked); }, label: '' }),
 					React.createElement('span', { className: css.filterQuickLabel }, '全部'),
 					React.createElement('span', { className: css.filterQuickHint }, '显示所有分支与标签'),
 				),
@@ -75,7 +75,7 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 					return React.createElement(
 						'label',
 						{ key: `${ref.type}:${ref.name}`, className: cx(css.filterRow, isChecked && css.isChecked) },
-						React.createElement(Checkbox, { checked: isChecked, onChange: () => onToggle(ref.name), label: '' }),
+						React.createElement(Checkbox, { checked: isChecked, onChange: () => { onToggle(ref.name); }, label: '' }),
 						ref.type === 'branch' && React.createElement(GitGraphIcon, { size: 14, className: css.filterIcon }),
 						ref.type === 'remote' && React.createElement(RemoteRefIcon),
 						ref.type === 'tag' && React.createElement(TagRefIcon),

@@ -417,7 +417,7 @@ test('工作树分支从图形区与删除候选中排除', () => {
 	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
-	assert.match(routes, /heads: \(commit\.heads \?\? \[\]\)\.filter/, 'loadCommits 应过滤分支标签');
+	assert.match(routes, /heads: commit\.heads\.filter\(\(name: string\) => !foreign\.has\(name\)\)/, 'loadCommits 应过滤分支标签');
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
 	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
 	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');

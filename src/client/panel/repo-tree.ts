@@ -12,7 +12,7 @@ const EXPANDED_KEY = 'dsh-source-control-expanded';
 
 /** 运行环境是否按大小写不敏感比较路径。 */
 const CASE_INSENSITIVE = typeof navigator !== 'undefined'
-	&& (/Windows/i.test(navigator.userAgent ?? ''));
+	&& (/Windows/i.test(navigator.userAgent));
 
 /**
  * 把路径规范化为与宿主节点 id 一致的形式。
@@ -219,7 +219,7 @@ export function saveExpanded(sessionId, ids) {
  * @returns {string|null} 存储值。
  */
 function readStored(prefix, sessionId) {
-	const value = loadValue(`${prefix}:${sessionId ?? ''}`, null);
+	const value = loadValue<string | null>(`${prefix}:${sessionId ?? ''}`, null);
 	return typeof value === 'string' ? value : null;
 }
 

@@ -410,7 +410,7 @@ export function useGraphData({
 	 */
 	React.useEffect(() => {
 		if (!settings.autoRefresh || workingTreePath === null) return undefined;
-		let cancelled = false;
+		const cancelled = { current: false };
 		let polling = false;
 		let lastSeen = '';
 		let seenCount = 0;
@@ -421,12 +421,12 @@ export function useGraphData({
 		const loadedHead = (): string | null => loadedHeadRef.current;
 
 		const poll = (): void => {
-			if (cancelled || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
+			if (cancelled.current || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
 			polling = true;
 			void (async () => {
 				try {
 					const snapshot = await loadWorkingTreeSnapshot(workingTreePath);
-					if (cancelled) return;
+					if (cancelled.current) return;
 					const signature = entriesSignature(snapshot.entries);
 					const previous = lastSeen;
 					seenCount = signature === previous ? seenCount + 1 : 1;
@@ -489,7 +489,7 @@ export function useGraphData({
 		document.addEventListener('visibilitychange', onVisibilityChange);
 		schedule();
 		return () => {
-			cancelled = true;
+			cancelled.current = true;
 			document.removeEventListener('visibilitychange', onVisibilityChange);
 			if (timerId !== undefined) window.clearInterval(timerId);
 		};

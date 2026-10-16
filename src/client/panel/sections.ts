@@ -24,7 +24,7 @@ import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
-const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '')
+const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent)
 	? '⌘'
 	: 'Ctrl';
 
@@ -206,7 +206,7 @@ export function ChangesSection({
 						placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${head ?? 'master'}'提交)`,
 						value: message,
 						disabled: aiBusy,
-						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => onMessageChange(event.currentTarget.value),
+						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { onMessageChange(event.currentTarget.value); },
 						onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
 							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
 								event.preventDefault();
@@ -280,13 +280,13 @@ export function ChangesSection({
 				{ className: css.changesScroll },
 				ChangeGroup({
 					staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
+					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => { toggleGroup('staged'); },
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
 				}),
 				ChangeGroup({
 					staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
+					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => { toggleGroup('unstaged'); },
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
 					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
@@ -497,7 +497,7 @@ export function GraphSection({
 								busy: busy.read,
 								loading: detail.loading,
 								collapsed: detailCollapsed,
-								onToggle: (path: string) => onToggleChange('detail', path),
+								onToggle: (path: string) => { onToggleChange('detail', path); },
 								// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
 								onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash); },
 							}),

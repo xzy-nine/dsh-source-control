@@ -76,30 +76,30 @@ function disabledFor(ctx: ChangeMenuContext): boolean {
 const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMenuActionMeta) => ContextMenuItem | null>> = {
 	open: (ctx, meta) => (ctx.entry === null
 		? null
-		: { title: labelOf(meta, ctx), onClick: () => ctx.deps.onOpenFile(ctx.entry as WorkingTreeEntry) }),
+		: { title: labelOf(meta, ctx), onClick: () => { ctx.deps.onOpenFile(ctx.entry as WorkingTreeEntry); } }),
 	stage: (ctx, meta) => (ctx.deps.staged
 		? null
-		: { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => ctx.deps.onStage(ctx.paths) }),
+		: { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => { ctx.deps.onStage(ctx.paths); } }),
 	discard: (ctx, meta) => {
 		if (ctx.deps.staged) return null;
 		const base = { title: labelOf(meta, ctx), danger: meta.danger, disabled: disabledFor(ctx) };
-		if (ctx.target === 'group') return { ...base, onClick: () => ctx.deps.onDiscardGroup() };
-		if (ctx.target === 'folder') return { ...base, onClick: () => ctx.deps.onDiscardFolder(ctx.path as string) };
-		return { ...base, onClick: () => ctx.deps.onDiscard(ctx.paths, ctx.untracked) };
+		if (ctx.target === 'group') return { ...base, onClick: () => { ctx.deps.onDiscardGroup(); } };
+		if (ctx.target === 'folder') return { ...base, onClick: () => { ctx.deps.onDiscardFolder(ctx.path as string); } };
+		return { ...base, onClick: () => { ctx.deps.onDiscard(ctx.paths, ctx.untracked); } };
 	},
 	unstage: (ctx, meta) => (ctx.deps.staged
-		? { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => ctx.deps.onUnstage(ctx.paths) }
+		? { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => { ctx.deps.onUnstage(ctx.paths); } }
 		: null),
 	// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
 	addToGitignore: (ctx, meta) => (ctx.deps.staged || ctx.path === null
 		? null
-		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => ctx.deps.onAddToGitignore(ctx.path as string) }),
+		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => { ctx.deps.onAddToGitignore(ctx.path as string); } }),
 	addToLocalExclude: (ctx, meta) => (ctx.deps.staged || ctx.path === null
 		? null
-		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => ctx.deps.onAddToLocalExclude(ctx.path as string) }),
+		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => { ctx.deps.onAddToLocalExclude(ctx.path as string); } }),
 	copyPath: (ctx, meta) => (ctx.path === null
 		? null
-		: { title: meta.title, onClick: () => ctx.deps.onCopyPath(ctx.path as string) }),
+		: { title: meta.title, onClick: () => { ctx.deps.onCopyPath(ctx.path as string); } }),
 };
 
 /** 注册表：元数据取自 JSON，处理函数按 id 绑定。 */

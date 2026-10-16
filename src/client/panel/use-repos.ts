@@ -74,7 +74,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	const [syncById, setSyncById] = React.useState<Map<string, RepoSync>>(() => new Map());
 	/** 每次重新扫描递增：作为发现 effect 的依赖，克隆出新仓库后据此重扫。 */
 	const [scanSeq, setScanSeq] = React.useState(0);
-	const hasWorkspace = cwd !== undefined && cwd !== null;
+	const hasWorkspace = cwd !== undefined;
 	/** 已补齐工作树与子模块的仓库路径占用登记：同一路径不重复下发，取消时释放。 */
 	const enrichClaims = React.useRef<EnrichClaims>(createEnrichClaims());
 	/** 最近一次浅层发现的节点：补齐结果写回时以它为底，避免与后台纠正互相覆盖。 */
@@ -219,7 +219,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		const find = (list: readonly RepoNode[]): RepoNode | null => {
 			for (const node of list) {
 				if (node.id === selectedId) return node;
-				const found = find(node.children ?? []);
+				const found = find(node.children);
 				if (found !== null) return found;
 			}
 			return null;
@@ -251,8 +251,8 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
 			: (fn: () => void): number => window.setTimeout(fn, 120);
 		const cancelIdle = typeof window.cancelIdleCallback === 'function'
-			? (handle: number): void => window.cancelIdleCallback(handle)
-			: (handle: number): void => window.clearTimeout(handle);
+			? (handle: number): void => { window.cancelIdleCallback(handle); }
+			: (handle: number): void => { window.clearTimeout(handle); };
 		/** 本次 effect 已下发的路径：取消时按批释放占用，见下方 cleanup。 */
 		let issued: string[] = [];
 		const handle = idle(() => {
@@ -270,7 +270,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 					requestRetry: () => { setEnrichRetrySeq((previous) => previous + 1); },
 					write: (batch, enriched) => {
 						// 宿主按入参顺序回投节点，这里按 path 对齐：id 的大小写归一化不必重复推导。
-						const byPath = new Map(enriched.map((node) => [node.path, node.children ?? []]));
+						const byPath = new Map(enriched.map((node) => [node.path, node.children]));
 						const next = new Map(childrenByPathRef.current);
 						for (const path of batch) next.set(path, byPath.get(path) ?? []);
 						childrenByPathRef.current = next;
@@ -327,8 +327,8 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
 			: (fn: () => void): number => window.setTimeout(fn, 120);
 		const cancelIdle = typeof window.cancelIdleCallback === 'function'
-			? (handle: number): void => window.cancelIdleCallback(handle)
-			: (handle: number): void => window.clearTimeout(handle);
+			? (handle: number): void => { window.cancelIdleCallback(handle); }
+			: (handle: number): void => { window.clearTimeout(handle); };
 		const handle = idle(() => {
 			void (async () => {
 				// 同一路径可能对应多个节点：按路径收集节点 id，结果一次写回。

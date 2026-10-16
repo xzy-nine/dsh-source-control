@@ -13,7 +13,7 @@ import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
 import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './diff/better-sidebar-diff.ts';
-import { fileDiffContent } from './api/index.ts';
+import { fileDiffContent, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import css from './css/index.module.css';
@@ -158,7 +158,7 @@ function GitDiffTab(props) {
 		return entry?.cwd ?? null;
 	});
 	const gitCwd = repoRoot ?? cwd;
-	const [diffData, setDiffData] = React.useState(null);
+	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
 	const [wrap, setWrap] = React.useState(true);
@@ -200,12 +200,12 @@ function GitDiffTab(props) {
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
-				onClick: () => setSplit((value) => !value),
+				onClick: () => { setSplit((value) => !value); },
 			}, split ? '并排' : '统一'),
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
-				onClick: () => setWrap((value) => !value),
+				onClick: () => { setWrap((value) => !value); },
 			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(

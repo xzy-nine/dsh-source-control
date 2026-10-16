@@ -365,7 +365,7 @@ export async function getStatus(repo: string): Promise<StatusFiles> {
 	while (index < fields.length) {
 		const record = fields[index];
 		index++;
-		if (record === undefined || record.length < 4) break;
+		if (record.length < 4) break;
 		const indexStatus = record.slice(0, 1);
 		const worktreeStatus = record.slice(1, 2);
 		const path = record.slice(3);

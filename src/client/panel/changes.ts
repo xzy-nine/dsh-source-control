@@ -96,13 +96,13 @@ export function ChangeNodeRow({
 				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
 				entry: null, untracked: false,
 			});
-			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
+			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
 		};
 		return React.createElement(
 			'div',
 			{
 				className: cx(css.change, css.folder), title: row.path,
-				onClick: () => onToggle(row.path), onContextMenu: handleContextMenu,
+				onClick: () => { onToggle(row.path); }, onContextMenu: handleContextMenu,
 			},
 			...guidesOf(row.depth),
 			React.createElement('span', {
@@ -128,7 +128,7 @@ export function ChangeNodeRow({
 			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
 			entry, untracked,
 		});
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -199,7 +199,7 @@ export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen
 					'div',
 					{
 						key: `f:${row.path}`, className: cx(css.change, css.folder), title: row.path,
-						onClick: () => onToggle(row.path),
+						onClick: () => { onToggle(row.path); },
 					},
 					...guidesOf(row.depth),
 					React.createElement('span', {
@@ -212,7 +212,7 @@ export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen
 			}
 			const entry = row.entry;
 			const { name } = splitPath(entry.path);
-			const stat = entry.additions !== null && entry.additions !== undefined;
+			const stat = entry.additions !== null;
 			// 提交里的 `A` 与工作区伪提交里的 `A`/`U` 都没有旧侧内容。
 			const isNew = entry.type === 'A' || entry.type === 'U';
 			return React.createElement(
@@ -378,7 +378,7 @@ export function ChangeGroup({
 			target: 'group', deps: menu, path: null, paths: allPaths,
 			entry: null, untracked: false,
 		});
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
+		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
 	};
 	return React.createElement(
 		'div',
@@ -387,7 +387,7 @@ export function ChangeGroup({
 			'div',
 			{
 				className: cx(css.change, css.groupRoot),
-				onClick: () => onToggleGroup(),
+				onClick: () => { onToggleGroup(); },
 				onContextMenu: handleHeadContextMenu,
 			},
 			React.createElement('span', {
@@ -404,7 +404,7 @@ export function ChangeGroup({
 				row, busy,
 				open: row.kind === 'folder' && !collapsed.has(row.path),
 				staged,
-				onToggle: (path: string) => toggleChange(groupKey, path),
+				onToggle: (path: string) => { toggleChange(groupKey, path); },
 				onStage, onUnstage, onDiscard, onOpen,
 				descendantsOf, menu,
 			})),

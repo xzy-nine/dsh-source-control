@@ -150,22 +150,22 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 无关，因此不占用首屏关键路径。仓库位置由宿主在发现命令里自行读取，这里不预取。
 	 */
 	React.useEffect(() => {
-		if (cwd === undefined || cwd === null) return undefined;
-		let cancelled = false;
+		if (cwd === undefined) return undefined;
+		const cancelled = { current: false };
 		void (async () => {
 			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
 			// 草稿是会话级数据，不经过宿主迁移，也不受宿主迁移标记约束。
 			migrateLegacyDrafts();
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
-			if (cancelled) return;
+			if (cancelled.current) return;
 			setSettings(loadSettings());
 			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));
 			setGraphSecOpen(loadValue('dsh-source-control-graph-open', true));
 			setGraphHeight(loadValue('dsh-source-control-graph-height', 320));
 			setRepoHeight(loadValue('dsh-source-control-repo-height', 200));
 		})();
-		return () => { cancelled = true; };
+		return () => { cancelled.current = true; };
 	}, [cwd]);
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -232,7 +232,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const workingTreePath = selectedNode !== null
 		? selectedNode.path
 		: (treeStatus === 'loading' ? null : (cwd ?? null));
-	const hasWorkspace = cwd !== undefined && cwd !== null;
+	const hasWorkspace = cwd !== undefined;
 
 	// 引用筛选按仓库持久化：每个仓库各有一套模式与勾选，默认「自动」。
 	const filterKey = workingTreePath === null ? null : `dsh-source-control-ref-filter:${workingTreePath}`;
@@ -241,9 +241,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	React.useEffect(() => {
 		if (filterKey === null) return;
 		const saved = loadValue<RefFilterState | null>(filterKey, null);
-		setFilterState(saved === null || saved.mode === undefined
+		setFilterState(saved === null
 			? { mode: 'auto', selected: new Set() }
-			: { mode: saved.mode, selected: new Set(saved.selected ?? []) });
+			: { mode: saved.mode, selected: new Set(saved.selected) });
 	}, [filterKey]);
 
 	/** 写入当前仓库的筛选状态并保留模式。 */
@@ -343,7 +343,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	React.useEffect(() => {
 		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
 		let cancelled = false;
-		translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
+		void translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
@@ -375,7 +375,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	React.useEffect(() => {
 		const path = workingTreePath;
 		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
-		let cancelled = false;
+		const cancelled = { current: false };
 		// 本轮读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
 		let readDone = false;
 		setDraftReadDone(false);
@@ -383,7 +383,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void (async () => {
 			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
 			const persisted = await takePersistedDraft(path, key);
-			if (cancelled) return;
+			if (cancelled.current) return;
 			const saved = loadSessionValue<string | null>(key, null);
 			if (saved === null && persisted !== null) {
 				saveSessionValue(key, persisted);
@@ -396,7 +396,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			setDraftReadDone(true);
 		})();
 		return () => {
-			cancelled = true;
+			cancelled.current = true;
 			// 离开本仓库：读回完成后 message 才是本仓库的内容，此时才把草稿写回它自己的键。
 			if (!readDone) return;
 			saveSessionValue(key, messageRef.current);
@@ -692,7 +692,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (state.phase !== 'ready' || state.commits.length === 0) return undefined;
 		didAutoScrollRef.current = true;
 		const timer = setTimeout(goToHead, 60);
-		return () => clearTimeout(timer);
+		return () => { clearTimeout(timer); };
 	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
 	// 切换仓库时把已加载提交数收回初始值，避免跨仓库累积。
 	React.useEffect(() => { setMaxCommits(INITIAL_MAX_COMMITS); }, [workingTreePath]);
@@ -750,14 +750,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		setMessage('');
 		const controller = new AbortController();
 		aiAbortRef.current = controller;
-		generateCommitMessage(workingTreePath, settings.aiCommitProvider ?? '', settings.aiCommitModel ?? '', settings.aiCommitRules ?? '', {
+		generateCommitMessage(workingTreePath, settings.aiCommitProvider, settings.aiCommitModel, settings.aiCommitRules, {
 			signal: controller.signal,
-			onChunk: (text) => setMessage((prev) => prev + text),
-			onWarning: (text) => setAiWarning(text),
-			onError: (text) => setAiWarning(text),
-			onStats: (stats) => setAiStats(stats as AiStats),
+			onChunk: (text) => { setMessage((prev) => prev + text); },
+			onWarning: (text) => { setAiWarning(text); },
+			onError: (text) => { setAiWarning(text); },
+			onStats: (stats) => { setAiStats(stats as AiStats); },
 		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
-		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => setAiWarning(String((err as Error)?.message ?? err)));
+		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => { setAiWarning(err instanceof Error ? err.message : String(err)); });
 	};
 
 	/**
@@ -881,7 +881,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			? account.unavailable.find((item) => item.feature === 'create-repo')?.message ?? ''
 			: '未检测到可用的 GitHub 登录，请先运行 gh auth login。';
 
-		const pages: [FormPage, ...FormPage[]] = ghReady && account !== null
+		const pages: [FormPage, ...FormPage[]] = ghReady
 			? [
 				{
 					value: 'github',
@@ -979,7 +979,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				const picked = await showSelect({
 					title: '发布到远程仓库',
 					message: `把分支 ${branch} 推送到哪个远程仓库？`,
-					options: state.remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== null && item.url !== '' ? `（${item.url}）` : ''}` })),
+					options: state.remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== '' ? `（${item.url}）` : ''}` })),
 				});
 				if (picked === null || picked === '') return;
 				remote = picked;
@@ -1041,7 +1041,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void (async () => {
 			try {
 				const cfg = await loadConfig(workingTreePath, state.remotes.map((remote) => remote.name));
-				const user = (cfg?.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
+				const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
 				setUserDetails({ userName: user?.name, userEmail: user?.email });
 			} catch { /* 加载失败时保留空表单 */ }
 		})();
@@ -1049,7 +1049,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	const reloadUserDetails = async (): Promise<void> => {
 		const cfg = await loadConfig(workingTreePath as string, state.remotes.map((remote) => remote.name));
-		const user = (cfg?.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
+		const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
 		setUserDetails({ userName: user?.name, userEmail: user?.email });
 	};
 
@@ -1087,9 +1087,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 */
 	const handleAddToGitignore = React.useCallback((path: string) => {
 		void (async () => {
-			let written: IgnoreWriteResult | null = null;
-			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
-			const result: IgnoreWriteResult | null = written;
+			const written: { value: IgnoreWriteResult | null } = { value: null };
+			await run('commit', async () => { written.value = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
+			const result = written.value;
 			if (result === null || result.file === '') return;
 			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
 			await openDiff('*', result.file, false, !result.tracked);
@@ -1103,9 +1103,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 */
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
 		void (async () => {
-			let written: LocalExcludeState | null = null;
-			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
-			const state: LocalExcludeState | null = written;
+			const written: { value: LocalExcludeState | null } = { value: null };
+			await run('commit', async () => { written.value = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
+			const state = written.value;
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
 			if (state === null || state.path === '') return;
 			setLocalExclude(state);
@@ -1129,7 +1129,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 */
 	const handleClone = React.useCallback(() => {
 		void (async () => {
-			if (cwd === undefined || cwd === null) {
+			if (cwd === undefined) {
 				await notify('没有可用的会话工作区，无法克隆。');
 				return;
 			}
@@ -1252,7 +1252,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleCreateArchive = React.useCallback(async (ref: string, refLabel: string) => {
 		const format = await showSelect({
 			title: '创建归档',
-			message: `从 ${refLabel ?? ref} 创建归档`,
+			message: `从 ${refLabel} 创建归档`,
 			options: [
 				{ value: 'zip', label: 'zip' },
 				{ value: 'tar', label: 'tar' },
@@ -1294,18 +1294,20 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (isLinkedWorktree) {
 			items.push({ type: 'divider' }, {
 				title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, workingTreePath, 'history'),
-				onClick: async () => {
-					const ok = await showCheckbox({
-						title: '移除工作树',
-						message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
-						checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
-					});
-					if (!ok) return;
-					void run('history', async () => {
-						await removeWorktree(workingTreePath as string, node.path, true);
-						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
-						setSelectedId((previous) => (previous === node.id ? null : previous));
-					});
+				onClick: () => {
+					void (async () => {
+						const ok = await showCheckbox({
+							title: '移除工作树',
+							message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
+							checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
+						});
+						if (!ok) return;
+						void run('history', async () => {
+							await removeWorktree(workingTreePath as string, node.path, true);
+							// 该节点已不存在，清掉选中以免刷新后指向失效节点。
+							setSelectedId((previous) => (previous === node.id ? null : previous));
+						});
+					})();
 				},
 			});
 		}
@@ -1364,7 +1366,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => {
-		if (refInfo !== null && refInfo !== undefined && refInfo.type !== null && refInfo.name !== null) {
+		if (refInfo !== null && refInfo.type !== null && refInfo.name !== null) {
 			openRefMenuFor({ commit, refInfo: { type: refInfo.type, name: refInfo.name }, event });
 		} else {
 			openCommitMenuFor({ commit, event });
@@ -1428,7 +1430,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		{ className: css.root },
 
 		React.createElement(SettingsPanel, {
-			open: settingsOpen, onClose: () => setSettingsOpen(false),
+			open: settingsOpen, onClose: () => { setSettingsOpen(false); },
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
 			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
 			onCheckSsh: handleCheckSsh,
@@ -1446,17 +1448,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				else next.add(name);
 				patchFilter({ mode: 'manual', selected: next });
 			},
-			onSelectAll: (checked: boolean) => patchFilter({
+			onSelectAll: (checked: boolean) => { patchFilter({
 				mode: checked ? 'all' : 'manual',
 				selected: checked ? new Set(allRefs.map((ref) => ref.name)) : new Set(),
-			}),
+			}); },
 			// 勾选态一律由模式决定，不看勾选内容反推：模式是唯一事实来源。
 			allChecked: filterState.mode === 'all',
 			autoChecked: filterState.mode === 'auto',
-			onToggleAuto: (checked: boolean) => patchFilter(checked
+			onToggleAuto: (checked: boolean) => { patchFilter(checked
 				? { mode: 'auto', selected: new Set() }
-				: { mode: 'manual', selected: new Set() }),
-			onClose: () => setFilterOpen(false),
+				: { mode: 'manual', selected: new Set() }); },
+			onClose: () => { setFilterOpen(false); },
 		}),
 
 		// ── 存储库 ──────────────────────────────────────────────
@@ -1464,7 +1466,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			open: repoSecOpen, height: repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
-			onOpenSettings: () => setSettingsOpen(true),
+			onOpenSettings: () => { setSettingsOpen(true); },
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
@@ -1514,7 +1516,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	onLoadMore: () => { void loadMore(); },
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
-			onOpenFilter: () => setFilterOpen(true),
+			onOpenFilter: () => { setFilterOpen(true); },
 			filterSummary,
 			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,

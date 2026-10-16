@@ -45,7 +45,7 @@ export function diffFileAddress(sessionId: string, workspaceRoot: string | null,
 	const root = normalize(repoRoot);
 	const absolute = /^[a-zA-Z]:\//.test(file) || file.startsWith('/') || root === '' ? file : `${root}/${file}`;
 	// 相对路径更短也更稳；区外保留绝对形式——POSIX 靠前导空段表达，盘符自带前缀。
-	const relative = workspaceRoot === null || workspaceRoot === undefined ? null : relativeTo(workspaceRoot, absolute);
+	const relative = workspaceRoot === null ? null : relativeTo(workspaceRoot, absolute);
 	const path = relative === null || relative === '' ? absolute : relative;
 	const encoded = path.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
 	return `${FILE_ADDRESS_PREFIX}${encodeURIComponent(sessionId)}/${encoded}`;

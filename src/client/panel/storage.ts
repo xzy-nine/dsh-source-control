@@ -51,7 +51,7 @@ export async function primeStorage(cwd: string): Promise<void> {
 			cache = await readState(cwd);
 			// 补写路径未定期间暂存的改动：预取刚读回的值以后写为准。
 			for (const [key, value] of pendingWrites) {
-				if (value === null) delete cache[key]; else cache[key] = value;
+				if (value === null) Reflect.deleteProperty(cache, key); else cache[key] = value;
 				void writeState(cwd, key, value).catch(() => { /* 落盘失败时保留内存态 */ });
 			}
 			pendingWrites.clear();
@@ -110,7 +110,7 @@ export function loadValue<T>(key: string, fallback: T): T {
  * @returns 无。
  */
 export function saveValue(key: string, value: unknown): void {
-	if (value === null || value === undefined) delete cache[key];
+	if (value === null || value === undefined) Reflect.deleteProperty(cache, key);
 	else cache[key] = value;
 	const cwd = currentCwd;
 	if (cwd === null) {

@@ -603,7 +603,7 @@ export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEn
 	while (index < fields.length && entries.length < limit) {
 		const record = fields[index];
 		index++;
-		if (record === undefined || record.length < 4) break;
+		if (record.length < 4) break;
 		const indexStatus = record.slice(0, 1);
 		const worktreeStatus = record.slice(1, 2);
 		const path = record.slice(3);
@@ -661,7 +661,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	while (index < tokens.length && entries.length < limit) {
 		const token = tokens[index];
 		index++;
-		if (token === undefined || token === '') continue;
+		if (token === '') continue;
 		if (token.startsWith('# ')) {
 			const space = token.indexOf(' ', 2);
 			const key = space === -1 ? token.slice(2) : token.slice(2, space);
@@ -672,8 +672,8 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
 				const [aheadRaw, behindRaw] = value.split(' ');
-				const ahead = Number.parseInt((aheadRaw ?? '').replace('+', ''), 10);
-				const behind = Number.parseInt((behindRaw ?? '').replace('-', ''), 10);
+				const ahead = Number.parseInt(aheadRaw.replace('+', ''), 10);
+				const behind = Number.parseInt(behindRaw.replace('-', ''), 10);
 				ab = { ahead: Number.isFinite(ahead) ? ahead : 0, behind: Number.isFinite(behind) ? behind : 0 };
 			}
 			continue;

@@ -124,7 +124,7 @@ export function readEntry(key: string): unknown {
 export function writeEntry(key: string, value: unknown): void {
 	const current = load();
 	const entries = { ...current.entries };
-	if (value === null || value === undefined) delete entries[key];
+	if (value === null || value === undefined) Reflect.deleteProperty(entries, key);
 	else entries[key] = value;
 	save({ ...current, entries });
 }
