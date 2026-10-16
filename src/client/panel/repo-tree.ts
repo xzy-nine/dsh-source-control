@@ -54,7 +54,7 @@ export function findNode(nodes, id) {
  */
 export function flattenVisible(nodes, expandedIds) {
 	const rows = [];
-	const walk = (list, level) => {
+	const walk = (list, level: number) => {
 		for (const node of list ?? []) {
 			rows.push({ node, depth: level });
 			if ((node.children ?? []).length > 0 && expandedIds?.has(node.id)) walk(node.children, level + 1);

@@ -38,8 +38,10 @@ import { dropGraphWindows, useGraphData } from './use-graph-data.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
-import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
+import { commitEntries } from './optimistic.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
+import { useResizeHandler } from './use-resize.ts';
+import { textOf, trimmedTextOf } from '../shared/text.ts';
 import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import css from '../css/panel.module.css';
@@ -181,23 +183,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		saveValue('dsh-source-control-graph-height', clamped);
 	}, []);
 	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
-	const startGraphResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-		event.preventDefault();
-		const startY = event.clientY;
-		const startHeight = graphHeight;
-		const handle = event.currentTarget;
-		handle.classList.add(shared.isDragging);
-		const onMove = (moveEvent: PointerEvent): void => {
-			commitGraphHeight(startHeight - (moveEvent.clientY - startY));
-		};
-		const onUp = (): void => {
-			handle.classList.remove(shared.isDragging);
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		};
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-	}, [graphHeight, commitGraphHeight]);
+	const startGraphResize = useResizeHandler(graphHeight, 'up', commitGraphHeight);
 
 	const commitRepoHeight = React.useCallback((value: number) => {
 		const clamped = Math.max(80, Math.min(value, 600));
@@ -205,23 +191,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		saveValue('dsh-source-control-repo-height', clamped);
 	}, []);
 	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
-	const startRepoResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-		event.preventDefault();
-		const startY = event.clientY;
-		const startHeight = repoHeight;
-		const handle = event.currentTarget;
-		handle.classList.add(shared.isDragging);
-		const onMove = (moveEvent: PointerEvent): void => {
-			commitRepoHeight(startHeight + (moveEvent.clientY - startY));
-		};
-		const onUp = (): void => {
-			handle.classList.remove(shared.isDragging);
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		};
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-	}, [repoHeight, commitRepoHeight]);
+	const startRepoResize = useResizeHandler(repoHeight, 'down', commitRepoHeight);
 
 	const {
 		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
@@ -536,8 +506,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 
 	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
-	const notify = React.useCallback(async (message: string) => {
+	const notify = React.useCallback((message: string): Promise<void> => {
 		showToast(message);
+		return Promise.resolve();
 	}, []);
 
 	/** 把当前改动存入贮藏；贮藏信息由用户输入，留空表示不指定。 */
@@ -582,7 +553,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * @param isNew - 是否是新增文件。
 	 * @param baseHash - 旧侧提交哈希；非空时按两提交对比打开。
 	 */
-	const openDiff = React.useCallback(async (hash: string, path: string, staged: boolean, isNew = false, baseHash?: string) => {
+	const openDiff = React.useCallback((hash: string, path: string, staged: boolean, isNew = false, baseHash?: string): Promise<void> => {
 		const kind = isNew ? 'file' : (hash === '*' ? 'worktree' : 'commit');
 		const diff = kind === 'file'
 			? { kind, path, repoRoot: workingTreePath }
@@ -593,6 +564,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			// 对比时 id 带上旧侧哈希：同一文件的不同对比组合各自成页。
 			onOpenDiff({ id: `gg-diff:${baseHash ?? ''}:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
 		}
+		return Promise.resolve();
 	}, [onOpenDiff, workingTreePath]);
 
 	/**
@@ -926,10 +898,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const form = await showTabbedForm({ title: '发布', pages, confirmLabel: '发布' });
 		if (form === null) return null;
 		if (form.page === 'github') {
-			const name = String(form.name ?? '').trim();
+			const name = trimmedTextOf(form.name);
 			if (name === '') return null;
 			// 个人账号固定为当前登录用户；组织取所选组织。组织为空时退回个人账号。
-			const chosenOrg = String(form.owner ?? '').trim();
+			const chosenOrg = trimmedTextOf(form.owner);
 			const owner = form.accountType === 'org' && chosenOrg !== '' ? chosenOrg : user;
 			if (owner === '') return null;
 			// 选 SSH 时先确认本机可认证，避免仓库已建好却推送失败。
@@ -938,13 +910,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				kind: 'github',
 				owner,
 				name,
-				private: String(form.visibility ?? 'private') !== 'public',
-				description: String(form.description ?? '').trim(),
+				private: textOf(form.visibility, 'private') !== 'public',
+				description: trimmedTextOf(form.description),
 				protocol: form.protocol === 'ssh' ? 'ssh' : 'https',
 			};
 		}
-		const name = String(form.name ?? '').trim() === '' ? 'origin' : String(form.name ?? '').trim();
-		let url = String(form.url ?? '').trim();
+		const name = trimmedTextOf(form.name) === '' ? 'origin' : trimmedTextOf(form.name);
+		let url = trimmedTextOf(form.url);
 		if (url === '') return null;
 		if (form.protocol === 'ssh') {
 			const sshUrl = toSshRemoteUrl(url);
@@ -1143,7 +1115,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				confirmLabel: '下一步',
 			});
 			if (form === null) return;
-			const url = String(form.url ?? '').trim();
+			const url = trimmedTextOf(form.url);
 			if (url === '') return;
 			if (pickDirectory === undefined) {
 				await notify('当前界面没有装载目录选择器，无法选择存放位置。');
@@ -1215,14 +1187,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			],
 		});
 		if (form === null) return;
-		const title = String(form.title ?? '').trim();
+		const title = trimmedTextOf(form.title);
 		if (title === '') return;
 		await run('network', async () => {
 			const url = await ghCreatePullRequest(path, {
 				head,
-				base: String(form.base ?? base),
+				base: textOf(form.base, base),
 				title,
-				body: String(form.body ?? ''),
+				body: textOf(form.body),
 				draft: form.draft === true,
 			});
 			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
@@ -1376,7 +1348,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const dateFmt = React.useCallback((seconds: number) => formatDate(seconds, settings.dateFormat), [settings.dateFormat]);
 	// 悬停卡片的括号内始终是详细时间：与主标签同源比较，相同就不重复。
 	const dateDetail = React.useCallback(
-		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso === true }),
+		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso }),
 		[settings.dateFormat.iso],
 	);
 	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);

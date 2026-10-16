@@ -22,8 +22,8 @@ export interface TreeEntry {
  * @returns 绝对路径。
  */
 export function absolutePathOf(repoRoot: string, path: string): string {
-	const root = String(repoRoot).replace(/[\\/]+$/, '');
-	const target = String(path);
+	const root = repoRoot.replace(/[\\/]+$/, '');
+	const target = path;
 	// 绝对路径：盘符（`C:/`、`C:\`）、POSIX 前导斜杠或 UNC（`\\server\share`）。
 	if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith('/') || /^\\\\/.test(target)) return target;
 	if (root === '') return target;
@@ -82,7 +82,9 @@ function flattenChangeTree<Entry extends TreeEntry>(
 		let path = prefix === '' ? name : `${prefix}/${name}`;
 		let child = node.folders.get(name) as ChangeTreeNode<Entry>;
 		while (child.files.length === 0 && child.folders.size === 1) {
-			const [onlyName, onlyChild] = [...child.folders.entries()][0] as [string, ChangeTreeNode<Entry>];
+			const entry = [...child.folders.entries()].at(0);
+			if (entry === undefined) break;
+			const [onlyName, onlyChild] = entry;
 			label = `${label}/${onlyName}`;
 			path = `${path}/${onlyName}`;
 			child = onlyChild;

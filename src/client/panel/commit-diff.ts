@@ -154,7 +154,7 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 	}
 	const message = `Uncommitted Changes (${count})`;
 	if (existing !== undefined) {
-		const match = UNCOMMITTED_MESSAGE.exec(String(existing.message ?? ''));
+		const match = UNCOMMITTED_MESSAGE.exec(existing.message);
 		if (match !== null && Number.parseInt(match[1], 10) === count) return commits;
 		return [{ ...existing, message }, ...commits.slice(1)];
 	}

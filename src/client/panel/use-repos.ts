@@ -96,7 +96,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			return undefined;
 		}
 		const controller = new AbortController();
-		const root = cwd as string;
+		const root = cwd;
 		/**
 		 * 应用一次发现结果。
 		 *
@@ -243,7 +243,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	 */
 	React.useEffect(() => {
 		if (!hasWorkspace) return undefined;
-		const root = cwd as string;
+		const root = cwd;
 		let cancelled = false;
 		// 本轮请求的取消信号：依赖变化或卸载时中止在途补齐。
 		const controller = new AbortController();
@@ -319,7 +319,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	 */
 	React.useEffect(() => {
 		if (!hasWorkspace) return undefined;
-		const root = cwd as string;
+		const root = cwd;
 		let cancelled = false;
 		// 本轮请求的取消信号：依赖变化或卸载时中止在途预取。
 		const controller = new AbortController();

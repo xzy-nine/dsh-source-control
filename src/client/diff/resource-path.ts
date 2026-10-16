@@ -11,7 +11,7 @@
 const FILE_ADDRESS_PREFIX = 'dsh-resource://file/session/';
 
 /** 统一分隔符并去掉尾斜杠。 */
-const normalize = (path: string | null | undefined): string => String(path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+const normalize = (path: string | null | undefined): string => (path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
 
 /** 盘符路径按 Windows 规则忽略大小写比较。 */
 const comparable = (path: string): string => (/^[a-zA-Z]:\//.test(path) ? path.toLowerCase() : path);
@@ -70,7 +70,7 @@ export interface GitDiffAddress {
  * @returns `dsh-resource://git-diff/session/<sessionId>/<hash>/<path>` 地址。
  */
 export function gitDiffAddress(sessionId: string, hash: string, filePath: string): string {
-	const encoded = String(filePath).split('/').map((s) => encodeURIComponent(s)).join('/');
+	const encoded = filePath.split('/').map((s) => encodeURIComponent(s)).join('/');
 	return `${GIT_DIFF_PREFIX}${encodeURIComponent(sessionId)}/${encodeURIComponent(hash)}/${encoded}`;
 }
 

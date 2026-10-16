@@ -9,7 +9,6 @@
  * 合并提交为环加内点，其余为实心点。
  */
 import React from 'react';
-import md5 from 'blueimp-md5';
 import {
 	HoverCard, IconArchiveOutlineRegular, IconClockOutlineRegular,
 	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
@@ -18,7 +17,7 @@ import {
 import {
 	HEAD_CORE_RADIUS, HEAD_NODE_RADIUS, INDICATOR_DASH, INDICATOR_NODE_RADIUS, INDICATOR_RING_RADIUS,
 	LANE_STROKE, MERGE_CORE_RADIUS, MERGE_NODE_RADIUS, NODE_RADIUS,
-	REMOTE_REF_COLOUR, RING_STROKE, ROW_HEIGHT, ROW_OVERLAP, HEAD_REF_COLOUR,
+	REMOTE_REF_COLOUR, RING_STROKE, ROW_HEIGHT, HEAD_REF_COLOUR,
 	laneCentre, laneSpanWidth, layoutCommits, nodeOuterRadius, segmentGeometry,
 } from './lanes.ts';
 import { RemoteRefIcon, TagRefIcon, TranslateIcon } from '../ui/ref-icons.ts';
@@ -652,7 +651,7 @@ export function CommitGraph({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	localTip, remoteTip, baseTip, upstream,
-	markdown, showAvatars, muteMergeCommits, graphColours,
+	markdown, showAvatars, muteMergeCommits, graphColours: _graphColours,
 	translatedMessages, translatedFrom, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
 	onVisibleCommits,
 }) {

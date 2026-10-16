@@ -124,7 +124,7 @@ export function formatDate(unixSeconds: number, dateFormat: DateFormat): string 
 		return `${Math.floor(diff / (86400 * 365))} 年前`;
 	}
 	let text: string;
-	if (dateFormat.iso === true) {
+	if (dateFormat.iso) {
 		text = date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
 	} else {
 		const pad = (n: number): string => String(n).padStart(2, '0');
@@ -492,7 +492,7 @@ export function SettingsPanel({
 		React.createElement(Section, { title: '仓库配置', key: 'export' },
 			React.createElement(Button, {
 				variant: 'outline', size: 'sm',
-				onClick: () => { void onExportConfig?.(); },
+				onClick: () => { onExportConfig?.(); },
 			}, '导出仓库配置'),
 		),
 	];

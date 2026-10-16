@@ -60,17 +60,17 @@ function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> 
 		let stdout = '';
 		let stderr = '';
 		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (result: SshResult): void => {
-			if (settled) return;
-			settled = true;
-			if (timer !== undefined) clearTimeout(timer);
-			resolve(result);
-		};
-		timer = setTimeout(() => {
+		/* 超时定时器先创建，finish 里要清掉它；回调在稍后执行，那时 finish 已初始化。 */
+		const timer = setTimeout(() => {
 			child.kill();
 			finish({ code: -1, stdout, stderr: stderr === '' ? 'SSH 探测超时' : stderr });
 		}, timeoutMs);
+		const finish = (result: SshResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(result);
+		};
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (chunk: string) => { stdout += chunk; });

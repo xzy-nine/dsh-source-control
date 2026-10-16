@@ -99,10 +99,11 @@ test('图形区拖拽手柄在图形标题之前', () => {
 
 test('图形区高度跟随拖动方向', () => {
 	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-	const source = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
-	const start = source.indexOf('const startGraphResize');
-	const body = source.slice(start, source.indexOf("window.addEventListener('pointermove'", start));
-	assert.match(body, /commitGraphHeight\(startHeight - \(moveEvent\.clientY - startY\)\)/, '拖拽位移必须取负号');
+	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
+	assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
+	const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');
+	assert.match(resize, /commit\(startHeight \+ \(direction === 'up' \? -delta : delta\)\)/, '拖拽位移必须按方向取符号');
 });
 
 test('改动文件区在图形区内展开', () => {

@@ -139,10 +139,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		return;
 	}
 
-	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k] as string) : '');
-	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? (msg[k] as string) : null);
-	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? (msg[k] as boolean) : dflt);
-	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? (msg[k] as number) : dflt);
+	const str = (k: string): string => (typeof msg[k] === 'string' ? msg[k] : '');
+	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? msg[k] : null);
+	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? msg[k] : dflt);
+	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? msg[k] : dflt);
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
@@ -160,7 +160,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	 * @param cmd - 命令名，原样回投。
 	 * @param fn - 执行体，返回值会并入响应载荷。
 	 */
-	const respondResult = async (cmd: string, fn: () => Promise<Record<string, unknown>>): Promise<void> => {
+	const respondResult = async (cmd: string, fn: () => Record<string, unknown> | Promise<Record<string, unknown>>): Promise<void> => {
 		try {
 			respond({ command: cmd, ...(await fn()), error: null });
 		} catch (error) {
@@ -231,21 +231,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
 		/* --- 插件状态持久化：设置、布局、引用筛选、仓库位置缓存（落 $DSH_HOME/dsh-source-control/） --- */
 		case 'readState':
-			await respondResult('readState', async () => ({ entries: readEntries() }));
+			await respondResult('readState', () => ({ entries: readEntries() }));
 			break;
 		case 'writeState':
-			await respondResult('writeState', async () => {
+			await respondResult('writeState', () => {
 				writeEntry(str('key'), msg.value === undefined ? null : msg.value);
 				return { repo };
 			});
 			break;
 		case 'readRepoLocations':
-			await respondResult('readRepoLocations', async () => ({ repos: readRepoLocations(repo) }));
+			await respondResult('readRepoLocations', () => ({ repos: readRepoLocations(repo) }));
 			break;
 		case 'writeRepoLocations':
-			await respondResult('writeRepoLocations', async () => {
+			await respondResult('writeRepoLocations', () => {
 				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
-					.filter((item) => typeof item.path === 'string' && (item.path as string) !== '')
+					.filter((item) => typeof item.path === 'string' && item.path !== '')
 					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
 				writeRepoLocations(repo, repos);
 				return { repo };
@@ -409,8 +409,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					commits: all,
 					head: data.head,
 					tags: data.tags,
-					moreCommitsAvailable: data.moreCommitsAvailable === true,
-					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
+					moreCommitsAvailable: data.moreCommitsAvailable,
+					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});
@@ -504,7 +504,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error: await merge(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit')),
 			});
 			break;
 		case 'mergeIntoBranch': {
@@ -532,13 +532,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				command: 'rebase',
 				actionOn: msg.actionOn,
 				interactive: bool('interactive'),
-				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
+				error: await rebase(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('ignoreDate', true), bool('interactive')),
 			});
 			break;
 
 		/* --- 标签 --- */
 		case 'addTag': {
-			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
+			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), typeof msg.type === 'number' ? msg.type : 0, str('message'), bool('force'))];
 			if (errors[0] === null && strOrNull('pushToRemote') !== null) {
 				errors.push(...(await pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
 			}
@@ -677,7 +677,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-source-control] ' + String(msg.message ?? ''));
+			console.error('[dsh-source-control] ' + (typeof msg.message === 'string' ? msg.message : ''));
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -949,8 +949,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					res.end();
 					return;
 				}
-				void handleApi(req, res, aiDeps).catch((e) => {
-					sendJson(res, 500, { error: String(e instanceof Error ? e.message : e) });
+				void handleApi(req, res, aiDeps).catch((e: unknown) => {
+					sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
 				});
 			},
 		}),
@@ -1065,7 +1065,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 							} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
 								const f = chunk.reason.failure;
-								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
+								const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
 								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 							}
 						}

@@ -2,6 +2,7 @@
  * GitHub 集成与 SSH 状态：账号、属主、新建仓库、创建 Pull Request。
  */
 import { callApi } from './http.ts';
+import { textOf } from '../shared/text.ts';
 
 /** GitHub 账号信息。 */
 export interface GhAccountInfo {
@@ -40,7 +41,7 @@ export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
 	const unavailable = Array.isArray(account.unavailable)
 		? account.unavailable.map((item) => {
 			const entry = item as Record<string, unknown>;
-			return { feature: String(entry.feature ?? ''), reason: String(entry.reason ?? ''), message: String(entry.message ?? '') };
+			return { feature: textOf(entry.feature), reason: textOf(entry.reason), message: textOf(entry.message) };
 		})
 		: [];
 	return {
@@ -64,9 +65,9 @@ export async function ghOwners(cwd: string): Promise<GhOwnerInfo[]> {
 	return owners.map((item) => {
 		const owner = item as Record<string, unknown>;
 		return {
-			login: String(owner.login ?? ''),
+			login: textOf(owner.login),
 			isOrg: owner.isOrg === true,
-			name: typeof owner.name === 'string' && owner.name !== '' ? owner.name : String(owner.login ?? ''),
+			name: typeof owner.name === 'string' && owner.name !== '' ? owner.name : textOf(owner.login),
 		};
 	}).filter((owner) => owner.login !== '');
 }

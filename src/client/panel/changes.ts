@@ -274,7 +274,7 @@ export function ChangeGroup({
 		? (entry.index !== ' ' && entry.index !== '?')
 		: (entry.worktree !== ' '));
 	if (visible.length === 0 && !forceShow) return [];
-	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
+	const rows = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
