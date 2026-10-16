@@ -46,6 +46,8 @@ export async function loadRepoSync(cwd: string, signal?: AbortSignal): Promise<R
 /** 工作区快照：变更条目与仓库同步状态。 */
 export interface WorkingTreeSnapshot {
 	readonly entries: WorkingTreeEntry[];
+	/** 本次读取时的 HEAD 提交哈希；尚无提交时为 null。 */
+	readonly head: string | null;
 	readonly branch: string | null;
 	readonly upstream: string | null;
 	readonly ahead: number;
@@ -63,6 +65,7 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal)
 	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot' }, signal);
 	return {
 		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
+		head: typeof payload.head === 'string' ? payload.head : null,
 		branch: typeof payload.branch === 'string' ? payload.branch : null,
 		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
@@ -96,7 +99,8 @@ export interface LoadGraphOptions {
 /**
  * 读取提交图与仓库信息。
  *
- * `loadCommits` 需要仓库的远程列表与 stash 列表参与引用标注，因此先取仓库信息。
+ * 首屏（skip 为 0）由 `loadCommits` 一并取回仓库信息、引用集合与贮藏，因此这里不先发仓库信息请求：
+ * 两次请求会各起一组 git 子进程并串行等待。翻页批没有该附带信息，此时单独补取一次。
  *
  * @param cwd - 会话工作区路径。
  * @param options - 读取选项。
@@ -107,18 +111,19 @@ export async function loadGraph(cwd: string, {
 	showStashes = true, showTags = true, showRemoteBranches = true,
 	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
-	const repoInfo = await callApi(cwd, {
-		command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [],
-	}, signal);
-	const remotes = (Array.isArray(repoInfo.remotes) ? repoInfo.remotes : []) as Remote[];
-	const stashes = Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [];
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
 		// 偏移分页：skip 是已加载条数，正反向都用它。
 		command: 'loadCommits', branches: null, skip, limit: maxCommits, showTags, showRemoteBranches,
-		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering,
-		remotes, hideRemotes: [], stashes,
+		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, showStashes,
+		// 不带 `stashes`：首屏由宿主按 `showStashes` 自行枚举；翻页批由宿主自行读取远程名。
+		remotes: [], hideRemotes: [],
 	}, signal);
+	const batch = commitsPayload.repoInfo;
+	const repoInfo = batch !== null && typeof batch === 'object'
+		? batch as Record<string, unknown>
+		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [] }, signal);
+	const remotes = (Array.isArray(repoInfo.remotes) ? repoInfo.remotes : []) as Remote[];
 	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;
 	return {
 		commits: (Array.isArray(commitsPayload.commits) ? commitsPayload.commits : []) as Commit[],

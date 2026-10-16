@@ -24,17 +24,29 @@ export interface UseAutoFetchOptions {
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 执行一次抓取。 */
 	readonly fetch: (path: string) => Promise<void>;
+	/**
+	 * 抓取成功后的回调。
+	 *
+	 * 抓取会改动远程引用与领先/落后，调用方据此作废提交图缓存并重载：进入仓库后的第一次抓取
+	 * 因此表现为「先用本地引用渲染，抓取完成后更新远程分支与领先/落后」。
+	 */
+	readonly onFetched?: (path: string) => void;
 }
 
 /**
  * 按周期抓取当前仓库的远程引用。
  *
+ * 循环的第一轮在进入仓库后立即执行，因此面板先用本地引用渲染，抓取完成后经
+ * {@link UseAutoFetchOptions.onFetched} 更新远程分支与领先/落后；此后按周期重复。
+ *
  * @param options - 见 {@link UseAutoFetchOptions}。
  * @returns 无。
  */
-export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef, fetch }: UseAutoFetchOptions): void {
+export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef, fetch, onFetched }: UseAutoFetchOptions): void {
 	const fetchRef = React.useRef(fetch);
 	fetchRef.current = fetch;
+	const onFetchedRef = React.useRef(onFetched);
+	onFetchedRef.current = onFetched;
 
 	React.useEffect(() => {
 		if (!enabled || workingTreePath === null) return undefined;
@@ -67,6 +79,8 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 					/* 抓取失败不改设置；下一次周期重试 */
 				}
 				if (cancelled) return;
+				// 抓取成功才回调：失败时引用没变，重载没有意义。
+				onFetchedRef.current?.(workingTreePath);
 				// 周期下限另有兜底：设置值异常时也不会退化成密集抓取。
 				await sleep(Math.max(AUTO_REFRESH_COOLDOWN_MS, autoFetchPeriodMs(periodSeconds)));
 			}

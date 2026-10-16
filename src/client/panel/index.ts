@@ -29,13 +29,14 @@ import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { loadValue, primeStorage, saveValue } from './storage.ts';
+import { draftKeyOf, loadSessionValue, loadValue, primeStorage, saveSessionValue, saveValue } from './storage.ts';
 import { primeRepoLocations } from './repo-locations.ts';
-import { migrateLegacyState } from '../api/index.ts';
+import { migrateLegacyState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, useGraphData } from './use-graph-data.ts';
+import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
@@ -271,13 +272,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/*
 	 * 文件改动事件驱动的自动刷新：工具写入/编辑落地、且目标确实在所选仓库内时重载面板。
-	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用），因此无需宿主新增通道。
+	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用）。
 	 */
 	useFileChangeRefresh({
 		sessions,
 		sessionId,
 		workingTreePath,
 		cwd: cwd ?? null,
+		enabled: settings.autoRefresh,
+		busyRef,
+		refresh,
+	});
+
+	/*
+	 * 宿主事件流：别的会话、别的工作区或外部进程对当前仓库的写操作不产生本会话事件，
+	 * 事件驱动的刷新看不到。订阅宿主推送的仓库写事件补上这条通道，按仓库路径过滤。
+	 */
+	useRepositoryWriteEvents({
+		workingTreePath,
 		enabled: settings.autoRefresh,
 		busyRef,
 		refresh,
@@ -293,6 +305,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		periodSeconds: settings.autoFetchPeriod,
 		busyRef,
 		fetch: async (path) => { await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); },
+		/*
+		 * 抓取完成后重载：面板先用本地引用渲染，抓取拉回的远程引用与领先/落后随后并入。
+		 * 抓取改动了引用，因此提交图窗口缓存一并作废。
+		 */
+		onFetched: (path) => {
+			dropGraphWindows(path);
+			void refresh('reconcile');
+		},
 	});
 
 	/*
@@ -335,30 +355,45 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 
   /*
-	 * 按仓库/子模块/工作树路径存提交信息草稿。
+	 * 提交信息草稿：按仓库根存会话级存储（sessionStorage），键为 ggg-commit-msg:<仓库根绝对路径>。
 	 *
-	 * 写入必须等草稿读完：message 初始为空串，若在预取完成前就写入，会把宿主里的草稿覆盖成空；
-	 * 而读取又发生在预取完成之前，于是草稿每次都丢。readDone 标记读完这一刻，之后才允许写。
+	 * 草稿只活在本次会话，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
+	 *
+	 * 写入必须等草稿读完：message 初始为空串，若在读回之前就写入，会把刚切换过来的仓库的草稿覆盖成空。
+	 * readDone 标记读完这一刻，之后才允许写。切换仓库时先把上一个仓库的草稿写回它自己的键，再读新仓库的。
 	 */
 	const [draftReadDone, setDraftReadDone] = React.useState(false);
+	/** 当前 message 所属的仓库；与 workingTreePath 不同时不得写入。 */
+	const [draftPath, setDraftPath] = React.useState<string | null>(null);
+	/** message 的当前值：切换仓库的收尾里读取它，避免把旧值写进新仓库的键。 */
+	const messageRef = React.useRef(message);
+	messageRef.current = message;
+
 	React.useEffect(() => {
-		if (workingTreePath === null) { setDraftReadDone(false); return; }
+		const path = workingTreePath;
+		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
 		let cancelled = false;
 		setDraftReadDone(false);
+		const key = draftKeyOf(path);
 		void (async () => {
-			// 等预取完成，否则读到的是空缓存。
-			await primeStorage(workingTreePath);
+			// 早期版本把草稿落在宿主：取回一次，之后不再持久化。
+			const persisted = await takePersistedDraft(path, key);
 			if (cancelled) return;
-			const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
-			if (saved !== null) setMessage(saved);
+			const saved = loadSessionValue<string | null>(key, null);
+			setMessage(saved ?? persisted ?? '');
+			setDraftPath(path);
 			setDraftReadDone(true);
 		})();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+			// 离开本仓库：把草稿写回它自己的键。此时 message 仍是本仓库的内容。
+			saveSessionValue(key, messageRef.current);
+		};
 	}, [workingTreePath]);
 	React.useEffect(() => {
-		if (workingTreePath === null || aiBusy || !draftReadDone) return;
-		saveValue('ggg-commit-msg:' + workingTreePath, message);
-	}, [workingTreePath, message, aiBusy, draftReadDone]);
+		if (workingTreePath === null || !draftReadDone || draftPath !== workingTreePath) return;
+		saveSessionValue(draftKeyOf(workingTreePath), message);
+	}, [workingTreePath, message, draftReadDone, draftPath]);
 
 	/**
 	 * 选中一个仓库节点并重置面板状态。
@@ -412,11 +447,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
 			}
-			if (scope !== 'read' && target === workingTreePath) {
-				// 写操作可能改动引用与提交历史，提交图窗口缓存随之失效。
-				dropGraphWindows(target);
-				await refresh('reconcile');
-			}
+			// 写操作可能改动引用与提交历史，目标仓库的提交图窗口缓存随之失效。
+			if (scope !== 'read') dropGraphWindows(target);
+			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {

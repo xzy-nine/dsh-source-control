@@ -16,3 +16,4 @@ export * from './tags.ts';
 export * from './remotes.ts';
 export * from './github.ts';
 export * from './ai.ts';
+export * from './repo-events.ts';

@@ -9,8 +9,13 @@ import { callApi } from './http.ts';
 /** 迁移完成标记：记在宿主，换浏览器不会重复迁移。 */
 const MIGRATED_KEY = 'dsh-source-control-migrated';
 
-/** 需要从浏览器搬到宿主的 localStorage 键前缀。 */
-const LEGACY_LOCAL_PREFIXES = ['dsh-source-control-', 'ggg-commit-msg:', 'dsh-source-control-ref-filter:'];
+/**
+ * 需要从浏览器搬到宿主的 localStorage 键前缀。
+ *
+ * 提交信息草稿（`ggg-commit-msg:`）不在其中：草稿是会话级数据，由调用方按仓库键经
+ * `panel/storage.ts` 的会话级读写自行取回，不迁往宿主。
+ */
+const LEGACY_LOCAL_PREFIXES = ['dsh-source-control-', 'dsh-source-control-ref-filter:'];
 
 /**
  * 读取宿主的全部状态键值。
@@ -35,6 +40,24 @@ export async function readState(cwd: string, signal?: AbortSignal): Promise<Reco
  */
 export async function writeState(cwd: string, key: string, value: unknown): Promise<void> {
 	await callApi(cwd, { command: 'writeState', key, value });
+}
+
+/**
+ * 取回一次此前落在宿主的提交信息草稿。
+ *
+ * 草稿改为会话级后不再写入宿主，但旧版本可能已把草稿持久化在宿主；调用方在首次挂载时用本函数
+ * 取回一次：键值为非空字符串时先删除宿主键、再返回该文本，之后草稿只走会话级存储。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param key - 宿主状态键。
+ * @returns 取回的草稿文本；无草稿时返回 null。
+ */
+export async function takePersistedDraft(cwd: string, key: string): Promise<string | null> {
+	const entries = await readState(cwd);
+	const value = entries[key];
+	if (typeof value !== 'string' || value === '') return null;
+	await writeState(cwd, key, null);
+	return value;
 }
 
 /**

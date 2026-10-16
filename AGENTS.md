@@ -115,15 +115,22 @@ Office）主动不认领，那些仍走宿主预览。
 | 机制 | 触发源 | 周期/延迟 | 开关 |
 |---|---|---|---|
 | 自动刷新（事件） | 当前会话事件窗口里已落地的写入/编辑，且目标在所选仓库内 | 5s 冷却 | `autoRefresh`（默认开） |
-| 自动刷新（兜底） | 定时轮询工作区签名 | 120s，连续两次同一签名才重载 | 跟随 `autoRefresh` |
+| 自动刷新（宿主事件） | 宿主事件流里的仓库写操作，且目标与所选仓库同一 | 5s 冷却 | `autoRefresh`（默认开） |
+| 自动刷新（兜底） | 定时轮询工作区签名 | 可见 10s / 不可见 120s，快档一次、慢档连续两次同一签名才重载 | 跟随 `autoRefresh` |
 | 自动抓取 | 定时循环 | `autoFetchPeriod` 秒（默认 180） | `autoFetch`（默认开） |
 | 缓存清理 | 定时循环 | 300s | 无 |
 
-兜底轮询覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），间隔远大于事件响应的及时性要求，
-页签不可见、上一次未结束、面板正忙时跳过。
+兜底轮询覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），页签可见时按 10s 的快档跑，
+不可见时退回 120s 的慢档；页签不可见、上一次未结束、面板正忙时跳过。
 
-一次重载向宿主发两次请求：`loadCommits`（提交图窗口）与 `loadWorkingTreeSnapshot`（工作区条目 +
-分支 / 上游 / 领先落后）。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
+宿主事件流（`GET /dsh-source-control/gg/events`，`text/event-stream`）补上事件窗口之外的另一半：
+执行层在每次**成功**的仓库写操作后推一条 `repository-write`（只带仓库路径），因此别的会话、别的
+工作区与外部进程造成的改动也能即时反映。客户端 `api/repo-events.ts` 解析帧、按退避重连，
+`use-repository-write-events.ts` 按仓库路径过滤后重载。
+
+一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；首屏同时带回仓库信息、引用集合与贮藏）
+与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部也是并行的：
+仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，不重复读。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
 只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
 用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
 
@@ -153,22 +160,24 @@ Office）主动不认领，那些仍走宿主预览。
 打开文件、打开设置这类只读入口不因任何影响面禁用。宿主侧不串行化命令：每条请求独立执行，面板的
 阻塞只来自上述控件禁用。
 
-## 状态持久化的两级
+## 状态持久化的分级
 
-分两级，判据只有一条：该状态是否值得跨会话保留。**持久化一律落宿主**，浏览器端不承担存储 —— 
-换浏览器、换标签页、清缓存都不会丢；窗口级只活在本次挂载里，不进任何存储。
+分三级，判据只有一条：该状态是否值得跨会话保留。**持久化一律落宿主**，浏览器端只承担会话级 —— 
+换浏览器、换标签页、清缓存都不会丢；窗口级只活在本次挂载里，会话级关标签页即清。
 
 | 级别 | 载体 | 存活范围 | 适用 |
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
-| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、提交信息草稿（键 `ggg-commit-msg:<workingTreePath>`）、工作区仓库位置缓存 |
+| 会话级 | 浏览器 `sessionStorage`（客户端经 `panel/storage.ts` 的 `loadSessionValue` / `saveSessionValue` 读写） | 本次会话，关标签页即清 | 与具体仓库绑定、重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<仓库根绝对路径>`） |
+| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、工作区仓库位置缓存 |
 
-客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 在首屏预取一次到内存镜像，
+客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 是唯一出口，宿主侧在首屏预取一次到内存镜像，
 读走镜像（同步，供 `useState` 初始化），写更新镜像并异步落盘。仓库位置缓存在 `state.json` 的 `repos` 
 段按工作区路径分列，键值对在 `entries` 段。旧版本浏览器里的数据由 `api/state.ts` 的 `migrateLegacyState` 
 在首次进入时搬一次并清掉旧键。
 
-新状态先在此表定位；除窗口级外一律落宿主，不要用 `localStorage`。
+新状态先在此表定位：窗口级留组件状态；只值得活一次会话、且与具体仓库绑定的输入（如提交信息草稿）落会话级；
+其余一律落宿主。不要用 `localStorage`。
 
 ## 构建
 
@@ -210,6 +219,8 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
 | `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
+| `draft-storage.test.mjs` | 会话级存储：读写往返、非法值与缺失回退、按仓库根的草稿键 |
+| `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
@@ -222,6 +233,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
+| `repo-events.test.mjs` | 仓库变更事件流：帧解析、分帧、重连退避、事件与当前仓库的匹配 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |

@@ -447,6 +447,42 @@ function invalidateRepo(repo: string): void {
 const inFlightGit = new Map<string, Promise<GitResult>>();
 
 /**
+ * 仓库写操作的观察者：参数为仓库路径（调用方给出的原样写法）。
+ *
+ * 面板订阅它来即时反映别的会话、别的工作区或外部进程对同一仓库的改动 —— 那些改动不产生
+ * 当前会话的事件，事件驱动的刷新看不到。只在**写操作成功**后通知，且通知不携带任何数据，
+ * 由接收方自行重读。
+ */
+const writeListeners = new Set<(repo: string) => void>();
+
+/**
+ * 订阅仓库写操作。
+ *
+ * @param listener - 写操作成功时调用。
+ * @returns 取消订阅。
+ */
+export function onRepositoryWrite(listener: (repo: string) => void): () => void {
+	writeListeners.add(listener);
+	return () => { writeListeners.delete(listener); };
+}
+
+/**
+ * 通知一次仓库写操作。
+ *
+ * @param cwd - 工作目录，调用方给出的原样写法。
+ * @returns 无。
+ */
+function notifyWrite(cwd: string): void {
+	for (const listener of writeListeners) {
+		try {
+			listener(cwd);
+		} catch {
+			/* 观察者自身的异常不影响命令结果 */
+		}
+	}
+}
+
+/**
  * 运行一次 git。
  *
  * 子进程无法启动（git 不在 PATH、工作目录不存在）时不抛错，而是以退出码 -1 与
@@ -492,6 +528,8 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
 		if (readOnly && result.code === 0) setCachedResult(key, result);
+		// 写操作成功后才通知：失败的写没有改动仓库，通知只会让面板白读一次。
+		if (!readOnly && result.code === 0) notifyWrite(cwd);
 		return result;
 	} finally {
 		inFlightGit.delete(key);
@@ -582,6 +620,8 @@ export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEn
 export interface WorkingTreeSnapshot {
 	/** 工作区变更条目，按路径升序。 */
 	readonly entries: WorkingTreeEntry[];
+	/** 本次读取时的 HEAD 提交哈希；尚无提交时为 null。 */
+	readonly head: string | null;
 	/** 当前分支短名；分离头指针时为 null。 */
 	readonly branch: string | null;
 	/** 上游短名；无上游或上游引用不存在时为 null。 */
@@ -601,7 +641,8 @@ function column(value: string): string {
  * 解析 `git status --porcelain=v2 --branch -z` 的输出。
  *
  * 分支信息取自 `# branch.*` 头：`branch.head` 为 `(detached)` 时分支为 null；
- * `branch.ab` 缺失表示上游引用不存在，此时上游同样按无上游处理。
+ * `branch.oid` 为 `(initial)` 时表示尚无提交；`branch.ab` 缺失表示上游引用不存在，
+ * 此时上游同样按无上游处理。
  * 记录以 NUL 分隔，重命名记录的新路径与旧路径分列相邻两条；路径不做转义。
  *
  * @param stdout - git 的标准输出。
@@ -611,6 +652,7 @@ function column(value: string): string {
 export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): WorkingTreeSnapshot {
 	const tokens = stdout.split('\0');
 	const entries: WorkingTreeEntry[] = [];
+	let head: string | null = null;
 	let branch: string | null = null;
 	let upstream = '';
 	let ab: { ahead: number; behind: number } | null = null;
@@ -623,7 +665,8 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			const space = token.indexOf(' ', 2);
 			const key = space === -1 ? token.slice(2) : token.slice(2, space);
 			const value = space === -1 ? '' : token.slice(space + 1);
-			if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
+			if (key === 'branch.oid') head = value === '' || value === '(initial)' ? null : value;
+			else if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
 			else if (key === 'branch.upstream') upstream = value;
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
@@ -642,8 +685,8 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		if (kind !== '1' && kind !== '2' && kind !== 'u') continue;
 		const parts = token.split(' ');
 		/* 固定字段数：普通记录 8、重命名记录 9、未合并记录 10，其后整段为路径。 */
-		const head = kind === 'u' ? 10 : kind === '2' ? 9 : 8;
-		const path = parts.slice(head).join(' ');
+		const fieldCount = kind === 'u' ? 10 : kind === '2' ? 9 : 8;
+		const path = parts.slice(fieldCount).join(' ');
 		if (path === '') continue;
 		const xy = parts[1] ?? '';
 		let origPath: string | null = null;
@@ -654,7 +697,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
 		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
 	}
-	return { entries, branch, upstream: upstream !== '' && ab !== null ? upstream : null, ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0 };
+	return { entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null, ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0 };
 }
 
 /**

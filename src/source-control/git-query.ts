@@ -35,12 +35,13 @@ const DIFF_FILTER = 'AMDR';
  */
 export async function getRepoInfo(repo: string, showRemoteBranches: boolean, showStashes: boolean, hideRemotes: readonly string[]): Promise<RepoInfo> {
 	try {
-		const [branchData, remoteNames, stashes] = await Promise.all([
+		/* 四路互不依赖，同批取：串行要等四个子进程依次结束，并行只等最慢的一个。 */
+		const [branchData, remoteNames, stashes, configs] = await Promise.all([
 			getBranches(repo, showRemoteBranches, hideRemotes),
 			getRemoteNames(repo),
 			showStashes ? getStashes(repo) : Promise.resolve([]),
+			readConfig(repo),
 		]);
-		const configs = await readConfig(repo);
 		return {
 			branches: branchData.branches,
 			head: branchData.head,
@@ -71,11 +72,11 @@ export async function getRepoInfo(repo: string, showRemoteBranches: boolean, sho
  * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
  * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
  * @param commitOrdering - 提交排序方式。
- * @param remotes - 已知远程名，用于标注远程分支所属远程。
+ * @param remotes - 已知远程名，用于标注远程分支所属远程；可直接给出，也可给一个待定的取值。
  * @param hideRemotes - 要隐藏的远程名。
  * @param stashes - 仓库中的贮藏。
  * @param skip - 从起点跳过的提交数；双向分页都按绝对偏移取用。
- * @param skip - 从起点跳过的提交数；反向翻页按绝对偏移取用。
+ * @param refsInput - 调用方预先发起的引用读取；省略时由本函数自行读取。
  * @returns 提交图；读取失败时为空图且 `error` 为错误文本。
  */
 export async function getCommits(
@@ -87,15 +88,25 @@ export async function getCommits(
 	includeCommitsMentionedByReflogs: boolean,
 	onlyFollowFirstParent: boolean,
 	commitOrdering: CommitOrdering,
-	remotes: readonly string[],
+	remotes: readonly string[] | Promise<readonly string[]>,
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
 	skip = 0,
+	refsInput?: Promise<RefData>,
 ): Promise<CommitData> {
 	try {
+		/*
+		 * 引用集合可由调用方预先给出（与仓库信息同批取），此时日志与引用两路并行。
+		 *
+		 * 引用读取先发：日志读取会用到贮藏的基提交，而基提交由调用方在同一批里枚举后传入，
+		 * 因此这里不能反过来等引用。
+		 */
+		const refsSource = refsInput ?? getRefs(repo, showRemoteBranches, false, hideRemotes);
+		/* 工作区读取与日志、引用互不依赖，先发出去，稍后再等结果。 */
+		const statusSource = skip > 0 ? null : readStatusSnapshot(repo);
 		const [records, refsOrError] = await Promise.all([
 			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip),
-			getRefs(repo, showRemoteBranches, false, hideRemotes).then((refs) => refs, (error: unknown) => errorText(error)),
+			refsSource.then((refs) => refs, (error: unknown) => errorText(error)),
 		]);
 
 		let refs: RefData;
@@ -107,9 +118,20 @@ export async function getCommits(
 			refs = refsOrError;
 		}
 
-		/* 未提交伪提交只插在首屏：翻页页不会把它放在正确位置，客户端也已持有该行。 */
-		const uncommittedChanges = refs.head === null || skip > 0 ? 0 : await getUncommittedChanges(repo);
-		return { ...assembleCommits(records, refs, stashes, remotes, uncommittedChanges, showTags, maxCommits), error: null };
+		/*
+		 * 未提交伪提交只插在首屏：翻页页不会把它放在正确位置，客户端也已持有该行。
+		 *
+		 * 伪提交要求引用与工作区读自同一批：引用之后 HEAD 可能已被别的进程移动（提交、检出），
+		 * 此时伪提交的父提交会指向一个不在列表里的哈希，泳道图在该处断线。
+		 * 读取失败时按 0 处理，面板仍能显示提交历史。
+		 */
+		const uncommittedChanges = refs.head === null || statusSource === null ? 0 : countUncommittedChanges(await statusSource, refs.head);
+		/*
+		 * 远程名可能与仓库信息同批取。标注发生在日志与引用都就绪之后，因此这里才等它落地：
+		 * 放在日志之前会把两路并行压成串行。
+		 */
+		const remoteNames = await remotes;
+		return { ...assembleCommits(records, refs, stashes, remoteNames, uncommittedChanges, showTags, maxCommits), error: null };
 	} catch (error) {
 		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, error: errorText(error) };
 	}
@@ -370,6 +392,7 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 		const snapshot = parseStatusSnapshot(stdout);
 		return {
 			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
+			head: snapshot.head,
 			branch: snapshot.branch,
 			upstream: snapshot.upstream,
 			ahead: snapshot.ahead,
@@ -377,7 +400,7 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			error: null,
 		};
 	} catch (error) {
-		return { entries: [], branch: null, upstream: null, ahead: 0, behind: 0, error: errorText(error) };
+		return { entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, error: errorText(error) };
 	}
 }
 
@@ -468,7 +491,7 @@ async function getBranches(repo: string, showRemoteBranches: boolean, hideRemote
  * @param repo - 仓库路径。
  * @returns 远程名列表。
  */
-async function getRemoteNames(repo: string): Promise<string[]> {
+export async function getRemoteNames(repo: string): Promise<string[]> {
 	const stdout = await gitOrThrow(['remote'], repo);
 	return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
 }
@@ -484,7 +507,7 @@ async function getRemoteNames(repo: string): Promise<string[]> {
  * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
  * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
  * @param order - 提交排序方式。
- * @param remotes - 已知远程名。
+ * @param remotes - 已知远程名；可直接给出，也可给一个待定的取值（仅在需要隐藏远程时使用）。
  * @param hideRemotes - 要隐藏的远程名。
  * @param stashes - 仓库中的贮藏。
  * @returns 提交记录。
@@ -498,7 +521,7 @@ async function getLog(
 	includeCommitsMentionedByReflogs: boolean,
 	onlyFollowFirstParent: boolean,
 	order: CommitOrdering,
-	remotes: readonly string[],
+	remotes: readonly string[] | Promise<readonly string[]>,
 	hideRemotes: readonly string[],
 	stashes: readonly StashEntry[],
 	skip = 0,
@@ -516,9 +539,11 @@ async function getLog(
 		if (includeCommitsMentionedByReflogs) args.push('--reflog');
 		if (includeRemotes) {
 			if (hideRemotes.length === 0) {
+				// 不隐藏任何远程时不需要远程名，日志因此不必等仓库信息。
 				args.push('--remotes');
 			} else {
-				remotes.filter((remote) => !hideRemotes.includes(remote)).forEach((remote) => args.push(`--glob=refs/remotes/${remote}`));
+				const names = await remotes;
+				names.filter((remote) => !hideRemotes.includes(remote)).forEach((remote) => args.push(`--glob=refs/remotes/${remote}`));
 			}
 		}
 		/* 仅被贮藏引用的提交也要出现在图中，因此把贮藏基提交作为起点。 */
@@ -529,6 +554,20 @@ async function getLog(
 	args.push('--');
 
 	return parseLog(await gitOrThrow(args, repo));
+}
+
+/**
+ * 读取引用集合（含 HEAD 指向的提交）。
+ *
+ * 供调用方与仓库信息同批取，使引用读取与日志读取两路并行。
+ *
+ * @param repo - 仓库路径。
+ * @param showRemoteBranches - 是否包含远程分支。
+ * @param hideRemotes - 要隐藏的远程名。
+ * @returns 引用集合；读取失败时以失败态返回，由调用方降级。
+ */
+export function getRefsForGraph(repo: string, showRemoteBranches: boolean, hideRemotes: readonly string[]): Promise<RefData> {
+	return getRefs(repo, showRemoteBranches, false, hideRemotes);
 }
 
 /**
@@ -625,10 +664,30 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
  * @param repo - 仓库路径。
  * @returns 变更条目数。
  */
-async function getUncommittedChanges(repo: string): Promise<number> {
-	// 参数与 getWorkingTreeSnapshot 完全一致：两者并发时共用同一个子进程与缓存条目。
-	const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
-	return parseStatusSnapshot(stdout).entries.length;
+async function readStatusSnapshot(repo: string): Promise<WorkingTreeSnapshot | null> {
+	try {
+		// 参数与 getWorkingTreeSnapshot 完全一致：两者并发时共用同一个子进程与缓存条目。
+		const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
+		return parseStatusSnapshot(stdout);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 取未提交变更数，供伪提交使用。
+ *
+ * 快照与引用读自同一批：引用之后 HEAD 可能已被别的进程移动（提交、检出），此时伪提交的父提交
+ * 会指向一个不在列表里的哈希，泳道图在该处断线。读不到快照或 HEAD 已变时按 0 处理。
+ *
+ * @param snapshot - 已读出的工作区快照；读取失败时为 null。
+ * @param expectedHead - 引用读取给出的 HEAD 哈希。
+ * @returns 未提交变更数。
+ */
+function countUncommittedChanges(snapshot: WorkingTreeSnapshot | null, expectedHead: string): number {
+	if (snapshot === null) return 0;
+	if (snapshot.head !== null && snapshot.head !== expectedHead) return 0;
+	return snapshot.entries.length;
 }
 
 /**

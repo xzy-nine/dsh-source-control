@@ -1,8 +1,8 @@
 /**
  * 提交图数据：按选中仓库加载提交图与工作区，并对外暴露重载函数。
  *
- * 外部变更的检测分两条：文件改动事件驱动见 ./use-file-change-refresh.ts；本模块另有低频兜底
- * 轮询，覆盖事件窗口之外的外部写入。
+ * 外部变更的检测分两条：文件改动事件驱动见 ./use-file-change-refresh.ts；本模块另有兜底轮询，
+ * 覆盖事件窗口之外的写入，页签可见时按快档、不可见时按慢档。
  *
  * 一次重载向宿主发两次请求：提交图窗口，以及一次工作区快照（条目 + 分支/上游）。写操作后的
  * 对账复用同一参数的提交图窗口，避免重复取数；仓库切换与用户主动刷新时缓存作废。
@@ -11,7 +11,7 @@ import React from 'react';
 import { loadGraph, loadWorkingTreeSnapshot, type GraphData } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
-import { FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh } from './change-events.ts';
+import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { createCommitGraphCache } from '../graph/cache.ts';
 import { isRepoBusy } from './busy.ts';
 
@@ -148,11 +148,16 @@ export function useGraphData({
 			setState((previous) => ({ ...previous, error: null }));
 		}
 		try {
-			// 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。
+			/*
+			 * 提交图与工作区快照互不依赖，两路并行：串行要等两组请求依次结束，并行只等最慢的一组。
+			 * 提交图命中窗口缓存时只剩快照一路。
+			 *
+			 * 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。
+			 */
 			const key = graphKeyOf(workingTreePath, maxCommits, 0, settings);
-			let graph = mode === 'reconcile' ? graphWindows.get(key) : undefined;
-			if (graph === undefined) {
-				graph = await loadGraph(workingTreePath, {
+			const cached = mode === 'reconcile' ? graphWindows.get(key) : undefined;
+			const [graph, snapshot] = await Promise.all([
+				cached ?? loadGraph(workingTreePath, {
 					maxCommits,
 					commitOrdering: settings.commitOrdering,
 					showStashes: settings.showStashes,
@@ -161,11 +166,11 @@ export function useGraphData({
 					onlyFollowFirstParent: settings.onlyFollowFirstParent,
 					includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
 					signal: controller.signal,
-				});
-				// 已中止的请求结果可能不完整，不写入缓存。
-				if (!controller.signal.aborted) graphWindows.set(key, graph);
-			}
-			const snapshot = await loadWorkingTreeSnapshot(workingTreePath, controller.signal);
+				}),
+				loadWorkingTreeSnapshot(workingTreePath, controller.signal),
+			]);
+			// 已中止的请求结果可能不完整，不写入缓存。
+			if (cached === undefined && !controller.signal.aborted) graphWindows.set(key, graph);
 			if (generation !== generationRef.current) return;
 			setState((previous) => ({
 				...previous, phase: 'ready', error: null,
@@ -237,9 +242,12 @@ export function useGraphData({
 	loadedSigRef.current = entriesSignature(state.entries);
 
 	/*
-	 * 兜底轮询：覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），是事件驱动之外的定期校对，
-	 * 间隔远大于事件响应的及时性要求。页签不可见、上一次未结束、面板正忙时跳过；连续两次读到
-	 * 同一份签名才重载，避免克隆等长时间写盘期间反复拉取整棵目录树。
+	 * 兜底轮询：覆盖事件窗口之外的写入（其它会话、其它工作区、编辑器、终端），是事件驱动之外的
+	 * 定期校对。页签可见时按快档跑，不可见时退回慢档以省资源，切换时重建定时器。
+	 * 页签不可见、上一次未结束、面板正忙时跳过。
+	 *
+	 * 稳定判定按档位取所需观测次数：快档一次读到与已加载不同的签名即重载，慢档仍要求连续两次
+	 * 读到同一份签名，避免克隆等长时间写盘期间反复拉取整棵目录树。
 	 *
 	 * 签名取自工作区快照：它与随后的重载读同一份数据，命中宿主侧同一份结果缓存。
 	 */
@@ -249,7 +257,10 @@ export function useGraphData({
 		let polling = false;
 		let lastSeen = '';
 		let seenCount = 0;
-		const intervalId = window.setInterval(() => {
+		let timerId: number | undefined;
+		let timerInterval = 0;
+
+		const poll = (): void => {
 			if (cancelled || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
 			polling = true;
 			void (async () => {
@@ -260,7 +271,11 @@ export function useGraphData({
 					const previous = lastSeen;
 					seenCount = signature === previous ? seenCount + 1 : 1;
 					lastSeen = signature;
-					if (!shouldFallbackRefresh(signature, previous, loadedSigRef.current, seenCount)) return;
+					const active = document.visibilityState === 'visible';
+					const reload = active
+						? seenCount >= stableObservationsRequired(true) && signature !== loadedSigRef.current
+						: shouldFallbackRefresh(signature, previous, loadedSigRef.current, seenCount);
+					if (!reload) return;
 					// 外部写入可能已经产生提交，窗口缓存随之失效。
 					graphWindows.dropRepo(workingTreePath);
 					void refresh();
@@ -268,8 +283,25 @@ export function useGraphData({
 					polling = false;
 				}
 			})();
-		}, FALLBACK_POLL_INTERVAL_MS);
-		return () => { cancelled = true; window.clearInterval(intervalId); };
+		};
+
+		/** 按页签可见性取轮询间隔，间隔未变时保留原定时器。 */
+		const schedule = (): void => {
+			const next = document.visibilityState === 'visible' ? FALLBACK_POLL_ACTIVE_MS : FALLBACK_POLL_INTERVAL_MS;
+			if (timerId !== undefined && next === timerInterval) return;
+			if (timerId !== undefined) window.clearInterval(timerId);
+			timerInterval = next;
+			timerId = window.setInterval(poll, next);
+		};
+
+		const onVisibilityChange = (): void => { schedule(); };
+		document.addEventListener('visibilitychange', onVisibilityChange);
+		schedule();
+		return () => {
+			cancelled = true;
+			document.removeEventListener('visibilitychange', onVisibilityChange);
+			if (timerId !== undefined) window.clearInterval(timerId);
+		};
 	}, [workingTreePath, refresh, settings.autoRefresh]);
 
 	return { state, setState, refresh, loadMore, busyRef };
