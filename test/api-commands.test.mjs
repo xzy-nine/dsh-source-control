@@ -152,21 +152,6 @@ test('提交详情：普通、根、重命名、工作区与贮藏', { skip: !bu
 	}
 });
 
-test('标签详情区分附注与轻量', { skip: !built && '未找到宿主产物' }, async () => {
-	const { repo } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		const annotated = await call({ command: 'tagDetails', tagName: 'v1', commitHash: '' });
-		assert.equal(annotated.tagDetails.message, 'release one');
-		assert.equal(annotated.tagDetails.tagger, 'Api <api@example.com>');
-		assert.equal(typeof annotated.tagDetails.date, 'string');
-
-		const lightweight = await call({ command: 'tagDetails', tagName: 'light', commitHash: '' });
-		assert.equal(lightweight.tagDetails, null);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
 
 test('分支、标签、贮藏与远程的写操作', { skip: !built && '未找到宿主产物' }, async () => {
 	const { repo } = makeRepo();

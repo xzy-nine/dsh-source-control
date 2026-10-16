@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import {
 	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
-	getRefsForGraph, getRemoteNames, getStashes, getTagDetails, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
+	getRefsForGraph, getRemoteNames, getStashes, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
@@ -400,10 +400,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				refresh: bool('refresh'),
 			});
 			break;
-		case 'tagDetails':
-			respond({ command: 'tagDetails', tagName: str('tagName'), commitHash: str('commitHash'), ...(await getTagDetails(repo, str('tagName'))) });
-			break;
-
 		/* --- 分支操作 --- */
 		case 'checkoutBranch': {
 			const errors: unknown[] = [await checkoutBranch(repo, str('branchName'), strOrNull('remoteBranch'))];
@@ -514,17 +510,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'deleteTag':
 			await respondError('deleteTag', () => deleteTag(repo, str('tagName'), strOrNull('deleteOnRemote')));
 			break;
-		case 'pushTag':
-			respond({
-				command: 'pushTag',
-				repo,
-				tagName: str('tagName'),
-				remotes: arr('remotes'),
-				commitHash: str('commitHash'),
-				errors: await pushTag(repo, str('tagName'), arr('remotes'), str('commitHash'), bool('skipRemoteCheck')),
-			});
-			break;
-
 		/* --- 远程 --- */
 		case 'fetch':
 			await respondError('fetch', () => fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags')));

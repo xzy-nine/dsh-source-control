@@ -8,14 +8,13 @@ import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
-	parseNumStat, parseRefs, parseStashReflog, parseTagInfo, parseTagSignature,
-	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT, TAG_FORMAT, UNCOMMITTED,
+	parseNumStat, parseRefs, parseStashReflog,
+	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT, UNCOMMITTED,
 } from './git-parse.js';
 import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, StatusFiles } from './git-parse.js';
 import type {
 	CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
-	RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, Signature, StashEntry, TagDetails,
-	TagDetailsData, TagDetailsView,
+	RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
 } from './git-types.js';
 
 /** 提交详情中除改动列表以外的字段。 */
@@ -297,40 +296,6 @@ export async function getCommitComparison(repo: string, fromHash: string, toHash
 	}
 }
 
-/**
- * 读取一个标签的详情。
- *
- * 轻量标签没有打标签者信息，返回 `tagDetails: null`；附注标签的签名由 `git verify-tag --raw`
- * 校验后解析。
- *
- * @param repo - 仓库路径。
- * @param tagName - 标签名。
- * @returns 标签详情；读取失败时 `tagDetails` 为 null 且 `error` 为错误文本。
- */
-export async function getTagDetails(repo: string, tagName: string): Promise<TagDetailsData> {
-	try {
-		const ref = `refs/tags/${tagName}`;
-		const info = parseTagInfo(await gitOrThrow(['for-each-ref', ref, `--format=${TAG_FORMAT}`], repo));
-		if (info === null || info.taggerName === '') return { tagDetails: null, error: null };
-
-		let signature: Signature | null = null;
-		if (info.signed) {
-			const verified = await runGit(['verify-tag', '--raw', ref], repo);
-			signature = parseTagSignature(verified.stderr !== '' ? verified.stderr : verified.stdout);
-		}
-		const details: TagDetails = {
-			hash: info.hash,
-			taggerName: info.taggerName,
-			taggerEmail: info.taggerEmail,
-			taggerDate: info.taggerDate,
-			message: info.message,
-			signature,
-		};
-		return { tagDetails: tagDetailsView(details), error: null };
-	} catch (error) {
-		return { tagDetails: null, error: errorText(error) };
-	}
-}
 
 /**
  * 读取仓库中的贮藏。
@@ -690,16 +655,4 @@ function countUncommittedChanges(snapshot: WorkingTreeSnapshot | null, expectedH
 	return snapshot.entries.length;
 }
 
-/**
- * 取标签详情的展示形状。
- *
- * @param details - 标签详情。
- * @returns 前端使用的标签详情。
- */
-function tagDetailsView(details: TagDetails): TagDetailsView {
-	return {
-		message: details.message,
-		tagger: `${details.taggerName} <${details.taggerEmail}>`,
-		date: new Date(details.taggerDate * 1000).toLocaleString(),
-	};
-}
+

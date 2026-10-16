@@ -33,11 +33,6 @@ export const DETAILS_FORMAT = [
 	'%B',
 ].join('%x00');
 
-/** 标签详情的字段数：对象名、打标签者名、邮箱、时间、签名、内容。 */
-export const TAG_FIELD_COUNT = 6;
-/** 标签详情的格式串。`for-each-ref` 的转义是 `%xx`，与 `git log` 的 `%x00` 不同。 */
-export const TAG_FORMAT = ['%(objectname)', '%(taggername)', '%(taggeremail)', '%(taggerdate:unix)', '%(contents:signature)', '%(contents)'].join('%00');
-
 /** 引用列表的字段数：全名、对象名、解引用对象名、对象类型。 */
 export const REF_FIELD_COUNT = 4;
 /** 引用列表的格式串。 */
@@ -93,16 +88,6 @@ export interface DiffNumStatRecord {
 export interface StatusFiles {
 	readonly deleted: string[];
 	readonly untracked: string[];
-}
-
-/** 标签详情（解析结果）。 */
-export interface TagInfo {
-	readonly hash: string;
-	readonly taggerName: string;
-	readonly taggerEmail: string;
-	readonly taggerDate: number;
-	readonly message: string;
-	readonly signed: boolean;
 }
 
 /**
@@ -436,73 +421,6 @@ export function parseCommitDetails(stdout: string): {
  */
 export function parseSignatureStatus(code: string): SignatureStatus | null {
 	return ['G', 'U', 'X', 'Y', 'R', 'E', 'B'].includes(code) ? code as SignatureStatus : null;
-}
-
-/**
- * 解析 `git for-each-ref refs/tags/<name> --format=<TAG_FORMAT>` 的输出。
- *
- * @param stdout - git 的标准输出。
- * @returns 标签信息；无记录时为 null。
- */
-export function parseTagInfo(stdout: string): TagInfo | null {
-	if (stdout.trim() === '') return null;
-	const fields = stdout.split(FIELD);
-	if (fields.length < TAG_FIELD_COUNT) return null;
-	const signature = fields[TAG_FIELD_COUNT - 2];
-	const rawEmail = fields[2];
-	const contents = fields.slice(TAG_FIELD_COUNT - 1).join(FIELD);
-	const message = (signature === '' ? contents : contents.replace(signature, ''));
-	return {
-		hash: fields[0],
-		taggerName: fields[1],
-		taggerEmail: rawEmail.replace(/^</, '').replace(/>$/, ''),
-		taggerDate: Number.parseInt(fields[3], 10),
-		message: removeTrailingBlankLines(message.split(/\r\n|\r|\n/)).join('\n'),
-		signed: signature !== '',
-	};
-}
-
-/** GPG 状态码到签名状态的映射。 */
-const GPG_STATUS: Readonly<Record<string, { status: SignatureStatus; uid: boolean }>> = {
-	GOODSIG: { status: 'G', uid: true },
-	BADSIG: { status: 'B', uid: true },
-	ERRSIG: { status: 'E', uid: false },
-	EXPSIG: { status: 'X', uid: true },
-	EXPKEYSIG: { status: 'Y', uid: true },
-	REVKEYSIG: { status: 'R', uid: true },
-};
-
-/**
- * 解析 `git verify-tag --raw` 的 GPG 状态行。
- *
- * 信任级别为未定义或从不信任时，有效签名降级为「有效但有效性未知」。
- *
- * @param output - 命令的 stderr 或 stdout。
- * @returns 签名；无法解析时为 null。
- */
-export function parseTagSignature(output: string): Signature | null {
-	let signature: { status: SignatureStatus; key: string; signer: string } | null = null;
-	let trustLevel = '';
-	for (const line of output.split(/\r\n|\r|\n/)) {
-		if (!line.startsWith('[GNUPG:] ')) continue;
-		const parts = line.split(' ');
-		const details = GPG_STATUS[parts[1]];
-		if (details !== undefined) {
-			if (signature !== null) return null;
-			signature = {
-				status: details.status,
-				key: parts[2] ?? '',
-				signer: details.uid ? parts.slice(3).join(' ') : '',
-			};
-		} else if ((parts[1] ?? '').startsWith('TRUST_')) {
-			trustLevel = parts[1];
-		}
-	}
-	if (signature === null) return null;
-	if (signature.status === 'G' && (trustLevel === 'TRUST_UNDEFINED' || trustLevel === 'TRUST_NEVER')) {
-		signature = { ...signature, status: 'U' };
-	}
-	return signature;
 }
 
 /**

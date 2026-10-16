@@ -9,9 +9,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT, TAG_FORMAT,
+	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT,
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
-	parseNameStatus, parseNumStat, parseRefs, parseStashReflog, parseTagInfo, parseTagSignature,
+	parseNameStatus, parseNumStat, parseRefs, parseStashReflog,
 	splitRecords, UNCOMMITTED,
 } from '../src/source-control/git-parse.ts';
 
@@ -234,55 +234,6 @@ test('无贮藏时 reflog 命令失败由调用方处理', () => {
 	}
 });
 
-test('标签详情解析打标签者、时间与消息', () => {
-	const { repo, git, write } = makeRepo();
-	try {
-		write('a.txt', 'one');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'base');
-		git('tag', '-a', 'v1', '-m', 'tag message');
-		const raw = git('for-each-ref', 'refs/tags/v1', `--format=${TAG_FORMAT}`);
-		const info = parseTagInfo(raw);
-		assert.equal(info.taggerName, 'Parse');
-		assert.equal(info.taggerEmail, 'parse@example.com');
-		assert.ok(info.taggerDate > 0);
-		assert.equal(info.signed, false);
-		assert.equal(info.message, 'tag message');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('轻量标签没有打标签者', () => {
-	const { repo, git, write } = makeRepo();
-	try {
-		write('a.txt', 'one');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'base');
-		git('tag', 'light');
-		const raw = git('for-each-ref', 'refs/tags/light', `--format=${TAG_FORMAT}`);
-		const info = parseTagInfo(raw);
-		assert.equal(info.taggerName, '');
-		assert.equal(info.message, 'base');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('GPG 状态行解析出签名与信任降级', () => {
-	const good = parseTagSignature('[GNUPG:] GOODSIG ABC123 Alice <a@b.c>\n[GNUPG:] TRUST_ULTIMATE\n');
-	assert.equal(good.status, 'G');
-	assert.equal(good.key, 'ABC123');
-	assert.equal(good.signer, 'Alice <a@b.c>');
-
-	const untrusted = parseTagSignature('[GNUPG:] GOODSIG ABC123 Alice <a@b.c>\n[GNUPG:] TRUST_UNDEFINED\n');
-	assert.equal(untrusted.status, 'U');
-
-	const bad = parseTagSignature('[GNUPG:] BADSIG ABC123 Alice <a@b.c>\n');
-	assert.equal(bad.status, 'B');
-
-	assert.equal(parseTagSignature('no gnupg records here'), null);
-});
 
 test('改动列表把状态信息与增删数合并到同一路径', () => {
 	const changes = generateFileChanges(

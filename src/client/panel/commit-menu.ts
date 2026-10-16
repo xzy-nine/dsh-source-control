@@ -13,7 +13,7 @@
 import {
 	addTag, applyStash, branchFromStash, branchesContaining, checkoutBranch, checkoutCommit,
 	cherrypickCommit, createBranch, deleteBranch, deleteRemoteBranch, deleteTag, dropStash,
-	fetchIntoLocalBranch, merge, mergeIntoBranch, popStash, pushTag, rebase, renameBranch,
+	fetchIntoLocalBranch, merge, mergeIntoBranch, popStash, rebase, renameBranch,
 	resetToCommit, revertCommit, throwIfError,
 } from '../api/index.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -47,8 +47,6 @@ export interface GraphMenuDeps {
 	readonly head: string | null;
 	/** 一般提示：用于说明当前条件下操作无法进行的原因。 */
 	readonly notify: (message: string) => Promise<void>;
-	/** 查看标签详情。 */
-	readonly handleTagDetails: (tagName: string, commitHash: string) => Promise<void>;
 	/** 创建 Pull Request：由面板负责选目标分支、填标题正文并调用 gh。 */
 	readonly handleCreatePullRequest: () => Promise<void>;
 	/** 当前分支是否有可创建 PR 的远程：无 GitHub 远程时该项不显示。 */
@@ -367,30 +365,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			},
 		}));
 	},
-	pushTag: (ctx, meta) => {
-		const targets = tagTargets(ctx);
-		if (targets.length === 0) return null;
-		return tagItem(targets, '推送标签到远程…', (tagName) => ({
-			title: meta.title,
-			onClick: async () => {
-				const { remotes } = ctx.deps;
-				// 没有远程时该操作无法进行，原因是未配置远程。
-				if (remotes.length === 0) return ctx.deps.notify('未配置远程仓库，请先在设置中添加远程。');
-				const remote = remotes.length === 1 ? remotes[0].name : await showSelect({
-					title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })),
-				});
-				if (remote !== null && remote !== '') void ctx.deps.run('history', async () => { throwIfError(await pushTag(ctx.repo, tagName, [remote], ctx.commit.hash, false)); });
-			},
-		}));
-	},
-	viewTagDetails: (ctx, meta) => {
-		const targets = tagTargets(ctx);
-		if (targets.length === 0) return null;
-		return tagItem(targets, '查看标签详情…', (tagName) => ({
-			title: meta.title,
-			onClick: () => { void ctx.deps.handleTagDetails(tagName, ctx.commit.hash); },
-		}));
-	},
+
 	copyTagName: (ctx, meta) => {
 		const targets = tagTargets(ctx);
 		if (targets.length === 0) return null;
@@ -549,7 +524,17 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		items.push({ type: 'divider' });
 		push(items, { title: COMMIT_MENU.createTag, onClick: async () => {
 			const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
-			if (name !== null && name !== '') void deps.run('history', async () => { throwIfError(await addTag(ctx.repo, name, commit.hash, 0, '', false, null)); });
+			if (name === null || name === '') return;
+			/*
+			 * 创建后一并推送到远程：标签与它指向的提交一起发布，不需要单独推送。
+			 * 没有远程时只创建本地标签；多个远程时由用户选一个，不静默挑第一个。
+			 */
+			const { remotes } = deps;
+			const remote = remotes.length === 0 ? null
+				: remotes.length === 1 ? remotes[0].name
+					: await showSelect({ title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })) });
+			if (remote === '') return;
+			void deps.run('history', async () => { throwIfError(await addTag(ctx.repo, name, commit.hash, 0, '', false, remote)); });
 		} });
 		for (const item of tagItems) items.push(item);
 	}

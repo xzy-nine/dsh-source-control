@@ -161,31 +161,6 @@ export interface StashEntry {
 	readonly message: string;
 }
 
-/** 标签详情。 */
-export interface TagDetails {
-	readonly hash: string;
-	readonly taggerName: string;
-	readonly taggerEmail: string;
-	readonly taggerDate: number;
-	readonly message: string;
-	readonly signature: Signature | null;
-}
-
-/** 标签详情的展示形状，字段名与前端 `TagDetails` 一致。 */
-export interface TagDetailsView {
-	/** 标签信息。 */
-	readonly message: string;
-	/** 打标签者，形如 `名字 <邮箱>`。 */
-	readonly tagger: string;
-	/** 打标签时间（本地时间文本）。 */
-	readonly date: string;
-}
-
-/** 标签详情读取结果；轻量标签的 `tagDetails` 为 null。 */
-export interface TagDetailsData {
-	readonly tagDetails: TagDetailsView | null;
-	readonly error: ErrorInfo;
-}
 
 /** 分支的远程配置。 */
 export interface RepoConfigBranch {

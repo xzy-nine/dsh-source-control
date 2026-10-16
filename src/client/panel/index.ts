@@ -11,7 +11,7 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -1213,29 +1213,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}
 	}, [workingTreePath, setState]);
 
-	/** 查看标签详情。 */
-	const handleTagDetails = React.useCallback(async (tagName: string, commitHash: string) => {
-		if (workingTreePath === null) return;
-		try {
-			const details = await tagDetails(workingTreePath, tagName, commitHash);
-			if (details === null) {
-				showToast('该标签是轻量标签，无附加信息');
-				return;
-			}
-			const tagMessage = details.message ?? '';
-			const tagger = details.tagger ?? '';
-			const date = details.date ?? '';
-			const lines = [
-				`标签：${tagName}`,
-				tagger ? `打标签者：${tagger}` : '',
-				date ? `日期：${date}` : '',
-				tagMessage ? `\n${tagMessage}` : '',
-			].filter(Boolean).join('\n');
-			await showForm({ title: '标签详情', message: lines, fields: [], confirmLabel: '关闭' });
-		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
-		}
-	}, [workingTreePath, setState]);
 
 	/** 创建归档。 */
 	const handleCreateArchive = React.useCallback(async (ref: string, refLabel: string) => {
@@ -1337,9 +1314,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
-		notify, handleTagDetails, setCommitMessage: setMessage,
+		notify, setCommitMessage: setMessage,
 		handleCreatePullRequest, canCreatePullRequest,
-	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleTagDetails, handleCreatePullRequest, canCreatePullRequest]);
+	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleCreatePullRequest, canCreatePullRequest]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
