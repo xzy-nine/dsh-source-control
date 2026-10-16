@@ -214,6 +214,26 @@ export function parseStashReflog(stdout: string): StashEntry[] {
 }
 
 /**
+ * 由引用的对象名与解引用对象名构造一条标签记录。
+ *
+ * 附注标签的 `%(objectname)` 是标签对象本身，其解引用对象才是被标注的提交，因此附注标签以解
+ * 引用哈希标注到提交上。
+ *
+ * @param refname - 引用的全名。
+ * @param objectname - `%(objectname)`。
+ * @param peeled - `%(*objectname)`；空串表示轻量标签。
+ * @returns 标签记录。
+ */
+function tagOf(refname: string, objectname: string, peeled: string): RefTag {
+	const annotated = peeled !== '';
+	return {
+		hash: annotated ? peeled : objectname,
+		name: refname.slice('refs/tags/'.length),
+		annotated,
+	};
+}
+
+/**
  * 解析 `git for-each-ref --format=<REF_FORMAT>` 的输出。
  *
  * 记录以换行分隔、字段以 NUL 分隔。附注标签的 `%(objectname)` 是标签对象本身，
@@ -240,12 +260,7 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 		if (refname.startsWith('refs/heads/')) {
 			heads.push({ hash: objectname, name: refname.slice('refs/heads/'.length) });
 		} else if (refname.startsWith('refs/tags/')) {
-			const annotated = peeled !== '';
-			tags.push({
-				hash: annotated ? peeled : objectname,
-				name: refname.slice('refs/tags/'.length),
-				annotated,
-			});
+			tags.push(tagOf(refname, objectname, peeled));
 		} else if (refname.startsWith('refs/remotes/')) {
 			const short = refname.slice('refs/remotes/'.length);
 			// 远程 HEAD 是指向分支的符号引用，不是可操作的分支。
@@ -298,12 +313,7 @@ export function parseRefsAndBranches(stdout: string, hideRemotes: readonly strin
 			continue;
 		}
 		if (refname.startsWith('refs/tags/')) {
-			const annotated = peeled !== '';
-			tags.push({
-				hash: annotated ? peeled : objectname,
-				name: refname.slice('refs/tags/'.length),
-				annotated,
-			});
+			tags.push(tagOf(refname, objectname, peeled));
 			continue;
 		}
 		if (!refname.startsWith('refs/remotes/')) continue;

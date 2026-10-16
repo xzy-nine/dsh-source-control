@@ -10,12 +10,9 @@
 import React from 'react';
 import { matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
 import { dropGraphWindows } from './use-graph-data.ts';
-import { AUTO_REFRESH_COOLDOWN_MS } from './change-events.ts';
+import { createRefreshScheduler } from './refresh-scheduler.ts';
 import { isRepoBusy } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
-
-/** 面板正忙时的复核间隔（毫秒）。 */
-const BUSY_RETRY_MS = 1000;
 
 /** 仓库写事件订阅的入参。 */
 export interface UseRepositoryWriteEventsOptions {
@@ -48,47 +45,28 @@ export function useRepositoryWriteEvents({
 
 	React.useEffect(() => {
 		if (!enabled) return undefined;
-		let disposed = false;
-		let lastRefreshAt = 0;
-		let timer: number | null = null;
-
-		/** 重载一次；面板忙时挂起到空闲。 */
-		const runRefresh = (): void => {
-			if (disposed) return;
-			const target = targetRef.current;
-			if (target === null) return;
-			if (isRepoBusy(busyRef.current, target)) {
-				if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, BUSY_RETRY_MS);
-				return;
-			}
-			lastRefreshAt = Date.now();
+		const scheduler = createRefreshScheduler({
+			canRefresh: () => targetRef.current !== null,
+			isBusy: () => isRepoBusy(busyRef.current, targetRef.current),
 			// 写操作已改动该仓库：作废其提交图窗口与已知仓库信息，避免复用陈旧的一页。
-			dropGraphWindows(target);
-			void refreshRef.current().catch(() => { /* 重载失败由面板自身提示 */ });
-		};
-
-		/** 冷却满后再重载；冷却未满时挂起一次收尾。 */
-		const scheduleRefresh = (): void => {
-			const wait = AUTO_REFRESH_COOLDOWN_MS - (Date.now() - lastRefreshAt);
-			if (wait > 0) {
-				if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, wait);
-				return;
-			}
-			runRefresh();
-		};
+			beforeRefresh: () => {
+				const target = targetRef.current;
+				if (target !== null) dropGraphWindows(target);
+			},
+			refresh: () => refreshRef.current(),
+		});
 
 		const unsubscribe = subscribeRepositoryWrites({
 			onWrite: (event) => {
 				const target = targetRef.current;
 				if (target === null) return;
 				if (!matchesRepository(target, event.repo)) return;
-				scheduleRefresh();
+				scheduler.scheduleRefresh();
 			},
 		});
 
 		return () => {
-			disposed = true;
-			if (timer !== null) window.clearTimeout(timer);
+			scheduler.dispose();
 			unsubscribe();
 		};
 	}, [enabled, busyRef]);

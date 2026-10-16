@@ -37,10 +37,12 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
+                    stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
                     仓库树（use-repos.ts 以批量命令预取领先/落后；repo-tree.ts 树结构与选中、
                     enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
+                    refresh-scheduler.ts 是两处事件驱动刷新共用的冷却与挂起调度、
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
@@ -204,7 +206,7 @@ Office）主动不认领，那些仍走宿主预览。
 
 `enrichRepositories` 对「无链接工作树且无 `.gitmodules`」的仓库零 git 调用（`linkedWorktreePresence`
 + `.gitmodules` 存在性判定，且要求 `.git` 为目录），有来源时才枚举。仓库判据与发现层对齐：`.git` 为
-目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `gitDirOf` 定位 `HEAD`，因此链接工作树与子模块也能
+目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `worktree-branches.ts` 的 `gitDirAt` 定位 `HEAD`，因此链接工作树与子模块也能
 解析出分支。`branchesOfOtherWorktrees` 先做无链接工作树判定，为空时直接返回空集。`getStashes` 先看
 `<commondir>/logs/refs/stash` 是否存在，不存在时不调用 git。`getRepoInfo` 的远程名由 config 派生
 （`remote.<name>.<任意子键>`），集合为空才回退 `git remote`。

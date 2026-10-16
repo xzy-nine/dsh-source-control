@@ -11,7 +11,7 @@
  * 已知值；写操作后作废，使贮藏这类会变的字段重新读取。
  */
 import React from 'react';
-import { loadGraph, loadWorkingTreeSnapshot, type GraphData, type GraphStash } from '../api/index.ts';
+import { loadGraph, loadWorkingTreeSnapshot, type GraphData, type GraphStash, type WorkingTreeSnapshot } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
@@ -125,6 +125,51 @@ export interface UseGraphDataResult {
  * @param options - 见 {@link UseGraphDataOptions}。
  * @returns 面板状态与刷新函数。
  */
+/**
+ * 把一个快照的分支、上游与领先/落后写回选中节点。
+ *
+ * 领先/落后与条目来自同一次读取，因此调用点都在拿到快照之后，不再单独请求。
+ *
+ * @param setSyncById - 节点同步状态的写入器。
+ * @param selectedId - 选中节点 id；null 时不写。
+ * @param snapshot - 本轮工作区快照。
+ * @returns 无。
+ */
+function writeSync(
+	setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>,
+	selectedId: string | null,
+	snapshot: WorkingTreeSnapshot,
+): void {
+	if (selectedId === null) return;
+	setSyncById((previous) => new Map(previous).set(selectedId, {
+		branch: snapshot.branch, upstream: snapshot.upstream,
+		ahead: snapshot.ahead, behind: snapshot.behind,
+	}));
+}
+
+/**
+ * 按一轮快照就地修正条目与未提交伪提交行。
+ *
+ * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。父提交必须已在列表中，宿主不再负责
+ * 这一判定，两处补出该行的调用点共用同一判据。
+ *
+ * @param previous - 当前状态。
+ * @param snapshot - 本轮工作区快照。
+ * @returns 新状态；条目未变时除 error 外保持原引用。
+ */
+function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapshot): PanelState {
+	const entriesSame = entriesEqual(previous.entries, snapshot.entries);
+	const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
+	const commits = entriesSame
+		? previous.commits
+		: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
+	return {
+		...previous, error: null,
+		entries: entriesSame ? previous.entries : snapshot.entries,
+		commits,
+	};
+}
+
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 }: UseGraphDataOptions): UseGraphDataResult {
@@ -237,13 +282,7 @@ export function useGraphData({
 						? previous.entries
 						: snapshot.entries,
 				}));
-				// 领先/落后与条目来自同一次读取，不再单独请求。
-				if (selectedId !== null) {
-					setSyncById((previous) => new Map(previous).set(selectedId, {
-						branch: snapshot.branch, upstream: snapshot.upstream,
-						ahead: snapshot.ahead, behind: snapshot.behind,
-					}));
-				}
+				writeSync(setSyncById, selectedId, snapshot);
 				return snapshot;
 			});
 			const [graph, snapshot] = await Promise.all([graphSource, snapshotSource]);
@@ -315,28 +354,8 @@ export function useGraphData({
 			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal);
 			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
-			setState((previous) => {
-				const entriesSame = entriesEqual(previous.entries, snapshot.entries);
-				/*
-				 * 父提交必须已在列表中：宿主不再负责这一判定，两处补出该行的调用点共用同一判据。
-				 */
-				const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
-				const commits = entriesSame
-					? previous.commits
-					: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
-				return {
-					...previous, error: null,
-					entries: entriesSame ? previous.entries : snapshot.entries,
-					commits,
-				};
-			});
-			// 领先/落后与条目来自同一次读取，不再单独请求。
-			if (selectedId !== null) {
-				setSyncById((previous) => new Map(previous).set(selectedId, {
-					branch: snapshot.branch, upstream: snapshot.upstream,
-					ahead: snapshot.ahead, behind: snapshot.behind,
-				}));
-			}
+			setState((previous) => mergeSnapshot(previous, snapshot));
+			writeSync(setSyncById, selectedId, snapshot);
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			reportError(setState, error instanceof Error ? error.message : String(error));
@@ -458,18 +477,7 @@ export function useGraphData({
 						void refresh();
 						return;
 					}
-					setState((previous) => {
-						const entriesSame = entriesEqual(previous.entries, snapshot.entries);
-						const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
-						const commits = entriesSame
-							? previous.commits
-							: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
-						return {
-							...previous, error: null,
-							entries: entriesSame ? previous.entries : snapshot.entries,
-							commits,
-						};
-					});
+					setState((previous) => mergeSnapshot(previous, snapshot));
 				} catch { /* 忽略兜底轮询失败 */ } finally {
 					polling = false;
 				}

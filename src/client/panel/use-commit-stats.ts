@@ -28,6 +28,31 @@ export interface TranslateItem {
 	readonly text: string;
 }
 
+/**
+ * 从一份按哈希索引的缓存中丢弃给定条目。
+ *
+ * @param previous - 现有缓存。
+ * @param hashes - 要丢弃的哈希。
+ * @returns 新缓存。
+ */
+function dropHashes<T>(previous: Map<string, T>, hashes: Iterable<string>): Map<string, T> {
+	const next = new Map(previous);
+	for (const hash of hashes) next.delete(hash);
+	return next;
+}
+
+/**
+ * 从一份按哈希索引的缓存中丢弃单个条目。
+ *
+ * @param previous - 现有缓存。
+ * @param hash - 要丢弃的哈希。
+ * @returns 新缓存；原本就没有该条目时返回原引用。
+ */
+function dropHash<T>(previous: Map<string, T>, hash: string): Map<string, T> {
+	if (!previous.has(hash)) return previous;
+	return dropHashes(previous, [hash]);
+}
+
 /** 提交改动统计 hook 的返回值。 */
 export interface UseCommitStatsResult {
 	/** 提交哈希 -> 改动统计。 */
@@ -92,6 +117,18 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	const onTranslateErrorRef = React.useRef(onTranslateError);
 	onTranslateErrorRef.current = onTranslateError;
 
+	/**
+	 * 报告一次翻译失败；被取消的请求不报告（取消是调用方的意图）。
+	 *
+	 * @param controller - 该次翻译的取消信号。
+	 * @param error - 抛出的错误。
+	 * @returns 无。
+	 */
+	const reportTranslateFailure = (controller: AbortController, error: unknown): void => {
+		if (controller.signal.aborted) return;
+		onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+	};
+
 	// 换仓库后旧的统计、信息与译文都不再适用。
 	React.useEffect(() => {
 		setStatsByHash(new Map());
@@ -113,37 +150,17 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 
 	useCacheCleanup({
 		stamps: statsStamps,
-		drop: (hashes) => {
-			setStatsByHash((previous) => {
-				const next = new Map(previous);
-				for (const hash of hashes) next.delete(hash);
-				return next;
-			});
-		},
+		drop: (hashes) => { setStatsByHash((previous) => dropHashes(previous, hashes)); },
 	});
 	useCacheCleanup({
 		stamps: messageStamps,
-		drop: (hashes) => {
-			setMessageByHash((previous) => {
-				const next = new Map(previous);
-				for (const hash of hashes) next.delete(hash);
-				return next;
-			});
-		},
+		drop: (hashes) => { setMessageByHash((previous) => dropHashes(previous, hashes)); },
 	});
 	useCacheCleanup({
 		stamps: translationStamps,
 		drop: (hashes) => {
-			setTranslatedByHash((previous) => {
-				const next = new Map(previous);
-				for (const hash of hashes) next.delete(hash);
-				return next;
-			});
-			setTranslatedFromByHash((previous) => {
-				const next = new Map(previous);
-				for (const hash of hashes) next.delete(hash);
-				return next;
-			});
+			setTranslatedByHash((previous) => dropHashes(previous, hashes));
+			setTranslatedFromByHash((previous) => dropHashes(previous, hashes));
 		},
 	});
 
@@ -263,8 +280,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 				if (controller.signal.aborted) return;
 				storeTranslation(hash, source, translated);
 			} catch (error) {
-				if (controller.signal.aborted) return;
-				onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+				reportTranslateFailure(controller, error);
 			} finally {
 				if (singleAbortRef.current === controller) singleAbortRef.current = null;
 				if (!controller.signal.aborted) setTranslatingHash(null);
@@ -304,8 +320,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 				}
 				setGraphTranslated(true);
 			} catch (error) {
-				if (controller.signal.aborted) return;
-				onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+				reportTranslateFailure(controller, error);
 			} finally {
 				if (graphAbortRef.current === controller) graphAbortRef.current = null;
 				if (!controller.signal.aborted) setGraphTranslating(null);
@@ -329,16 +344,8 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		setGraphTranslated(false);
 		if (batch.length === 0) return;
 		const dropped = new Set(batch);
-		setTranslatedByHash((previous) => {
-			const next = new Map(previous);
-			for (const hash of dropped) next.delete(hash);
-			return next;
-		});
-		setTranslatedFromByHash((previous) => {
-			const next = new Map(previous);
-			for (const hash of dropped) next.delete(hash);
-			return next;
-		});
+		setTranslatedByHash((previous) => dropHashes(previous, dropped));
+		setTranslatedFromByHash((previous) => dropHashes(previous, dropped));
 	}, []);
 
 	/**
@@ -357,18 +364,8 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 			setTranslatingHash(null);
 		}
 		graphBatchRef.current = graphBatchRef.current.filter((item) => item !== hash);
-		setTranslatedByHash((previous) => {
-			if (!previous.has(hash)) return previous;
-			const next = new Map(previous);
-			next.delete(hash);
-			return next;
-		});
-		setTranslatedFromByHash((previous) => {
-			if (!previous.has(hash)) return previous;
-			const next = new Map(previous);
-			next.delete(hash);
-			return next;
-		});
+		setTranslatedByHash((previous) => dropHash(previous, hash));
+		setTranslatedFromByHash((previous) => dropHash(previous, hash));
 	}, []);
 
 	return {

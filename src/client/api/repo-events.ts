@@ -8,6 +8,7 @@
  * 数据为发生变更的仓库路径。连接断开后按退避重连，因此宿主重启或页面长时间挂起都能自愈。
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
+import { readStreamText } from './stream.ts';
 
 /** 事件流地址。 */
 const EVENTS_PATH = '/dsh-source-control/gg/events';
@@ -144,20 +145,16 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 			if (!response.ok || response.body === null) throw new Error('事件流不可用');
 			attempt = 0;
 			options.onState?.('open');
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
 			let buffer = '';
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done || disposed) break;
-				buffer += decoder.decode(value, { stream: true });
+			await readStreamText(response.body, (text) => {
+				buffer += text;
 				const { frames, rest } = splitFrames(buffer);
 				buffer = rest;
 				for (const frame of frames) {
 					const event = parseRepositoryWriteFrame(frame);
 					if (event !== null) options.onWrite(event);
 				}
-			}
+			}, () => disposed);
 		} catch {
 			/* 连接失败或中断：走重连 */
 		} finally {
