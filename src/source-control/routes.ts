@@ -21,7 +21,7 @@ import {
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
@@ -265,6 +265,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				await whenGitIdle(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
+			});
+			break;
+		case 'loadReposSync':
+			await respondResult('loadReposSync', async () => {
+				// 入参路径逐个回显：结果按 path 与入参一一对应。
+				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
+				// 空列表不读仓库：results 为空数组。
+				if (repos.length === 0) return { repo, results: [] };
+				await whenGitIdle(repo);
+				return { repo, results: await loadReposSync(repos) };
 			});
 			break;
 

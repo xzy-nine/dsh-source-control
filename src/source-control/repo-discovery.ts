@@ -6,7 +6,9 @@
  */
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
-import { runGit } from './working-tree.js';
+import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
+import { listRepoLocationWorkspaces, readRepoLocations } from './state-store.js';
+import { onRepositoryWrite, runGit } from './working-tree.js';
 import { foreignWorktreeBranches, parseWorktreeList } from './worktree-branches.js';
 
 /** 节点种类：主工作树仓库、链接工作树、子模块。 */
@@ -77,6 +79,108 @@ const DEFAULT_MAX_DEPTH = 3;
 
 /** 默认最多访问的目录数。 */
 const DEFAULT_MAX_DIRECTORIES = 5000;
+
+/** 批量同步仓库时的并发上限。 */
+const MAX_SYNC_CONCURRENCY = 4;
+
+/** 同一层内并发构造仓库节点的上限。 */
+const MAX_REPO_CONCURRENCY = 8;
+
+/** 发现结果缓存的存活毫秒数。 */
+const DISCOVERY_CACHE_TTL_MS = 60_000;
+
+/** 发现结果缓存的容量上限；超出按插入序淘汰最旧。 */
+const DISCOVERY_CACHE_LIMIT = 16;
+
+/** 一条发现结果缓存：键、结果与写入时刻。 */
+interface DiscoveryCacheEntry {
+	readonly result: DiscoveryResult;
+	readonly at: number;
+}
+
+/** 发现结果缓存。 */
+const discoveryCache = new Map<string, DiscoveryCacheEntry>();
+
+/**
+ * 生成发现结果缓存的键。
+ *
+ * @param root - 工作区根目录。
+ * @param options - 发现选项。
+ * @returns 缓存键。
+ */
+function discoveryCacheKey(root: string, options: DiscoveryOptions): string {
+	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
+	const known = options.knownRepos === undefined ? '' : options.knownRepos.join('\0');
+	return `${root}\0${maxDepth}\0${maxDirectories}\0${known}`;
+}
+
+/**
+ * 取未过期的缓存发现结果。
+ *
+ * @param key - 缓存键。
+ * @returns 缓存结果；未命中或已过期时为 null。
+ */
+function readDiscoveryCache(key: string): DiscoveryResult | null {
+	const entry = discoveryCache.get(key);
+	if (entry === undefined) return null;
+	if (Date.now() - entry.at >= DISCOVERY_CACHE_TTL_MS) {
+		discoveryCache.delete(key);
+		return null;
+	}
+	return entry.result;
+}
+
+/**
+ * 写入发现结果缓存，并按插入序淘汰超出容量的最旧项。
+ *
+ * @param key - 缓存键。
+ * @param result - 发现结果。
+ * @returns 无。
+ */
+function writeDiscoveryCache(key: string, result: DiscoveryResult): void {
+	discoveryCache.delete(key);
+	discoveryCache.set(key, { result, at: Date.now() });
+	while (discoveryCache.size > DISCOVERY_CACHE_LIMIT) {
+		const oldest = discoveryCache.keys().next();
+		if (oldest.done === true) break;
+		discoveryCache.delete(oldest.value);
+	}
+}
+
+/**
+ * 作废全部发现结果缓存。
+ *
+ * @returns 无。
+ */
+export function clearDiscoveryCache(): void {
+	discoveryCache.clear();
+}
+
+/* 仓库写操作会改变目录与仓库位置，写成功后立即作废发现缓存。 */
+onRepositoryWrite(() => { clearDiscoveryCache(); });
+
+/**
+ * 在并发上限内按顺序处理一组输入。
+ *
+ * @param items - 输入项。
+ * @param limit - 并发上限。
+ * @param task - 单项处理函数。
+ * @returns 与输入同序的结果数组。
+ */
+async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let cursor = 0;
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (cursor < items.length) {
+			const index = cursor;
+			cursor++;
+			results[index] = await task(items[index]);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
 
 /**
  * 把路径规范化为节点标识。
@@ -279,11 +383,29 @@ async function repoNodeOf(dir: string, depth: number, submoduleIds: Set<string>)
 /**
  * 发现工作区根下的仓库，并补齐工作区根所属的仓库。
  *
+ * 结果进 60 秒 TTL 的模块内缓存（容量 16）；缓存命中直接返回同一对象，调用方不得修改。
+ *
  * @param root - 工作区根目录。
- * @param options - 层数与目录数上限。
+ * @param options - 层数、目录数上限与已知仓库位置。
  * @returns 仓库扁平列表与是否被截断。
  */
 export async function discoverRepositories(root: string, options: DiscoveryOptions = {}): Promise<DiscoveryResult> {
+	const key = discoveryCacheKey(root, options);
+	const cached = readDiscoveryCache(key);
+	if (cached !== null) return cached;
+	const result = await scanRepositories(root, options);
+	writeDiscoveryCache(key, result);
+	return result;
+}
+
+/**
+ * 扫描工作区根下的仓库：逐层并行探测，层内按入队顺序去重与计数。
+ *
+ * @param root - 工作区根目录。
+ * @param options - 层数、目录数上限与已知仓库位置。
+ * @returns 仓库扁平列表与是否被截断。
+ */
+async function scanRepositories(root: string, options: DiscoveryOptions): Promise<DiscoveryResult> {
 	// 缓存命中：只核对已知路径，跳过整层目录扫描。
 	if (options.knownRepos !== undefined && options.knownRepos.length > 0) {
 		return discoverKnownRepositories(root, options.knownRepos);
@@ -297,7 +419,8 @@ export async function discoverRepositories(root: string, options: DiscoveryOptio
 	let truncated = false;
 	let level: Array<{ dir: string; depth: number }> = [{ dir: resolve(root), depth: 0 }];
 	while (level.length > 0) {
-		const next: Array<{ dir: string; depth: number }> = [];
+		// 层内先按入队顺序去重与计数，得到本层待处理项。
+		const pending: Array<{ dir: string; depth: number }> = [];
 		for (const current of level) {
 			if (visitedCount >= maxDirectories) {
 				truncated = true;
@@ -307,13 +430,24 @@ export async function discoverRepositories(root: string, options: DiscoveryOptio
 			const id = nodeId(current.dir);
 			if (visited.has(id) || submoduleIds.has(id)) continue;
 			visited.add(id);
-			const gitEntry = await gitEntryOf(current.dir);
-			if (gitEntry === 'dir') nodes.push(await repoNodeOf(current.dir, current.depth, submoduleIds));
-			// 工作树与子模块检出由权威枚举负责，不再下钻。
-			if (gitEntry === 'file') continue;
-			if (current.depth >= maxDepth) continue;
-			for (const child of await subdirectories(current.dir)) next.push({ dir: child, depth: current.depth + 1 });
+			pending.push(current);
 		}
+		const entries = await Promise.all(pending.map((current) => gitEntryOf(current.dir)));
+		const repoIndexes: number[] = [];
+		entries.forEach((entry, index) => { if (entry === 'dir') repoIndexes.push(index); });
+		// 仓库节点与子目录并发取；两者都完成后才进入下一层，子模块去重集合才完整。
+		const [repoNodes, children] = await Promise.all([
+			mapLimit(repoIndexes, MAX_REPO_CONCURRENCY, (index) =>
+				repoNodeOf(pending[index].dir, pending[index].depth, submoduleIds)),
+			Promise.all(pending.map((current, index) => entries[index] === 'file' || current.depth >= maxDepth
+				? Promise.resolve([] as string[])
+				: subdirectories(current.dir))),
+		]);
+		for (const node of repoNodes) nodes.push(node);
+		const next: Array<{ dir: string; depth: number }> = [];
+		children.forEach((dirs, index) => {
+			for (const child of dirs) next.push({ dir: child, depth: pending[index].depth + 1 });
+		});
 		level = next;
 	}
 	const enclosing = await enclosingRepo(root, visited, submoduleIds);
@@ -336,14 +470,20 @@ async function discoverKnownRepositories(root: string, known: readonly string[])
 	const nodes: RepoNode[] = [];
 	const submoduleIds = new Set<string>();
 	const visited = new Set<string>();
+	// 顺序去重：保留首次出现的路径，已在 visited 或子模块集合中的路径跳过。
+	const candidates: string[] = [];
 	for (const candidate of known) {
 		const dir = resolve(candidate);
 		const id = nodeId(dir);
 		if (visited.has(id) || submoduleIds.has(id)) continue;
-		if (await gitEntryOf(dir) !== 'dir') continue;
 		visited.add(id);
-		nodes.push(await repoNodeOf(dir, 0, submoduleIds));
+		candidates.push(dir);
 	}
+	// `.git` 探测并发；仍是仓库的路径按原顺序并发构造节点。
+	const entries = await Promise.all(candidates.map((dir) => gitEntryOf(dir)));
+	const repoDirs = candidates.filter((dir, index) => entries[index] === 'dir');
+	const built = await mapLimit(repoDirs, MAX_REPO_CONCURRENCY, (dir) => repoNodeOf(dir, 0, submoduleIds));
+	for (const node of built) nodes.push(node);
 	if (nodes.length === 0) {
 		return discoverRepositories(root, { maxDepth: DEFAULT_MAX_DEPTH, maxDirectories: DEFAULT_MAX_DIRECTORIES });
 	}
@@ -400,26 +540,67 @@ export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string
 /**
  * 读取一个仓库相对其上游的领先/落后提交数。
  *
+ * 常见路径一次 `for-each-ref` 取回全部分支与当前分支的上游跟踪信息；无提交的仓库
+ * （`refs/heads` 为空）回退一次 `symbolic-ref`，此时只给出分支名。
+ *
  * @param repo - 仓库路径。
  * @returns 分支、上游名与领先/落后数；无上游时两者为 0。
  */
 export async function loadRepoSync(repo: string): Promise<{
 	branch: string | null; upstream: string | null; ahead: number; behind: number;
 }> {
+	const refs = await runGit(['for-each-ref', '--format=' + BRANCH_SYNC_FORMAT, 'refs/heads'], repo);
+	const sync = parseBranchSync(refs.stdout);
+	if (sync.branch !== null) return sync;
 	const head = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
 	const branch = head.code === 0 ? head.stdout.trim() : '';
 	if (branch === '') return { branch: null, upstream: null, ahead: 0, behind: 0 };
-	const upstreamResult = await runGit(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo);
-	if (upstreamResult.code !== 0) return { branch, upstream: null, ahead: 0, behind: 0 };
-	const upstream = upstreamResult.stdout.trim();
-	const counts = await runGit(['rev-list', '--left-right', '--count', '@{upstream}...HEAD'], repo);
-	if (counts.code !== 0) return { branch, upstream, ahead: 0, behind: 0 };
-	const [behindRaw, aheadRaw] = counts.stdout.trim().split(/\s+/);
-	const behind = Number.parseInt(behindRaw ?? '', 10);
-	const ahead = Number.parseInt(aheadRaw ?? '', 10);
-	return {
-		branch, upstream,
-		ahead: Number.isFinite(ahead) ? ahead : 0,
-		behind: Number.isFinite(behind) ? behind : 0,
-	};
+	return { branch, upstream: null, ahead: 0, behind: 0 };
+}
+
+/**
+ * 批量读取多个仓库的分支同步状态。
+ *
+ * 入参按首次出现顺序去重，`path` 原样回显；单个仓库失败时以空状态兜底，不抛错。
+ *
+ * @param repos - 仓库路径。
+ * @returns 每个入参仓库的同步状态，顺序与去重后的入参一致。
+ */
+export async function loadReposSync(repos: readonly string[]): Promise<Array<{
+	path: string; branch: string | null; upstream: string | null; ahead: number; behind: number;
+}>> {
+	const unique: string[] = [];
+	const seen = new Set<string>();
+	for (const repo of repos) {
+		if (seen.has(repo)) continue;
+		seen.add(repo);
+		unique.push(repo);
+	}
+	return mapLimit(unique, MAX_SYNC_CONCURRENCY, async (path) => {
+		try {
+			const sync = await loadRepoSync(path);
+			return { path, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
+		} catch {
+			return { path, branch: null, upstream: null, ahead: 0, behind: 0 };
+		}
+	});
+}
+
+/**
+ * 按已持久化的工作区根预热仓库发现缓存。
+ *
+ * 只走「按已知仓库位置取树」的快路径，不逐层扫描；逐项失败静默，不抛错。
+ *
+ * @returns 无。
+ */
+export async function primeCachedWorkspaces(): Promise<void> {
+	for (const root of listRepoLocationWorkspaces()) {
+		try {
+			const known = readRepoLocations(root).map((repo) => repo.path);
+			if (known.length === 0) continue;
+			await discoverRepositories(root, { knownRepos: known });
+		} catch {
+			/* 预扫失败不影响后续请求 */
+		}
+	}
 }

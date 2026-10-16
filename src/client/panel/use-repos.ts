@@ -2,12 +2,15 @@
  * 存储库发现：按会话工作区加载仓库树，并按可见行预取领先/落后。
  */
 import React from 'react';
-import { discoverRepositories, loadRepoSync } from '../api/index.ts';
+import { discoverRepositories, loadReposSync } from '../api/index.ts';
 import { loadRepoLocations, primeRepoLocations, saveRepoLocations } from './repo-locations.ts';
 import {
 	ancestryOf, flattenVisible, loadExpanded, loadSelection, saveExpanded, saveSelection, selectInitial,
 } from './repo-tree.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
+
+/** 一次批量请求的仓库路径数上限；超出的路径留到下一轮空闲回调。 */
+const SYNC_BATCH = 24;
 
 /** 仓库发现 hook 的入参。 */
 export interface UseReposOptions {
@@ -170,13 +173,18 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 
 	/* ── 后台预取可见节点的领先/落后 ─────────────────────── */
 
+	/** 在途请求的仓库路径集合：同一路径不重复请求，回写后清除。 */
+	const syncInFlight = React.useRef<Set<string>>(new Set());
+	/** 整批预取失败后的重试序号：递增以驱动下一轮空闲回调。 */
+	const [syncRetrySeq, setSyncRetrySeq] = React.useState(0);
+
 	/*
-	 * 一次只预取一个节点：领先/落后要跑三次 git，每个节点都是一次完整的服务端往返；
-	 * 并发预取（尤其是仓库树刚重扫、节点全部变化时）会把服务端压满，拖慢其它响应。
+	 * 一次批量取回可见节点：路径去重后交给宿主批量命令，宿主侧按仓库并发；
+	 * 请求按路径在途去重，一次最多 SYNC_BATCH 个路径，超出的留到下一轮空闲回调。
 	 */
 	React.useEffect(() => {
-		const pending = visibleRows.filter(({ node }) => !syncById.has(node.id));
-		if (pending.length === 0) return undefined;
+		if (!hasWorkspace) return undefined;
+		const root = cwd as string;
 		let cancelled = false;
 		const idle = typeof window.requestIdleCallback === 'function'
 			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
@@ -186,21 +194,45 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			: (handle: number): void => window.clearTimeout(handle);
 		const handle = idle(() => {
 			void (async () => {
-				for (const { node } of pending.slice(0, 1)) {
+				// 同一路径可能对应多个节点：按路径收集节点 id，结果一次写回。
+				const idsByPath = new Map<string, string[]>();
+				for (const { node } of visibleRows) {
+					if (syncById.has(node.id) || syncInFlight.current.has(node.path)) continue;
+					const ids = idsByPath.get(node.path);
+					if (ids !== undefined) { ids.push(node.id); continue; }
+					if (idsByPath.size >= SYNC_BATCH) continue;
+					idsByPath.set(node.path, [node.id]);
+				}
+				if (idsByPath.size === 0) return;
+				const paths = [...idsByPath.keys()];
+				for (const path of paths) syncInFlight.current.add(path);
+				try {
+					const entries = await loadReposSync(root, paths);
+					for (const path of paths) syncInFlight.current.delete(path);
 					if (cancelled) return;
-					let sync: RepoSync = { branch: null, upstream: null, ahead: 0, behind: 0 };
-					try {
-						sync = await loadRepoSync(node.path);
-					} catch {
-						/* 无上游或非仓库时保留空徽标 */
+					const patch = new Map<string, RepoSync>();
+					for (const entry of entries) {
+						for (const id of idsByPath.get(entry.path) ?? []) {
+							patch.set(id, {
+								branch: entry.branch, upstream: entry.upstream, ahead: entry.ahead, behind: entry.behind,
+							});
+						}
 					}
-					if (cancelled) return;
-					setSyncById((previous) => new Map(previous).set(node.id, sync));
+					if (patch.size === 0) return;
+					setSyncById((previous) => {
+						const next = new Map(previous);
+						for (const [id, sync] of patch) next.set(id, sync);
+						return next;
+					});
+				} catch {
+					// 整批失败不写入缓存：清除在途后由下一轮空闲回调重试。
+					for (const path of paths) syncInFlight.current.delete(path);
+					setSyncRetrySeq((previous) => previous + 1);
 				}
 			})();
 		});
 		return () => { cancelled = true; cancelIdle(handle); };
-	}, [visibleRows, syncById]);
+	}, [visibleRows, syncById, cwd, hasWorkspace, syncRetrySeq]);
 
 	return {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,

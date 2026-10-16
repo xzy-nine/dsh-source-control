@@ -38,6 +38,17 @@ export const REF_FIELD_COUNT = 4;
 /** 引用列表的格式串。 */
 export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(objecttype)'].join('%00');
 
+/** 分支同步的格式串；`%(HEAD)` 标出当前分支。 */
+export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+
+/** 一个仓库的分支同步状态。 */
+export interface BranchSync {
+	readonly branch: string | null;
+	readonly upstream: string | null;
+	readonly ahead: number;
+	readonly behind: number;
+}
+
 /** 未提交伪提交的哈希。 */
 export const UNCOMMITTED = '*';
 
@@ -421,6 +432,38 @@ export function parseCommitDetails(stdout: string): {
  */
 export function parseSignatureStatus(code: string): SignatureStatus | null {
 	return ['G', 'U', 'X', 'Y', 'R', 'E', 'B'].includes(code) ? code as SignatureStatus : null;
+}
+
+/**
+ * 解析 `git for-each-ref --format=BRANCH_SYNC_FORMAT refs/heads` 的输出。
+ *
+ * 每行一条记录，字段以 NUL 分隔；第一字段为 `*` 的记录是当前分支。当前分支没有上游、
+ * 上游引用已被删除（track 为 `gone`）或计数缺失时，上游为 null、领先与落后为 0。
+ *
+ * @param stdout - git 的标准输出。
+ * @returns 当前分支的同步状态；无当前分支记录时分支与上游为 null、计数为 0。
+ */
+export function parseBranchSync(stdout: string): BranchSync {
+	const empty: BranchSync = { branch: null, upstream: null, ahead: 0, behind: 0 };
+	for (const line of stdout.split('\n')) {
+		if (line === '') continue;
+		const fields = line.split(FIELD);
+		if (fields[0] !== '*') continue;
+		const branch = fields[1] ?? '';
+		if (branch === '') return empty;
+		const upstreamName = fields[2] ?? '';
+		const track = fields[3] ?? '';
+		if (upstreamName === '' || track === 'gone') return { branch, upstream: null, ahead: 0, behind: 0 };
+		const ahead = /ahead (\d+)/.exec(track);
+		const behind = /behind (\d+)/.exec(track);
+		return {
+			branch,
+			upstream: upstreamName,
+			ahead: ahead === null ? 0 : Number.parseInt(ahead[1], 10),
+			behind: behind === null ? 0 : Number.parseInt(behind[1], 10),
+		};
+	}
+	return empty;
 }
 
 /**

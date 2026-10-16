@@ -30,17 +30,19 @@
 ## 文件夹组织
 
 ```
-src/index.ts        宿主入口：注册 web 路由与 AI 依赖
-src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现、
-                    插件状态持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/）
+src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按已持久化的工作区根预扫仓库树
+src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
+                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、插件状态
+                    持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/，
+                    listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
-                    仓库树、语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作
-                    元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型；变更区三个
-                    目标（文件夹行 / 文件行 / 分组标题）的菜单共用 change-menu.ts 的注册表，
-                    元数据在 change-menu-actions.json
+                    仓库树（use-repos.ts 以批量命令预取领先/落后）、语言判定、各目标右键菜单与
+                    hooks；menu-actions.json 是右键操作元数据与菜单名称的数据源，
+                    menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
+                    分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
   src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、cache.ts 提交图窗口缓存
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
@@ -75,14 +77,16 @@ JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），�
 宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更，
 其 `parseStatusSnapshot` 解析 `status --porcelain=v2 --branch`（条目与分支上游来自同一次调用，
 v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，
-无 git 调用，可被测试直接导入；`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现）；
+无 git 调用，可被测试直接导入，分支同步解析见其 `BRANCH_SYNC_FORMAT` 与 `parseBranchSync`；
+`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现）；
 `git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
 `git/terminal-run.ts` 打开 DSH 终端页并在其中执行。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
-记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开。
+记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开，
+分支同步的格式串 `BRANCH_SYNC_FORMAT` 同样用 `%00`。
 `git diff-tree -z` 的输出以提交对象名开头，解析时须跳过（`skipLeadingObjectName`）。
 
 `gh-cli.ts` 是 GitHub 集成层：同样以数组参数直接 spawn `gh`（不经 shell），并设
@@ -133,6 +137,15 @@ Office）主动不认领，那些仍走宿主预览。
 仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，不重复读。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
 只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
 用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
+
+仓库树的领先/落后不在重载的两路请求里取：`panel/use-repos.ts` 在空闲回调里把当前可见且未缓存的节点
+（一次最多 24 个路径）交给批量命令 `loadReposSync` 一次取回，按路径在途去重，结果按节点 id 批量回写；
+宿主侧按仓库并发（上限 4），单个仓库失败以空值兜底，`path` 原样回显入参。分支与上游的领先/落后由
+一次 `git for-each-ref --format=… refs/heads` 取回（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，
+`%(HEAD)` 标出当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、
+上游为空、领先/落后为 0。仓库发现逐层并行，结果进 60 秒 TTL 的内存缓存（容量 16，超出按插入序淘汰），
+任何**成功**的仓库写操作作废该缓存；插件 `apply()` 注册路由后按已持久化的工作区根启动一次预扫
+（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，失败静默。
 
 `change-events.ts` 是判据的纯函数层（无导入，可直接单测）：`settledFileChanges` 把事件折成「拿到结果
 且结果非错误」的写入/编辑，`repositoryRelativePath` 判定模型给出的路径是否真在仓库内。事件窗口是
@@ -216,6 +229,8 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `status-snapshot.test.mjs` | 工作区快照解析：v2 记录与空列、重命名、未合并、分支与上游、截断 |
+| `branch-sync.test.mjs` | 分支同步：`BRANCH_SYNC_FORMAT` 形状、`parseBranchSync` 的各 track 文本与 upstream 为 null 的情形；ahead/behind 与 `rev-list` 独立推导对照 |
+| `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler |
 | `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
 | `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |

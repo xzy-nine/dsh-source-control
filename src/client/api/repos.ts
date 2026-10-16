@@ -35,11 +35,48 @@ export async function discoverRepositories(cwd: string, { maxDepth, knownRepos }
  */
 export async function loadRepoSync(cwd: string, signal?: AbortSignal): Promise<RepoSync> {
 	const payload = await callApi(cwd, { command: 'loadRepoSync' }, signal);
+	return readSyncFields(payload);
+}
+
+/** 一个仓库的分支同步状态。 */
+export interface RepoSyncEntry extends RepoSync {
+	readonly path: string;
+}
+
+/**
+ * 批量读取多个仓库相对其上游的领先/落后提交数。
+ *
+ * @param cwd - 会话工作区路径，作为 repo 传给宿主。
+ * @param repos - 仓库路径列表；空列表时宿主直接返回空结果，不读仓库。
+ * @param signal - 取消信号。
+ * @returns 按 `path` 与入参对齐的同步状态；宿主无法读取的仓库以空值兜底。
+ */
+export async function loadReposSync(cwd: string, repos: readonly string[], signal?: AbortSignal): Promise<RepoSyncEntry[]> {
+	const payload = await callApi(cwd, { command: 'loadReposSync', repos }, signal);
+	const results = Array.isArray(payload.results) ? payload.results : [];
+	const entries: RepoSyncEntry[] = [];
+	for (const item of results) {
+		if (item === null || typeof item !== 'object') continue;
+		const record = item as Record<string, unknown>;
+		// path 缺失的记录无法与入参对齐，丢弃。
+		if (typeof record.path !== 'string') continue;
+		entries.push({ path: record.path, ...readSyncFields(record) });
+	}
+	return entries;
+}
+
+/**
+ * 从命令载荷读取分支同步字段。
+ *
+ * @param source - 命令响应或 results 中的一条记录。
+ * @returns 分支、上游与领先/落后数；字段缺失或类型不符时取空值。
+ */
+function readSyncFields(source: Record<string, unknown>): RepoSync {
 	return {
-		branch: typeof payload.branch === 'string' ? payload.branch : null,
-		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
-		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
-		behind: typeof payload.behind === 'number' ? payload.behind : 0,
+		branch: typeof source.branch === 'string' ? source.branch : null,
+		upstream: typeof source.upstream === 'string' ? source.upstream : null,
+		ahead: typeof source.ahead === 'number' ? source.ahead : 0,
+		behind: typeof source.behind === 'number' ? source.behind : 0,
 	};
 }
 
