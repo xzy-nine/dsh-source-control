@@ -91,6 +91,28 @@ export function ancestryOf(nodes, id) {
 }
 
 /**
+ * 把已补齐的工作树与子模块挂回浅层节点。
+ *
+ * 浅层发现只产出顶层仓库节点；补齐结果按仓库路径另行保存，两者在此合流。按路径而不是按
+ * 上一轮节点取用，因此：
+ * - 后台纠正用新的浅层节点整棵替换时，已补齐的 children 不会丢；
+ * - 重新扫描时清掉保存的补齐结果即可让 children 变空，已删除的工作树不会残留。
+ *
+ * 没有保存记录的仓库按浅层节点原样返回（children 为空）；已带 children 的节点原样采用。
+ *
+ * @param {object[]} nodes - 本次发现得到的节点。
+ * @param {Map<string, object[]>} childrenByPath - 仓库路径 -> 已补齐的 children。
+ * @returns {object[]} 挂好 children 的节点。
+ */
+export function attachChildren(nodes, childrenByPath) {
+	return (nodes ?? []).map((node) => {
+		if ((node.children ?? []).length > 0) return node;
+		const children = childrenByPath?.get(node.path);
+		return children === undefined ? node : { ...node, children };
+	});
+}
+
+/**
  * 选出初始选中节点：持久化命中优先，其次是工作区根自身，最后取第一个仓库。
  *
  * @param {object[]} nodes - 仓库节点列表。
@@ -108,6 +130,36 @@ export function selectInitial(nodes, cwd, restoredId) {
 		}
 	}
 	return (nodes ?? [])[0] ?? null;
+}
+
+/**
+ * 规划一次发现结果落地后的选中。
+ *
+ * 持久化选中的可能是工作树或子模块，而浅层树里没有这些节点，`selectInitial` 只能回退成第一个
+ * 仓库。此时把原 id 作为「待认领」一并返回，等补齐出该节点后再改回选中。
+ *
+ * @param {object[]} nodes - 挂好 children 的节点列表。
+ * @param {string|null} cwd - 会话工作区路径。
+ * @param {string|null} restoredId - 持久化的节点 id。
+ * @returns {{ selectedId: string|null, pendingId: string|null }} 选中 id 与待认领 id。
+ */
+export function planSelection(nodes, cwd, restoredId) {
+	const initial = selectInitial(nodes, cwd, restoredId);
+	const selectedId = initial === null ? null : initial.id;
+	const pendingId = restoredId !== null && restoredId !== undefined && selectedId !== restoredId ? restoredId : null;
+	return { selectedId, pendingId };
+}
+
+/**
+ * 在补齐后的树里认领待认领的选中节点。
+ *
+ * @param {object[]} nodes - 挂好 children 的节点列表。
+ * @param {string|null} pendingId - 待认领的节点 id。
+ * @returns {object|null} 命中的节点；仍不存在时为 null。
+ */
+export function claimPendingSelection(nodes, pendingId) {
+	if (pendingId === null || pendingId === undefined) return null;
+	return findNode(nodes, pendingId);
 }
 
 /**

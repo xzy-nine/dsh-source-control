@@ -8,22 +8,50 @@ import { callApi } from './http.ts';
 export interface DiscoveryResult {
 	readonly nodes: RepoNode[];
 	readonly truncated: boolean;
+	/** 宿主是否直接按持久化的仓库位置取树，未逐层扫描目录。 */
+	readonly usedCache: boolean;
+}
+
+/** 仓库发现选项。 */
+export interface DiscoveryOptions {
+	readonly maxDepth?: number;
+	/** 已知的顶层仓库路径；给出时宿主只核对已知路径，不扫描目录。 */
+	readonly knownRepos?: readonly string[];
+	/** 只产出顶层仓库节点，不枚举工作树与子模块。 */
+	readonly shallow?: boolean;
+	/** 忽略宿主持久化的仓库位置，强制逐层扫描目录。 */
+	readonly fullScan?: boolean;
 }
 
 /**
  * 发现工作区根下的仓库及其工作树与子模块。
  *
  * @param cwd - 工作区根路径。
- * @param options - 发现选项；`knownRepos` 命中时宿主只核对已知路径，不扫描目录。
+ * @param options - 见 {@link DiscoveryOptions}。
  * @param signal - 取消信号。
- * @returns 节点列表与是否被截断。
+ * @returns 节点列表、是否被截断与是否来自持久化位置。
  */
-export async function discoverRepositories(cwd: string, { maxDepth, knownRepos }: { maxDepth?: number; knownRepos?: readonly string[] } = {}, signal?: AbortSignal): Promise<DiscoveryResult> {
-	const payload = await callApi(cwd, { command: 'discoverRepositories', maxDepth, knownRepos }, signal);
+export async function discoverRepositories(cwd: string, { maxDepth, knownRepos, shallow, fullScan }: DiscoveryOptions = {}, signal?: AbortSignal): Promise<DiscoveryResult> {
+	const payload = await callApi(cwd, { command: 'discoverRepositories', maxDepth, knownRepos, shallow, fullScan }, signal);
 	return {
 		nodes: (Array.isArray(payload.nodes) ? payload.nodes : []) as RepoNode[],
 		truncated: payload.truncated === true,
+		usedCache: payload.usedCache === true,
 	};
+}
+
+/**
+ * 为顶层仓库节点补齐工作树与子模块。
+ *
+ * @param cwd - 会话工作区路径，作为 repo 传给宿主。
+ * @param repos - 顶层仓库路径列表；空列表时不请求宿主。
+ * @param signal - 取消信号。
+ * @returns 补齐后的节点列表，顺序与入参一致。
+ */
+export async function enrichRepositories(cwd: string, repos: readonly string[], signal?: AbortSignal): Promise<RepoNode[]> {
+	if (repos.length === 0) return [];
+	const payload = await callApi(cwd, { command: 'enrichRepositories', repos }, signal);
+	return (Array.isArray(payload.nodes) ? payload.nodes : []) as RepoNode[];
 }
 
 /**

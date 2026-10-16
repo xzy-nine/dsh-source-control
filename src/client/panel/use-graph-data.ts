@@ -152,23 +152,37 @@ export function useGraphData({
 			 * 提交图与工作区快照互不依赖，两路并行：串行要等两组请求依次结束，并行只等最慢的一组。
 			 * 提交图命中窗口缓存时只剩快照一路。
 			 *
+			 * 两路各自就绪即写入：工作区快照通常先回，更改区因此不必等提交图就能画出变更列表。
+			 * 只写 `entries`，不改 `phase` —— 图形区按 `phase === 'loading'` 显示占位，提前置
+			 * ready 会让它误显示「这个仓库还没有提交」。
+			 *
 			 * 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。
 			 */
 			const key = graphKeyOf(workingTreePath, maxCommits, 0, settings);
 			const cached = mode === 'reconcile' ? graphWindows.get(key) : undefined;
-			const [graph, snapshot] = await Promise.all([
-				cached ?? loadGraph(workingTreePath, {
-					maxCommits,
-					commitOrdering: settings.commitOrdering,
-					showStashes: settings.showStashes,
-					showTags: settings.showTags,
-					showRemoteBranches: settings.showRemoteBranches,
-					onlyFollowFirstParent: settings.onlyFollowFirstParent,
-					includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
-					signal: controller.signal,
-				}),
-				loadWorkingTreeSnapshot(workingTreePath, controller.signal),
-			]);
+			const graphSource = cached ?? loadGraph(workingTreePath, {
+				maxCommits,
+				commitOrdering: settings.commitOrdering,
+				showStashes: settings.showStashes,
+				showTags: settings.showTags,
+				showRemoteBranches: settings.showRemoteBranches,
+				onlyFollowFirstParent: settings.onlyFollowFirstParent,
+				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+				signal: controller.signal,
+			});
+			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal).then((snapshot) => {
+				if (generation !== generationRef.current || controller.signal.aborted) return snapshot;
+				setState((previous) => ({ ...previous, error: null, entries: snapshot.entries }));
+				// 领先/落后与条目来自同一次读取，不再单独请求。
+				if (selectedId !== null) {
+					setSyncById((previous) => new Map(previous).set(selectedId, {
+						branch: snapshot.branch, upstream: snapshot.upstream,
+						ahead: snapshot.ahead, behind: snapshot.behind,
+					}));
+				}
+				return snapshot;
+			});
+			const [graph, snapshot] = await Promise.all([graphSource, snapshotSource]);
 			// 已中止的请求结果可能不完整，不写入缓存。
 			if (cached === undefined && !controller.signal.aborted) graphWindows.set(key, graph);
 			if (generation !== generationRef.current) return;
@@ -178,13 +192,6 @@ export function useGraphData({
 				remotes: graph.remotes, entries: snapshot.entries,
 				detail: mode === 'full' ? null : previous.detail,
 			}));
-			// 领先/落后与条目来自同一次读取，不再单独请求。
-			if (selectedId !== null) {
-				setSyncById((previous) => new Map(previous).set(selectedId, {
-					branch: snapshot.branch, upstream: snapshot.upstream,
-					ahead: snapshot.ahead, behind: snapshot.behind,
-				}));
-			}
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
 			reportError(setState, error instanceof Error ? error.message : String(error));

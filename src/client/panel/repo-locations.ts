@@ -58,3 +58,16 @@ export function saveRepoLocations(cwd: string, repos: readonly CachedRepoLocatio
 	cache.set(cwd, value);
 	void writeRepoLocations(cwd, value).catch(() => { /* 落盘失败时保留内存态 */ });
 }
+
+/**
+ * 把宿主本次返回的仓库位置收进内存缓存。
+ *
+ * 首屏直接采用宿主按持久化位置取回的树，位置已由宿主持有，因此只更新内存镜像、不再落盘一次。
+ *
+ * @param cwd - 工作区根路径。
+ * @param repos - 顶层仓库位置。
+ * @returns 无。
+ */
+export function rememberRepoLocations(cwd: string, repos: readonly CachedRepoLocation[]): void {
+	cache.set(cwd, repos.map((repo) => ({ path: repo.path, name: repo.name })));
+}

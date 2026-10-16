@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -327,4 +327,169 @@ test('非仓库：error 为字符串且其余字段为空值', { skip }, async (
 	assert.equal(snap.ahead, 0);
 	assert.equal(snap.behind, 0);
 	assert.equal((snap.entries ?? []).length, 0, '失败时 entries 应为空');
+});
+
+test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+
+		const call = await makeCaller(repo);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
+		assert.equal(info.command, 'loadRepoInfo');
+		assert.equal(info.error, null);
+		assert.deepEqual(info.stashes, []);
+		assert.equal(info.isRepo, true);
+		assert.equal(info.head, 'main');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('贮藏契约：链接工作树按公共目录读到主仓库的贮藏', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	const worktree = mkdtempSync(join(tmpdir(), 'gg-snap-wt-'));
+	rmSync(worktree, { recursive: true, force: true });
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		write('a.txt', 'two\n');
+		git('stash', 'push', '-q', '-m', 'wip');
+
+		git('worktree', 'add', '-q', worktree, '-b', 'side');
+		const call = await makeCaller(worktree);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
+		assert.equal(info.error, null);
+		assert.equal(info.stashes.length, 1, '链接工作树应读到主仓库的贮藏');
+		assert.match(info.stashes[0].message, /wip/);
+	} finally {
+		rmSync(worktree, { recursive: true, force: true });
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('首屏贮藏契约：loadCommits 首屏自带仓库信息与贮藏', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		write('a.txt', 'two\n');
+		git('stash', 'push', '-q', '-m', 'wip');
+
+		const call = await makeCaller(repo);
+		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, showStashes: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		assert.equal(page.command, 'loadCommits');
+		assert.equal(page.error, null);
+		assert.equal(page.repoInfo.stashes.length, 1, '首屏仓库信息应带贮藏');
+		assert.match(page.repoInfo.stashes[0].message, /wip/);
+		assert.ok(page.commits.some((commit) => commit.hash !== '*' && commit.hash.length > 0), '首屏应含提交');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('首屏贮藏契约：调用方给出空贮藏列表时不插入贮藏行', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		write('a.txt', 'two\n');
+		git('stash', 'push', '-q', '-m', 'wip');
+
+		const call = await makeCaller(repo);
+		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, stashes: [], showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		assert.equal(page.error, null);
+		assert.equal(page.repoInfo.stashes.length, 1, '仓库信息仍按 showStashes 读取贮藏');
+		const stashRows = page.commits.filter((commit) => commit.stash !== null && commit.stash !== undefined);
+		assert.equal(stashRows.length, 0, '调用方给出空列表时提交图不插入贮藏行');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+/**
+ * 在 `.git/config` 追加一条只有 fetch、没有 url 的远程。
+ *
+ * @param repo - 仓库路径。
+ * @param name - 远程名。
+ * @returns 无。
+ */
+function addFetchOnlyRemote(repo, name) {
+	appendFileSync(join(repo, '.git', 'config'), `[remote "${name}"]\n\tfetch = +refs/heads/*:refs/remotes/${name}/*\n`);
+}
+
+/**
+ * 断言 `loadRepoInfo` 给出的远程名集合与 `git remote` 逐项一致。
+ *
+ * @param call - 经真实路由 handler 发请求的函数。
+ * @param git - 临时仓库的 git 辅助函数。
+ * @returns 远程名数组（已按升序）。
+ */
+async function assertRemoteNames(call, git) {
+	const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: false, hideRemotes: [] });
+	assert.equal(info.error, null);
+	const fromGit = git('remote').split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	const names = info.remotes.map((remote) => remote.name);
+	assert.deepEqual([...names].sort(), [...fromGit].sort(), '远程名集合应与 git remote 逐项一致');
+	assert.deepEqual(names, [...names].sort((left, right) => left.localeCompare(right)), '远程名应按 name 升序');
+	for (const remote of info.remotes) {
+		assert.equal(typeof remote.name, 'string');
+		assert.ok(remote.url === null || typeof remote.url === 'string');
+		assert.ok(remote.pushUrl === null || typeof remote.pushUrl === 'string');
+	}
+	return names;
+}
+
+test('远程名契约：只有 url 的远程', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		git('remote', 'add', 'origin', 'https://example.com/o.git');
+
+		const names = await assertRemoteNames(await makeCaller(repo), git);
+		assert.deepEqual(names, ['origin']);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('远程名契约：只有 fetch 无 url 的远程', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		addFetchOnlyRemote(repo, 'beta');
+
+		const call = await makeCaller(repo);
+		const names = await assertRemoteNames(call, git);
+		assert.deepEqual(names, ['beta']);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: false, hideRemotes: [] });
+		assert.equal(info.remotes[0].url, null, '无 url 的远程 url 为 null');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('远程名契约：有 url 与只有 fetch 的远程并存', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		git('remote', 'add', 'origin', 'https://example.com/o.git');
+		addFetchOnlyRemote(repo, 'beta');
+
+		const names = await assertRemoteNames(await makeCaller(repo), git);
+		assert.deepEqual(names, ['beta', 'origin'], '有 url 的远程不应挤掉只有 fetch 的远程');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
 });

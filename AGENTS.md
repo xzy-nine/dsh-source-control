@@ -39,9 +39,10 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
-                    仓库树（use-repos.ts 以批量命令预取领先/落后）、语言判定、各目标右键菜单与
-                    hooks；menu-actions.json 是右键操作元数据与菜单名称的数据源，
-                    menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
+                    仓库树（use-repos.ts 以批量命令预取领先/落后；repo-tree.ts 树结构与选中、
+                    enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
+                    语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
+                    数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
   src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、cache.ts 提交图窗口缓存
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
@@ -55,7 +56,8 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
 doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
-scripts/            客户端打包脚本
+scripts/            客户端打包脚本（build-client.mjs）与首屏耗时度量（bench-first-paint.mjs /
+                    bench-discovery.mjs / bench-enrich.mjs / bench-verify.mjs；均需先 build:host）
 assets/icons/       引用标记用的 SVG
 ```
 
@@ -147,6 +149,41 @@ Office）主动不认领，那些仍走宿主预览。
 任何**成功**的仓库写操作作废该缓存；插件 `apply()` 注册路由后按已持久化的工作区根启动一次预扫
 （`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，失败静默。
 
+## 首屏空白
+
+一次 git 子进程的固定开销约 80ms（本机实测），因此首屏关键路径上的 git 调用数是空白时间的主因。
+
+三处各自的最短路径：
+
+| 区域 | 关键路径 | 空白来源 |
+|---|---|---|
+| 仓库列表 | `discoverWorkspace(root, { shallow: true })`：宿主按持久化位置取树，每仓库一次 `stat` + 读 `HEAD`，不起 git | 无位置缓存时退回完整扫描（8 仓库约 260ms） |
+| 更改区 | `loadWorkingTreeSnapshot`：一次 `git status --porcelain=v2 --branch -z -uall` | 单次 status 约 90ms |
+| 图形区 | `loadCommits` 首屏：仓库信息 / 引用集合 / 贮藏 / 工作树分支同批并行，再与 `git log` 并行 | 最慢一路约 110ms |
+
+仓库列表先出**浅层树**（顶层仓库节点，`children` 全空），工作树与子模块随后由
+`enrichRepositories` 在空闲回调里补齐：`use-repos.ts` 按仓库路径把补齐结果存进 `childrenByPathRef`，
+`repo-tree.ts` 的 `attachChildren` 负责挂回。判据是「有没有补齐记录」而不是「当前有没有 children」，
+`rescan()` 清空记录与标记，因此重扫能反映工作树的增删。浅层树里没有工作树与子模块节点，持久化选中的
+若正是这类节点，`planSelection` 把它记为待认领、补齐后由 `claimPendingSelection` 认领回原节点；
+用户手动选中即作废待认领项。
+
+补齐的占用登记与结局处理是两个纯模块：`enrich-claims.ts` 的 `createEnrichClaims()` 记在途与已完成，
+`enrich-run.ts` 的 `runEnrichBatch()` 按结局决定保留还是释放占用。取消、空结果与失败都必须释放，
+否则该路径此后既不下发、也不在已完成集合里，工作树永久不出现。空结果与失败还会驱动重试，但按路径
+累计连续失败次数（`ENRICH_FAILURE_LIMIT`，默认 5）——到上限即按「没有工作树与子模块」处理，不再
+重试，避免宿主判据与发现层不一致时形成无休止请求；成功一次即清零计数，`rescan()` 的 `clear()` 亦然。
+
+`enrichRepositories` 对「无链接工作树且无 `.gitmodules`」的仓库零 git 调用（`linkedWorktreePresence`
++ `.gitmodules` 存在性判定，且要求 `.git` 为目录），有来源时才枚举。仓库判据与发现层对齐：`.git` 为
+目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `gitDirOf` 定位 `HEAD`，因此链接工作树与子模块也能
+解析出分支。`branchesOfOtherWorktrees` 先做无链接工作树判定，为空时直接返回空集。`getStashes` 先看
+`<commondir>/logs/refs/stash` 是否存在，不存在时不调用 git。`getRepoInfo` 的远程名由 config 派生
+（`remote.<name>.<任意子键>`），集合为空才回退 `git remote`。
+
+`scripts/bench-first-paint.mjs`、`bench-discovery.mjs`、`bench-enrich.mjs`、`bench-verify.mjs` 度量这
+几处；`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
+
 `change-events.ts` 是判据的纯函数层（无导入，可直接单测）：`settledFileChanges` 把事件折成「拿到结果
 且结果非错误」的写入/编辑，`repositoryRelativePath` 判定模型给出的路径是否真在仓库内。事件窗口是
 客户端会话事件源，因此 `run_code` 里的嵌套调用按 `tool/ptc-dispatch-start` + `tool/ptc-dispatch`
@@ -236,7 +273,9 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
 | `draft-storage.test.mjs` | 会话级存储：读写往返、非法值与缺失回退、按仓库根的草稿键 |
 | `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
-| `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
+| `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
+| `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
+| `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |

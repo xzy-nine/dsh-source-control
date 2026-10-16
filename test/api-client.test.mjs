@@ -1,12 +1,12 @@
 /**
- * 宿主 API 客户端的错误处理。
+ * 宿主 API 客户端的错误处理与首屏取数命令的参数透传。
  *
  * 两条约定：非 2xx 响应体里的 `error` 文本优先于状态码（宿主在 400 时同样回传它）；
  * 签名声明「返回错误文本」的函数必须把文本交给调用方，而不是内部抛出后让返回值恒为 null。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { callApi, callApiRaw, pushUpstream, resetToCommit } from '../src/client/api/index.ts';
+import { callApi, callApiRaw, discoverRepositories, enrichRepositories, pushUpstream, resetToCommit } from '../src/client/api/index.ts';
 
 /**
  * 以给定的响应替换全局 fetch 跑一次调用。
@@ -89,4 +89,63 @@ test('返回错误文本的封装函数把文本交给调用方而非抛出', as
 		() => resetToCommit('/repo', 'abc'),
 	);
 	assert.equal(reset.value, '重置失败');
+});
+
+/**
+ * 以给定的响应替换全局 fetch，并记录请求体。
+ *
+ * @param response - 伪造的响应。
+ * @param run - 实际发起的调用。
+ * @returns 调用结果与最后一次请求体。
+ */
+async function withCapturedFetch(response, run) {
+	const original = globalThis.fetch;
+	let body = null;
+	globalThis.fetch = async (_url, init) => { body = JSON.parse(init.body); return response; };
+	try {
+		return { value: await run(), body };
+	} finally {
+		globalThis.fetch = original;
+	}
+}
+
+test('发现仓库透传 shallow 与 fullScan，并读出 usedCache', async () => {
+	const result = await withCapturedFetch(
+		makeResponse(true, 200, JSON.stringify({ command: 'discoverRepositories', nodes: [], truncated: false, usedCache: true })),
+		() => discoverRepositories('/root', { shallow: true, fullScan: true }),
+	);
+	assert.equal(result.body.command, 'discoverRepositories');
+	assert.equal(result.body.shallow, true);
+	assert.equal(result.body.fullScan, true);
+	assert.equal(result.value.usedCache, true);
+	assert.deepEqual(result.value.nodes, []);
+});
+
+test('usedCache 缺失时按 false 处理', async () => {
+	const result = await withCapturedFetch(
+		makeResponse(true, 200, JSON.stringify({ command: 'discoverRepositories', nodes: [], truncated: false })),
+		() => discoverRepositories('/root', { shallow: true }),
+	);
+	assert.equal(result.value.usedCache, false);
+});
+
+test('补齐仓库：空列表不发请求，非空列表按路径下发并读出节点', async () => {
+	let calls = 0;
+	const original = globalThis.fetch;
+	globalThis.fetch = async () => { calls += 1; return makeResponse(true, 200, JSON.stringify({ command: 'enrichRepositories', nodes: [] })); };
+	try {
+		assert.deepEqual(await enrichRepositories('/root', []), []);
+		assert.equal(calls, 0);
+	} finally {
+		globalThis.fetch = original;
+	}
+
+	const node = { id: '/root/a', path: '/root/a', name: 'a', kind: 'repo', depth: 0, branch: 'main', head: null, available: true, children: [] };
+	const result = await withCapturedFetch(
+		makeResponse(true, 200, JSON.stringify({ command: 'enrichRepositories', nodes: [node] })),
+		() => enrichRepositories('/root', ['/root/a']),
+	);
+	assert.equal(result.body.command, 'enrichRepositories');
+	assert.deepEqual(result.body.repos, ['/root/a']);
+	assert.deepEqual(result.value, [node]);
 });

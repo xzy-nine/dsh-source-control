@@ -7,6 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -60,8 +61,24 @@ const commitsMessage = {
 	remotes: [], hideRemotes: [], stashes: [],
 };
 
-/** 度量一次请求；返回耗时毫秒与响应。 */
+/**
+ * 采样冷却（毫秒）。
+ *
+ * `runGit` 对只读命令有 200ms 的结果缓存；相邻采样间隔小于该 TTL 时后一次会命中缓存，
+ * 读数偏小且不可复现。冷却取 300ms 以稳定越过该 TTL。
+ */
+const SAMPLE_COOLDOWN_MS = 300;
+
+/**
+ * 度量一次请求；返回耗时毫秒与响应。
+ *
+ * 冷却发生在计时区间之外，不计入耗时。
+ *
+ * @param message - 请求载荷。
+ * @returns 耗时与响应。
+ */
 async function time(message) {
+	await sleep(SAMPLE_COOLDOWN_MS);
 	const started = process.hrtime.bigint();
 	const result = await call(message);
 	return { ms: Number(process.hrtime.bigint() - started) / 1e6, result };

@@ -21,7 +21,7 @@ import {
 import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
@@ -253,11 +253,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('discoverRepositories', async () => {
 				// knownRepos 命中时走快路径：只核对已知路径，不逐层扫描目录。
 				const knownRepos = arr<string>('knownRepos').filter((path) => typeof path === 'string' && path !== '');
-				const result = await discoverRepositories(repo, {
+				const result = await discoverWorkspace(repo, {
+					shallow: bool('shallow'),
+					fullScan: bool('fullScan'),
 					maxDepth: num('maxDepth', 3),
 					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
 				});
-				return { root: repo, nodes: result.nodes, truncated: result.truncated };
+				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
+			});
+			break;
+		case 'enrichRepositories':
+			await respondResult('enrichRepositories', async () => {
+				// 入参为空时不扫目录：nodes 为空数组。
+				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
+				if (repos.length === 0) return { nodes: [] };
+				return { nodes: await enrichRepositories(repos) };
 			});
 			break;
 		case 'loadRepoSync':
@@ -314,23 +324,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const showStashes = bool('showStashes', true);
 				const showRemoteBranches = bool('showRemoteBranches', true);
 				const hideRemotes = arr<string>('hideRemotes');
+				/*
+				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
+				 * 单独枚举。该取值同时交给首屏批与 `getCommits`，两者因此共用一次读取。
+				 */
+				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
+				const stashesSource: Promise<StashEntry[]> = givenStashes !== null
+					? Promise.resolve(givenStashes)
+					: showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]);
 				const batchSource = firstPage
 					? Promise.all([
 						getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes),
 						getRefsForGraph(repo, showRemoteBranches, hideRemotes),
-						showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]),
+						stashesSource,
 						branchesOfOtherWorktrees(repo),
 					]).then(([info, refs, stashes, foreign]) => ({ info, refs, stashes, foreign }), () => null)
 					: null;
-				/*
-				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes` 枚举，
-				 * 首屏因此不必先取一次仓库信息就能画出贮藏行。
-				 */
-				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
-				const stashes = givenStashes
-					?? (batchSource !== null
-						? (await batchSource)?.stashes ?? []
-						: showStashes ? await getStashes(repo) : []);
+				const stashes = await stashesSource;
 				/*
 				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
 				 * 直接传字符串数组的调用方同样接受。

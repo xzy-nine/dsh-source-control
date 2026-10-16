@@ -30,7 +30,6 @@ import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import { draftKeyOf, loadSessionValue, loadValue, primeStorage, saveSessionValue, saveValue } from './storage.ts';
-import { primeRepoLocations } from './repo-locations.ts';
 import { migrateLegacyState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
@@ -146,6 +145,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 预取是异步的，而上面这些 useState 的初始值在挂载时同步取过；那时缓存还空着，拿到的是回退值，
 	 * 且 useState 的初始值不会随预取完成自动重算 —— 不显式回填，每次进入都会显示默认值（表现为
 	 * 「设置每次都被重置」）。预取完成后因此把这几项按真实值重新写入。
+	 *
+	 * 状态迁移与预取串行，且预取完成才回填：设置面板、布局高度都只在用户打开时可见，与首屏三区
+	 * 无关，因此不占用首屏关键路径。仓库位置由宿主在发现命令里自行读取，这里不预取。
 	 */
 	React.useEffect(() => {
 		if (cwd === undefined || cwd === null) return undefined;
@@ -154,7 +156,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
-			await primeRepoLocations(cwd);
 			if (cancelled) return;
 			setSettings(loadSettings());
 			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));

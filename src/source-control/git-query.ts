@@ -4,8 +4,11 @@
  * 只读仓库，不修改引用与文件；git 的失败一律写进返回值的 `error` 字段，不向调用方抛错。
  * 命令输出交给 `git-parse.ts` 的纯解析函数，执行与错误处理复用 `working-tree.ts`。
  */
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
+import { resolveGitCommonDir } from './worktree-branches.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
 	parseNumStat, parseRefs, parseStashReflog,
@@ -34,13 +37,15 @@ const DIFF_FILTER = 'AMDR';
  */
 export async function getRepoInfo(repo: string, showRemoteBranches: boolean, showStashes: boolean, hideRemotes: readonly string[]): Promise<RepoInfo> {
 	try {
-		/* 四路互不依赖，同批取：串行要等四个子进程依次结束，并行只等最慢的一个。 */
-		const [branchData, remoteNames, stashes, configs] = await Promise.all([
+		/* 三路互不依赖，同批取：串行要等三个子进程依次结束，并行只等最慢的一个。 */
+		const [branchData, configs, stashes] = await Promise.all([
 			getBranches(repo, showRemoteBranches, hideRemotes),
-			getRemoteNames(repo),
-			showStashes ? getStashes(repo) : Promise.resolve([]),
 			readConfig(repo),
+			showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]),
 		]);
+		/* 远程名多数可从配置派生；配置里没有任何远程时才回退读取。 */
+		const configured = remoteNamesFromConfig(configs);
+		const remoteNames = configured ?? await getRemoteNames(repo);
 		return {
 			branches: branchData.branches,
 			head: branchData.head,
@@ -55,6 +60,27 @@ export async function getRepoInfo(repo: string, showRemoteBranches: boolean, sho
 	} catch (error) {
 		return { branches: [], head: null, remotes: [], stashes: [], error: errorText(error) };
 	}
+}
+
+/**
+ * 从配置键值对派生远程名。
+ *
+ * 键形如 `remote.<name>.<子键>`，子键可以是 `url`、`pushurl`、`fetch` 等任意一种；名称取最后一个
+ * 点之前的部分，因此名称本身含点时同样解析正确。只要某个远程在配置里出现过任意一个子键就计入，
+ * 不因别的远程有 `url` 而漏掉只有 `fetch` 的远程。
+ *
+ * @param configs - `git config --list` 的键值对。
+ * @returns 升序去重的远程名；配置里没有任何 `remote.<name>.<子键>` 时为 null。
+ */
+function remoteNamesFromConfig(configs: Record<string, string>): string[] | null {
+	const names = new Set<string>();
+	for (const key of Object.keys(configs)) {
+		const match = /^remote\.(.+)\./.exec(key);
+		if (match === null) continue;
+		const name = match[1];
+		if (name !== '') names.add(name);
+	}
+	return names.size === 0 ? null : [...names].sort();
 }
 
 /**
@@ -300,14 +326,33 @@ export async function getCommitComparison(repo: string, fromHash: string, toHash
 /**
  * 读取仓库中的贮藏。
  *
+ * 先按文件系统判定 `logs/refs/stash` 是否存在：不存在时仓库必然没有贮藏，直接返回空列表，
+ * 不起子进程。存在时才按 reflog 枚举。
+ *
  * @param repo - 仓库路径。
  * @returns 贮藏列表；`refs/stash` 不存在时为空列表。
  */
 export async function getStashes(repo: string): Promise<StashEntry[]> {
+	const commonDir = await resolveGitCommonDir(repo);
+	if (commonDir === null || !(await stashLogExists(commonDir))) return [];
 	const result = await runGit(['reflog', '-z', `--format=${STASH_FORMAT}`, 'refs/stash', '--'], repo);
 	/* 仓库没有贮藏时 git 以非零退出。 */
 	if (result.code !== 0) return [];
 	return parseStashReflog(result.stdout);
+}
+
+/**
+ * 判定 git 公共目录下是否存在贮藏的 reflog 文件。
+ *
+ * @param commonDir - git 公共目录的绝对路径。
+ * @returns `logs/refs/stash` 是否为常规文件。
+ */
+async function stashLogExists(commonDir: string): Promise<boolean> {
+	try {
+		return (await stat(join(commonDir, 'logs', 'refs', 'stash'))).isFile();
+	} catch {
+		return false;
+	}
 }
 
 /**

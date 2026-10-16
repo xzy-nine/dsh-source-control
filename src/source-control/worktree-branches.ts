@@ -3,6 +3,8 @@
  *
  * 与 git 调用分离的纯逻辑，便于直接单测。
  */
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 /** 一条工作树记录。 */
 export interface WorktreeEntry {
@@ -77,4 +79,42 @@ export function foreignWorktreeBranches(
 		if (entry.branch !== null && entry.branch !== '') branches.add(entry.branch);
 	}
 	return branches;
+}
+
+/**
+ * 解析一个仓库的 git 公共目录（common dir）。
+ *
+ * 判定全部走文件系统，不调用 git：`.git` 为目录时即它本身；为文件时读其中的 `gitdir:` 指向；
+ * 该目录内存在 `commondir` 文件时按其中的相对路径再解析一层，得到链接工作树与子模块共用的公共目录。
+ *
+ * @param repo - 仓库根或工作树根路径。
+ * @returns 公共目录的绝对路径；路径不存在或格式不可识别时为 null。
+ */
+export async function resolveGitCommonDir(repo: string): Promise<string | null> {
+	const gitEntry = resolve(repo, '.git');
+	let gitDir: string;
+	try {
+		const info = await stat(gitEntry);
+		if (info.isDirectory()) {
+			gitDir = gitEntry;
+		} else if (info.isFile()) {
+			const pointer = await readFile(gitEntry, 'utf8');
+			const line = pointer.split(/\r?\n/).find((entry) => entry.startsWith('gitdir:'));
+			if (line === undefined) return null;
+			const target = line.slice('gitdir:'.length).trim();
+			if (target === '') return null;
+			gitDir = resolve(repo, target);
+		} else {
+			return null;
+		}
+	} catch {
+		return null;
+	}
+
+	try {
+		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
+		return common === '' ? gitDir : resolve(gitDir, common);
+	} catch {
+		return gitDir;
+	}
 }
