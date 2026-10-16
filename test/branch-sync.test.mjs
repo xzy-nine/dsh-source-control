@@ -98,7 +98,7 @@ function record(head, branch, upstream, track) {
  */
 function makeUpstreamRepo(localAhead, remoteAhead) {
 	const remote = makeTemp('gg-branch-remote-');
-	gitIn(tmpdir(), 'init', '-q', '--bare', remote);
+	gitIn(tmpdir(), 'init', '-q', '--bare', '-b', 'main', remote);
 
 	const repo = makeRepo('gg-branch-work-');
 	commitFile(repo, 'a.txt', 'one\n', 'base');

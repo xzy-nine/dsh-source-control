@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -344,7 +344,8 @@ test('loadReposSync：空数组返回空、path 原样回显、重复入参去�
 	const rootDir = makeTemp('gg-sync-');
 	const repoA = makeBareRepoAt(rootDir, 'Alpha-Repo');
 	const repoB = makeBareRepoAt(rootDir, 'beta');
-	const spelled = repoA.replace(/\//g, '\\') + '\\';
+	// 非规范写法：追加平台分隔符。该写法必须逐字回显，且仍能读到仓库。
+	const spelled = repoA + sep;
 	assert.notEqual(spelled, repoA, '入参多一个尾分隔符，验证逐字回显');
 
 	const results = await loadReposSync([spelled, repoB, spelled]);
