@@ -68,3 +68,34 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 export function throwIfError(error: string | null, describe: (error: string) => string = (text) => text): void {
 	if (error !== null) throw new Error(describe(error));
 }
+
+/**
+ * 取命令返回的 `error` 字段。
+ *
+ * @param payload - 宿主响应。
+ * @returns 错误文本；缺失或为空串时为 null。
+ */
+export function commandError(payload: Record<string, unknown>): string | null {
+	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+}
+
+/**
+ * 取命令返回的 `errors` 列表。
+ *
+ * @param payload - 宿主响应。
+ * @returns 其中的字符串项；字段缺失或类型不符时为空数组。
+ */
+export function errorList(payload: Record<string, unknown>): string[] {
+	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
+ * 取命令返回的第一条 `errors`。
+ *
+ * @param payload - 宿主响应。
+ * @returns 首条错误文本；无错误时为 null。
+ */
+export function firstError(payload: Record<string, unknown>): string | null {
+	const errors = errorList(payload);
+	return errors.length > 0 ? errors[0] : null;
+}

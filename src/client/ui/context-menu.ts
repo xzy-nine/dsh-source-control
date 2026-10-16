@@ -116,6 +116,27 @@ function labelOf(title: string, hasChildren: boolean, hint?: string): React.Reac
 }
 
 /**
+ * 把一条自建菜单项登记进 handlers / selectedIds，并给出它是否带二级菜单。
+ *
+ * @param item - 自建菜单项。
+ * @param id - 该项在所属层级里的 id。
+ * @param handlers - 收集 id 到点击回调的映射。
+ * @param selectedIds - 收集需要显示勾选的 id。
+ * @returns 已过滤可见性的子项。
+ */
+function registerItem(
+	item: ContextMenuItem,
+	id: string,
+	handlers: Map<string, () => void>,
+	selectedIds: string[],
+): ContextMenuItem[] {
+	const children = (item.children ?? []).filter((child) => child.visible !== false);
+	if (item.onClick !== undefined) handlers.set(id, item.onClick);
+	if (item.checked === true) selectedIds.push(id);
+	return children;
+}
+
+/**
  * 把自建菜单项转成 Menu 的一级条目，并把可点击项的 id 收集进 handlers。
  *
  * @param items - 自建菜单项。
@@ -135,9 +156,7 @@ function toEntries(
 			entries.push({ type: 'separator', id: `sep-${id}` });
 			return;
 		}
-		const children = (item.children ?? []).filter((child) => child.visible !== false);
-		if (item.onClick !== undefined) handlers.set(id, item.onClick);
-		if (item.checked === true) selectedIds.push(id);
+		const children = registerItem(item, id, handlers, selectedIds);
 		entries.push({
 			id,
 			label: labelOf(item.title ?? '', children.length > 0, item.hint),
@@ -169,9 +188,7 @@ function toSubItems(
 	items.forEach((item, index) => {
 		if (item.type === 'divider') return;
 		const id = `${prefix}${index}`;
-		const children = (item.children ?? []).filter((child) => child.visible !== false);
-		if (item.onClick !== undefined) handlers.set(id, item.onClick);
-		if (item.checked === true) selectedIds.push(id);
+		const children = registerItem(item, id, handlers, selectedIds);
 		entries.push({
 			id,
 			label: item.hint === undefined ? (item.title ?? '') : React.createElement('span', { title: item.hint }, item.title ?? ''),

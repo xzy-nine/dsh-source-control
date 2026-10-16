@@ -6,7 +6,7 @@
  */
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
+import { forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
 import { resolveGitCommonDir, readHeadRef } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -358,22 +358,13 @@ async function stashLogExists(commonDir: string): Promise<boolean> {
  */
 export async function getStatus(repo: string): Promise<StatusFiles> {
 	const stdout = await gitOrThrow(['status', '-s', '--untracked-files=all', '--porcelain', '-z'], repo);
-	const fields = stdout.split('\0');
 	const deleted: string[] = [];
 	const untracked: string[] = [];
-	let index = 0;
-	while (index < fields.length) {
-		const record = fields[index];
-		index++;
-		if (record === undefined || record.length < 4) break;
-		const indexStatus = record.slice(0, 1);
-		const worktreeStatus = record.slice(1, 2);
-		const path = record.slice(3);
-		if (indexStatus === 'D' || worktreeStatus === 'D') deleted.push(path);
-		else if (indexStatus === '?' || worktreeStatus === '?') untracked.push(path);
-		/* 重命名与复制的记录后紧跟一条原路径记录。 */
-		if (indexStatus === 'R' || indexStatus === 'C' || worktreeStatus === 'R' || worktreeStatus === 'C') index++;
-	}
+	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
+	forEachStatusRecord(stdout, Number.POSITIVE_INFINITY, (record) => {
+		if (record.index === 'D' || record.worktree === 'D') deleted.push(record.path);
+		else if (record.index === '?' || record.worktree === '?') untracked.push(record.path);
+	}, true);
 	return { deleted, untracked };
 }
 

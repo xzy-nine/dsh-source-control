@@ -1,7 +1,7 @@
 /**
  * 标签的创建与删除。
  */
-import { callApi, callApiRaw } from './http.ts';
+import { callApi, callApiRaw, commandError, firstError } from './http.ts';
 
 
 /**
@@ -18,8 +18,7 @@ import { callApi, callApiRaw } from './http.ts';
  */
 export async function addTag(cwd: string, tagName: string, commitHash: string, type = 0, message = '', force = false, pushToRemote: string | null = null): Promise<string | null> {
 	const payload = await callApi(cwd, { command: 'addTag', tagName, commitHash, type, message, force, pushToRemote });
-	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
-	return errors.length > 0 ? errors[0] : null;
+	return firstError(payload);
 }
 
 /**
@@ -32,7 +31,7 @@ export async function addTag(cwd: string, tagName: string, commitHash: string, t
  */
 export async function deleteTag(cwd: string, tagName: string, deleteOnRemote: string | null = null): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'deleteTag', tagName, deleteOnRemote });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 

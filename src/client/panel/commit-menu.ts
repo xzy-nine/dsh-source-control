@@ -96,6 +96,34 @@ function shortBranchName(name: string): string {
 }
 
 /**
+ * 把一项远程分支操作渲染成菜单项：先问本地分支名，确认后执行。
+ *
+ * @param ctx - 构建上下文。
+ * @param meta - 操作元数据，取菜单名称。
+ * @param title - 输入框标题。
+ * @param act - 拿到本地分支名后的执行体。
+ * @param placeholder - 输入框占位提示。
+ * @returns 菜单项；没有引用目标时为 null。
+ */
+function branchFromRemoteItem(
+	ctx: MenuContext,
+	meta: MenuActionMeta,
+	title: string,
+	act: (localName: string) => void,
+	placeholder = '',
+): ContextMenuItem | null {
+	if (ctx.ref === null) return null;
+	const short = shortBranchName(ctx.ref.name);
+	return {
+		title: meta.title,
+		onClick: async () => {
+			const localName = await showText({ title, label: '本地分支名', value: short, placeholder });
+			if (localName !== null && localName !== '') act(localName);
+		},
+	};
+}
+
+/**
  * 取一项标签操作的目标标签。
  *
  * 引用菜单右键时只有被点击的那个标签；提交行右键时是该提交上的全部标签。
@@ -291,32 +319,14 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			],
 		};
 	},
-	checkoutRemoteBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		const short = shortBranchName(name);
-		return {
-			title: meta.title,
-			onClick: async () => {
-				const localName = await showText({ title: '检出远程分支', label: '本地分支名', value: short, placeholder: 'feature/xxx' });
-				if (localName !== null && localName !== '') void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localName, name), checkoutFailureText); });
-			},
-		};
-	},
-	fetchIntoLocalBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		const short = shortBranchName(name);
-		return {
-			title: meta.title,
-			onClick: async () => {
-				const localName = await showText({ title: '创建本地分支', label: '本地分支名', value: short });
-				if (localName !== null && localName !== '') {
-					void ctx.deps.run('history', async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, ctx.ref!.remote ?? '', short, localName, false)); });
-				}
-			},
-		};
-	},
+	checkoutRemoteBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '检出远程分支', (localName) => {
+		const name = ctx.ref!.name;
+		void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localName, name), checkoutFailureText); });
+	}, 'feature/xxx'),
+	fetchIntoLocalBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '创建本地分支', (localName) => {
+		const ref = ctx.ref!;
+		void ctx.deps.run('history', async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, ref.remote ?? '', shortBranchName(ref.name), localName, false)); });
+	}),
 	mergeRemoteIntoCurrent: (ctx, meta) => {
 		if (ctx.ref === null) return null;
 		const name = ctx.ref.name;
