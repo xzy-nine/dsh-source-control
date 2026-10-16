@@ -3,14 +3,20 @@
  *
  * 持久化统一落在宿主（见 source-control/state-store.ts）；本模块是客户端入口，并在首次
  * 连接时把浏览器 localStorage / sessionStorage 里的旧数据搬到宿主，搬完打标记不再重复。
+ * 提交信息草稿是会话级数据，不经本模块迁移。
  */
 import { callApi } from './http.ts';
 
 /** 迁移完成标记：记在宿主，换浏览器不会重复迁移。 */
 const MIGRATED_KEY = 'dsh-source-control-migrated';
 
-/** 需要从浏览器搬到宿主的 localStorage 键前缀。 */
-const LEGACY_LOCAL_PREFIXES = ['dsh-source-control-', 'ggg-commit-msg:', 'dsh-source-control-ref-filter:'];
+/**
+ * 需要从浏览器搬到宿主的 localStorage 键前缀。
+ *
+ * 提交信息草稿（`ggg-commit-msg:`）不在其中：草稿是会话级数据，由调用方按仓库键经
+ * `panel/storage.ts` 的会话级读写自行取回，不迁往宿主。
+ */
+const LEGACY_LOCAL_PREFIXES = ['dsh-source-control-', 'dsh-source-control-ref-filter:'];
 
 /**
  * 读取宿主的全部状态键值。
@@ -35,6 +41,37 @@ export async function readState(cwd: string, signal?: AbortSignal): Promise<Reco
  */
 export async function writeState(cwd: string, key: string, value: unknown): Promise<void> {
 	await callApi(cwd, { command: 'writeState', key, value });
+}
+
+/**
+ * 取回一次此前落在宿主的提交信息草稿。
+ *
+ * 草稿改为会话级后不再写入宿主，但旧版本可能已把草稿持久化在宿主；调用方在首次挂载时用本函数
+ * 取回一次：键值为非空字符串时返回该文本。本函数只读宿主键，不删除；调用方在草稿落到会话存储
+ * 后调用 {@link clearPersistedDraft} 删除旧键，删除失败不影响已取回的文本。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param key - 宿主状态键。
+ * @returns 取回的草稿文本；无草稿时返回 null。
+ */
+export async function takePersistedDraft(cwd: string, key: string): Promise<string | null> {
+	const entries = await readState(cwd);
+	const value = entries[key];
+	if (typeof value !== 'string' || value === '') return null;
+	return value;
+}
+
+/**
+ * 删除宿主持久化里的一个键。
+ *
+ * 草稿落到会话存储后由调用方用它清掉旧版本遗留在宿主的草稿键，避免旧键长期滞留。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param key - 宿主状态键。
+ * @returns 无。
+ */
+export async function clearPersistedDraft(cwd: string, key: string): Promise<void> {
+	await writeState(cwd, key, null);
 }
 
 /**
@@ -66,8 +103,10 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 /**
  * 把浏览器里的旧持久化数据搬到宿主，只做一次。
  *
- * 旧版本把设置、布局、引用筛选与提交信息草稿存在 localStorage / sessionStorage；迁移后统一
- * 由宿主落盘。已在宿主标记过则跳过；搬完清掉浏览器里的旧键，避免下次重复读取。
+ * 旧版本把设置、布局与引用筛选存在 localStorage / sessionStorage；迁移后统一由宿主落盘。
+ * 提交信息草稿是会话级数据，不在 {@link LEGACY_LOCAL_PREFIXES} 内，由调用方经
+ * `panel/storage.ts` 的 migrateLegacyDrafts 转入会话存储，不进宿主。已在宿主标记过则跳过；
+ * 搬完清掉浏览器里的旧键，避免下次重复读取。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。

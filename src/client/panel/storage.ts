@@ -1,12 +1,17 @@
 /**
- * 客户端存储：宿主侧持久化 + 内存缓存。
+ * 客户端存储：宿主侧持久化 + 内存缓存，以及会话级存储。
  *
- * 数据统一落在宿主（`$DSH_HOME/dsh-source-control/`），本模块只在首屏预取一次，之后读走内存
- * 缓存；写更新缓存并异步落盘。
+ * 两级存储：
+ * - 宿主持久化：数据落在宿主（`$DSH_HOME/dsh-source-control/`），本模块只在首屏预取一次，
+ *   之后读走内存缓存；写更新缓存并异步落盘。键值对读写用 {@link loadValue} / {@link saveValue}。
+ * - 会话级：数据落在浏览器 sessionStorage，直读直写，不经宿主也不进内存缓存。读写用
+ *   {@link loadSessionValue} / {@link saveSessionValue} / {@link clearSessionValue}。
  *
  * 预取是异步的，而 `useState(() => loadValue(...))` 在挂载时同步执行，因此首次渲染读到的是回退值，
  * 且 useState 的初始值不会随预取完成而重算。调用方须在预取完成后把状态重新按真实值初始化，
  * 否则每次进入都会显示默认值（表现为「设置每次都被重置」）。
+ *
+ * 本模块是客户端唯一的存储出口，其它模块不直接访问 sessionStorage。
  */
 import { readState, writeState } from '../api/index.ts';
 /** 内存缓存：宿主状态的镜像。 */
@@ -119,10 +124,171 @@ export function saveValue(key: string, value: unknown): void {
 /**
  * 清掉缓存，使下次预取重新读取。
  *
+ * 只涉及宿主持久化的内存镜像，不影响会话级存储。
+ *
  * @returns 无。
  */
 export function resetStorageCache(): void {
 	cache = {};
 	primed = false;
 	priming = null;
+}
+
+/** 提交信息草稿的键前缀。 */
+const DRAFT_KEY_PREFIX = 'ggg-commit-msg:';
+
+/**
+ * 按仓库根路径构造提交信息草稿的会话键。
+ *
+ * @param repoPath - 仓库根绝对路径。
+ * @returns 键 `ggg-commit-msg:<repoPath>`。
+ */
+export function draftKeyOf(repoPath: string): string {
+	return `${DRAFT_KEY_PREFIX}${repoPath}`;
+}
+
+/**
+ * 判断一个键是否为提交信息草稿的会话键。
+ *
+ * @param key - 存储键。
+ * @returns 是草稿键时为 true。
+ */
+function isDraftKey(key: string): boolean {
+	return key.startsWith(DRAFT_KEY_PREFIX);
+}
+
+/**
+ * 枚举一个 store 里的全部键。
+ *
+ * 优先用 `key(index)` 按下标遍历；store 未提供该方法时退回 `Object.keys`。
+ *
+ * @param store - localStorage 或 sessionStorage。
+ * @returns 键列表。
+ */
+function storeKeys(store: Storage): string[] {
+	const keys: string[] = [];
+	try {
+		if (typeof store.key === 'function') {
+			for (let at = 0; at < store.length; at += 1) {
+				const key = store.key(at);
+				if (key !== null) keys.push(key);
+			}
+			return keys;
+		}
+		return Object.keys(store);
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * 把 localStorage / sessionStorage 里的提交信息草稿转入会话存储。
+ *
+ * 草稿键为 `ggg-commit-msg:<仓库根绝对路径>`，转入目标即 sessionStorage 的同名键：
+ * 来源已是 sessionStorage 时等同保留。会话键是转入目标，不删除；只在会话键有值后清掉
+ * localStorage 里的同名残留。不写宿主。sessionStorage 不可用时草稿留在原处，下次进入重试。
+ *
+ * @returns 无。
+ */
+export function migrateLegacyDrafts(): void {
+	const store = sessionStore();
+	if (store === null) return;
+	const local = typeof localStorage === 'undefined' ? null : localStorage;
+	const drafts: Array<[string, string]> = [];
+	try {
+		for (const source of local === null ? [store] : [local, store]) {
+			for (const key of storeKeys(source)) {
+				if (!isDraftKey(key)) continue;
+				const raw = source.getItem(key);
+				if (raw === null) continue;
+				drafts.push([key, raw]);
+			}
+		}
+	} catch {
+		/* 枚举失败时保留原键，下次进入重试 */
+	}
+	for (const [key, raw] of drafts) {
+		try {
+			if (store.getItem(key) === null) store.setItem(key, raw);
+		} catch {
+			/* 转入失败时保留原键，下次进入重试 */
+		}
+	}
+	try {
+		for (const [key] of drafts) {
+			// 会话键已有值才清 localStorage 残留；会话键本身是转入目标，不删除。
+			if (store.getItem(key) !== null) local?.removeItem(key);
+		}
+	} catch {
+		/* 清理失败时保留旧键，下次进入重试 */
+	}
+}
+
+/**
+ * 取 sessionStorage；不存在时返回 null。
+ *
+ * @returns sessionStorage 或 null。
+ */
+function sessionStore(): Storage | null {
+	return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+}
+
+/**
+ * 读取会话级存储的一个键。
+ *
+ * sessionStorage 不存在、访问抛错或值不是合法 JSON 时一律给回退值。
+ *
+ * 只接受解析结果为字符串的值：会话级状态只有草稿，非字符串值（如数字）一律回退。
+ *
+ * @param key - 键。
+ * @param fallback - 回退值。
+ * @returns 值或回退值。
+ */
+export function loadSessionValue<T>(key: string, fallback: T): T {
+	try {
+		const store = sessionStore();
+		if (store === null) return fallback;
+		const raw = store.getItem(key);
+		if (raw === null) return fallback;
+		const parsed = JSON.parse(raw) as unknown;
+		return typeof parsed === 'string' ? parsed as T : fallback;
+	} catch {
+		return fallback;
+	}
+}
+
+/**
+ * 写入会话级存储的一个键。
+ *
+ * 值为 null / undefined 时删除该键；sessionStorage 不存在或访问抛错时静默。
+ *
+ * @param key - 键。
+ * @param value - 值。
+ * @returns 无。
+ */
+export function saveSessionValue(key: string, value: unknown): void {
+	try {
+		const store = sessionStore();
+		if (store === null) return;
+		if (value === null || value === undefined) store.removeItem(key);
+		else store.setItem(key, JSON.stringify(value));
+	} catch {
+		/* 会话存储不可用时静默 */
+	}
+}
+
+/**
+ * 删除会话级存储的一个键。
+ *
+ * sessionStorage 不存在或访问抛错时静默。
+ *
+ * @param key - 键。
+ * @returns 无。
+ */
+export function clearSessionValue(key: string): void {
+	try {
+		sessionStore()?.removeItem(key);
+	} catch {
+		/* 会话存储不可用时静默 */
+	}
 }

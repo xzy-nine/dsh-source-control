@@ -6,6 +6,9 @@
  * 该类型未注册、被设置页关闭，或本插件的差异描述无法换算成这两种引用时，本模块返回失败，
  * 调用方回退到本插件自己的差异页。
  *
+ * 仓库根的层级也是一条回退判据：better-sidebar 只认识会话工作区自身所在的仓库与它的
+ * 直接子目录仓库，更深的仓库交给它会把命令跑在别的仓库上（见 {@link betterSidebarKnowsRepo}）。
+ *
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
 
@@ -66,6 +69,47 @@ export interface DiffOpenScope {
 
 /** 非空字符串，否则 undefined。 */
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+
+/** 统一分隔符、去掉尾斜杠与冗余段，便于按路径层级比较。 */
+const normalizePath = (path: string): string => {
+	const unified = path.replace(/\\/g, '/').replace(/\/+$/, '');
+	const drive = /^[a-zA-Z]:/.test(unified);
+	const segments: string[] = [];
+	for (const segment of unified.split('/')) {
+		if (segment === '' || segment === '.') continue;
+		if (segment === '..') { segments.pop(); continue; }
+		segments.push(segment);
+	}
+	return `${drive ? '' : '/'}${segments.join('/')}`;
+};
+
+/** 路径比较用的标识；盘符路径按 Windows 规则忽略大小写。 */
+const pathKey = (path: string): string => (/^[a-zA-Z]:/.test(normalizePath(path)) ? normalizePath(path).toLowerCase() : normalizePath(path));
+
+/**
+ * better-sidebar 能否把 git 命令定位到该仓库。
+ *
+ * 它按「会话工作区根所在的仓库 + 工作区根的直接子目录仓库」发现仓库；选中仓库不在这个
+ * 集合里时，它会**静默回退到发现列表的第一项**，于是差异落到别的仓库上：工作区差异显示
+ * 为「没有文本差异」，提交差异报 `bad object <哈希>`（该哈希只存在于真正选中的仓库）。
+ *
+ * 因此只在仓库就是工作区根本身或它的直接子目录时交给它；更深的层级回退到本插件自己的
+ * 差异页，那里的仓库根由本插件解析，不受此限。
+ *
+ * @param workspaceRoot - 会话工作区根；未知时传 undefined。
+ * @param repoRoot - 选中仓库的绝对路径。
+ * @returns 可以交给 better-sidebar 时为 true。
+ */
+export function betterSidebarKnowsRepo(workspaceRoot: string | undefined, repoRoot: string | undefined): boolean {
+	if (workspaceRoot === undefined || repoRoot === undefined) return false;
+	const root = pathKey(workspaceRoot);
+	const target = pathKey(repoRoot);
+	if (root === '' || target === '') return false;
+	if (target === root) return true;
+	if (!target.startsWith(`${root}/`)) return false;
+	// 直接子目录：根之后只剩一段。
+	return !target.slice(root.length + 1).includes('/');
+}
 
 /** 路径末段，用作页标题。 */
 const baseName = (path: string): string => {
@@ -160,6 +204,9 @@ export function diffTitleOf(ref: SidebarDiffRef): string {
 /**
  * 在 better-sidebar 的差异页中打开一个差异目标。
  *
+ * 仓库根比工作区根深一级以上时报告回退：它会把命令跑在别的仓库上（见
+ * {@link betterSidebarKnowsRepo}）。
+ *
  * @param service - {@link resolveBetterSidebarDiff} 的返回值。
  * @param target - 本插件的差异描述。
  * @param scope - 会话作用域；`sessionId` 必填，`cwd` 供其内部按会话解析路径。
@@ -171,6 +218,8 @@ export function openDiffInBetterSidebar(
 	scope: DiffOpenScope,
 ): boolean {
 	if (service === null) return false;
+	// 工作区差异与提交差异都以所选仓库根为准；层级过深时它的解析会落到别的仓库。
+	if (!betterSidebarKnowsRepo(scope.cwd, text(target?.repoRoot))) return false;
 	const ref = toSidebarDiffRef(target);
 	if (ref === null) return false;
 	try {

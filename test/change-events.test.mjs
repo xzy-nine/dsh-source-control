@@ -4,9 +4,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	AUTO_REFRESH_COOLDOWN_MS, CLEANUP_INTERVAL_MS, FALLBACK_POLL_INTERVAL_MS,
+	AUTO_REFRESH_COOLDOWN_MS, CLEANUP_INTERVAL_MS, FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS,
+	FALLBACK_STABLE_OBSERVATIONS,
 	autoFetchPeriodMs, hasRepositoryChange, isAutoRefreshDue, isCacheExpired, repositoryRelativePath, settledFileChanges,
-	shouldFallbackRefresh,
+	shouldFallbackRefresh, stableObservationsRequired,
 } from '../src/client/panel/change-events.ts';
 
 /** 一次工具调用事件。 */
@@ -92,6 +93,16 @@ test('缓存未到清理周期时保留，到达后过期', () => {
 
 test('兜底轮询间隔明显低于事件响应节拍', () => {
 	assert.ok(FALLBACK_POLL_INTERVAL_MS >= AUTO_REFRESH_COOLDOWN_MS * 10);
+});
+
+test('兜底轮询快档一次观测即可重载，慢档要求稳定观测', () => {
+	assert.equal(stableObservationsRequired(true), 1);
+	assert.equal(stableObservationsRequired(false), FALLBACK_STABLE_OBSERVATIONS);
+});
+
+test('兜底轮询快档间隔为正且短于慢档', () => {
+	assert.ok(FALLBACK_POLL_ACTIVE_MS > 0);
+	assert.ok(FALLBACK_POLL_ACTIVE_MS < FALLBACK_POLL_INTERVAL_MS);
 });
 
 test('兜底轮询首次读取不重载', () => {

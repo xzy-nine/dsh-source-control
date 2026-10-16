@@ -7,14 +7,25 @@
 import type { WorkingTreeEntry } from '../shared/types.ts';
 
 /**
- * 是否命中给定路径集合。
+ * 是否命中给定路径集合：当前路径与重命名/复制前的路径都算命中。
  *
  * @param entry - 工作区条目。
  * @param paths - 目标路径集合。
  * @returns 命中时为 true。
  */
 function matches(entry: WorkingTreeEntry, paths: ReadonlySet<string>): boolean {
-	return paths.has(entry.path);
+	if (paths.has(entry.path)) return true;
+	return typeof entry.origPath === 'string' && paths.has(entry.origPath);
+}
+
+/**
+ * 工作区变更的签名：路径与状态码逐条拼接。
+ *
+ * @param entries - 工作区条目。
+ * @returns 签名文本。
+ */
+export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
+	return entries.map((entry) => `${entry.path}:${entry.index}${entry.worktree}`).join('\n');
 }
 
 /**

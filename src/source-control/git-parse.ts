@@ -33,15 +33,46 @@ export const DETAILS_FORMAT = [
 	'%B',
 ].join('%x00');
 
-/** 标签详情的字段数：对象名、打标签者名、邮箱、时间、签名、内容。 */
-export const TAG_FIELD_COUNT = 6;
-/** 标签详情的格式串。`for-each-ref` 的转义是 `%xx`，与 `git log` 的 `%x00` 不同。 */
-export const TAG_FORMAT = ['%(objectname)', '%(taggername)', '%(taggeremail)', '%(taggerdate:unix)', '%(contents:signature)', '%(contents)'].join('%00');
-
 /** 引用列表的字段数：全名、对象名、解引用对象名、对象类型。 */
 export const REF_FIELD_COUNT = 4;
 /** 引用列表的格式串。 */
 export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(objecttype)'].join('%00');
+
+/** 分支同步的格式串；`%(HEAD)` 标出当前分支。 */
+export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+
+/**
+ * 引用与分支合并读取的字段数：HEAD 标记、全名、短名、对象名、解引用对象名、对象类型、符号引用目标。
+ */
+export const REF_BRANCH_FIELD_COUNT = 7;
+
+/**
+ * 引用与分支合并读取的格式串。
+ *
+ * 引用集合与分支列表读的是同一批引用，只是取值不同；一次枚举即可同时得到两者，避免同一次
+ * 首屏为此起两个子进程。
+ */
+export const REF_BRANCH_FORMAT = [
+	'%(HEAD)', '%(refname)', '%(refname:short)', '%(objectname)', '%(*objectname)', '%(objecttype)', '%(symref)',
+].join('%00');
+
+/** 一次引用枚举同时得到的引用集合与分支列表。 */
+export interface RefsAndBranches {
+	/** 引用集合；`head` 由调用方按 `HEAD` 文件补入。 */
+	readonly refs: RefData;
+	/** 分支名列表，当前分支在首位。 */
+	readonly branches: string[];
+	/** 当前分支名；分离头指针为 null。 */
+	readonly branch: string | null;
+}
+
+/** 一个仓库的分支同步状态。 */
+export interface BranchSync {
+	readonly branch: string | null;
+	readonly upstream: string | null;
+	readonly ahead: number;
+	readonly behind: number;
+}
 
 /** 未提交伪提交的哈希。 */
 export const UNCOMMITTED = '*';
@@ -93,16 +124,6 @@ export interface DiffNumStatRecord {
 export interface StatusFiles {
 	readonly deleted: string[];
 	readonly untracked: string[];
-}
-
-/** 标签详情（解析结果）。 */
-export interface TagInfo {
-	readonly hash: string;
-	readonly taggerName: string;
-	readonly taggerEmail: string;
-	readonly taggerDate: number;
-	readonly message: string;
-	readonly signed: boolean;
 }
 
 /**
@@ -234,6 +255,79 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 		}
 	}
 	return { head: null, heads, tags, remotes };
+}
+
+/**
+ * 一次枚举同时解析引用集合与分支列表。
+ *
+ * 与 {@link parseRefs} 同一套记录解析，另按 `%(HEAD)` 标出当前分支、按 `%(refname:short)` 给出
+ * 分支名。远程 HEAD 是指向分支的符号引用，不作为可操作的分支。
+ *
+ * @param stdout - `git for-each-ref --format=<REF_BRANCH_FORMAT>` 的输出。
+ * @param hideRemotes - 要隐藏的远程名。
+ * @returns 引用集合、分支名列表与当前分支名。
+ */
+export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
+	const heads: RefEntry[] = [];
+	const tags: RefTag[] = [];
+	const remotes: RefEntry[] = [];
+	const branches: string[] = [];
+	const hidePrefixes = hideRemotes.map((remote) => `refs/remotes/${remote}/`);
+	let branch: string | null = null;
+
+	for (const line of stdout.split('\n')) {
+		if (line === '') continue;
+		const fields = line.split(FIELD);
+		if (fields.length < REF_BRANCH_FIELD_COUNT) continue;
+		const isHead = fields[0].trim() === '*';
+		const refname = fields[1];
+		const short = fields[2];
+		const objectname = fields[3];
+		const peeled = fields[4];
+		const symref = fields[6];
+
+		if (refname.startsWith('refs/heads/')) {
+			const name = refname.slice('refs/heads/'.length);
+			heads.push({ hash: objectname, name });
+			if (isHead) {
+				branch = name;
+				branches.unshift(name);
+			} else {
+				branches.push(name);
+			}
+			continue;
+		}
+		if (refname.startsWith('refs/tags/')) {
+			const annotated = peeled !== '';
+			tags.push({
+				hash: annotated ? peeled : objectname,
+				name: refname.slice('refs/tags/'.length),
+				annotated,
+			});
+			continue;
+		}
+		if (!refname.startsWith('refs/remotes/')) continue;
+		const name = refname.slice('refs/remotes/'.length);
+		/* 远程 HEAD 是指向分支的符号引用，不是可操作的分支。 */
+		if (symref !== '') continue;
+		if (hidePrefixes.some((prefix) => refname.startsWith(prefix))) continue;
+		remotes.push({ hash: objectname, name });
+		if (showRemoteBranch(short)) branches.push(short);
+	}
+
+	return { refs: { head: null, heads, tags, remotes }, branches, branch };
+}
+
+/**
+ * 远程分支是否计入分支列表。
+ *
+ * 远程 HEAD（`<远程>/HEAD`）是符号引用，不出现在列表里。
+ *
+ * @param short - 引用的短名。
+ * @returns 计入时为 true。
+ */
+function showRemoteBranch(short: string): boolean {
+	return short !== '' && !short.endsWith('/HEAD');
 }
 
 /**
@@ -439,87 +533,53 @@ export function parseSignatureStatus(code: string): SignatureStatus | null {
 }
 
 /**
- * 解析 `git for-each-ref refs/tags/<name> --format=<TAG_FORMAT>` 的输出。
+ * 解析 `git for-each-ref --format=BRANCH_SYNC_FORMAT refs/heads` 的输出。
+ *
+ * 每行一条记录，字段以 NUL 分隔；第一字段为 `*` 的记录是当前分支。当前分支没有上游、
+ * 上游引用已被删除（track 为 `gone`）或计数缺失时，上游为 null、领先与落后为 0。
  *
  * @param stdout - git 的标准输出。
- * @returns 标签信息；无记录时为 null。
+ * @returns 当前分支的同步状态；无当前分支记录时分支与上游为 null、计数为 0。
  */
-export function parseTagInfo(stdout: string): TagInfo | null {
-	if (stdout.trim() === '') return null;
-	const fields = stdout.split(FIELD);
-	if (fields.length < TAG_FIELD_COUNT) return null;
-	const signature = fields[TAG_FIELD_COUNT - 2];
-	const rawEmail = fields[2];
-	const contents = fields.slice(TAG_FIELD_COUNT - 1).join(FIELD);
-	const message = (signature === '' ? contents : contents.replace(signature, ''));
-	return {
-		hash: fields[0],
-		taggerName: fields[1],
-		taggerEmail: rawEmail.replace(/^</, '').replace(/>$/, ''),
-		taggerDate: Number.parseInt(fields[3], 10),
-		message: removeTrailingBlankLines(message.split(/\r\n|\r|\n/)).join('\n'),
-		signed: signature !== '',
-	};
-}
-
-/** GPG 状态码到签名状态的映射。 */
-const GPG_STATUS: Readonly<Record<string, { status: SignatureStatus; uid: boolean }>> = {
-	GOODSIG: { status: 'G', uid: true },
-	BADSIG: { status: 'B', uid: true },
-	ERRSIG: { status: 'E', uid: false },
-	EXPSIG: { status: 'X', uid: true },
-	EXPKEYSIG: { status: 'Y', uid: true },
-	REVKEYSIG: { status: 'R', uid: true },
-};
-
-/**
- * 解析 `git verify-tag --raw` 的 GPG 状态行。
- *
- * 信任级别为未定义或从不信任时，有效签名降级为「有效但有效性未知」。
- *
- * @param output - 命令的 stderr 或 stdout。
- * @returns 签名；无法解析时为 null。
- */
-export function parseTagSignature(output: string): Signature | null {
-	let signature: { status: SignatureStatus; key: string; signer: string } | null = null;
-	let trustLevel = '';
-	for (const line of output.split(/\r\n|\r|\n/)) {
-		if (!line.startsWith('[GNUPG:] ')) continue;
-		const parts = line.split(' ');
-		const details = GPG_STATUS[parts[1]];
-		if (details !== undefined) {
-			if (signature !== null) return null;
-			signature = {
-				status: details.status,
-				key: parts[2] ?? '',
-				signer: details.uid ? parts.slice(3).join(' ') : '',
-			};
-		} else if ((parts[1] ?? '').startsWith('TRUST_')) {
-			trustLevel = parts[1];
-		}
+export function parseBranchSync(stdout: string): BranchSync {
+	const empty: BranchSync = { branch: null, upstream: null, ahead: 0, behind: 0 };
+	for (const line of stdout.split('\n')) {
+		if (line === '') continue;
+		const fields = line.split(FIELD);
+		if (fields[0] !== '*') continue;
+		const branch = fields[1] ?? '';
+		if (branch === '') return empty;
+		const upstreamName = fields[2] ?? '';
+		const track = fields[3] ?? '';
+		if (upstreamName === '' || track === 'gone') return { branch, upstream: null, ahead: 0, behind: 0 };
+		const ahead = /ahead (\d+)/.exec(track);
+		const behind = /behind (\d+)/.exec(track);
+		return {
+			branch,
+			upstream: upstreamName,
+			ahead: ahead === null ? 0 : Number.parseInt(ahead[1], 10),
+			behind: behind === null ? 0 : Number.parseInt(behind[1], 10),
+		};
 	}
-	if (signature === null) return null;
-	if (signature.status === 'G' && (trustLevel === 'TRUST_UNDEFINED' || trustLevel === 'TRUST_NEVER')) {
-		signature = { ...signature, status: 'U' };
-	}
-	return signature;
+	return empty;
 }
 
 /**
  * 把原始提交记录、引用与贮藏组装成提交图。
  *
- * 顺序与边界行为：先按 `maxCommits + 1` 判定是否还有更多并丢掉多取的一条；HEAD 在列表内
- * 且存在未提交变更时，在最前插入哈希为 `*` 的伪提交；随后插入不在列表中的贮藏；最后把
- * 分支、标签与远程分支标注到对应提交上。
+ * 顺序与边界行为：先按 `maxCommits + 1` 判定是否还有更多并丢掉多取的一条；随后插入不在
+ * 列表中的贮藏；最后把分支、标签与远程分支标注到对应提交上。
+ *
+ * 哈希为 `*` 的未提交伪提交不在这里插入：它需要工作区条目数，而读取工作区要起一次
+ * `git status`，提交图的返回时刻会因此取决于工作区读取。该行由客户端按同一轮的工作区
+ * 快照补出，见 `client/panel/commit-diff.ts` 的 `withUncommittedCount`。
  *
  * @param records - `git log` 的原始记录，已按 `maxCommits + 1` 取回。
  * @param refs - 引用集合。
  * @param stashes - 仓库中的贮藏。
  * @param remotes - 已知远程名，用于给远程分支标注所属远程。
- * @param uncommittedChanges - 未提交变更数；为 0 时不插入伪提交。
  * @param showTags - 是否标注标签。
  * @param maxCommits - 请求的提交数上限。
- * @param now - 伪提交的时间（秒）；默认取当前时间。
  * @returns 提交图。
  */
 export function assembleCommits(
@@ -527,24 +587,12 @@ export function assembleCommits(
 	refs: RefData,
 	stashes: readonly StashEntry[],
 	remotes: readonly string[],
-	uncommittedChanges: number,
 	showTags: boolean,
 	maxCommits: number,
-	now: number = Math.round(Date.now() / 1000),
 ): CommitGraph {
 	const commits: LogRecord[] = [...records];
 	const moreCommitsAvailable = commits.length === maxCommits + 1;
 	if (moreCommitsAvailable) commits.pop();
-
-	if (refs.head !== null && uncommittedChanges > 0) {
-		const headIndex = commits.findIndex((commit) => commit.hash === refs.head);
-		if (headIndex !== -1) {
-			commits.unshift({
-				hash: UNCOMMITTED, parents: [refs.head], author: '*', email: '', date: now,
-				message: `Uncommitted Changes (${uncommittedChanges})`,
-			});
-		}
-	}
 
 	const nodes: CommitNode[] = commits.map((commit) => ({
 		...commit, heads: [], tags: [], remotes: [], stash: null,

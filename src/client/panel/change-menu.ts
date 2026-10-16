@@ -30,8 +30,8 @@ export interface ChangeMenuDeps {
 	readonly onDiscardFolder: (folderPath: string) => void;
 	/** 丢弃该分组内全部改动。 */
 	readonly onDiscardGroup: () => void;
-	/** 打开文件。 */
-	readonly onOpen: (entry: WorkingTreeEntry, isNew: boolean) => void;
+	/** 按整文件打开文件行对应的文件。 */
+	readonly onOpenFile: (entry: WorkingTreeEntry) => void;
 	/** 把路径加入最近的 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;
 	/** 把路径加入本地排除文件。 */
@@ -52,8 +52,6 @@ export interface ChangeMenuContext {
 	readonly paths: readonly string[];
 	/** 文件行的条目；文件夹行与分组菜单为 null。 */
 	readonly entry: WorkingTreeEntry | null;
-	/** 文件行是否对应新增文件（没有旧侧内容，按普通文件打开）。 */
-	readonly isNew: boolean;
 	/** 文件行是否是未跟踪文件。 */
 	readonly untracked: boolean;
 }
@@ -66,7 +64,6 @@ export interface ChangeMenuContext {
  * @returns 菜单名称；已代入路径数量。
  */
 function labelOf(meta: ChangeMenuActionMeta, ctx: ChangeMenuContext): string {
-	if (ctx.target === 'file' && ctx.isNew) return meta.newTitle;
 	return titleOf(meta, ctx.target).replace('{count}', String(ctx.paths.length));
 }
 
@@ -79,7 +76,7 @@ function disabledFor(ctx: ChangeMenuContext): boolean {
 const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMenuActionMeta) => ContextMenuItem | null>> = {
 	open: (ctx, meta) => (ctx.entry === null
 		? null
-		: { title: labelOf(meta, ctx), onClick: () => ctx.deps.onOpen(ctx.entry as WorkingTreeEntry, ctx.isNew) }),
+		: { title: labelOf(meta, ctx), onClick: () => ctx.deps.onOpenFile(ctx.entry as WorkingTreeEntry) }),
 	stage: (ctx, meta) => (ctx.deps.staged
 		? null
 		: { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => ctx.deps.onStage(ctx.paths) }),

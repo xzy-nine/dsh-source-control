@@ -6,8 +6,7 @@
 				"file"
 			],
 			"group": "open",
-			"title": "打开",
-			"newTitle": "打开文件"
+			"title": "打开文件"
 		},
 		{
 			"id": "stage",

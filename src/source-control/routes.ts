@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import {
 	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
-	getTagDetails, getUncommittedDetails, repoRoot,
+	getRefsAndBranches, getRefsForGraph, getRemoteNames, getStashes, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
@@ -18,15 +18,16 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { branchesOfOtherWorktrees, discoverRepositories, loadRepoSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
+import type { StashEntry } from './git-types.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -50,6 +51,71 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 		});
 		req.on('error', reject);
 	});
+}
+
+/** 事件流连接的保活间隔（毫秒）。 */
+const EVENTS_HEARTBEAT_MS = 25000;
+
+/** 事件流连接数上限：每个连接占一个响应流，不设上限时页面反复重连会累积。 */
+const MAX_EVENT_STREAMS = 16;
+
+/** 当前打开的事件流连接。 */
+const eventStreams = new Set<http.ServerResponse>();
+
+/**
+ * 向所有事件流连接推送一条仓库变更。
+ *
+ * @param repo - 发生变更的仓库路径。
+ * @returns 无。
+ */
+function broadcastRepositoryWrite(repo: string): void {
+	const frame = `event: repository-write\ndata: ${JSON.stringify({ repo })}\n\n`;
+	for (const stream of eventStreams) {
+		try {
+			stream.write(frame);
+		} catch {
+			/* 连接已断开时由 close 事件清理 */
+		}
+	}
+}
+
+/**
+ * 处理一条事件流连接。
+ *
+ * 通道只做一件事：把本进程里任何**成功**的仓库写操作推给所有面板，让别的会话、别的工作区与
+ * 外部进程造成的改动也能即时反映。推送不携带数据，接收方自行重读。
+ *
+ * @param req - 请求。
+ * @param res - 响应。
+ * @returns 无。
+ */
+function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void {
+	if (eventStreams.size >= MAX_EVENT_STREAMS) {
+		sendJson(res, 503, { error: '事件流连接数已达上限' });
+		return;
+	}
+	res.writeHead(200, {
+		'content-type': 'text/event-stream; charset=utf-8',
+		'cache-control': 'no-store',
+		'connection': 'keep-alive',
+	});
+	res.write(': connected\n\n');
+	eventStreams.add(res);
+	const heartbeat = setInterval(() => {
+		try {
+			res.write(': ping\n\n');
+		} catch {
+			/* 写失败由 close 事件清理 */
+		}
+	}, EVENTS_HEARTBEAT_MS);
+	// 保活不应阻止宿主退出。
+	if (typeof heartbeat.unref === 'function') heartbeat.unref();
+	const close = (): void => {
+		clearInterval(heartbeat);
+		eventStreams.delete(res);
+	};
+	req.on('close', close);
+	res.on('close', close);
 }
 
 /**
@@ -108,6 +174,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				await whenGitIdle(repo);
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
+			break;
+		case 'loadWorkingTreeSnapshot':
+			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
+			await whenGitIdle(repo);
+			respond({ command: 'loadWorkingTreeSnapshot', repo, ...(await getWorkingTreeSnapshot(repo)) });
 			break;
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
@@ -182,11 +253,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('discoverRepositories', async () => {
 				// knownRepos 命中时走快路径：只核对已知路径，不逐层扫描目录。
 				const knownRepos = arr<string>('knownRepos').filter((path) => typeof path === 'string' && path !== '');
-				const result = await discoverRepositories(repo, {
+				const result = await discoverWorkspace(repo, {
+					shallow: bool('shallow'),
+					fullScan: bool('fullScan'),
 					maxDepth: num('maxDepth', 3),
 					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
 				});
-				return { root: repo, nodes: result.nodes, truncated: result.truncated };
+				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
+			});
+			break;
+		case 'enrichRepositories':
+			await respondResult('enrichRepositories', async () => {
+				// 入参为空时不扫目录：nodes 为空数组。
+				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
+				if (repos.length === 0) return { nodes: [] };
+				return { nodes: await enrichRepositories(repos) };
 			});
 			break;
 		case 'loadRepoSync':
@@ -194,6 +275,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				await whenGitIdle(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
+			});
+			break;
+		case 'loadReposSync':
+			await respondResult('loadReposSync', async () => {
+				// 入参路径逐个回显：结果按 path 与入参一一对应。
+				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
+				// 空列表不读仓库：results 为空数组。
+				if (repos.length === 0) return { repo, results: [] };
+				await whenGitIdle(repo);
+				return { repo, results: await loadReposSync(repos) };
 			});
 			break;
 
@@ -213,11 +304,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			// 提交图同样等写操作结束：写操作可能正在改写引用。
 			await whenGitIdle(repo);
 			{
-				// 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
-				// 直接传字符串数组的调用方同样接受。
-				const remoteNames = arr<unknown>('remotes')
-					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
-					.filter((name): name is string => typeof name === 'string' && name !== '');
 				/*
 				 * 偏移分页：客户端传 `skip`（已加载条数）与 `limit`，git 跳过前 skip 条再输出本页。
 				 *
@@ -227,23 +313,83 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 */
 				const limit = num('limit', num('maxCommits', 32));
 				const skip = num('skip', 0);
+				/*
+				 * 仓库信息批由 `withRepoInfo` 显式控制，与「是否首屏」无关：刷新（skip 为 0）不必
+				 * 重取仓库信息，调用方把已知的远程与贮藏随请求传入。
+				 *
+				 * 该批含仓库信息、引用集合、贮藏枚举与工作树分支，四者互不依赖，同批并行。
+				 * 仓库信息以 `repoInfo` 随响应发回，客户端首次进入因此只发一次请求。
+				 */
+				const withRepoInfo = msg.withRepoInfo === true;
+				const showStashes = bool('showStashes', true);
+				const showRemoteBranches = bool('showRemoteBranches', true);
+				const hideRemotes = arr<string>('hideRemotes');
+				/*
+				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
+				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
+				 */
+				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
+				const stashesSource: Promise<StashEntry[]> = givenStashes !== null
+					? Promise.resolve(givenStashes)
+					: showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]);
+				/*
+				 * 引用集合与分支列表读自同一批引用，只取值不同：一次 `for-each-ref` 同时得到两者。
+				 * 首屏（`withRepoInfo`）下两者都有人要，合并后少起一个子进程；刷新路径只有提交图
+				 * 需要引用，因此只在首屏预先发起。
+				 */
+				const refsAndBranchesSource = withRepoInfo
+					? getRefsAndBranches(repo, showRemoteBranches, hideRemotes)
+					: null;
+				const batchSource = withRepoInfo
+					? Promise.all([
+						getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes, refsAndBranchesSource ?? undefined),
+						refsAndBranchesSource?.then((parsed) => parsed.refs) ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes),
+						stashesSource,
+						branchesOfOtherWorktrees(repo),
+					]).then(([info, refs, stashes, foreign]) => ({ info, refs, stashes, foreign }), () => null)
+					: null;
+				const stashes = await stashesSource;
+				/*
+				 * 别的工作树占用的分支：仓库信息批里已含该结果时直接取用，否则单独判定。
+				 * 该判定对没有链接工作树的仓库只读文件系统，不启动 git；先发出去，不占关键路径。
+				 */
+				const foreignSource: Promise<Set<string>> = batchSource !== null
+					? batchSource.then((batch) => batch?.foreign ?? branchesOfOtherWorktrees(repo))
+					: branchesOfOtherWorktrees(repo);
+				/*
+				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，这里取名字；
+				 * 直接传字符串数组的调用方同样接受。
+				 *
+				 * 调用方未给出远程名时由宿主读取：提交图需要远程名才能标注远程分支的归属。客户端在
+				 * 首次取数后即持有远程列表并随每次刷新传入，因此这条回退只在调用方未提供时发生。
+				 * 仓库信息批里的远程名来自同批的配置读取，标注在提交图组装之后才发生，不必为它多等
+				 * 一次串行往返。
+				 */
+				const givenRemotes = arr<unknown>('remotes')
+					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
+					.filter((name): name is string => typeof name === 'string' && name !== '');
+				const remoteNames: readonly string[] | Promise<readonly string[]> = batchSource !== null
+					? batchSource.then((batch) => batch?.info?.remotes?.map((remote) => remote.name) ?? givenRemotes)
+					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
 					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
 					limit,
 					bool('showTags', true),
-					bool('showRemoteBranches', true),
+					showRemoteBranches,
 					bool('includeCommitsMentionedByReflogs'),
 					bool('onlyFollowFirstParent'),
 					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
 					remoteNames,
-					arr<string>('hideRemotes'),
-					arr<never>('stashes'),
+					hideRemotes,
+					stashes,
 					skip,
+					batchSource?.then((batch) => batch?.refs ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes)) ?? undefined,
 				);
-				// 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。
-				const foreign = await branchesOfOtherWorktrees(repo);
+				const batch = batchSource === null ? null : await batchSource;
+				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
+				const foreign = await foreignSource;
 				const all = foreign.size === 0
 					? (data.commits ?? [])
 					: (data.commits ?? []).map((commit) => ({
@@ -263,6 +409,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					tags: data.tags ?? [],
 					moreCommitsAvailable: data.moreCommitsAvailable === true,
 					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
+					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
+					repoInfo: batch?.info ?? null,
 				});
 			}
 			break;
@@ -288,10 +436,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				refresh: bool('refresh'),
 			});
 			break;
-		case 'tagDetails':
-			respond({ command: 'tagDetails', tagName: str('tagName'), commitHash: str('commitHash'), ...(await getTagDetails(repo, str('tagName'))) });
-			break;
-
 		/* --- 分支操作 --- */
 		case 'checkoutBranch': {
 			const errors: unknown[] = [await checkoutBranch(repo, str('branchName'), strOrNull('remoteBranch'))];
@@ -402,17 +546,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'deleteTag':
 			await respondError('deleteTag', () => deleteTag(repo, str('tagName'), strOrNull('deleteOnRemote')));
 			break;
-		case 'pushTag':
-			respond({
-				command: 'pushTag',
-				repo,
-				tagName: str('tagName'),
-				remotes: arr('remotes'),
-				commitHash: str('commitHash'),
-				errors: await pushTag(repo, str('tagName'), arr('remotes'), str('commitHash'), bool('skipRemoteCheck')),
-			});
-			break;
-
 		/* --- 远程 --- */
 		case 'fetch':
 			await respondError('fetch', () => fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags')));
@@ -783,6 +916,25 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 
 export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDeps): Array<() => void> {
 	const disposers: Array<() => void> = [];
+
+	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
+	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
+
+	// 事件流（GET）：面板据此即时反映别处的写操作。
+	disposers.push(
+		webServer.register({
+			kind: 'exact',
+			path: '/dsh-source-control/gg/events',
+			handler: (req, res) => {
+				if (req.method !== 'GET') {
+					res.writeHead(405, { allow: 'GET' });
+					res.end();
+					return;
+				}
+				handleEvents(req, res);
+			},
+		}),
+	);
 
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
 	disposers.push(

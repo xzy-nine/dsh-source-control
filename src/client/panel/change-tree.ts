@@ -1,5 +1,5 @@
 /**
- * 变更区的目录树：把带路径的条目组成可折叠的文件树。
+ * 变更区的目录树：把带路径的条目组成可折叠的文件树，以及菜单路径的绝对化。
  *
  * 与 React 无关的纯变换，便于直接单测。
  */
@@ -8,6 +8,27 @@ import type { WorkingTreeEntry } from '../shared/types.ts';
 /** 带路径的树条目：工作区条目与提交改动文件都满足。 */
 export interface TreeEntry {
 	readonly path: string;
+}
+
+/**
+ * 把菜单里的路径拼成绝对路径。
+ *
+ * 菜单给出的路径相对仓库根（git 的输出形态），而仓库根是绝对路径。已经是绝对路径的
+ * 输入原样返回：本地排除文件这类目标在 `.git` 目录内，客户端持有的就是绝对路径。
+ * 分隔符沿用仓库根的写法，Windows 上得到 `E:\repo\src\a.ts` 这样的原生形式。
+ *
+ * @param repoRoot - 仓库根的绝对路径。
+ * @param path - 菜单给出的路径，相对仓库根或已是绝对路径。
+ * @returns 绝对路径。
+ */
+export function absolutePathOf(repoRoot: string, path: string): string {
+	const root = String(repoRoot ?? '').replace(/[\\/]+$/, '');
+	const target = String(path ?? '');
+	// 绝对路径：盘符（`C:/`、`C:\`）、POSIX 前导斜杠或 UNC（`\\server\share`）。
+	if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith('/') || /^\\\\/.test(target)) return target;
+	if (root === '') return target;
+	const separator = root.includes('\\') ? '\\' : '/';
+	return `${root}${separator}${target.replace(/^[\\/]+/, '').split(/[\\/]/).join(separator)}`;
 }
 
 /** 变更树节点。 */

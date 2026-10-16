@@ -19,8 +19,16 @@ export const AUTO_FETCH_PERIOD_SECONDS_MAX = 3600;
 /** 过期缓存的清理周期（毫秒）。 */
 export const CLEANUP_INTERVAL_MS = 300000;
 
-/** 兜底轮询的间隔（毫秒）：事件驱动之外的定期校对，远低于事件响应的及时性要求。 */
+/*
+ * 兜底轮询覆盖事件窗口之外的写入（其它会话、其它工作区、编辑器、终端），是事件驱动之外的定期校对。
+ * 页签可见时按快档跑，不可见时退回慢档以省资源。
+ */
+
+/** 兜底轮询的间隔（毫秒）：页签不可见时的慢档。 */
 export const FALLBACK_POLL_INTERVAL_MS = 120000;
+
+/** 兜底轮询的间隔（毫秒）：页签可见且窗口聚焦时的快档。 */
+export const FALLBACK_POLL_ACTIVE_MS = 10000;
 
 /**
  * 兜底轮询的第几次观测可以判定变化已稳定。
@@ -29,6 +37,19 @@ export const FALLBACK_POLL_INTERVAL_MS = 120000;
  * 连续两次读到同一份签名才认为变化已停止。
  */
 export const FALLBACK_STABLE_OBSERVATIONS = 2;
+
+/**
+ * 兜底轮询在给定档位下判定变化已稳定所需的观测次数。
+ *
+ * 快档（页签可见且窗口聚焦）为 1 次：间隔本身已足够短，再要求两次会让重载延迟翻倍到 2× 间隔。
+ * 慢档沿用 {@link FALLBACK_STABLE_OBSERVATIONS}。
+ *
+ * @param active - 是否处于快档。
+ * @returns 所需观测次数。
+ */
+export function stableObservationsRequired(active: boolean): number {
+	return active ? 1 : FALLBACK_STABLE_OBSERVATIONS;
+}
 
 /**
  * 兜底轮询是否应触发重载。

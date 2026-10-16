@@ -12,6 +12,10 @@
 
 .secHead .headActions{margin-left:auto;display:flex;gap:2px}
 
+/* 紧随分区标题文本的图标按钮：与文字留出间距，其余仍由 .headActions 靠右。 */
+
+.secHead .headAction{margin-left:2px;flex:none}
+
 .repos{display:flex;flex-direction:column;gap:1px;padding:0 6px 6px}
 
 .secNote{color:var(--dsw-alias-state-warn-primary);cursor:default}
@@ -66,9 +70,21 @@
 
 .iconBtn:disabled{opacity:0.5;cursor:default}
 
-/* 筛选生效时按钮高亮，标题栏一眼可见当前不是全量视图。 */
+/* 开关型图标按钮的生效态：筛选收窄了视图、或图形区已翻译时高亮，
+ * 标题栏一眼可见当前不是默认状态。 */
 
-.filterOn{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+.actionOn{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+
+/* 批量翻译进行中：图标半透明并呼吸，按钮留在原位可再次点击取消。
+ * 只改透明度不动布局，进度提示经 title 给出。 */
+
+.iconBtn[data-translating]{opacity:0.6;animation:translatePulse 1s ease-in-out infinite}
+
+@keyframes translatePulse{0%,100%{opacity:0.45}50%{opacity:0.9}}
+
+@media (prefers-reduced-motion: reduce){
+	.iconBtn[data-translating]{animation:none;opacity:0.6}
+}
 
 /* ── 图形区标题栏仓库名（图标+名称） ─────────────────────── */
 

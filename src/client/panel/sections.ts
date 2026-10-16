@@ -13,6 +13,7 @@ import { CommitGraph } from '../graph/index.ts';
 import { PublishIcon, RepoIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
+import { interfaceLanguage, needsTranslation } from './language.ts';
 import { RepoRow } from './repo-row.ts';
 import { anyBusy } from './busy.ts';
 import type {
@@ -320,6 +321,26 @@ export interface GraphSectionProps {
 	readonly statsByHash: ReadonlyMap<string, CommitStats>;
 	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
 	readonly messageByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 提交信息译文；未翻译过时缺省。 */
+	readonly translatedByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 已翻译的原文；与当前信息相同表示无需再译。 */
+	readonly translatedFromByHash: ReadonlyMap<string, string>;
+	/** 正在翻译的提交哈希；空闲时为 null。 */
+	readonly translatingHash: string | null;
+	/** 翻译服务是否可用；不可用时提交浮窗不给翻译入口。 */
+	readonly translateReady: boolean;
+	/** 翻译一个提交的提交信息。 */
+	readonly onTranslateCommit: (hash: string, text: string) => void;
+	/** 取消一个提交的翻译。 */
+	readonly onCancelTranslateCommit: (hash: string) => void;
+	/** 图形区标题栏的批量翻译是否已生效。 */
+	readonly graphTranslated: boolean;
+	/** 图形区批量翻译的进度；未进行时为 null。 */
+	readonly graphTranslating: { done: number; total: number } | null;
+	/** 批量翻译当前可见窗口内的提交标题。 */
+	readonly onTranslateVisible: (items: readonly { hash: string; text: string }[]) => void;
+	/** 取消图形区的批量翻译。 */
+	readonly onCancelTranslate: () => void;
 	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
@@ -356,8 +377,20 @@ export function GraphSection({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
 	localTip, remoteTip, baseTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
+	translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
+	graphTranslated, graphTranslating, onTranslateVisible, onCancelTranslate,
 	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
 }: GraphSectionProps): React.ReactElement {
+	// 当前可见窗口内的提交；由提交图上报，标题栏的批量翻译据此下发。
+	const [visible, setVisible] = React.useState<readonly { hash: string; text: string }[]>([]);
+	/*
+	 * 标题栏入口与提交信息框同一判据：翻译服务可用、可见窗口内有非当前语言的标题。
+	 *
+	 * 已翻译或正在翻译时一律保留：进行中隐藏会让按钮在点击后消失，进度与取消都无处可点。
+	 */
+	const visibleTranslatable = visible.some((item) => needsTranslation(item.text, interfaceLanguage()));
+	const showGraphTranslate = translateReady && (graphTranslated || graphTranslating !== null || visibleTranslatable);
+	const translating = graphTranslating !== null;
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.graphSec) },
@@ -373,13 +406,30 @@ export function GraphSection({
 		},
 			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'图形',
+			// 翻译当前可见窗口内的提交标题，紧随标题文本；已翻译时图标反色，再点即取消。
+			showGraphTranslate && React.createElement('button', {
+				type: 'button',
+				className: cx(css.iconBtn, css.headAction, graphTranslated && css.actionOn),
+				title: graphTranslated
+					? '取消翻译提交标题'
+					: (translating ? `正在翻译 ${graphTranslating.done}/${graphTranslating.total}` : '翻译可见的提交标题'),
+				'aria-label': graphTranslated ? '取消翻译' : '翻译可见的提交标题',
+				'data-translated': graphTranslated ? '1' : undefined,
+				'data-translating': translating ? '1' : undefined,
+				onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+					event.stopPropagation();
+					// 进行中再点即取消；否则按当前状态发起或撤销。
+					if (translating || graphTranslated) onCancelTranslate();
+					else onTranslateVisible(visible);
+				},
+			}, React.createElement(TranslateIcon, { inverted: graphTranslated })),
 			React.createElement('span', { className: css.headActions },
 				selectedNode !== null && React.createElement('span', { className: css.headRepo },
 					React.createElement(RepoIcon),
 					React.createElement('span', null, selectedNode.name),
 				),
 				React.createElement('button', {
-					type: 'button', className: cx(css.iconBtn, filterActive && css.filterOn), title: '筛选分支与标签',
+					type: 'button', className: cx(css.iconBtn, filterActive && css.actionOn), title: '筛选分支与标签',
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
 				}, React.createElement(GitGraphIcon, { size: 14 }), filterSummary),
 				React.createElement('button', {
@@ -423,6 +473,13 @@ export function GraphSection({
 					graphColours: settings.graphColours,
 					commitStats: statsByHash,
 					commitMessages: messageByHash,
+					translatedMessages: translatedByHash,
+					translatedFrom: translatedFromByHash,
+					translatingHash,
+					translateReady,
+					onTranslateCommit,
+					onCancelTranslateCommit,
+					onVisibleCommits: setVisible,
 					onHoverCommit,
 					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
 						? React.createElement(

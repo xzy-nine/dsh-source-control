@@ -124,22 +124,6 @@
 			"commitTarget": "tag"
 		},
 		{
-			"id": "pushTag",
-			"title": "推送标签到远程…",
-			"refTypes": [
-				"tag"
-			],
-			"commitTarget": "tag"
-		},
-		{
-			"id": "viewTagDetails",
-			"title": "查看标签详情…",
-			"refTypes": [
-				"tag"
-			],
-			"commitTarget": "tag"
-		},
-		{
 			"id": "copyTagName",
 			"title": "复制标签名",
 			"refTypes": [

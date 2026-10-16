@@ -3,3 +3,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+
+overrides:
+  "@asamuzakjp/css-color": 7.1.5

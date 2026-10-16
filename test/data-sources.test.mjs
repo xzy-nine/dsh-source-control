@@ -106,7 +106,7 @@ test('变更区菜单元数据每项都有 id、标题与适用目标', () => {
 
 test('变更区菜单名称的占位符只有 count', () => {
 	const { actions } = readJson('src', 'client', 'panel', 'change-menu-actions.json');
-	const texts = actions.flatMap((action) => [action.title, action.newTitle, ...Object.values(action.titles ?? {})]);
+	const texts = actions.flatMap((action) => [action.title, ...Object.values(action.titles ?? {})]);
 	for (const text of texts) {
 		if (typeof text !== 'string') continue;
 		for (const [placeholder] of text.matchAll(/\{[^}]*\}/g)) {

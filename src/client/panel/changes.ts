@@ -12,7 +12,7 @@ import { copyText, showContextMenu } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
-import { changeRowsOf, type ChangeRow } from './change-tree.ts';
+import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { BusyScope, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
@@ -94,7 +94,7 @@ export function ChangeNodeRow({
 			target.classList.add(MENU_TARGET_CLASS);
 			const items = changeMenuItems({
 				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
-				entry: null, isNew: false, untracked: false,
+				entry: null, untracked: false,
 			});
 			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 		};
@@ -126,7 +126,7 @@ export function ChangeNodeRow({
 		target.classList.add(MENU_TARGET_CLASS);
 		const items = changeMenuItems({
 			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
-			entry, isNew, untracked,
+			entry, untracked,
 		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};
@@ -248,7 +248,7 @@ export interface ChangeGroupProps {
 	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
-	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => Promise<void>;
+	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[], options?: { readonly historyChanged?: boolean }) => Promise<void>;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
@@ -277,8 +277,9 @@ export function ChangeGroup({
 	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
-	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths)); };
-	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths)); };
+	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
+	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false }); };
+	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false }); };
 	/**
 	 * 丢弃某个文件夹下的全部改动。
 	 *
@@ -301,10 +302,11 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
 				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			});
+			}, undefined, undefined, { historyChanged: false });
 		})();
 	};
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
@@ -323,7 +325,8 @@ export function ChangeGroup({
 				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
 			});
 			if (!ok) return;
-			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); }, undefined, (entries) => discardEntries(entries, paths));
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
+			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); }, undefined, (entries) => discardEntries(entries, paths), { historyChanged: false });
 		})();
 	};
 	/**
@@ -344,13 +347,16 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
 				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			}, undefined, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]));
+			}, undefined, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]), { historyChanged: false });
 		})();
 	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
+	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
+	const onOpenFile = (item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true); };
 	const descendantsOf = (folderPath: string): string[] => {
 		const prefix = `${folderPath}/`;
 		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
@@ -359,8 +365,9 @@ export function ChangeGroup({
 	const menu: ChangeMenuDeps = {
 		busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder,
 		onDiscardGroup: () => { onDiscardAll(); },
-		onOpen, onAddToGitignore, onAddToLocalExclude,
-		onCopyPath: (path: string) => { void copyText(path); },
+		onOpenFile, onAddToGitignore, onAddToLocalExclude,
+		// 菜单里的路径相对仓库根；复制时给出绝对路径，便于直接粘进终端或编辑器。
+		onCopyPath: (path: string) => { void copyText(absolutePathOf(workingTreePath, path)); },
 	};
 	const handleHeadContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		event.preventDefault();
@@ -369,7 +376,7 @@ export function ChangeGroup({
 		target.classList.add(MENU_TARGET_CLASS);
 		const items = changeMenuItems({
 			target: 'group', deps: menu, path: null, paths: allPaths,
-			entry: null, isNew: false, untracked: false,
+			entry: null, untracked: false,
 		});
 		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => target.classList.remove(MENU_TARGET_CLASS) });
 	};

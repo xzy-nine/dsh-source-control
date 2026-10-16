@@ -11,7 +11,7 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, tagDetails, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -24,18 +24,18 @@ import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { ROW_HEIGHT } from '../graph/lanes.ts';
 import { changeOf } from './changes.ts';
 import { hasGitHubRemote } from './github.ts';
-import { needsTranslation, splitCommitPrefix } from './language.ts';
+import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { loadValue, primeStorage, saveValue } from './storage.ts';
-import { primeRepoLocations } from './repo-locations.ts';
-import { migrateLegacyState } from '../api/index.ts';
+import { draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue } from './storage.ts';
+import { clearPersistedDraft, migrateLegacyState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
-import { useGraphData } from './use-graph-data.ts';
+import { dropGraphWindows, useGraphData } from './use-graph-data.ts';
+import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
@@ -78,20 +78,6 @@ export interface GitGraphPanelProps {
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
 function issueLinkingConfigOf(settings: Settings): unknown {
 	return settings.issueLinkingConfig ?? null;
-}
-
-/**
- * 当前界面语言。
- *
- * DSH 的语言服务把活动语言同步到 `<html lang>`（`zh` 写成 `zh-CN`），因此直接读它；
- * 读取不到时按英文处理。
- *
- * @returns 语言标签，如 `zh-CN`、`en`。
- */
-function interfaceLanguage(): string {
-	if (typeof document === 'undefined') return 'en';
-	const lang = document.documentElement.lang;
-	return lang === '' ? 'en' : lang;
 }
 
 /**
@@ -159,15 +145,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 预取是异步的，而上面这些 useState 的初始值在挂载时同步取过；那时缓存还空着，拿到的是回退值，
 	 * 且 useState 的初始值不会随预取完成自动重算 —— 不显式回填，每次进入都会显示默认值（表现为
 	 * 「设置每次都被重置」）。预取完成后因此把这几项按真实值重新写入。
+	 *
+	 * 状态迁移与预取串行，且预取完成才回填：设置面板、布局高度都只在用户打开时可见，与首屏三区
+	 * 无关，因此不占用首屏关键路径。仓库位置由宿主在发现命令里自行读取，这里不预取。
 	 */
 	React.useEffect(() => {
 		if (cwd === undefined || cwd === null) return undefined;
 		let cancelled = false;
 		void (async () => {
 			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
+			// 草稿是会话级数据，不经过宿主迁移，也不受宿主迁移标记约束。
+			migrateLegacyDrafts();
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
-			await primeRepoLocations(cwd);
 			if (cancelled) return;
 			setSettings(loadSettings());
 			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));
@@ -262,13 +252,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
-	const { state, setState, refresh, loadMore, busyRef } = useGraphData({
+	const { state, setState, refresh, refreshEntries, loadMore, busyRef } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
 
-	const { statsByHash, messageByHash, hoverCommit } = useCommitStats({ workingTreePath });
+	const {
+		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
+		graphTranslated, graphTranslating,
+		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -281,13 +275,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	/*
 	 * 文件改动事件驱动的自动刷新：工具写入/编辑落地、且目标确实在所选仓库内时重载面板。
-	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用），因此无需宿主新增通道。
+	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用）。
 	 */
 	useFileChangeRefresh({
 		sessions,
 		sessionId,
 		workingTreePath,
 		cwd: cwd ?? null,
+		enabled: settings.autoRefresh,
+		busyRef,
+		refresh,
+	});
+
+	/*
+	 * 宿主事件流：别的会话、别的工作区或外部进程对当前仓库的写操作不产生本会话事件，
+	 * 事件驱动的刷新看不到。订阅宿主推送的仓库写事件补上这条通道，按仓库路径过滤。
+	 */
+	useRepositoryWriteEvents({
+		workingTreePath,
 		enabled: settings.autoRefresh,
 		busyRef,
 		refresh,
@@ -303,6 +308,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		periodSeconds: settings.autoFetchPeriod,
 		busyRef,
 		fetch: async (path) => { await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); },
+		/*
+		 * 抓取完成后重载：面板先用本地引用渲染，抓取拉回的远程引用与领先/落后随后并入。
+		 * 抓取改动了引用，因此提交图窗口缓存一并作废。
+		 */
+		onFetched: (path) => {
+			dropGraphWindows(path);
+			void refresh('reconcile');
+		},
 	});
 
 	/*
@@ -345,30 +358,54 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 
   /*
-	 * 按仓库/子模块/工作树路径存提交信息草稿。
+	 * 提交信息草稿：按仓库根存会话级存储（sessionStorage），键为 ggg-commit-msg:<仓库根绝对路径>。
 	 *
-	 * 写入必须等草稿读完：message 初始为空串，若在预取完成前就写入，会把宿主里的草稿覆盖成空；
-	 * 而读取又发生在预取完成之前，于是草稿每次都丢。readDone 标记读完这一刻，之后才允许写。
+	 * 草稿只活在本次会话，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
+	 *
+	 * 写入必须等草稿读完：message 初始为空串，若在读回之前就写入，会把刚切换过来的仓库的草稿覆盖成空。
+	 * readDone 标记读完这一刻，之后才允许写。切换仓库时先把上一个仓库的草稿写回它自己的键，再读新仓库的。
 	 */
 	const [draftReadDone, setDraftReadDone] = React.useState(false);
+	/** 当前 message 所属的仓库；与 workingTreePath 不同时不得写入。 */
+	const [draftPath, setDraftPath] = React.useState<string | null>(null);
+	/** message 的当前值：切换仓库的收尾里读取它，避免把旧值写进新仓库的键。 */
+	const messageRef = React.useRef(message);
+	messageRef.current = message;
+
 	React.useEffect(() => {
-		if (workingTreePath === null) { setDraftReadDone(false); return; }
+		const path = workingTreePath;
+		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
 		let cancelled = false;
+		// 本轮读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
+		let readDone = false;
 		setDraftReadDone(false);
+		const key = draftKeyOf(path);
 		void (async () => {
-			// 等预取完成，否则读到的是空缓存。
-			await primeStorage(workingTreePath);
+			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
+			const persisted = await takePersistedDraft(path, key);
 			if (cancelled) return;
-			const saved = loadValue<string | null>('ggg-commit-msg:' + workingTreePath, null);
-			if (saved !== null) setMessage(saved);
+			const saved = loadSessionValue<string | null>(key, null);
+			if (saved === null && persisted !== null) {
+				saveSessionValue(key, persisted);
+				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
+				void clearPersistedDraft(path, key).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
+			}
+			setMessage(saved ?? persisted ?? '');
+			setDraftPath(path);
+			readDone = true;
 			setDraftReadDone(true);
 		})();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+			// 离开本仓库：读回完成后 message 才是本仓库的内容，此时才把草稿写回它自己的键。
+			if (!readDone) return;
+			saveSessionValue(key, messageRef.current);
+		};
 	}, [workingTreePath]);
 	React.useEffect(() => {
-		if (workingTreePath === null || aiBusy || !draftReadDone) return;
-		saveValue('ggg-commit-msg:' + workingTreePath, message);
-	}, [workingTreePath, message, aiBusy, draftReadDone]);
+		if (workingTreePath === null || !draftReadDone || draftPath !== workingTreePath) return;
+		saveSessionValue(draftKeyOf(workingTreePath), message);
+	}, [workingTreePath, message, draftReadDone, draftPath]);
 
 	/**
 	 * 选中一个仓库节点并重置面板状态。
@@ -408,27 +445,51 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
 	 * 用一次对账刷新纠正推算误差。对账是 reconcile 模式，不会清空现有列表。
 	 *
+	 * `historyChanged` 决定对账的深度：可能改动引用或提交历史的操作（检出、重置、提交、贮藏、
+	 * 抓取等）需作废该仓库的提交图窗口并重取提交图；纯工作区操作（暂存、取消暂存、丢弃、忽略
+	 * 规则）只重取工作区快照。缺省为 true，即按可能改动引用与提交历史处理。
+	 *
 	 * @param scope - 操作的影响面。
 	 * @param operation - 操作体。
 	 * @param repo - 目标仓库路径；省略时用当前选中的工作树。
 	 * @param optimistic - 写操作成功后对条目的推算；省略时不推算，只做对账刷新。
+	 * @param options - 见上；省略时按可能改动引用与提交历史处理。
 	 */
-	const run = React.useCallback(async (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => {
+	const run = React.useCallback(async (
+		scope: BusyScope,
+		operation: () => Promise<void>,
+		repo?: string,
+		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+		options?: { readonly historyChanged?: boolean },
+	) => {
 		const target = repo ?? workingTreePath;
 		if (target === null) return;
+		const historyChanged = options?.historyChanged !== false;
 		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope), error: null }));
 		try {
 			await operation();
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
 			}
-			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
+			if (scope === 'read') return;
+			// 目标是别的仓库：只作废它的窗口缓存，当前仓库的视图不动。
+			if (target !== workingTreePath) {
+				if (historyChanged) dropGraphWindows(target);
+				return;
+			}
+			if (!historyChanged) {
+				await refreshEntries();
+				return;
+			}
+			// 写操作可能改动引用与提交历史，目标仓库的提交图窗口缓存随之失效。
+			dropGraphWindows(target);
+			await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {
 			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
 		}
-	}, [workingTreePath, refresh, setState]);
+	}, [workingTreePath, refresh, refreshEntries, setState]);
 
 	/**
 	 * 在进度条下执行一次不刷新的预备调用。
@@ -713,15 +774,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		void (async () => {
 			try {
 				// 空行保留为空行，其余每行单独翻译。
-				const lines = source.split('\n');
-				const parts: string[] = [];
-				for (const line of lines) {
-					if (line.trim() === '') { parts.push(''); continue; }
-					// git 惯例前缀不翻译：翻译会破坏 type/scope 的机器可读语义。
-					const { prefix, body } = splitCommitPrefix(line);
-					parts.push(body.trim() === '' ? line : prefix + await translateText(workingTreePath, body, locale));
-				}
-				setMessage(parts.join('\n'));
+				setMessage(await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale)));
 				setTranslatedFrom(source);
 			} catch (error) {
 				await notify(error instanceof Error ? error.message : String(error));
@@ -749,14 +802,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
 
 	/**
-	 * 是否显示翻译入口。
+	 * 是否显示提交信息框的翻译入口。
 	 *
-	 * 三个条件同时满足才显示：翻译服务已装载（否则点了也失败）、当前无生成任务、
-	 * 且内容以非当前语言为主。已翻译过的内容不再重复提示。
+	 * 判据与提交浮窗共用 {@link showTranslateEntry}：翻译服务已装载（否则点了也失败）、
+	 * 当前无生成或翻译任务、内容非空且以非当前语言为主。已翻译过的内容不再重复提示。
 	 */
-	const showTranslate = translateReady && !aiBusy && !translateBusy
-		&& message.trim() !== '' && message !== translatedFrom
-		&& needsTranslation(message, interfaceLanguage());
+	const showTranslate = showTranslateEntry({
+		ready: translateReady, busy: aiBusy || translateBusy, text: message,
+		locale: interfaceLanguage(), translatedFrom,
+	});
 
 	/**
 	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
@@ -1034,7 +1088,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToGitignore = React.useCallback((path: string) => {
 		void (async () => {
 			let written: IgnoreWriteResult | null = null;
-			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
+			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
 			const result: IgnoreWriteResult | null = written;
 			if (result === null || result.file === '') return;
 			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
@@ -1050,7 +1104,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
 		void (async () => {
 			let written: LocalExcludeState | null = null;
-			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
+			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
 			const state: LocalExcludeState | null = written;
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
 			if (state === null || state.path === '') return;
@@ -1193,29 +1247,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}
 	}, [workingTreePath, setState]);
 
-	/** 查看标签详情。 */
-	const handleTagDetails = React.useCallback(async (tagName: string, commitHash: string) => {
-		if (workingTreePath === null) return;
-		try {
-			const details = await tagDetails(workingTreePath, tagName, commitHash);
-			if (details === null) {
-				showToast('该标签是轻量标签，无附加信息');
-				return;
-			}
-			const tagMessage = details.message ?? '';
-			const tagger = details.tagger ?? '';
-			const date = details.date ?? '';
-			const lines = [
-				`标签：${tagName}`,
-				tagger ? `打标签者：${tagger}` : '',
-				date ? `日期：${date}` : '',
-				tagMessage ? `\n${tagMessage}` : '',
-			].filter(Boolean).join('\n');
-			await showForm({ title: '标签详情', message: lines, fields: [], confirmLabel: '关闭' });
-		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
-		}
-	}, [workingTreePath, setState]);
 
 	/** 创建归档。 */
 	const handleCreateArchive = React.useCallback(async (ref: string, refLabel: string) => {
@@ -1317,9 +1348,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
-		notify, handleTagDetails, setCommitMessage: setMessage,
+		notify, setCommitMessage: setMessage,
 		handleCreatePullRequest, canCreatePullRequest,
-	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleTagDetails, handleCreatePullRequest, canCreatePullRequest]);
+	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleCreatePullRequest, canCreatePullRequest]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
@@ -1470,6 +1501,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
 					moreCommitsAvailable: state.more, statsByHash, messageByHash,
+			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
+			onCancelTranslateCommit: cancelTranslateCommit,
+			graphTranslated, graphTranslating,
+			onTranslateVisible: translateCommits, onCancelTranslate: cancelTranslateCommits,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
 			onToggleSection: toggleGraphSec,
 			onToggleChange: toggleChange,

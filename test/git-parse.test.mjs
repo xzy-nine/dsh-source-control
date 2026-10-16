@@ -9,9 +9,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT, TAG_FORMAT,
+	DETAILS_FORMAT, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
-	parseNameStatus, parseNumStat, parseRefs, parseStashReflog, parseTagInfo, parseTagSignature,
+	parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
 	splitRecords, UNCOMMITTED,
 } from '../src/source-control/git-parse.ts';
 
@@ -164,6 +164,46 @@ test('远程 HEAD 符号引用与隐藏远程被排除', () => {
 	}
 });
 
+test('合并枚举与单独枚举引用得到同一结果，并同时给出分支列表', () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('tag', '-a', 'ann', '-m', 'annotated');
+		git('tag', 'light');
+		git('branch', 'feature');
+		const head = git('rev-parse', 'HEAD').trim();
+		git('update-ref', 'refs/remotes/origin/main', head);
+		git('update-ref', 'refs/remotes/upstream/main', head);
+		git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+
+		const refs = ['refs/heads', 'refs/tags', 'refs/remotes'];
+		const separate = parseRefs(git('for-each-ref', `--format=${REF_FORMAT}`, ...refs));
+		const merged = parseRefsAndBranches(git('for-each-ref', `--format=${REF_BRANCH_FORMAT}`, ...refs));
+
+		// 引用集合与单独枚举逐条一致。
+		const sortByName = (list) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+		assert.deepEqual(sortByName(merged.refs.heads), sortByName(separate.heads));
+		assert.deepEqual(sortByName(merged.refs.tags), sortByName(separate.tags));
+		assert.deepEqual(sortByName(merged.refs.remotes), sortByName(separate.remotes));
+
+		// 分支列表：当前分支在首位，远程 HEAD 不出现在列表里。
+		assert.equal(merged.branch, 'main');
+		assert.equal(merged.branches[0], 'main', '当前分支应在首位');
+		assert.ok(merged.branches.includes('feature'));
+		assert.ok(merged.branches.includes('origin/main'));
+		assert.ok(!merged.branches.some((name) => name.endsWith('/HEAD')), '远程 HEAD 不应作为分支');
+
+		// 隐藏远程同时作用于引用集合与分支列表。
+		const hidden = parseRefsAndBranches(git('for-each-ref', `--format=${REF_BRANCH_FORMAT}`, ...refs), ['upstream']);
+		assert.deepEqual(hidden.refs.remotes.map((r) => r.name), ['origin/main']);
+		assert.ok(!hidden.branches.includes('upstream/main'));
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('配置列表按键取值且值中的换行被保留', () => {
 	const stdout = 'user.name\nalice\0core.bare\nfalse\0weird.value\nline1\nline2\0';
 	const configs = parseConfigList(stdout);
@@ -234,55 +274,6 @@ test('无贮藏时 reflog 命令失败由调用方处理', () => {
 	}
 });
 
-test('标签详情解析打标签者、时间与消息', () => {
-	const { repo, git, write } = makeRepo();
-	try {
-		write('a.txt', 'one');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'base');
-		git('tag', '-a', 'v1', '-m', 'tag message');
-		const raw = git('for-each-ref', 'refs/tags/v1', `--format=${TAG_FORMAT}`);
-		const info = parseTagInfo(raw);
-		assert.equal(info.taggerName, 'Parse');
-		assert.equal(info.taggerEmail, 'parse@example.com');
-		assert.ok(info.taggerDate > 0);
-		assert.equal(info.signed, false);
-		assert.equal(info.message, 'tag message');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('轻量标签没有打标签者', () => {
-	const { repo, git, write } = makeRepo();
-	try {
-		write('a.txt', 'one');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'base');
-		git('tag', 'light');
-		const raw = git('for-each-ref', 'refs/tags/light', `--format=${TAG_FORMAT}`);
-		const info = parseTagInfo(raw);
-		assert.equal(info.taggerName, '');
-		assert.equal(info.message, 'base');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('GPG 状态行解析出签名与信任降级', () => {
-	const good = parseTagSignature('[GNUPG:] GOODSIG ABC123 Alice <a@b.c>\n[GNUPG:] TRUST_ULTIMATE\n');
-	assert.equal(good.status, 'G');
-	assert.equal(good.key, 'ABC123');
-	assert.equal(good.signer, 'Alice <a@b.c>');
-
-	const untrusted = parseTagSignature('[GNUPG:] GOODSIG ABC123 Alice <a@b.c>\n[GNUPG:] TRUST_UNDEFINED\n');
-	assert.equal(untrusted.status, 'U');
-
-	const bad = parseTagSignature('[GNUPG:] BADSIG ABC123 Alice <a@b.c>\n');
-	assert.equal(bad.status, 'B');
-
-	assert.equal(parseTagSignature('no gnupg records here'), null);
-});
 
 test('改动列表把状态信息与增删数合并到同一路径', () => {
 	const changes = generateFileChanges(
@@ -301,27 +292,16 @@ test('改动列表把状态信息与增删数合并到同一路径', () => {
 	]);
 });
 
-test('未提交伪提交插在最前且带 HEAD 作父提交', () => {
+test('未提交伪提交不在宿主侧插入：该行由客户端按工作区快照补出', () => {
 	const refs = { head: 'h1', heads: [], tags: [], remotes: [] };
 	const graph = assembleCommits(
 		[{ hash: 'h1', parents: [], author: 'A', email: 'a@b.c', date: 10, message: 'first' }],
-		refs, [], [], 2, true, 300, 99,
-	);
-	assert.equal(graph.commits.length, 2);
-	assert.equal(graph.commits[0].hash, UNCOMMITTED);
-	assert.deepEqual(graph.commits[0].parents, ['h1']);
-	assert.equal(graph.commits[0].message, 'Uncommitted Changes (2)');
-	assert.equal(graph.commits[0].date, 99);
-	assert.equal(graph.commits[1].hash, 'h1');
-	assert.equal(graph.moreCommitsAvailable, false);
-});
-
-test('没有未提交变更时不插入伪提交', () => {
-	const graph = assembleCommits(
-		[{ hash: 'h1', parents: [], author: 'A', email: 'a@b.c', date: 10, message: 'first' }],
-		{ head: 'h1', heads: [], tags: [], remotes: [] }, [], [], 0, true, 300,
+		refs, [], [], true, 300,
 	);
 	assert.deepEqual(graph.commits.map((commit) => commit.hash), ['h1']);
+	assert.equal(graph.commits.some((commit) => commit.hash === UNCOMMITTED), false);
+	assert.equal(graph.head, 'h1');
+	assert.equal(graph.moreCommitsAvailable, false);
 });
 
 test('多取的一条被丢弃并置 moreCommitsAvailable', () => {
@@ -330,7 +310,7 @@ test('多取的一条被丢弃并置 moreCommitsAvailable', () => {
 		{ hash: 'h2', parents: ['h1'], author: 'A', email: '', date: 2, message: 'b' },
 		{ hash: 'h1', parents: [], author: 'A', email: '', date: 1, message: 'a' },
 	];
-	const graph = assembleCommits(records, { head: 'h3', heads: [], tags: [], remotes: [] }, [], [], 0, true, 2);
+	const graph = assembleCommits(records, { head: 'h3', heads: [], tags: [], remotes: [] }, [], [], true, 2);
 	assert.equal(graph.commits.length, 2);
 	assert.equal(graph.moreCommitsAvailable, true);
 	assert.deepEqual(graph.commits.map((commit) => commit.hash), ['h3', 'h2']);
@@ -345,7 +325,7 @@ test('只被贮藏引用的提交在基提交前插入', () => {
 		hash: 's1', baseHash: 'h1', untrackedFilesHash: null, selector: 'refs/stash@{0}',
 		author: 'A', email: '', date: 15, message: 'stashed',
 	};
-	const graph = assembleCommits(records, { head: 'h2', heads: [], tags: [], remotes: [] }, [stash], [], 0, true, 300);
+	const graph = assembleCommits(records, { head: 'h2', heads: [], tags: [], remotes: [] }, [stash], [], true, 300);
 	assert.deepEqual(graph.commits.map((commit) => commit.hash), ['h2', 's1', 'h1']);
 	assert.equal(graph.commits[1].stash.selector, 'refs/stash@{0}');
 	assert.deepEqual(graph.commits[1].parents, ['h1']);
@@ -361,7 +341,7 @@ test('已在列表中的贮藏只标记不插入', () => {
 		hash: 's1', baseHash: 'h1', untrackedFilesHash: null, selector: 'refs/stash@{0}',
 		author: 'A', email: '', date: 15, message: 'stashed',
 	};
-	const graph = assembleCommits(records, { head: 'h1', heads: [], tags: [], remotes: [] }, [stash], [], 0, true, 300);
+	const graph = assembleCommits(records, { head: 'h1', heads: [], tags: [], remotes: [] }, [stash], [], true, 300);
 	assert.deepEqual(graph.commits.map((commit) => commit.hash), ['s1', 'h1']);
 	assert.equal(graph.commits[0].stash.selector, 'refs/stash@{0}');
 });
@@ -374,7 +354,7 @@ test('多个贮藏插在同一基提交上时按时间倒序', () => {
 	});
 	const graph = assembleCommits(
 		records, { head: 'h1', heads: [], tags: [], remotes: [] },
-		[mk('old', 12), mk('new', 18)], [], 0, true, 300,
+		[mk('old', 12), mk('new', 18)], [], true, 300,
 	);
 	assert.deepEqual(graph.commits.map((commit) => commit.hash), ['new', 'old', 'h1']);
 });
@@ -390,7 +370,7 @@ test('分支、标签与远程标注到对应提交并带上所属远程', () =>
 		tags: [{ hash: 'h2', name: 'v1', annotated: true }, { hash: 'h1', name: 'light', annotated: false }],
 		remotes: [{ hash: 'h2', name: 'origin/main' }, { hash: 'h1', name: 'other/x' }],
 	};
-	const graph = assembleCommits(records, refs, [], ['origin'], 0, true, 300);
+	const graph = assembleCommits(records, refs, [], ['origin'], true, 300);
 	assert.deepEqual(graph.commits[0].heads, ['main']);
 	assert.deepEqual(graph.commits[1].heads, ['feature']);
 	assert.deepEqual(graph.commits[0].tags, [{ name: 'v1', annotated: true }]);
@@ -403,7 +383,7 @@ test('分支、标签与远程标注到对应提交并带上所属远程', () =>
 test('不显示标签时提交上不带标签但 tags 列表仍返回', () => {
 	const records = [{ hash: 'h1', parents: [], author: 'A', email: '', date: 1, message: 'a' }];
 	const refs = { head: 'h1', heads: [], tags: [{ hash: 'h1', name: 'v1', annotated: false }], remotes: [] };
-	const graph = assembleCommits(records, refs, [], [], 0, false, 300);
+	const graph = assembleCommits(records, refs, [], [], false, 300);
 	assert.deepEqual(graph.commits[0].tags, []);
 	assert.deepEqual(graph.tags, ['v1']);
 });

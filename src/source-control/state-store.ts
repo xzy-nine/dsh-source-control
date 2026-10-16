@@ -162,6 +162,15 @@ export function writeRepoLocations(cwd: string, repos: readonly CachedRepoLocati
 }
 
 /**
+ * 列出已缓存仓库位置的工作区根路径。
+ *
+ * @returns 工作区根路径；无缓存时为空数组。
+ */
+export function listRepoLocationWorkspaces(): string[] {
+	return Object.keys(load().repos);
+}
+
+/**
  * 清掉内存态，使下次读取重新落盘载入。
  *
  * @returns 无。

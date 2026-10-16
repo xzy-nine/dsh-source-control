@@ -100,9 +100,8 @@ test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产�
 			remotes: info.remotes, hideRemotes: [], stashes: info.stashes,
 		});
 		assert.equal(commits.error, null);
-		assert.equal(commits.commits[0].hash, '*', '未提交伪提交应在最前');
-		assert.equal(commits.commits[0].parents.length, 1);
-		assert.match(commits.commits[0].message, /^Uncommitted Changes \(1\)$/);
+		// 未提交伪提交不在宿主侧插入：该行由客户端按工作区快照补出。
+		assert.equal(commits.commits.some((commit) => commit.hash === '*'), false);
 		assert.deepEqual(commits.commits.flatMap((commit) => commit.heads).sort(), ['feature', 'main']);
 
 		const tagged = commits.commits.find((commit) => (commit.tags ?? []).some((tag) => tag.name === 'v1'));
@@ -152,21 +151,6 @@ test('提交详情：普通、根、重命名、工作区与贮藏', { skip: !bu
 	}
 });
 
-test('标签详情区分附注与轻量', { skip: !built && '未找到宿主产物' }, async () => {
-	const { repo } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		const annotated = await call({ command: 'tagDetails', tagName: 'v1', commitHash: '' });
-		assert.equal(annotated.tagDetails.message, 'release one');
-		assert.equal(annotated.tagDetails.tagger, 'Api <api@example.com>');
-		assert.equal(typeof annotated.tagDetails.date, 'string');
-
-		const lightweight = await call({ command: 'tagDetails', tagName: 'light', commitHash: '' });
-		assert.equal(lightweight.tagDetails, null);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
 
 test('分支、标签、贮藏与远程的写操作', { skip: !built && '未找到宿主产物' }, async () => {
 	const { repo } = makeRepo();
