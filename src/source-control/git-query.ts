@@ -4,7 +4,8 @@
  * 只读仓库，不修改引用与文件；git 的失败一律写进返回值的 `error` 字段，不向调用方抛错。
  * 命令输出交给 `git-parse.ts` 的纯解析函数，执行与错误处理复用 `working-tree.ts`。
  */
-import { gitOrThrow, parseStatus, runGit } from './working-tree.js';
+import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
+import type { WorkingTreeSnapshot } from './working-tree.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
 	parseNumStat, parseRefs, parseStashReflog, parseTagInfo, parseTagSignature,
@@ -12,7 +13,7 @@ import {
 } from './git-parse.js';
 import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, StatusFiles } from './git-parse.js';
 import type {
-	CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash,
+	CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
 	RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, Signature, StashEntry, TagDetails,
 	TagDetailsData, TagDetailsView,
 } from './git-types.js';
@@ -106,7 +107,8 @@ export async function getCommits(
 			refs = refsOrError;
 		}
 
-		const uncommittedChanges = refs.head === null ? 0 : await getUncommittedChanges(repo);
+		/* 未提交伪提交只插在首屏：翻页页不会把它放在正确位置，客户端也已持有该行。 */
+		const uncommittedChanges = refs.head === null || skip > 0 ? 0 : await getUncommittedChanges(repo);
 		return { ...assembleCommits(records, refs, stashes, remotes, uncommittedChanges, showTags, maxCommits), error: null };
 	} catch (error) {
 		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, error: errorText(error) };
@@ -346,6 +348,37 @@ export async function getStatus(repo: string): Promise<StatusFiles> {
 		if (indexStatus === 'R' || indexStatus === 'C' || worktreeStatus === 'R' || worktreeStatus === 'C') index++;
 	}
 	return { deleted, untracked };
+}
+
+/** 工作区快照的读取结果：条目、分支与上游关系，或错误文本。 */
+export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
+	readonly error: ErrorInfo;
+}
+
+/**
+ * 读取工作区快照：变更条目与当前分支的上游关系。
+ *
+ * 两条信息来自同一次 `git status --porcelain=v2 --branch -z -uall`：面板进入仓库与写操作后的
+ * 对账都同时需要它们，分两次读会各起一个子进程，且两次输出之间工作区可能已经变化。
+ *
+ * @param repo - 仓库路径。
+ * @returns 快照；读取失败时条目为空、分支为 null 且 `error` 为错误文本。
+ */
+export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeSnapshotData> {
+	try {
+		const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
+		const snapshot = parseStatusSnapshot(stdout);
+		return {
+			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
+			branch: snapshot.branch,
+			upstream: snapshot.upstream,
+			ahead: snapshot.ahead,
+			behind: snapshot.behind,
+			error: null,
+		};
+	} catch (error) {
+		return { entries: [], branch: null, upstream: null, ahead: 0, behind: 0, error: errorText(error) };
+	}
 }
 
 /**
@@ -593,9 +626,9 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
  * @returns 变更条目数。
  */
 async function getUncommittedChanges(repo: string): Promise<number> {
-	// 与 working-tree.ts 的 loadWorkingTree 保持同一参数顺序：同一份 status 在并发时共用子进程。
-	const stdout = await gitOrThrow(['status', '--porcelain', '-z', '--untracked-files=all'], repo);
-	return parseStatus(stdout).length;
+	// 参数与 getWorkingTreeSnapshot 完全一致：两者并发时共用同一个子进程与缓存条目。
+	const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
+	return parseStatusSnapshot(stdout).entries.length;
 }
 
 /**

@@ -578,6 +578,85 @@ export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEn
 	return entries;
 }
 
+/** 工作区快照：变更条目与当前分支的上游关系。 */
+export interface WorkingTreeSnapshot {
+	/** 工作区变更条目，按路径升序。 */
+	readonly entries: WorkingTreeEntry[];
+	/** 当前分支短名；分离头指针时为 null。 */
+	readonly branch: string | null;
+	/** 上游短名；无上游或上游引用不存在时为 null。 */
+	readonly upstream: string | null;
+	/** 相对上游的领先提交数。 */
+	readonly ahead: number;
+	/** 相对上游的落后提交数。 */
+	readonly behind: number;
+}
+
+/** v2 的 XY 列取值：`.` 表示该侧无改动，按空列输出。 */
+function column(value: string): string {
+	return value === '.' ? ' ' : value;
+}
+
+/**
+ * 解析 `git status --porcelain=v2 --branch -z` 的输出。
+ *
+ * 分支信息取自 `# branch.*` 头：`branch.head` 为 `(detached)` 时分支为 null；
+ * `branch.ab` 缺失表示上游引用不存在，此时上游同样按无上游处理。
+ * 记录以 NUL 分隔，重命名记录的新路径与旧路径分列相邻两条；路径不做转义。
+ *
+ * @param stdout - git 的标准输出。
+ * @param limit - 最多解析的记录数；超出即截断。
+ * @returns 变更条目与分支的上游关系。
+ */
+export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): WorkingTreeSnapshot {
+	const tokens = stdout.split('\0');
+	const entries: WorkingTreeEntry[] = [];
+	let branch: string | null = null;
+	let upstream = '';
+	let ab: { ahead: number; behind: number } | null = null;
+	let index = 0;
+	while (index < tokens.length && entries.length < limit) {
+		const token = tokens[index];
+		index++;
+		if (token === undefined || token === '') continue;
+		if (token.startsWith('# ')) {
+			const space = token.indexOf(' ', 2);
+			const key = space === -1 ? token.slice(2) : token.slice(2, space);
+			const value = space === -1 ? '' : token.slice(space + 1);
+			if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
+			else if (key === 'branch.upstream') upstream = value;
+			else if (key === 'branch.ab') {
+				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
+				const [aheadRaw, behindRaw] = value.split(' ');
+				const ahead = Number.parseInt((aheadRaw ?? '').replace('+', ''), 10);
+				const behind = Number.parseInt((behindRaw ?? '').replace('-', ''), 10);
+				ab = { ahead: Number.isFinite(ahead) ? ahead : 0, behind: Number.isFinite(behind) ? behind : 0 };
+			}
+			continue;
+		}
+		const kind = token.slice(0, 1);
+		if (kind === '?') {
+			entries.push({ path: token.slice(2), origPath: null, index: '?', worktree: '?' });
+			continue;
+		}
+		if (kind !== '1' && kind !== '2' && kind !== 'u') continue;
+		const parts = token.split(' ');
+		/* 固定字段数：普通记录 8、重命名记录 9、未合并记录 10，其后整段为路径。 */
+		const head = kind === 'u' ? 10 : kind === '2' ? 9 : 8;
+		const path = parts.slice(head).join(' ');
+		if (path === '') continue;
+		const xy = parts[1] ?? '';
+		let origPath: string | null = null;
+		if (kind === '2') {
+			origPath = tokens[index] ?? null;
+			index++;
+		}
+		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
+		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
+	}
+	return { entries, branch, upstream: upstream !== '' && ab !== null ? upstream : null, ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0 };
+}
+
 /**
  * 读取仓库的工作区变更。
  *

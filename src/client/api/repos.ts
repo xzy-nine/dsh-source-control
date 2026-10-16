@@ -1,7 +1,7 @@
 /**
  * 仓库发现、仓库同步状态与提交图查询。
  */
-import type { Commit, Remote, RepoNode, RepoSync } from '../shared/types.ts';
+import type { Commit, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
 import { callApi } from './http.ts';
 
 /** 仓库发现结果。 */
@@ -36,6 +36,33 @@ export async function discoverRepositories(cwd: string, { maxDepth, knownRepos }
 export async function loadRepoSync(cwd: string, signal?: AbortSignal): Promise<RepoSync> {
 	const payload = await callApi(cwd, { command: 'loadRepoSync' }, signal);
 	return {
+		branch: typeof payload.branch === 'string' ? payload.branch : null,
+		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
+		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
+		behind: typeof payload.behind === 'number' ? payload.behind : 0,
+	};
+}
+
+/** 工作区快照：变更条目与仓库同步状态。 */
+export interface WorkingTreeSnapshot {
+	readonly entries: WorkingTreeEntry[];
+	readonly branch: string | null;
+	readonly upstream: string | null;
+	readonly ahead: number;
+	readonly behind: number;
+}
+
+/**
+ * 读取工作区快照。
+ *
+ * @param cwd - 仓库路径。
+ * @param signal - 取消信号。
+ * @returns 变更条目与分支、上游、领先/落后数。
+ */
+export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal): Promise<WorkingTreeSnapshot> {
+	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot' }, signal);
+	return {
+		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
 		branch: typeof payload.branch === 'string' ? payload.branch : null,
 		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
@@ -84,12 +111,13 @@ export async function loadGraph(cwd: string, {
 		command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [],
 	}, signal);
 	const remotes = (Array.isArray(repoInfo.remotes) ? repoInfo.remotes : []) as Remote[];
+	const stashes = Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [];
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
 		// 偏移分页：skip 是已加载条数，正反向都用它。
 		command: 'loadCommits', branches: null, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering,
-		remotes, hideRemotes: [], stashes: Array.isArray(repoInfo.stashes) ? repoInfo.stashes : [],
+		remotes, hideRemotes: [], stashes,
 	}, signal);
 	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;
 	return {

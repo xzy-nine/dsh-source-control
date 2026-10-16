@@ -35,7 +35,7 @@ import { migrateLegacyState } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
-import { useGraphData } from './use-graph-data.ts';
+import { dropGraphWindows, useGraphData } from './use-graph-data.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries, discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
@@ -412,7 +412,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
 			}
-			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
+			if (scope !== 'read' && target === workingTreePath) {
+				// 写操作可能改动引用与提交历史，提交图窗口缓存随之失效。
+				dropGraphWindows(target);
+				await refresh('reconcile');
+			}
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {

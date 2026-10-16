@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import {
 	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
-	getTagDetails, getUncommittedDetails, repoRoot,
+	getTagDetails, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
@@ -108,6 +108,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				await whenGitIdle(repo);
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
+			break;
+		case 'loadWorkingTreeSnapshot':
+			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
+			await whenGitIdle(repo);
+			respond({ command: 'loadWorkingTreeSnapshot', repo, ...(await getWorkingTreeSnapshot(repo)) });
 			break;
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });

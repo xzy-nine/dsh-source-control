@@ -41,7 +41,7 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     元数据与菜单名称的数据源，menu-actions.ts 补缺省并给出类型；变更区三个
                     目标（文件夹行 / 文件行 / 分组标题）的菜单共用 change-menu.ts 的注册表，
                     元数据在 change-menu-actions.json
-  src/client/graph/ 泳道图：index.ts 组件与 lanes.ts 布局纯计算
+  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、cache.ts 提交图窗口缓存
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
@@ -72,9 +72,11 @@ assets/icons/       引用标记用的 SVG
 JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），因此形状、占位符与各目标的必备操作由
 `test/data-sources.test.mjs` 校验。
 
-宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更；
-`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，无 git 调用，可被测试直接导入；
-`git-query.ts` 是只读查询层；`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
+宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更，
+其 `parseStatusSnapshot` 解析 `status --porcelain=v2 --branch`（条目与分支上游来自同一次调用，
+v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，
+无 git 调用，可被测试直接导入；`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现）；
+`git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
@@ -119,6 +121,11 @@ Office）主动不认领，那些仍走宿主预览。
 
 兜底轮询覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），间隔远大于事件响应的及时性要求，
 页签不可见、上一次未结束、面板正忙时跳过。
+
+一次重载向宿主发两次请求：`loadCommits`（提交图窗口）与 `loadWorkingTreeSnapshot`（工作区条目 +
+分支 / 上游 / 领先落后）。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
+只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
+用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
 
 `change-events.ts` 是判据的纯函数层（无导入，可直接单测）：`settledFileChanges` 把事件折成「拿到结果
 且结果非错误」的写入/编辑，`repositoryRelativePath` 判定模型给出的路径是否真在仓库内。事件窗口是
@@ -199,6 +206,10 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构、CSS 模块类名引用 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
+| `status-snapshot.test.mjs` | 工作区快照解析：v2 记录与空列、重命名、未合并、分支与上游、截断 |
+| `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照 |
+| `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
+| `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码 |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
@@ -219,7 +230,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |
 | `ordering.test.mjs` | 三种提交排序 |
 
-`api-commands.test.mjs` 从 `lib/` 宿主产物导入，因此 `pretest` 跑完整 `build`。
+`api-commands.test.mjs` 与 `snapshot.test.mjs` 从 `lib/` 宿主产物导入，因此 `pretest` 跑完整 `build`。
 
 `primitives.test.mjs` 断言「客户端从 ui-primitives 导入的每个名字都真实存在」：产品图标导出名带
 `Regular` / `Medium` 权重后缀，写成裸名会得到 `undefined`，React 渲染时不报编译错误、只在运行时抛
