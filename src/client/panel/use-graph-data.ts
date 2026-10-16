@@ -260,6 +260,10 @@ export function useGraphData({
 		let timerId: number | undefined;
 		let timerInterval = 0;
 
+		/** 已加载提交图的 HEAD：取自提交列表首条真实提交。 */
+		const loadedHead = (): string | null =>
+			stateRef.current.commits.find((commit) => commit.hash !== '*')?.hash ?? null;
+
 		const poll = (): void => {
 			if (cancelled || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
 			polling = true;
@@ -276,9 +280,23 @@ export function useGraphData({
 						? seenCount >= stableObservationsRequired(true) && signature !== loadedSigRef.current
 						: shouldFallbackRefresh(signature, previous, loadedSigRef.current, seenCount);
 					if (!reload) return;
-					// 外部写入可能已经产生提交，窗口缓存随之失效。
-					graphWindows.dropRepo(workingTreePath);
-					void refresh();
+					/*
+					 * 轮询读到的是**工作区**签名，它只说明有文件改动，不说明引用或提交历史变了。
+					 * 区分两者的是 HEAD：只有 HEAD 移动（提交、检出、重置等）才需要重取提交图 ——
+					 * 窗口缓存的键不含 HEAD，不作废会返回陈旧的一页。
+					 *
+					 * 纯文件改动只更新变更区：一律作废缓存会让每次保存都重取整页提交
+					 * （大仓库数百毫秒），并让图形区整体重渲染。
+					 */
+					if (snapshot.head !== null && snapshot.head !== loadedHead()) {
+						graphWindows.dropRepo(workingTreePath);
+						void refresh();
+						return;
+					}
+					setState((previous) => ({
+						...previous,
+						phase: 'ready', error: null, entries: snapshot.entries,
+					}));
 				} catch { /* 忽略兜底轮询失败 */ } finally {
 					polling = false;
 				}
