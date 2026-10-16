@@ -181,15 +181,15 @@ test('提交集合与顺序由 git log 独立推导，标记与伪提交符合�
 		const head = git('rev-parse', 'HEAD').trim();
 		assert.equal(data.head, head);
 
-		// 1) 伪提交在最前，父提交为 HEAD。
-		assert.equal(commits[0].hash, '*');
-		assert.deepEqual(commits[0].parents, [head]);
+		// 1) 宿主不再插入未提交伪提交：该行由客户端按工作区快照补出。
+		assert.equal(commits.some((commit) => commit.hash === '*'), false, '宿主提交图不含未提交伪提交');
+		assert.ok(commits.some((commit) => commit.hash === head), 'HEAD 提交应在列表中');
 
-		// 2) 去掉伪提交与贮藏提交后，提交集合与顺序与 git log 一致。
+		// 2) 提交集合与顺序与 git log 一致（贮藏提交另计）。
 		const stashHash = git('rev-parse', 'refs/stash').trim();
 		const stashBase = git('rev-parse', 'refs/stash^').trim();
 		const expectedLog = deriveLogHashes(git, [stashBase]);
-		const actualLog = commits.filter((commit) => commit.hash !== '*' && commit.stash === null).map((commit) => commit.hash);
+		const actualLog = commits.filter((commit) => commit.stash === null).map((commit) => commit.hash);
 		assert.deepEqual(actualLog, expectedLog);
 
 		// 3) 贮藏插入在其基提交之前，且带贮藏标记。

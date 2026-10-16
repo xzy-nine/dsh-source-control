@@ -8,13 +8,14 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
-import { resolveGitCommonDir } from './worktree-branches.js';
+import { resolveGitCommonDir, readHeadRef } from './worktree-branches.js';
+import type { HeadRef } from './worktree-branches.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
-	parseNumStat, parseRefs, parseStashReflog,
-	DETAILS_FORMAT, LOG_FORMAT, REF_FORMAT, STASH_FORMAT, UNCOMMITTED,
+	parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
+	DETAILS_FORMAT, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT, UNCOMMITTED,
 } from './git-parse.js';
-import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, StatusFiles } from './git-parse.js';
+import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, RefsAndBranches, StatusFiles } from './git-parse.js';
 import type {
 	CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
 	RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
@@ -33,13 +34,17 @@ const DIFF_FILTER = 'AMDR';
  * @param showRemoteBranches - 是否列出远程分支。
  * @param showStashes - 是否列出贮藏。
  * @param hideRemotes - 要隐藏的远程名。
+ * @param prefetched - 已取到的引用与分支；给出时不再枚举引用。
  * @returns 仓库信息；任一读取失败时各列表为空且 `error` 为错误文本。
  */
-export async function getRepoInfo(repo: string, showRemoteBranches: boolean, showStashes: boolean, hideRemotes: readonly string[]): Promise<RepoInfo> {
+export async function getRepoInfo(
+	repo: string, showRemoteBranches: boolean, showStashes: boolean, hideRemotes: readonly string[],
+	prefetched?: Promise<RefsAndBranches>,
+): Promise<RepoInfo> {
 	try {
 		/* 三路互不依赖，同批取：串行要等三个子进程依次结束，并行只等最慢的一个。 */
 		const [branchData, configs, stashes] = await Promise.all([
-			getBranches(repo, showRemoteBranches, hideRemotes),
+			prefetched ?? getRefsAndBranches(repo, showRemoteBranches, hideRemotes),
 			readConfig(repo),
 			showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]),
 		]);
@@ -48,7 +53,7 @@ export async function getRepoInfo(repo: string, showRemoteBranches: boolean, sho
 		const remoteNames = configured ?? await getRemoteNames(repo);
 		return {
 			branches: branchData.branches,
-			head: branchData.head,
+			head: branchData.branch,
 			remotes: remoteNames.map((name): SettingsRemote => ({
 				name,
 				url: configs[`remote.${name}.url`] ?? null,
@@ -127,8 +132,6 @@ export async function getCommits(
 		 * 因此这里不能反过来等引用。
 		 */
 		const refsSource = refsInput ?? getRefs(repo, showRemoteBranches, false, hideRemotes);
-		/* 工作区读取与日志、引用互不依赖，先发出去，稍后再等结果。 */
-		const statusSource = skip > 0 ? null : readStatusSnapshot(repo);
 		const [records, refsOrError] = await Promise.all([
 			getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip),
 			refsSource.then((refs) => refs, (error: unknown) => errorText(error)),
@@ -144,19 +147,11 @@ export async function getCommits(
 		}
 
 		/*
-		 * 未提交伪提交只插在首屏：翻页页不会把它放在正确位置，客户端也已持有该行。
-		 *
-		 * 伪提交要求引用与工作区读自同一批：引用之后 HEAD 可能已被别的进程移动（提交、检出），
-		 * 此时伪提交的父提交会指向一个不在列表里的哈希，泳道图在该处断线。
-		 * 读取失败时按 0 处理，面板仍能显示提交历史。
-		 */
-		const uncommittedChanges = refs.head === null || statusSource === null ? 0 : countUncommittedChanges(await statusSource, refs.head);
-		/*
 		 * 远程名可能与仓库信息同批取。标注发生在日志与引用都就绪之后，因此这里才等它落地：
 		 * 放在日志之前会把两路并行压成串行。
 		 */
 		const remoteNames = await remotes;
-		return { ...assembleCommits(records, refs, stashes, remoteNames, uncommittedChanges, showTags, maxCommits), error: null };
+		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits), error: null };
 	} catch (error) {
 		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, error: errorText(error) };
 	}
@@ -463,36 +458,25 @@ async function readConfig(repo: string, location?: 'local' | 'global'): Promise<
 }
 
 /**
- * 读取分支列表与当前分支。
+ * 一次枚举读取引用集合与分支列表。
+ *
+ * 提交图与仓库信息读的是同一批引用，只是取值不同；一次 `for-each-ref` 同时得到两者，首屏因此
+ * 少起一个子进程。`head` 不在本次输出里，由 `HEAD` 文件补入，不起 `git rev-parse`。
  *
  * @param repo - 仓库路径。
- * @param showRemoteBranches - 是否列出远程分支。
+ * @param showRemoteBranches - 是否包含远程分支。
  * @param hideRemotes - 要隐藏的远程名。
- * @returns 分支名列表（当前分支在首位）与当前分支名。
+ * @returns 引用集合（`head` 已补入）、分支名列表与当前分支名。
  */
-async function getBranches(repo: string, showRemoteBranches: boolean, hideRemotes: readonly string[]): Promise<{ branches: string[]; head: string | null }> {
-	const args = ['for-each-ref', '--format=%(HEAD)%00%(refname:short)%00%(symref)', 'refs/heads'];
+export async function getRefsAndBranches(repo: string, showRemoteBranches: boolean, hideRemotes: readonly string[]): Promise<RefsAndBranches> {
+	const args = ['for-each-ref', `--format=${REF_BRANCH_FORMAT}`, 'refs/heads', 'refs/tags'];
 	if (showRemoteBranches) args.push('refs/remotes');
-	const stdout = await gitOrThrow(args, repo);
-
-	const branches: string[] = [];
-	let head: string | null = null;
-	for (const line of stdout.split('\n')) {
-		if (line === '') continue;
-		const fields = line.split('\0');
-		if (fields.length < 3) continue;
-		const name = fields[1];
-		/* 远程 HEAD 是指向分支的符号引用，不是可操作的分支。 */
-		if (fields[2] !== '') continue;
-		if (hideRemotes.some((remote) => name.startsWith(`${remote}/`))) continue;
-		if (fields[0].trim() === '*') {
-			head = name;
-			branches.unshift(name);
-		} else {
-			branches.push(name);
-		}
-	}
-	return { branches, head };
+	const [stdout, headRef] = await Promise.all([
+		gitOrThrow(args, repo),
+		readHeadRef(repo),
+	]);
+	const parsed = parseRefsAndBranches(stdout, hideRemotes);
+	return { ...parsed, refs: { ...parsed.refs, head: resolveHeadHash(parsed.refs, headRef) } };
 }
 
 /**
@@ -583,6 +567,9 @@ export function getRefsForGraph(repo: string, showRemoteBranches: boolean, hideR
 /**
  * 读取引用集合。
  *
+ * `head` 由 `HEAD` 文件解析得到，不再起 `git rev-parse` 子进程：文件内容指向分支时从本次
+ * 引用集合里取该分支的哈希，是分离头指针时文件内容本身就是提交哈希。
+ *
  * @param repo - 仓库路径。
  * @param showRemoteBranches - 是否包含远程分支。
  * @param showRemoteHeads - 是否包含远程 HEAD 符号引用。
@@ -593,13 +580,28 @@ async function getRefs(repo: string, showRemoteBranches: boolean, showRemoteHead
 	const args = ['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads', 'refs/tags'];
 	if (showRemoteBranches) args.push('refs/remotes');
 
-	const [stdout, head] = await Promise.all([
+	const [stdout, headRef] = await Promise.all([
 		gitOrThrow(args, repo),
-		runGit(['rev-parse', '--verify', '--quiet', 'HEAD'], repo),
+		readHeadRef(repo),
 	]);
 	const refs = parseRefs(stdout, hideRemotes, showRemoteHeads);
-	const headHash = head.code === 0 ? head.stdout.trim() : '';
-	return { ...refs, head: headHash === '' ? null : headHash };
+	return { ...refs, head: resolveHeadHash(refs, headRef) };
+}
+
+/**
+ * 由引用集合与 `HEAD` 文件内容得出 HEAD 指向的提交哈希。
+ *
+ * `HEAD` 指向分支时该分支必然出现在本次引用集合里；取不到时返回 null，与读不到 HEAD 同一处理。
+ *
+ * @param refs - 本次读到的引用集合。
+ * @param headRef - `HEAD` 文件的解析结果；读不到时为 null。
+ * @returns 提交哈希；无法确定时为 null。
+ */
+function resolveHeadHash(refs: RefData, headRef: HeadRef | null): string | null {
+	if (headRef === null) return null;
+	if (headRef.hash !== null) return headRef.hash;
+	if (headRef.branch === null) return null;
+	return refs.heads.find((head) => head.name === headRef.branch)?.hash ?? null;
 }
 
 /**
@@ -666,38 +668,6 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
 	/* diff-tree 的输出以提交哈希作为首个字段。 */
 	const separator = stdout.indexOf('\0');
 	return separator === -1 ? '' : stdout.slice(separator + 1);
-}
-
-/**
- * 统计工作区中的未提交变更数。
- *
- * @param repo - 仓库路径。
- * @returns 变更条目数。
- */
-async function readStatusSnapshot(repo: string): Promise<WorkingTreeSnapshot | null> {
-	try {
-		// 参数与 getWorkingTreeSnapshot 完全一致：两者并发时共用同一个子进程与缓存条目。
-		const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
-		return parseStatusSnapshot(stdout);
-	} catch {
-		return null;
-	}
-}
-
-/**
- * 取未提交变更数，供伪提交使用。
- *
- * 快照与引用读自同一批：引用之后 HEAD 可能已被别的进程移动（提交、检出），此时伪提交的父提交
- * 会指向一个不在列表里的哈希，泳道图在该处断线。读不到快照或 HEAD 已变时按 0 处理。
- *
- * @param snapshot - 已读出的工作区快照；读取失败时为 null。
- * @param expectedHead - 引用读取给出的 HEAD 哈希。
- * @returns 未提交变更数。
- */
-function countUncommittedChanges(snapshot: WorkingTreeSnapshot | null, expectedHead: string): number {
-	if (snapshot === null) return 0;
-	if (snapshot.head !== null && snapshot.head !== expectedHead) return 0;
-	return snapshot.entries.length;
 }
 
 

@@ -100,9 +100,8 @@ test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产�
 			remotes: info.remotes, hideRemotes: [], stashes: info.stashes,
 		});
 		assert.equal(commits.error, null);
-		assert.equal(commits.commits[0].hash, '*', '未提交伪提交应在最前');
-		assert.equal(commits.commits[0].parents.length, 1);
-		assert.match(commits.commits[0].message, /^Uncommitted Changes \(1\)$/);
+		// 未提交伪提交不在宿主侧插入：该行由客户端按工作区快照补出。
+		assert.equal(commits.commits.some((commit) => commit.hash === '*'), false);
 		assert.deepEqual(commits.commits.flatMap((commit) => commit.heads).sort(), ['feature', 'main']);
 
 		const tagged = commits.commits.find((commit) => (commit.tags ?? []).some((tag) => tag.name === 'v1'));

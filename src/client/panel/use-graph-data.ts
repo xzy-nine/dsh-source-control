@@ -17,7 +17,7 @@ import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { createCommitGraphCache } from '../graph/cache.ts';
 import { isRepoBusy } from './busy.ts';
-import { commitsListEqual, entriesEqual, remotesListEqual, withUncommittedCount } from './commit-diff.ts';
+import { commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from './commit-diff.ts';
 
 import type { BusyEntry, PanelState, Remote, RepoSync, Settings } from '../shared/types.ts';
 
@@ -244,6 +244,17 @@ export function useGraphData({
 			if (cached === undefined && !controller.signal.aborted) graphWindows.set(key, graph);
 			if (generation !== generationRef.current) return;
 			/*
+			 * 未提交伪提交行由这里补出：宿主不再为它读一次工作区，提交图的返回时刻因此不取决于
+			 * `git status`。条目数取同一轮的快照，与该行需要的父提交（HEAD）同源。
+			 *
+			 * 补出的行必须挂在提交列表里真实存在的父提交上：宿主列表与快照可能读自不同的时刻，
+			 * HEAD 已移动时该行会指向一个不在列表里的哈希，泳道图在该处断线。
+			 */
+			const commits = withUncommittedCount(
+				graph.commits, snapshot.entries.length,
+				uncommittedParentOf(graph.commits, snapshot.head),
+			);
+			/*
 			 * 对账刷新时数据未变则保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道布局
 			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
 			 */
@@ -251,12 +262,12 @@ export function useGraphData({
 			setState((previous) => {
 				const commitsSame = keep
 					&& previous.head === graph.head && previous.more === graph.moreCommitsAvailable
-					&& commitsListEqual(previous.commits, graph.commits);
+					&& commitsListEqual(previous.commits, commits);
 				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
 				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
 				return {
 					...previous, phase: 'ready', error: null,
-					commits: commitsSame ? previous.commits : graph.commits,
+					commits: commitsSame ? previous.commits : commits,
 					head: graph.head, more: graph.moreCommitsAvailable,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					entries: entriesSame ? previous.entries : snapshot.entries,
@@ -299,9 +310,13 @@ export function useGraphData({
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
 			setState((previous) => {
 				const entriesSame = entriesEqual(previous.entries, snapshot.entries);
+				/*
+				 * 父提交必须已在列表中：宿主不再负责这一判定，两处补出该行的调用点共用同一判据。
+				 */
+				const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
 				const commits = entriesSame
 					? previous.commits
-					: withUncommittedCount(previous.commits, snapshot.entries.length, snapshot.head ?? previous.head);
+					: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
 				return {
 					...previous, error: null,
 					entries: entriesSame ? previous.entries : snapshot.entries,

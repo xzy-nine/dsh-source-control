@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import {
 	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
-	getRefsForGraph, getRemoteNames, getStashes, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
+	getRefsAndBranches, getRefsForGraph, getRemoteNames, getStashes, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
@@ -332,10 +332,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const stashesSource: Promise<StashEntry[]> = givenStashes !== null
 					? Promise.resolve(givenStashes)
 					: showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]);
+				/*
+				 * 引用集合与分支列表读自同一批引用，只取值不同：一次 `for-each-ref` 同时得到两者。
+				 * 首屏（`withRepoInfo`）下两者都有人要，合并后少起一个子进程；刷新路径只有提交图
+				 * 需要引用，因此只在首屏预先发起。
+				 */
+				const refsAndBranchesSource = withRepoInfo
+					? getRefsAndBranches(repo, showRemoteBranches, hideRemotes)
+					: null;
 				const batchSource = withRepoInfo
 					? Promise.all([
-						getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes),
-						getRefsForGraph(repo, showRemoteBranches, hideRemotes),
+						getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes, refsAndBranchesSource ?? undefined),
+						refsAndBranchesSource?.then((parsed) => parsed.refs) ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes),
 						stashesSource,
 						branchesOfOtherWorktrees(repo),
 					]).then(([info, refs, stashes, foreign]) => ({ info, refs, stashes, foreign }), () => null)

@@ -137,13 +137,13 @@ const UNCOMMITTED_HASH = '*';
 /**
  * 按工作区条目数修正未提交伪提交行。
  *
- * 该行的文案由宿主的 `countUncommittedChanges` 给出，即当时的条目数。只取工作区快照的刷新
- * 不重取提交图，因此这里按同一判据就地修正：条目数变化时改写文案，条目清空时去掉该行，
+ * 该行的文案是当时的条目数。宿主不在提交图里插入该行（为它读一次工作区会让提交图的返回时刻
+ * 取决于 `git status`），因此这里按条目数补出并修正：条目数变化时改写文案，条目清空时去掉该行，
  * 条目数由零变正且该行尚不存在时补出该行。
  *
  * @param commits - 当前提交列表。
  * @param count - 当前工作区条目数。
- * @param head - 当前 HEAD 提交哈希；补出伪提交行时作为其父提交。
+ * @param head - 可作为该行父提交的哈希，须已在列表中（见 {@link uncommittedParentOf}）；不可用时传 null。
  * @returns 修正后的列表；无需改动时返回原引用。
  */
 export function withUncommittedCount(commits: Commit[], count: number, head: string | null = null): Commit[] {
@@ -165,6 +165,22 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 		hash: UNCOMMITTED_HASH, parents: [head], heads: [], tags: [], remotes: [], stash: null,
 		message, author: '*', email: '', date: Math.round(Date.now() / 1000),
 	}, ...commits];
+}
+
+/**
+ * 取未提交伪提交行可以挂载的父提交哈希。
+ *
+ * 该行的父提交必须出现在提交列表里，否则泳道图在该处断线：提交列表与工作区快照可能读自不同的
+ * 时刻，HEAD 已被别的进程移动时快照给出的哈希不在列表中，此时返回 null，由调用方按「不补出
+ * 该行」处理。
+ *
+ * @param commits - 当前提交列表。
+ * @param head - 工作区快照给出的 HEAD 哈希；缺失时为 null。
+ * @returns 可用的父提交哈希；不在列表中时为 null。
+ */
+export function uncommittedParentOf(commits: readonly Commit[], head: string | null | undefined): string | null {
+	if (typeof head !== 'string' || head === '') return null;
+	return commits.some((commit) => commit.hash === head) ? head : null;
 }
 
 /**

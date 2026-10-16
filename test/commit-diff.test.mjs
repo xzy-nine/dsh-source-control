@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { commitsEqual, commitsListEqual, entriesEqual, remotesListEqual, withUncommittedCount } from '../src/client/panel/commit-diff.ts';
+import { commitsEqual, commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from '../src/client/panel/commit-diff.ts';
 
 /** 构造一条带全部比对字段的提交。 */
 const commit = (overrides = {}) => ({
@@ -152,4 +152,21 @@ test('伪提交行：已有该行时补出逻辑不重复插入', () => {
 	const next = withUncommittedCount(list, 4, 'c1');
 	assert.equal(next.length, 2);
 	assert.equal(next[0].message, 'Uncommitted Changes (4)');
+});
+
+test('伪提交行的父提交必须已在列表中，否则不补出该行', () => {
+	const plain = commit({ hash: 'c1' });
+	const list = [plain];
+
+	// 在列表中：可作为父提交。
+	assert.equal(uncommittedParentOf(list, 'c1'), 'c1');
+	// 不在列表中（快照与列表读自不同时刻）：不可作为父提交，补出会让泳道断线。
+	assert.equal(uncommittedParentOf(list, 'moved'), null);
+	assert.equal(uncommittedParentOf(list, null), null);
+	assert.equal(uncommittedParentOf(list, undefined), null);
+	assert.equal(uncommittedParentOf(list, ''), null);
+
+	// 判据与补出联动：父提交不可用时保持原列表引用。
+	assert.equal(withUncommittedCount(list, 3, uncommittedParentOf(list, 'moved')), list);
+	assert.notEqual(withUncommittedCount(list, 3, uncommittedParentOf(list, 'c1')), list);
 });

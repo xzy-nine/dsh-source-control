@@ -138,23 +138,31 @@ Office）主动不认领，那些仍走宿主预览。
 一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；仅首次进入时同时带回仓库信息、引用集合
 与贮藏）与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部
 也是并行的：仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，
-不重复读。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
+不重复读；首屏下引用集合与分支列表由**同一次** `for-each-ref` 产出（`REF_BRANCH_FORMAT` 与
+`parseRefsAndBranches`，同时取 `%(HEAD)`、`%(refname:short)`、`%(symref)` 与引用字段），因此不为此多起
+子进程。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
 只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
 用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
 
 ## 刷新耗时
 
-一次 git 子进程的固定开销约 80ms，因此刷新路径的耗时几乎只由「起了几个 git 子进程」决定。三处对策：
+一次 git 子进程的固定开销约 80ms，因此刷新路径的耗时几乎只由「起了几个 git 子进程」决定。五处对策：
 
 | 对策 | 说明 |
 |---|---|
+| 图形区不等工作区 | `getCommits` 不读 `git status`：未提交伪提交行需要工作区条目数，宿主为它读一次工作区会让提交图的返回时刻取决于工作区读取（`git status` 是两者中最慢的一条），文件越多越慢。该行改由客户端按**同一轮**的工作区快照补出（`commit-diff.ts` 的 `withUncommittedCount`），`assembleCommits` 因此不接收未提交变更数 |
+| 引用只枚举一次 | 引用集合与分支列表读的是同一批引用：首屏由一次 `for-each-ref` 同时产出（`REF_BRANCH_FORMAT` 与 `parseRefsAndBranches`，`getRefsAndBranches`）；`HEAD` 由 `HEAD` 文件解析（`worktree-branches.ts` 的 `readHeadRef`），不起 `git rev-parse` |
 | 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
 | 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存 |
 | 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
 
+未提交伪提交行的父提交必须已在提交列表中：提交列表与工作区快照可能读自不同时刻，HEAD 已被别的进程
+移动时该行会指向一个不在列表里的哈希，泳道图在该处断线。判据是 `commit-diff.ts` 的
+`uncommittedParentOf`，`refresh` 与 `refreshEntries` 两处补出该行时共用它。
+
 `refreshEntries()` 只中止**上一次快照**请求（独立的 `entriesControllerRef`），不触碰在途的提交图请求：
 `phase` 只由 `refresh` 写入，作废在途的提交图会让图形区永久停在 loading。它按条目数就地修正未提交伪
-提交行（`withUncommittedCount`，含条目数由零变正时补出该行），文案与宿主 `git-parse.ts` 同格式。
+提交行（`withUncommittedCount`，含条目数由零变正时补出该行），文案与客户端同格式。
 
 度量：`scripts/bench-refresh.mjs`（刷新路径，含 `withRepoInfo` 两种模式对照）、`bench-first-paint.mjs`
 （首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
@@ -301,7 +309,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |
-| `worktree-branches.test.mjs` | 工作树占用分支的判定 |
+| `worktree-branches.test.mjs` | 工作树占用分支的判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
 | `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
 | `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
 | `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |

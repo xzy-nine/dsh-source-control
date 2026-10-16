@@ -41,6 +41,31 @@ export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(o
 /** 分支同步的格式串；`%(HEAD)` 标出当前分支。 */
 export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
 
+/**
+ * 引用与分支合并读取的字段数：HEAD 标记、全名、短名、对象名、解引用对象名、对象类型、符号引用目标。
+ */
+export const REF_BRANCH_FIELD_COUNT = 7;
+
+/**
+ * 引用与分支合并读取的格式串。
+ *
+ * 引用集合与分支列表读的是同一批引用，只是取值不同；一次枚举即可同时得到两者，避免同一次
+ * 首屏为此起两个子进程。
+ */
+export const REF_BRANCH_FORMAT = [
+	'%(HEAD)', '%(refname)', '%(refname:short)', '%(objectname)', '%(*objectname)', '%(objecttype)', '%(symref)',
+].join('%00');
+
+/** 一次引用枚举同时得到的引用集合与分支列表。 */
+export interface RefsAndBranches {
+	/** 引用集合；`head` 由调用方按 `HEAD` 文件补入。 */
+	readonly refs: RefData;
+	/** 分支名列表，当前分支在首位。 */
+	readonly branches: string[];
+	/** 当前分支名；分离头指针为 null。 */
+	readonly branch: string | null;
+}
+
 /** 一个仓库的分支同步状态。 */
 export interface BranchSync {
 	readonly branch: string | null;
@@ -230,6 +255,79 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 		}
 	}
 	return { head: null, heads, tags, remotes };
+}
+
+/**
+ * 一次枚举同时解析引用集合与分支列表。
+ *
+ * 与 {@link parseRefs} 同一套记录解析，另按 `%(HEAD)` 标出当前分支、按 `%(refname:short)` 给出
+ * 分支名。远程 HEAD 是指向分支的符号引用，不作为可操作的分支。
+ *
+ * @param stdout - `git for-each-ref --format=<REF_BRANCH_FORMAT>` 的输出。
+ * @param hideRemotes - 要隐藏的远程名。
+ * @returns 引用集合、分支名列表与当前分支名。
+ */
+export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
+	const heads: RefEntry[] = [];
+	const tags: RefTag[] = [];
+	const remotes: RefEntry[] = [];
+	const branches: string[] = [];
+	const hidePrefixes = hideRemotes.map((remote) => `refs/remotes/${remote}/`);
+	let branch: string | null = null;
+
+	for (const line of stdout.split('\n')) {
+		if (line === '') continue;
+		const fields = line.split(FIELD);
+		if (fields.length < REF_BRANCH_FIELD_COUNT) continue;
+		const isHead = fields[0].trim() === '*';
+		const refname = fields[1];
+		const short = fields[2];
+		const objectname = fields[3];
+		const peeled = fields[4];
+		const symref = fields[6];
+
+		if (refname.startsWith('refs/heads/')) {
+			const name = refname.slice('refs/heads/'.length);
+			heads.push({ hash: objectname, name });
+			if (isHead) {
+				branch = name;
+				branches.unshift(name);
+			} else {
+				branches.push(name);
+			}
+			continue;
+		}
+		if (refname.startsWith('refs/tags/')) {
+			const annotated = peeled !== '';
+			tags.push({
+				hash: annotated ? peeled : objectname,
+				name: refname.slice('refs/tags/'.length),
+				annotated,
+			});
+			continue;
+		}
+		if (!refname.startsWith('refs/remotes/')) continue;
+		const name = refname.slice('refs/remotes/'.length);
+		/* 远程 HEAD 是指向分支的符号引用，不是可操作的分支。 */
+		if (symref !== '') continue;
+		if (hidePrefixes.some((prefix) => refname.startsWith(prefix))) continue;
+		remotes.push({ hash: objectname, name });
+		if (showRemoteBranch(short)) branches.push(short);
+	}
+
+	return { refs: { head: null, heads, tags, remotes }, branches, branch };
+}
+
+/**
+ * 远程分支是否计入分支列表。
+ *
+ * 远程 HEAD（`<远程>/HEAD`）是符号引用，不出现在列表里。
+ *
+ * @param short - 引用的短名。
+ * @returns 计入时为 true。
+ */
+function showRemoteBranch(short: string): boolean {
+	return short !== '' && !short.endsWith('/HEAD');
 }
 
 /**
@@ -469,18 +567,19 @@ export function parseBranchSync(stdout: string): BranchSync {
 /**
  * 把原始提交记录、引用与贮藏组装成提交图。
  *
- * 顺序与边界行为：先按 `maxCommits + 1` 判定是否还有更多并丢掉多取的一条；HEAD 在列表内
- * 且存在未提交变更时，在最前插入哈希为 `*` 的伪提交；随后插入不在列表中的贮藏；最后把
- * 分支、标签与远程分支标注到对应提交上。
+ * 顺序与边界行为：先按 `maxCommits + 1` 判定是否还有更多并丢掉多取的一条；随后插入不在
+ * 列表中的贮藏；最后把分支、标签与远程分支标注到对应提交上。
+ *
+ * 哈希为 `*` 的未提交伪提交不在这里插入：它需要工作区条目数，而读取工作区要起一次
+ * `git status`，提交图的返回时刻会因此取决于工作区读取。该行由客户端按同一轮的工作区
+ * 快照补出，见 `client/panel/commit-diff.ts` 的 `withUncommittedCount`。
  *
  * @param records - `git log` 的原始记录，已按 `maxCommits + 1` 取回。
  * @param refs - 引用集合。
  * @param stashes - 仓库中的贮藏。
  * @param remotes - 已知远程名，用于给远程分支标注所属远程。
- * @param uncommittedChanges - 未提交变更数；为 0 时不插入伪提交。
  * @param showTags - 是否标注标签。
  * @param maxCommits - 请求的提交数上限。
- * @param now - 伪提交的时间（秒）；默认取当前时间。
  * @returns 提交图。
  */
 export function assembleCommits(
@@ -488,24 +587,12 @@ export function assembleCommits(
 	refs: RefData,
 	stashes: readonly StashEntry[],
 	remotes: readonly string[],
-	uncommittedChanges: number,
 	showTags: boolean,
 	maxCommits: number,
-	now: number = Math.round(Date.now() / 1000),
 ): CommitGraph {
 	const commits: LogRecord[] = [...records];
 	const moreCommitsAvailable = commits.length === maxCommits + 1;
 	if (moreCommitsAvailable) commits.pop();
-
-	if (refs.head !== null && uncommittedChanges > 0) {
-		const headIndex = commits.findIndex((commit) => commit.hash === refs.head);
-		if (headIndex !== -1) {
-			commits.unshift({
-				hash: UNCOMMITTED, parents: [refs.head], author: '*', email: '', date: now,
-				message: `Uncommitted Changes (${uncommittedChanges})`,
-			});
-		}
-	}
 
 	const nodes: CommitNode[] = commits.map((commit) => ({
 		...commit, heads: [], tags: [], remotes: [], stash: null,
