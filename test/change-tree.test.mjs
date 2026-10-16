@@ -89,6 +89,9 @@ test('已是绝对路径的目标原样复制', () => {
 	assert.equal(absolutePathOf('E:\\repo', 'E:\\repo\\.git\\info\\exclude'), 'E:\\repo\\.git\\info\\exclude');
 	assert.equal(absolutePathOf('E:/repo', 'D:/other/a.ts'), 'D:/other/a.ts', '跨盘符原样');
 	assert.equal(absolutePathOf('/home/me/repo', '/etc/hosts'), '/etc/hosts');
+	// UNC 路径（双反斜杠开头）原样返回，不再拼一次仓库根。
+	assert.equal(absolutePathOf('E:\\repo', '\\\\server\\share\\a.ts'), '\\\\server\\share\\a.ts');
+	assert.equal(absolutePathOf('/home/me/repo', '\\\\server\\share'), '\\\\server\\share');
 	// 仓库根未知时无从拼接，原样给出。
 	assert.equal(absolutePathOf('', 'src/a.ts'), 'src/a.ts');
 });

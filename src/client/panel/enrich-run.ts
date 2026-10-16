@@ -55,6 +55,8 @@ export async function runEnrichBatch(paths: readonly string[], deps: EnrichBatch
 		settled = true;
 		return 'settled';
 	} catch {
+		// 取消导致的抛错不计入失败次数，也不驱动重试；占用仍由 finally 释放。
+		if (deps.isCancelled()) return 'cancelled';
 		if (deps.claims.fail(paths)) deps.requestRetry();
 		return 'failed';
 	} finally {

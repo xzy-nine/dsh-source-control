@@ -533,7 +533,8 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 			const remote = remotes.length === 0 ? null
 				: remotes.length === 1 ? remotes[0].name
 					: await showSelect({ title: '推送标签到远程', options: remotes.map((item) => ({ value: item.name, label: item.name })) });
-			if (remote === '') return;
+			// 多远程时取消（null）与空选择都按用户取消处理；没有远程时 remote 为 null，只创建本地标签。
+			if (remotes.length > 1 && (remote === null || remote === '')) return;
 			void deps.run('history', async () => { throwIfError(await addTag(ctx.repo, name, commit.hash, 0, '', false, remote)); });
 		} });
 		for (const item of tagItems) items.push(item);

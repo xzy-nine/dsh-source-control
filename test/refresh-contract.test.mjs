@@ -4,19 +4,23 @@
  * 用 jsdom + react-dom/client 真实挂载 `useGraphData`，用可控延迟的 fetch 桩制造「提交图仍在途」
  * 的时序，再触发只取快照的刷新，断言 `phase` 最终收敛到 ready 且提交列表非空。
  *
- * 该文件依赖本机已安装的 jsdom（取自 deepseek-harness 的 pnpm store）；找不到时整体跳过。
+ * 该文件依赖 devDependencies 中的 jsdom；该包无法加载时整体跳过。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 本机 jsdom 入口；缺失时跳过。 */
-const jsdomEntry = 'E:/GitHubCode/02DSH/deepseek-harness/node_modules/.pnpm/jsdom@29.1.1_@noble+hashes@2.4.0/node_modules/jsdom/lib/api.js';
-const skip = existsSync(jsdomEntry) ? false : '本机未找到 jsdom，跳过客户端 hook 契约';
+/** jsdom 的 JSDOM 构造；包无法加载时为 null。 */
+let JSDOM = null;
+try {
+	({ JSDOM } = await import('jsdom'));
+} catch {
+	JSDOM = null;
+}
+const skip = JSDOM === null ? '未安装 jsdom，跳过客户端 hook 契约' : false;
 
 /** 稳定的设置对象：每次渲染都新建会让 refresh 回调重建并触发 effect 循环。 */
 const SETTINGS = {
@@ -47,7 +51,6 @@ const SNAPSHOT_PAYLOAD = {
  * @returns 状态读取器、刷新函数与请求记录。
  */
 async function mount(initialDelays = {}) {
-	const { JSDOM } = await import(pathToFileURL(jsdomEntry).href);
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
 		url: 'http://localhost/', pretendToBeVisual: true,
 	});

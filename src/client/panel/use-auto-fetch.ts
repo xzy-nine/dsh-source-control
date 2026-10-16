@@ -73,14 +73,16 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 			while (!cancelled) {
 				await whenIdleAndFocused();
 				if (cancelled) return;
+				let fetched = false;
 				try {
 					await fetchRef.current(workingTreePath);
+					fetched = true;
 				} catch {
 					/* 抓取失败不改设置；下一次周期重试 */
 				}
 				if (cancelled) return;
 				// 抓取成功才回调：失败时引用没变，重载没有意义。
-				onFetchedRef.current?.(workingTreePath);
+				if (fetched) onFetchedRef.current?.(workingTreePath);
 				// 周期下限另有兜底：设置值异常时也不会退化成密集抓取。
 				await sleep(Math.max(AUTO_REFRESH_COOLDOWN_MS, autoFetchPeriodMs(periodSeconds)));
 			}

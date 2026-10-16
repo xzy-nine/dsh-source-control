@@ -29,8 +29,8 @@ import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { draftKeyOf, loadSessionValue, loadValue, primeStorage, saveSessionValue, saveValue } from './storage.ts';
-import { migrateLegacyState, takePersistedDraft } from '../api/index.ts';
+import { draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue } from './storage.ts';
+import { clearPersistedDraft, migrateLegacyState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
@@ -154,6 +154,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		let cancelled = false;
 		void (async () => {
 			// 先迁移浏览器里的旧数据，再预取：顺序反了会把旧值当成已迁移。
+			// 草稿是会话级数据，不经过宿主迁移，也不受宿主迁移标记约束。
+			migrateLegacyDrafts();
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
 			if (cancelled) return;
@@ -374,20 +376,29 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const path = workingTreePath;
 		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
 		let cancelled = false;
+		// 本轮读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
+		let readDone = false;
 		setDraftReadDone(false);
 		const key = draftKeyOf(path);
 		void (async () => {
-			// 早期版本把草稿落在宿主：取回一次，之后不再持久化。
+			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
 			const persisted = await takePersistedDraft(path, key);
 			if (cancelled) return;
 			const saved = loadSessionValue<string | null>(key, null);
+			if (saved === null && persisted !== null) {
+				saveSessionValue(key, persisted);
+				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
+				void clearPersistedDraft(path, key).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
+			}
 			setMessage(saved ?? persisted ?? '');
 			setDraftPath(path);
+			readDone = true;
 			setDraftReadDone(true);
 		})();
 		return () => {
 			cancelled = true;
-			// 离开本仓库：把草稿写回它自己的键。此时 message 仍是本仓库的内容。
+			// 离开本仓库：读回完成后 message 才是本仓库的内容，此时才把草稿写回它自己的键。
+			if (!readDone) return;
 			saveSessionValue(key, messageRef.current);
 		};
 	}, [workingTreePath]);

@@ -24,8 +24,8 @@ export interface TreeEntry {
 export function absolutePathOf(repoRoot: string, path: string): string {
 	const root = String(repoRoot ?? '').replace(/[\\/]+$/, '');
 	const target = String(path ?? '');
-	// 绝对路径：盘符（`C:/`、`C:\`）或 POSIX 前导斜杠。
-	if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith('/')) return target;
+	// 绝对路径：盘符（`C:/`、`C:\`）、POSIX 前导斜杠或 UNC（`\\server\share`）。
+	if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith('/') || /^\\\\/.test(target)) return target;
 	if (root === '') return target;
 	const separator = root.includes('\\') ? '\\' : '/';
 	return `${root}${separator}${target.replace(/^[\\/]+/, '').split(/[\\/]/).join(separator)}`;

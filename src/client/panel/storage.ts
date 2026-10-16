@@ -148,6 +148,83 @@ export function draftKeyOf(repoPath: string): string {
 }
 
 /**
+ * 判断一个键是否为提交信息草稿的会话键。
+ *
+ * @param key - 存储键。
+ * @returns 是草稿键时为 true。
+ */
+function isDraftKey(key: string): boolean {
+	return key.startsWith(DRAFT_KEY_PREFIX);
+}
+
+/**
+ * 枚举一个 store 里的全部键。
+ *
+ * 优先用 `key(index)` 按下标遍历；store 未提供该方法时退回 `Object.keys`。
+ *
+ * @param store - localStorage 或 sessionStorage。
+ * @returns 键列表。
+ */
+function storeKeys(store: Storage): string[] {
+	const keys: string[] = [];
+	try {
+		if (typeof store.key === 'function') {
+			for (let at = 0; at < store.length; at += 1) {
+				const key = store.key(at);
+				if (key !== null) keys.push(key);
+			}
+			return keys;
+		}
+		return Object.keys(store);
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * 把 localStorage / sessionStorage 里的提交信息草稿转入会话存储。
+ *
+ * 草稿键为 `ggg-commit-msg:<仓库根绝对路径>`，转入目标即 sessionStorage 的同名键：
+ * 来源已是 sessionStorage 时等同保留。会话键是转入目标，不删除；只在会话键有值后清掉
+ * localStorage 里的同名残留。不写宿主。sessionStorage 不可用时草稿留在原处，下次进入重试。
+ *
+ * @returns 无。
+ */
+export function migrateLegacyDrafts(): void {
+	const store = sessionStore();
+	if (store === null) return;
+	const local = typeof localStorage === 'undefined' ? null : localStorage;
+	const drafts: Array<[string, string]> = [];
+	try {
+		for (const source of local === null ? [store] : [local, store]) {
+			for (const key of storeKeys(source)) {
+				if (!isDraftKey(key)) continue;
+				const raw = source.getItem(key);
+				if (raw === null) continue;
+				drafts.push([key, raw]);
+			}
+		}
+	} catch {
+		/* 枚举失败时保留原键，下次进入重试 */
+	}
+	for (const [key, raw] of drafts) {
+		try {
+			if (store.getItem(key) === null) store.setItem(key, raw);
+		} catch {
+			/* 转入失败时保留原键，下次进入重试 */
+		}
+	}
+	try {
+		for (const [key] of drafts) {
+			// 会话键已有值才清 localStorage 残留；会话键本身是转入目标，不删除。
+			if (store.getItem(key) !== null) local?.removeItem(key);
+		}
+	} catch {
+		/* 清理失败时保留旧键，下次进入重试 */
+	}
+}
+
+/**
  * 取 sessionStorage；不存在时返回 null。
  *
  * @returns sessionStorage 或 null。
@@ -161,6 +238,8 @@ function sessionStore(): Storage | null {
  *
  * sessionStorage 不存在、访问抛错或值不是合法 JSON 时一律给回退值。
  *
+ * 只接受解析结果为字符串的值：会话级状态只有草稿，非字符串值（如数字）一律回退。
+ *
  * @param key - 键。
  * @param fallback - 回退值。
  * @returns 值或回退值。
@@ -171,7 +250,8 @@ export function loadSessionValue<T>(key: string, fallback: T): T {
 		if (store === null) return fallback;
 		const raw = store.getItem(key);
 		if (raw === null) return fallback;
-		return JSON.parse(raw) as T;
+		const parsed = JSON.parse(raw) as unknown;
+		return typeof parsed === 'string' ? parsed as T : fallback;
 	} catch {
 		return fallback;
 	}

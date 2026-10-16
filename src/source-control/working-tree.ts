@@ -397,6 +397,7 @@ const READ_ONLY_FORMS: ReadonlyArray<{ subcommand: string; allow?: readonly stri
 	// 总是只读：这些子命令没有写形态。
 	{ subcommand: 'status' },
 	{ subcommand: 'diff' },
+	{ subcommand: 'diff-tree' },
 	{ subcommand: 'log' },
 	{ subcommand: 'show' },
 	{ subcommand: 'for-each-ref' },
