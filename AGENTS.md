@@ -56,8 +56,9 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
 doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
-scripts/            客户端打包脚本（build-client.mjs）与首屏耗时度量（bench-first-paint.mjs /
-                    bench-discovery.mjs / bench-enrich.mjs / bench-verify.mjs；均需先 build:host）
+scripts/            客户端打包脚本（build-client.mjs）与耗时度量（bench-first-paint.mjs 首屏 /
+                    bench-refresh.mjs 刷新 / bench-discovery.mjs 仓库发现 / bench-enrich.mjs 补齐 /
+                    bench-layout.mjs 泳道布局 / bench-verify.mjs 命令往返；均需先 build:host）
 assets/icons/       引用标记用的 SVG
 ```
 
@@ -134,11 +135,30 @@ Office）主动不认领，那些仍走宿主预览。
 工作区与外部进程造成的改动也能即时反映。客户端 `api/repo-events.ts` 解析帧、按退避重连，
 `use-repository-write-events.ts` 按仓库路径过滤后重载。
 
-一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；首屏同时带回仓库信息、引用集合与贮藏）
-与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部也是并行的：
-仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，不重复读。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
+一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；仅首次进入时同时带回仓库信息、引用集合
+与贮藏）与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部
+也是并行的：仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，
+不重复读。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
 只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
 用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
+
+## 刷新耗时
+
+一次 git 子进程的固定开销约 80ms，因此刷新路径的耗时几乎只由「起了几个 git 子进程」决定。三处对策：
+
+| 对策 | 说明 |
+|---|---|
+| 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
+| 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存 |
+| 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
+
+`refreshEntries()` 只中止**上一次快照**请求（独立的 `entriesControllerRef`），不触碰在途的提交图请求：
+`phase` 只由 `refresh` 写入，作废在途的提交图会让图形区永久停在 loading。它按条目数就地修正未提交伪
+提交行（`withUncommittedCount`，含条目数由零变正时补出该行），文案与宿主 `git-parse.ts` 同格式。
+
+度量：`scripts/bench-refresh.mjs`（刷新路径，含 `withRepoInfo` 两种模式对照）、`bench-first-paint.mjs`
+（首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
+`bench-verify.mjs`。`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
 
 仓库树的领先/落后不在重载的两路请求里取：`panel/use-repos.ts` 在空闲回调里把当前可见且未缓存的节点
 （一次最多 24 个路径）交给批量命令 `loadReposSync` 一次取回，按路径在途去重，结果按节点 id 批量回写；
@@ -276,6 +296,8 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
 | `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
 | `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
+| `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出 |
+| `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |

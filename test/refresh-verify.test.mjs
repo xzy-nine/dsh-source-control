@@ -28,6 +28,29 @@ const COMMITS_MESSAGE = {
 	remotes: [], hideRemotes: [],
 };
 
+/**
+ * 删除临时目录，容忍 Windows 上的瞬时文件锁。
+ *
+ * 测试里的 git 子进程刚退出时目录可能仍被短暂占用，`rmSync` 会抛 EPERM。重试若干次即可，
+ * 全部失败才抛错（真删除失败仍应暴露）。
+ *
+ * @param {string} dir - 待删除的目录。
+ * @returns {void}
+ */
+function removeTemp(dir) {
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error) {
+			if (attempt === 4) throw error;
+			// 同步等待：这是清理路径，不需要与测试的异步节奏配合。
+			const until = Date.now() + 100 * (attempt + 1);
+			while (Date.now() < until) { /* 自旋等待文件锁释放 */ }
+		}
+	}
+}
+
 /** 建一个已配置身份的临时仓库。 */
 function makeRepo() {
 	const repo = mkdtempSync(join(tmpdir(), 'gg-refresh-'));
@@ -112,7 +135,7 @@ test('快照条目与 loadWorkingTree 条目逐条一致', { skip }, async () =>
 		assert.deepEqual(normalize(snapshot.entries), normalize(working.entries));
 		assert.ok(snapshot.entries.length >= 3, '应含暂存、重命名与未跟踪改动');
 	} finally {
-		rmSync(repo, { recursive: true, force: true });
+		removeTemp(repo);
 	}
 });
 
@@ -190,8 +213,8 @@ test('提交集合与顺序由 git log 独立推导，标记与伪提交符合�
 		assert.deepEqual(headNode.remotes, [{ name: 'origin/main', remote: 'origin' }]);
 		assert.equal(data.moreCommitsAvailable, false);
 	} finally {
-		rmSync(repo, { recursive: true, force: true });
-		rmSync(remote, { recursive: true, force: true });
+		removeTemp(repo);
+		removeTemp(remote);
 	}
 });
 
@@ -204,12 +227,39 @@ test('无提交的仓库：提交图为空且无伪提交', { skip }, async () =
 		assert.equal(data.head, null);
 		assert.equal(data.error, null);
 	} finally {
-		rmSync(repo, { recursive: true, force: true });
+		removeTemp(repo);
 	}
 });
 
-/* --- 草稿：会话级绑定 --- */
+/* --- 未提交伪提交行的本地修正 --- */
 
+test('伪提交行：条目数变化时就地改写文案，条目清空时去掉该行', async () => {
+	const { withUncommittedCount } = await import(pathToFileURL(join(root, 'src', 'client', 'panel', 'commit-diff.ts')).href);
+	const head = { hash: 'h1', parents: [], message: 'head commit' };
+	const uncommitted = (count) => ({ hash: '*', parents: ['h1'], message: `Uncommitted Changes (${count})` });
+
+	// 条目数未变：保持原引用。
+	const stable = [uncommitted(2), head];
+	assert.equal(withUncommittedCount(stable, 2), stable, '条目数未变时不应新建数组');
+
+	// 条目数变化：只改文案，其余字段与顺序不动。
+	const changed = withUncommittedCount([uncommitted(2), head], 3);
+	assert.equal(changed[0].message, 'Uncommitted Changes (3)');
+	assert.deepEqual(changed[0].parents, ['h1']);
+	assert.equal(changed[1], head, '其余行应保持原引用');
+	assert.notEqual(changed, stable);
+
+	// 条目清空：伪提交行不再适用。
+	const cleared = withUncommittedCount([uncommitted(2), head], 0);
+	assert.deepEqual(cleared, [head]);
+
+	// 列表首行不是伪提交时不改动。
+	const withoutRow = [head];
+	assert.equal(withUncommittedCount(withoutRow, 5), withoutRow);
+	assert.equal(withUncommittedCount([], 5).length, 0);
+});
+
+/* --- 草稿：会话级绑定 --- */
 /** 最小 sessionStorage 桩。 */
 function makeSessionStorage() {
 	const map = new Map();

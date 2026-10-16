@@ -250,7 +250,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
 	}, [filterKey]);
 
-	const { state, setState, refresh, loadMore, busyRef } = useGraphData({
+	const { state, setState, refresh, refreshEntries, loadMore, busyRef } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
@@ -434,29 +434,51 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
 	 * 用一次对账刷新纠正推算误差。对账是 reconcile 模式，不会清空现有列表。
 	 *
+	 * `historyChanged` 决定对账的深度：可能改动引用或提交历史的操作（检出、重置、提交、贮藏、
+	 * 抓取等）需作废该仓库的提交图窗口并重取提交图；纯工作区操作（暂存、取消暂存、丢弃、忽略
+	 * 规则）只重取工作区快照。缺省为 true，即按可能改动引用与提交历史处理。
+	 *
 	 * @param scope - 操作的影响面。
 	 * @param operation - 操作体。
 	 * @param repo - 目标仓库路径；省略时用当前选中的工作树。
 	 * @param optimistic - 写操作成功后对条目的推算；省略时不推算，只做对账刷新。
+	 * @param options - 见上；省略时按可能改动引用与提交历史处理。
 	 */
-	const run = React.useCallback(async (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => {
+	const run = React.useCallback(async (
+		scope: BusyScope,
+		operation: () => Promise<void>,
+		repo?: string,
+		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+		options?: { readonly historyChanged?: boolean },
+	) => {
 		const target = repo ?? workingTreePath;
 		if (target === null) return;
+		const historyChanged = options?.historyChanged !== false;
 		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope), error: null }));
 		try {
 			await operation();
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
 			}
+			if (scope === 'read') return;
+			// 目标是别的仓库：只作废它的窗口缓存，当前仓库的视图不动。
+			if (target !== workingTreePath) {
+				if (historyChanged) dropGraphWindows(target);
+				return;
+			}
+			if (!historyChanged) {
+				await refreshEntries();
+				return;
+			}
 			// 写操作可能改动引用与提交历史，目标仓库的提交图窗口缓存随之失效。
-			if (scope !== 'read') dropGraphWindows(target);
-			if (scope !== 'read' && target === workingTreePath) await refresh('reconcile');
+			dropGraphWindows(target);
+			await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		} finally {
 			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
 		}
-	}, [workingTreePath, refresh, setState]);
+	}, [workingTreePath, refresh, refreshEntries, setState]);
 
 	/**
 	 * 在进度条下执行一次不刷新的预备调用。
@@ -1055,7 +1077,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToGitignore = React.useCallback((path: string) => {
 		void (async () => {
 			let written: IgnoreWriteResult | null = null;
-			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
+			await run('commit', async () => { written = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
 			const result: IgnoreWriteResult | null = written;
 			if (result === null || result.file === '') return;
 			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
@@ -1071,7 +1093,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
 		void (async () => {
 			let written: LocalExcludeState | null = null;
-			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path));
+			await run('commit', async () => { written = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false });
 			const state: LocalExcludeState | null = written;
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
 			if (state === null || state.path === '') return;

@@ -371,7 +371,7 @@ test('贮藏契约：链接工作树按公共目录读到主仓库的贮藏', { 
 	}
 });
 
-test('首屏贮藏契约：loadCommits 首屏自带仓库信息与贮藏', { skip }, async () => {
+test('首屏贮藏契约：loadCommits 带 withRepoInfo 时自带仓库信息与贮藏', { skip }, async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -381,14 +381,72 @@ test('首屏贮藏契约：loadCommits 首屏自带仓库信息与贮藏', { ski
 		git('stash', 'push', '-q', '-m', 'wip');
 
 		const call = await makeCaller(repo);
-		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, showStashes: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, withRepoInfo: true, showStashes: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
 		assert.equal(page.command, 'loadCommits');
 		assert.equal(page.error, null);
-		assert.equal(page.repoInfo.stashes.length, 1, '首屏仓库信息应带贮藏');
+		assert.equal(page.repoInfo.stashes.length, 1, '仓库信息批应带贮藏');
 		assert.match(page.repoInfo.stashes[0].message, /wip/);
 		assert.ok(page.commits.some((commit) => commit.hash !== '*' && commit.hash.length > 0), '首屏应含提交');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('刷新契约：不带 withRepoInfo 时响应 repoInfo 为 null，即使仓库有贮藏', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		write('a.txt', 'two\n');
+		git('stash', 'push', '-q', '-m', 'wip');
+
+		const call = await makeCaller(repo);
+		/* skip 为 0 不再是「取仓库信息」的判据：刷新同样以 skip 0 请求。 */
+		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, showStashes: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		assert.equal(page.error, null);
+		assert.equal(page.repoInfo, null, '未要求仓库信息时不随响应取回');
+		assert.ok(page.commits.length > 0, '提交图仍应正常返回');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐条一致', { skip }, async () => {
+	const { repo, git, write } = makeRepo();
+	const remote = mkdtempSync(join(tmpdir(), 'gg-snap-remote-'));
+	try {
+		execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		git('remote', 'add', 'origin', remote);
+		git('push', '-q', '--set-upstream', 'origin', 'main');
+		write('a.txt', 'two\n');
+		git('stash', 'push', '-q', '-m', 'wip');
+
+		const call = await makeCaller(repo);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
+		const first = await call({
+			command: 'loadCommits', limit: 200, skip: 0, withRepoInfo: true, showTags: true,
+			showRemoteBranches: true, hideRemotes: [], remotes: [], stashes: info.stashes,
+		});
+		const refresh = await call({
+			command: 'loadCommits', limit: 200, skip: 0, showTags: true, showRemoteBranches: true,
+			hideRemotes: [], remotes: info.remotes, stashes: info.stashes,
+		});
+
+		assert.equal(first.repoInfo.stashes.length, 1);
+		assert.equal(refresh.repoInfo, null, '刷新批不取仓库信息');
+		assert.deepEqual(refresh.commits, first.commits, '给出已知远程与贮藏时提交图应与首屏批逐条一致');
+		assert.deepEqual(refresh.tags, first.tags);
+		assert.equal(refresh.head, first.head);
+		assert.ok(refresh.commits.some((commit) => commit.stash !== null && commit.stash !== undefined), '贮藏行应仍插入');
+		const remoteMarked = refresh.commits.find((commit) => (commit.remotes ?? []).length > 0);
+		assert.deepEqual(remoteMarked.remotes, [{ name: 'origin/main', remote: 'origin' }], '远程分支归属应来自调用方给出的远程名');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(remote, { recursive: true, force: true });
 	}
 });
 
@@ -402,7 +460,7 @@ test('首屏贮藏契约：调用方给出空贮藏列表时不插入贮藏行',
 		git('stash', 'push', '-q', '-m', 'wip');
 
 		const call = await makeCaller(repo);
-		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, stashes: [], showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, withRepoInfo: true, stashes: [], showRemoteBranches: true, hideRemotes: [], remotes: [] });
 		assert.equal(page.error, null);
 		assert.equal(page.repoInfo.stashes.length, 1, '仓库信息仍按 showStashes 读取贮藏');
 		const stashRows = page.commits.filter((commit) => commit.stash !== null && commit.stash !== undefined);

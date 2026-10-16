@@ -314,25 +314,25 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const limit = num('limit', num('maxCommits', 32));
 				const skip = num('skip', 0);
 				/*
-				 * 首屏（skip 为 0）把仓库信息、引用集合、贮藏枚举与工作树分支同批取：四者互不依赖，
-				 * 串行要等四个子进程依次结束，并行只等最慢的一个。
+				 * 仓库信息批由 `withRepoInfo` 显式控制，与「是否首屏」无关：刷新（skip 为 0）不必
+				 * 重取仓库信息，调用方把已知的远程与贮藏随请求传入。
 				 *
-				 * 仓库信息以 `repoInfo` 随响应发回，客户端首屏因此只发一次请求；翻页批不带仓库信息，
-				 * 贮藏按调用方传入或按 `showStashes` 单独枚举。
+				 * 该批含仓库信息、引用集合、贮藏枚举与工作树分支，四者互不依赖，同批并行。
+				 * 仓库信息以 `repoInfo` 随响应发回，客户端首次进入因此只发一次请求。
 				 */
-				const firstPage = skip === 0;
+				const withRepoInfo = msg.withRepoInfo === true;
 				const showStashes = bool('showStashes', true);
 				const showRemoteBranches = bool('showRemoteBranches', true);
 				const hideRemotes = arr<string>('hideRemotes');
 				/*
 				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
-				 * 单独枚举。该取值同时交给首屏批与 `getCommits`，两者因此共用一次读取。
+				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
 				 */
 				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
 				const stashesSource: Promise<StashEntry[]> = givenStashes !== null
 					? Promise.resolve(givenStashes)
 					: showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]);
-				const batchSource = firstPage
+				const batchSource = withRepoInfo
 					? Promise.all([
 						getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes),
 						getRefsForGraph(repo, showRemoteBranches, hideRemotes),
@@ -342,11 +342,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					: null;
 				const stashes = await stashesSource;
 				/*
-				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支，这里取名字；
+				 * 别的工作树占用的分支：仓库信息批里已含该结果时直接取用，否则单独判定。
+				 * 该判定对没有链接工作树的仓库只读文件系统，不启动 git；先发出去，不占关键路径。
+				 */
+				const foreignSource: Promise<Set<string>> = batchSource !== null
+					? batchSource.then((batch) => batch?.foreign ?? branchesOfOtherWorktrees(repo))
+					: branchesOfOtherWorktrees(repo);
+				/*
+				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，这里取名字；
 				 * 直接传字符串数组的调用方同样接受。
 				 *
-				 * 远程名用于标注远程分支的归属，调用方未给出时由宿主自行读取：翻页批因此不会丢掉
-				 * 归属。首屏的远程名直接取本批的仓库信息，标注在提交图组装之后才发生，不必为它多等
+				 * 调用方未给出远程名时由宿主读取：提交图需要远程名才能标注远程分支的归属。客户端在
+				 * 首次取数后即持有远程列表并随每次刷新传入，因此这条回退只在调用方未提供时发生。
+				 * 仓库信息批里的远程名来自同批的配置读取，标注在提交图组装之后才发生，不必为它多等
 				 * 一次串行往返。
 				 */
 				const givenRemotes = arr<unknown>('remotes')
@@ -373,7 +381,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				);
 				const batch = batchSource === null ? null : await batchSource;
 				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
-				const foreign = batch?.foreign ?? await branchesOfOtherWorktrees(repo);
+				const foreign = await foreignSource;
 				const all = foreign.size === 0
 					? (data.commits ?? [])
 					: (data.commits ?? []).map((commit) => ({
@@ -393,7 +401,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					tags: data.tags ?? [],
 					moreCommitsAvailable: data.moreCommitsAvailable === true,
 					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
-					// 首屏批顺带取回的仓库信息；翻页批与降级路径为 null。
+					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});
 			}

@@ -138,11 +138,30 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal)
 	};
 }
 
+/** 贮藏条目：字段与宿主 `git-types.ts` 的 `StashEntry` 一致。 */
+export interface GraphStash {
+	/** 贮藏提交哈希。 */
+	readonly hash: string;
+	/** 基提交哈希。 */
+	readonly baseHash: string;
+	/** 未跟踪文件所在的提交；无则为 null。 */
+	readonly untrackedFilesHash: string | null;
+	/** 选择器（如 `refs/stash@{0}`）。 */
+	readonly selector: string;
+	readonly author: string;
+	readonly email: string;
+	readonly date: number;
+	readonly message: string;
+}
+
 /** 提交图读取结果。 */
 export interface GraphData {
 	readonly commits: Commit[];
+	/** 当前分支名；未取仓库信息且调用方未给出分支名时为 null。 */
 	readonly head: string | null;
 	readonly remotes: Remote[];
+	/** 本批使用的贮藏列表；未取仓库信息时为调用方给出的那份。 */
+	readonly stashes: GraphStash[];
 	/** 下一页的游标（本页最后一条的 hash）；无更多时为 null。 */
 	readonly moreCommitsAvailable: boolean;
 }
@@ -158,42 +177,69 @@ export interface LoadGraphOptions {
 	readonly showRemoteBranches?: boolean;
 	readonly onlyFollowFirstParent?: boolean;
 	readonly includeCommitsMentionedByReflogs?: boolean;
+	/**
+	 * 是否让宿主随本批取回仓库信息（分支、远程与贮藏）。
+	 *
+	 * 首次进入该仓库时为 true；刷新时给 false 并传入已知的 `remotes` 与 `stashes`，
+	 * 宿主因此不重取仓库信息批。
+	 */
+	readonly withRepoInfo?: boolean;
+	/** 已知远程列表；给出时随请求传给宿主，宿主按它标注远程分支。 */
+	readonly remotes?: readonly Remote[];
+	/** 已知贮藏列表；给出时以它为准，宿主不再枚举贮藏。 */
+	readonly stashes?: readonly GraphStash[];
+	/** 已知当前分支名；未取仓库信息时用它填充 `head`。 */
+	readonly branch?: string | null;
 	readonly signal?: AbortSignal;
 }
 
 /**
- * 读取提交图与仓库信息。
+ * 读取提交图。
  *
- * 首屏（skip 为 0）由 `loadCommits` 一并取回仓库信息、引用集合与贮藏，因此这里不先发仓库信息请求：
- * 两次请求会各起一组 git 子进程并串行等待。翻页批没有该附带信息，此时单独补取一次。
+ * `withRepoInfo` 为 true 时宿主随本批取回仓库信息、引用集合与贮藏，这里不先发仓库信息请求：
+ * 两次请求会各起一组 git 子进程并串行等待。为 false 时由调用方传入已知的 `remotes` 与
+ * `stashes`，本函数直接用它们组装结果，不再补取仓库信息；两者都未给出时才回退一次
+ * `loadRepoInfo`（该请求本身带仓库信息，代价与取数相同）。
  *
  * @param cwd - 会话工作区路径。
  * @param options - 读取选项。
- * @returns 提交、HEAD、远程与是否还有更多提交。
+ * @returns 提交、当前分支名、远程、贮藏与是否还有更多提交。
  */
 export async function loadGraph(cwd: string, {
 	maxCommits = 200, skip = 0, commitOrdering = 'topo',
 	showStashes = true, showTags = true, showRemoteBranches = true,
-	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false, signal,
+	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false,
+	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
 		// 偏移分页：skip 是已加载条数，正反向都用它。
 		command: 'loadCommits', branches: null, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, showStashes,
-		// 不带 `stashes`：首屏由宿主按 `showStashes` 自行枚举；翻页批由宿主自行读取远程名。
-		remotes: [], hideRemotes: [],
+		withRepoInfo,
+		// 调用方未给出时按宿主默认（空列表）处理，由宿主自行读取。
+		...(givenRemotes === undefined ? {} : { remotes: givenRemotes }),
+		...(givenStashes === undefined ? {} : { stashes: givenStashes }),
+		hideRemotes: [],
 	}, signal);
 	const batch = commitsPayload.repoInfo;
-	const repoInfo = batch !== null && typeof batch === 'object'
-		? batch as Record<string, unknown>
-		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [] }, signal);
-	const remotes = (Array.isArray(repoInfo.remotes) ? repoInfo.remotes : []) as Remote[];
-	const head = typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null;
+	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;
+	/*
+	 * 已知远程与贮藏都给出时不再补取仓库信息：本批响应已足够组装结果，补取只会多起一组子进程。
+	 */
+	const repoInfo = fetched ?? (givenRemotes !== undefined && givenStashes !== undefined
+		? null
+		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [] }, signal));
+	const remotes = (repoInfo === null ? givenRemotes : repoInfo.remotes) as Remote[] | undefined;
+	const stashes = (repoInfo === null ? givenStashes : repoInfo.stashes) as GraphStash[] | undefined;
+	const head = repoInfo === null
+		? (typeof branch === 'string' && branch !== '' ? branch : null)
+		: (typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null);
 	return {
 		commits: (Array.isArray(commitsPayload.commits) ? commitsPayload.commits : []) as Commit[],
 		head,
-		remotes,
+		remotes: Array.isArray(remotes) ? remotes : [],
+		stashes: Array.isArray(stashes) ? stashes : [],
 		moreCommitsAvailable: commitsPayload.moreCommitsAvailable === true,
 	};
 }

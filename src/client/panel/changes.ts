@@ -248,7 +248,7 @@ export interface ChangeGroupProps {
 	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
-	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => Promise<void>;
+	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[], options?: { readonly historyChanged?: boolean }) => Promise<void>;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
@@ -277,8 +277,9 @@ export function ChangeGroup({
 	const rows: ChangeRow<WorkingTreeEntry>[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
-	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths)); };
-	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths)); };
+	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
+	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false }); };
+	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false }); };
 	/**
 	 * 丢弃某个文件夹下的全部改动。
 	 *
@@ -301,10 +302,11 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
 				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			});
+			}, undefined, undefined, { historyChanged: false });
 		})();
 	};
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
@@ -323,7 +325,8 @@ export function ChangeGroup({
 				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
 			});
 			if (!ok) return;
-			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); }, undefined, (entries) => discardEntries(entries, paths));
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
+			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); }, undefined, (entries) => discardEntries(entries, paths), { historyChanged: false });
 		})();
 	};
 	/**
@@ -344,10 +347,11 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
+			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
 				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			}, undefined, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]));
+			}, undefined, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]), { historyChanged: false });
 		})();
 	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };

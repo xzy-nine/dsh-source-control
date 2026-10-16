@@ -6,16 +6,20 @@
  *
  * 一次重载向宿主发两次请求：提交图窗口，以及一次工作区快照（条目 + 分支/上游）。写操作后的
  * 对账复用同一参数的提交图窗口，避免重复取数；仓库切换与用户主动刷新时缓存作废。
+ *
+ * 仓库信息（远程、贮藏、当前分支名）只在首次进入该仓库时随提交图批取回，此后刷新随请求传入
+ * 已知值；写操作后作废，使贮藏这类会变的字段重新读取。
  */
 import React from 'react';
-import { loadGraph, loadWorkingTreeSnapshot, type GraphData } from '../api/index.ts';
+import { loadGraph, loadWorkingTreeSnapshot, type GraphData, type GraphStash } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { createCommitGraphCache } from '../graph/cache.ts';
 import { isRepoBusy } from './busy.ts';
+import { commitsListEqual, entriesEqual, remotesListEqual, withUncommittedCount } from './commit-diff.ts';
 
-import type { BusyEntry, PanelState, RepoSync, Settings } from '../shared/types.ts';
+import type { BusyEntry, PanelState, Remote, RepoSync, Settings } from '../shared/types.ts';
 
 /**
  * 提交图窗口缓存。
@@ -25,16 +29,38 @@ import type { BusyEntry, PanelState, RepoSync, Settings } from '../shared/types.
  */
 const graphWindows = createCommitGraphCache<GraphData>();
 
+/** 一个仓库最近一次取到的仓库信息；供后续刷新随请求传入。 */
+interface KnownRepoInfo {
+	readonly remotes: Remote[];
+	readonly stashes: GraphStash[];
+	/** 当前分支名；分离头指针为 null。 */
+	readonly branch: string | null;
+}
+
+/** 各仓库已知的仓库信息，键与提交图窗口缓存同一套归一化规则。 */
+const knownRepoInfo = new Map<string, KnownRepoInfo>();
+
 /**
- * 丢弃某个仓库的全部提交图窗口。
+ * 取仓库信息的键。
  *
- * 写操作与用户主动刷新后调用：引用与提交历史可能已经变化。
+ * @param repoPath - 仓库路径。
+ * @returns 归一化后的键。
+ */
+function repoKeyOf(repoPath: string): string {
+	return repoPath.replace(/[\\/]+$/, '').toLowerCase();
+}
+
+/**
+ * 丢弃某个仓库的全部提交图窗口与已知仓库信息。
+ *
+ * 写操作与用户主动刷新后调用：引用、提交历史与贮藏可能已经变化。
  *
  * @param repoPath - 仓库路径。
  * @returns 无。
  */
 export function dropGraphWindows(repoPath: string): void {
 	graphWindows.dropRepo(repoPath);
+	knownRepoInfo.delete(repoKeyOf(repoPath));
 }
 
 /**
@@ -85,6 +111,8 @@ export interface UseGraphDataResult {
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 重新加载选中仓库的提交图与工作区。 */
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
+	/** 只重取工作区快照；供不改动引用与提交历史的工作区操作使用。 */
+	readonly refreshEntries: () => Promise<void>;
 	/** 追加下一个提交窗口。 */
 	readonly loadMore: () => Promise<void>;
 	/** 进行中的操作记录；后台刷新据此判断目标仓库是否繁忙。 */
@@ -106,6 +134,8 @@ export function useGraphData({
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
+	/** 只取快照那一路的控制器；与提交图的控制器分开，避免作废在途的提交图请求。 */
+	const entriesControllerRef = React.useRef<AbortController | null>(null);
 	const busyRef = React.useRef<readonly BusyEntry[]>([]);
 
 	/** 当前状态的引用：loadMore 在回调里读取已加载条数，避免把它列入依赖。 */
@@ -137,8 +167,8 @@ export function useGraphData({
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
-		// 换仓库后旧的窗口不再适用；用户主动刷新同样作废。
-		if (mode === 'full' || loadedRepoRef.current !== workingTreePath) graphWindows.dropRepo(workingTreePath);
+		// 换仓库后旧的窗口与已知仓库信息不再适用；用户主动刷新同样作废。
+		if (mode === 'full' || loadedRepoRef.current !== workingTreePath) dropGraphWindows(workingTreePath);
 		loadedRepoRef.current = workingTreePath;
 		if (mode === 'full') {
 			setState((previous) => ({
@@ -160,6 +190,12 @@ export function useGraphData({
 			 */
 			const key = graphKeyOf(workingTreePath, maxCommits, 0, settings);
 			const cached = mode === 'reconcile' ? graphWindows.get(key) : undefined;
+			/*
+			 * 仓库信息只在首次进入该仓库时取：已知的远程、贮藏与分支名随请求传入，宿主因此
+			 * 不重取仓库信息批。取回后存入本仓库的已知值，供后续刷新复用；换仓库与写操作后
+			 * 由 dropGraphWindows 一并作废。
+			 */
+			const known = knownRepoInfo.get(repoKeyOf(workingTreePath)) ?? null;
 			const graphSource = cached ?? loadGraph(workingTreePath, {
 				maxCommits,
 				commitOrdering: settings.commitOrdering,
@@ -168,11 +204,32 @@ export function useGraphData({
 				showRemoteBranches: settings.showRemoteBranches,
 				onlyFollowFirstParent: settings.onlyFollowFirstParent,
 				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+				withRepoInfo: known === null,
+				...(known === null ? {} : {
+					remotes: known.remotes, stashes: known.stashes, branch: known.branch,
+				}),
 				signal: controller.signal,
+			}).then((graph) => {
+				// 已中止的响应可能不完整，不写入已知仓库信息。
+				if (known === null && !controller.signal.aborted) {
+					knownRepoInfo.set(repoKeyOf(workingTreePath), {
+						remotes: graph.remotes, stashes: graph.stashes, branch: graph.head,
+					});
+				}
+				return graph;
 			});
 			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal).then((snapshot) => {
 				if (generation !== generationRef.current || controller.signal.aborted) return snapshot;
-				setState((previous) => ({ ...previous, error: null, entries: snapshot.entries }));
+				/*
+				 * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。用户主动刷新不做短路，
+				 * 它必须真正重建。
+				 */
+				setState((previous) => ({
+					...previous, error: null,
+					entries: mode === 'reconcile' && entriesEqual(previous.entries, snapshot.entries)
+						? previous.entries
+						: snapshot.entries,
+				}));
 				// 领先/落后与条目来自同一次读取，不再单独请求。
 				if (selectedId !== null) {
 					setSyncById((previous) => new Map(previous).set(selectedId, {
@@ -186,17 +243,83 @@ export function useGraphData({
 			// 已中止的请求结果可能不完整，不写入缓存。
 			if (cached === undefined && !controller.signal.aborted) graphWindows.set(key, graph);
 			if (generation !== generationRef.current) return;
-			setState((previous) => ({
-				...previous, phase: 'ready', error: null,
-				commits: graph.commits, head: graph.head, more: graph.moreCommitsAvailable,
-				remotes: graph.remotes, entries: snapshot.entries,
-				detail: mode === 'full' ? null : previous.detail,
-			}));
+			/*
+			 * 对账刷新时数据未变则保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道布局
+			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
+			 */
+			const keep = mode === 'reconcile';
+			setState((previous) => {
+				const commitsSame = keep
+					&& previous.head === graph.head && previous.more === graph.moreCommitsAvailable
+					&& commitsListEqual(previous.commits, graph.commits);
+				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
+				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
+				return {
+					...previous, phase: 'ready', error: null,
+					commits: commitsSame ? previous.commits : graph.commits,
+					head: graph.head, more: graph.moreCommitsAvailable,
+					remotes: remotesSame ? previous.remotes : graph.remotes,
+					entries: entriesSame ? previous.entries : snapshot.entries,
+					detail: mode === 'full' ? null : previous.detail,
+				};
+			});
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId, setSyncById]);
+
+	/**
+	 * 只重取工作区快照并写入条目。
+	 *
+	 * 供不改动引用与提交历史的工作区操作（暂存、取消暂存、丢弃、忽略规则）使用：这类操作后提交
+	 * 图必然不变，重取整页提交只是白等一次 git log。提交图窗口缓存因此保持有效。
+	 *
+	 * 未提交伪提交行上的改动数由条目数决定，这里按同一判据就地修正（含条目数由零变正时补出该行），
+	 * 避免该行缺失或显示过期的数字。
+	 *
+	 * 不递增 `generationRef`、不 abort 在途请求：在途的提交图请求可能正把 `phase` 从 loading 推向
+	 * ready，作废它会让图形区永久停在 loading（`phase` 只由 {@link refresh} 写入）。快照请求自带
+	 * 控制器，只中止上一次快照。
+	 *
+	 * 与 {@link refresh} 的 `reconcile` 同一语义：不改 `phase`，不触碰 `detail` 与 `selectedHash`。
+	 *
+	 * @returns 无。
+	 */
+	const refreshEntries = React.useCallback(async () => {
+		if (workingTreePath === null) return;
+		// 只替换快照请求的控制器：提交图那一路（若有）继续跑完并自行收敛 phase。
+		entriesControllerRef.current?.abort();
+		const controller = new AbortController();
+		entriesControllerRef.current = controller;
+		const repo = workingTreePath;
+		try {
+			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal);
+			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
+			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
+			setState((previous) => {
+				const entriesSame = entriesEqual(previous.entries, snapshot.entries);
+				const commits = entriesSame
+					? previous.commits
+					: withUncommittedCount(previous.commits, snapshot.entries.length, snapshot.head ?? previous.head);
+				return {
+					...previous, error: null,
+					entries: entriesSame ? previous.entries : snapshot.entries,
+					commits,
+				};
+			});
+			// 领先/落后与条目来自同一次读取，不再单独请求。
+			if (selectedId !== null) {
+				setSyncById((previous) => new Map(previous).set(selectedId, {
+					branch: snapshot.branch, upstream: snapshot.upstream,
+					ahead: snapshot.ahead, behind: snapshot.behind,
+				}));
+			}
+		} catch (error) {
+			if (controller.signal.aborted) return;
+			reportError(setState, error instanceof Error ? error.message : String(error));
+		}
+	}, [workingTreePath, selectedId, setSyncById]);
 
 	/**
 	 * 追加下一页。
@@ -215,6 +338,8 @@ export function useGraphData({
 			const key = graphKeyOf(workingTreePath, maxCommits, skip, settings);
 			let graph = graphWindows.get(key);
 			if (graph === undefined) {
+				// 翻页不取仓库信息；已知的远程与贮藏随请求传入，省去宿主侧的枚举。
+				const known = knownRepoInfo.get(repoKeyOf(workingTreePath)) ?? null;
 				graph = await loadGraph(workingTreePath, {
 					maxCommits,
 					skip,
@@ -224,6 +349,9 @@ export function useGraphData({
 					showRemoteBranches: settings.showRemoteBranches,
 					onlyFollowFirstParent: settings.onlyFollowFirstParent,
 					includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+					...(known === null ? {} : {
+						remotes: known.remotes, stashes: known.stashes, branch: known.branch,
+					}),
 				});
 				graphWindows.set(key, graph);
 			}
@@ -297,6 +425,15 @@ export function useGraphData({
 					 */
 					if (snapshot.head !== null && snapshot.head !== loadedHead()) {
 						graphWindows.dropRepo(workingTreePath);
+						/*
+						 * 快照已带回当前分支名：外部检出会改分支，就地更新已知值即可，不必为一次
+						 * 外部提交重取整批仓库信息。
+						 */
+						const repoKey = repoKeyOf(workingTreePath);
+						const known = knownRepoInfo.get(repoKey);
+						if (known !== undefined && known.branch !== snapshot.branch) {
+							knownRepoInfo.set(repoKey, { ...known, branch: snapshot.branch });
+						}
 						void refresh();
 						return;
 					}
@@ -329,6 +466,6 @@ export function useGraphData({
 		};
 	}, [workingTreePath, refresh, settings.autoRefresh]);
 
-	return { state, setState, refresh, loadMore, busyRef };
+	return { state, setState, refresh, refreshEntries, loadMore, busyRef };
 
 }
