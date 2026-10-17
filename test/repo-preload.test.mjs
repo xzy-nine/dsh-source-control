@@ -152,7 +152,7 @@ test('预加载：按发现、纠正、补齐、同步的顺序取数并逐阶�
 	assert.equal(last.syncById.get(last.nodes[0].children[0].id).upstream, 'origin/main', '工作树节点也写回领先/落后');
 });
 
-test('预加载：同一工作区在途只发一份请求，force 重取', async () => {
+test('预加载：同一工作区在途只发一份请求，force 受冷却约束', async () => {
 	const root = '/work/preload-b';
 	let discovers = 0;
 	const stubbed = stubFetch({
@@ -169,9 +169,13 @@ test('预加载：同一工作区在途只发一份请求，force 重取', async
 		await waitFor(() => discovers >= 1);
 		assert.equal(discovers, 1, '在途期间重复调用只发一份请求');
 
+		/*
+		 * 同一工作区的多个会话面板各自挂载时都会请求一次重取；冷却期内不再重做全目录扫描，
+		 * 否则每挂一个面板就把上一份在途取数中止重来。
+		 */
 		preloadWorkspace(root, { force: true });
-		await waitFor(() => discovers >= 2);
-		assert.equal(discovers, 2, 'force 中止在途并重取');
+		await waitFor(() => false);
+		assert.equal(discovers, 1, '冷却期内 force 不重取');
 	} finally {
 		stubbed.restore();
 		dropWorkspace(root);

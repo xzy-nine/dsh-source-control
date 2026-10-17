@@ -38,6 +38,14 @@ export interface PreloadOptions {
 	readonly force?: boolean;
 }
 
+/**
+ * 一次重取的最短间隔（毫秒）。
+ *
+ * 同一工作区可能同时挂着多个会话面板，各自挂载时都会请求一次；没有这个下限时每个面板
+ * 都会中止上一份在途取数重来一遍，而重取包含一次全目录扫描，多个面板叠加即把宿主拖住。
+ */
+const REFRESH_COOLDOWN_MS = 30_000;
+
 /** 一个工作区的预加载状态。 */
 interface WorkspaceEntry {
 	readonly root: string;
@@ -55,6 +63,8 @@ interface WorkspaceEntry {
 	controller: AbortController | null;
 	/** 代次：每次重新取数递增，旧代次的结果不写回。 */
 	generation: number;
+	/** 最近一次取数完成或开始的时刻；用于重取冷却。 */
+	refreshedAt: number;
 }
 
 /** 工作区归一化键 -> 预加载状态。 */
@@ -168,6 +178,7 @@ function createEntry(root: string): WorkspaceEntry {
 		running: null,
 		controller: null,
 		generation: 0,
+		refreshedAt: 0,
 	};
 }
 
@@ -325,6 +336,7 @@ function start(entry: WorkspaceEntry): void {
 	const controller = new AbortController();
 	entry.controller = controller;
 	entry.generation += 1;
+	entry.refreshedAt = Date.now();
 	const generation = entry.generation;
 	const cancelled = (): boolean => controller.signal.aborted || entry.generation !== generation;
 	// 已有节点时保持 ready：重取期间界面继续显示上一轮结果，不闪回占位。
@@ -353,6 +365,7 @@ function start(entry: WorkspaceEntry): void {
 	})();
 	entry.running = run;
 	void run.finally(() => {
+		entry.refreshedAt = Date.now();
 		if (entry.running !== run) return;
 		entry.running = null;
 		entry.controller = null;
@@ -361,6 +374,9 @@ function start(entry: WorkspaceEntry): void {
 
 /**
  * 预加载一个工作区的仓库树。
+ *
+ * 同一工作区可能同时挂着多个会话面板：在途时一律复用，`force` 也受重取冷却约束，
+ * 避免每个面板挂载都中止上一份取数、重新做一次全目录扫描。
  *
  * @param root - 工作区根路径。
  * @param options - 见 {@link PreloadOptions}。
@@ -374,7 +390,8 @@ export function preloadWorkspace(root: string, options: PreloadOptions = {}): vo
 		entry = createEntry(root);
 		entries.set(key, entry);
 	}
-	if (entry.running !== null && options.force !== true) return;
+	if (entry.running !== null) return;
+	if (options.force === true && Date.now() - entry.refreshedAt < REFRESH_COOLDOWN_MS) return;
 	start(entry);
 }
 

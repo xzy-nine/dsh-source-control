@@ -162,7 +162,12 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			});
 		};
 
-		// 已有结果时后台重取一次；尚未开始时直接启动（在途则复用）。
+		/*
+		 * 已有结果时后台重取一次；尚未开始时直接启动。
+		 *
+		 * 重取受预加载模块的冷却约束：同一工作区的多个会话面板各自挂载时不重复做全目录扫描，
+		 * 也不会互相中止在途取数。
+		 */
 		preloadWorkspace(root, getWorkspaceSnapshot(root) === null ? {} : { force: true });
 		const current = getWorkspaceSnapshot(root);
 		if (current !== null) apply(current);

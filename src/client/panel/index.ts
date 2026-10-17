@@ -1281,11 +1281,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 							checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
 						});
 						if (!ok) return;
-						void run('history', async () => {
-							await removeWorktree(workingTreePath as string, node.path, true);
-							// 该节点已不存在，清掉选中以免刷新后指向失效节点。
-							setSelectedId((previous) => (previous === node.id ? null : previous));
-						});
+						/*
+						 * 经仓库行自己的 `run` 执行：目标传该工作树路径。
+						 *
+						 * 不能走当前选中仓库的 `run`——被移除的可能正是当前选中的工作树，
+						 * 那之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
+						 * 目标不是当前仓库时 `run` 只作废该仓库的窗口缓存，不刷新视图。
+						 */
+						await run('history', async () => {
+							await removeWorktree(node.path, node.path, true);
+						}, node.path);
+						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
+						setSelectedId((previous) => (previous === node.id ? null : previous));
+						rescan();
 					})();
 				},
 			});

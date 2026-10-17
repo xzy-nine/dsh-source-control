@@ -441,11 +441,16 @@ test('工作树右键提供移除入口', () => {
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
 	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
+	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录。
+	assert.match(panel, /await removeWorktree\(node\.path, node\.path, true\)/, '以工作树路径为目标执行移除');
+	assert.match(panel, /\}, node\.path\);\s*\n\s*\/\/ 该节点已不存在/, '移除后不对被删工作树做刷新');
 	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
 	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');
 	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
+	assert.match(host, /removalCwd/, '移除时的工作目录应避开被删目录');
+	assert.match(host, /resolveGitCommonDir/, '应退回 git 公共目录');
 });
 
 test('删除当前分支时提示而非静默失败', () => {
