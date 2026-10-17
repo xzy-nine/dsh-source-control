@@ -87,12 +87,6 @@ const DEFAULT_MAX_DEPTH = 3;
 /** 默认最多访问的目录数。 */
 const DEFAULT_MAX_DIRECTORIES = 5000;
 
-/** 批量同步仓库时的并发上限。 */
-const MAX_SYNC_CONCURRENCY = 4;
-
-/** 同一层内并发构造仓库节点的上限。 */
-const MAX_REPO_CONCURRENCY = 8;
-
 /** 发现结果缓存的存活毫秒数。 */
 const DISCOVERY_CACHE_TTL_MS = 60_000;
 
@@ -167,28 +161,6 @@ export function clearDiscoveryCache(): void {
 
 /* 仓库写操作会改变目录与仓库位置，写成功后立即作废发现缓存。 */
 onRepositoryWrite(() => { clearDiscoveryCache(); });
-
-/**
- * 在并发上限内按顺序处理一组输入。
- *
- * @param items - 输入项。
- * @param limit - 并发上限。
- * @param task - 单项处理函数。
- * @returns 与输入同序的结果数组。
- */
-async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let cursor = 0;
-	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) {
-			const index = cursor;
-			cursor++;
-			results[index] = await task(items[index]);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
 
 /**
  * 把路径规范化为节点标识。
@@ -498,8 +470,7 @@ export async function enrichRepositories(repos: readonly string[]): Promise<Repo
 	const repoDirs = candidates.filter((dir, index) => entries[index]);
 	const trivial = await Promise.all(repoDirs.map((dir) => hasNoChildSources(dir)));
 	const targets = repoDirs.map((dir, index) => ({ dir, trivial: trivial[index] }));
-	return mapLimit(targets, MAX_REPO_CONCURRENCY, (target) =>
-		repoNodeOf(target.dir, 0, submoduleIds, target.trivial));
+	return Promise.all(targets.map((target) => repoNodeOf(target.dir, 0, submoduleIds, target.trivial)));
 }
 
 /**
@@ -631,8 +602,8 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 		entries.forEach((entry, index) => { if (entry === 'dir') repoIndexes.push(index); });
 		// 仓库节点与子目录并发取；两者都完成后才进入下一层，子模块去重集合才完整。
 		const [repoNodes, children] = await Promise.all([
-			mapLimit(repoIndexes, MAX_REPO_CONCURRENCY, (index) =>
-				repoNodeOf(pending[index].dir, pending[index].depth, submoduleIds, options.shallow === true)),
+			Promise.all(repoIndexes.map((index) =>
+				repoNodeOf(pending[index].dir, pending[index].depth, submoduleIds, options.shallow === true))),
 			Promise.all(pending.map((current, index) => entries[index] === 'file' || current.depth >= maxDepth
 				? Promise.resolve([] as string[])
 				: subdirectories(current.dir))),
@@ -671,7 +642,7 @@ async function discoverKnownRepositories(
 	// `.git` 探测并发；仍是仓库的路径按原顺序并发构造节点。
 	const entries = await Promise.all(candidates.map((dir) => gitEntryOf(dir)));
 	const repoDirs = candidates.filter((dir, index) => entries[index] === 'dir');
-	const built = await mapLimit(repoDirs, MAX_REPO_CONCURRENCY, (dir) => repoNodeOf(dir, 0, submoduleIds, shallow));
+	const built = await Promise.all(repoDirs.map((dir) => repoNodeOf(dir, 0, submoduleIds, shallow)));
 	for (const node of built) nodes.push(node);
 	if (nodes.length === 0) {
 		return discoverRepositories(root, {
@@ -780,14 +751,14 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 		seen.add(repo);
 		unique.push(repo);
 	}
-	return mapLimit(unique, MAX_SYNC_CONCURRENCY, async (path) => {
+	return Promise.all(unique.map(async (path) => {
 		try {
 			const sync = await loadRepoSync(path);
 			return { path, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 		} catch {
 			return { path, branch: null, upstream: null, ahead: 0, behind: 0 };
 		}
-	});
+	}));
 }
 
 /**

@@ -334,6 +334,31 @@ test('discoverRepositories：同层目录多时结果与串行语义一致', asy
 	assert.ok(result.nodes.every((node) => node.depth === 1 && node.kind === 'repo'), '同层仓库 depth 均为 1');
 });
 
+test('loadReposSync：大量仓库一次全部返回，顺序与入参一致', async () => {
+	const { loadReposSync } = await import(pathToFileURL(discoveryPath).href);
+	const rootDir = makeTemp('gg-sync-many-');
+	const paths = [];
+	for (let i = 0; i < 40; i++) paths.push(makeBareRepoAt(rootDir, `r${String(i).padStart(2, '0')}`));
+
+	const results = await loadReposSync(paths);
+	assert.equal(results.length, 40, '全部仓库一次返回');
+	assert.deepEqual(results.map((entry) => entry.path), paths, '顺序与入参一致');
+	assert.ok(results.every((entry) => entry.branch === 'main'));
+});
+
+test('enrichRepositories：大量仓库一次全部补齐，顺序与入参一致', async () => {
+	const { enrichRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
+	clearDiscoveryCache();
+	const rootDir = makeTemp('gg-enrich-many-');
+	const paths = [];
+	for (let i = 0; i < 40; i++) paths.push(makeBareRepoAt(rootDir, `r${String(i).padStart(2, '0')}`));
+
+	const enriched = await enrichRepositories(paths);
+	assert.equal(enriched.length, 40, '全部仓库一次补齐');
+	assert.deepEqual(enriched.map((node) => node.path), paths, '顺序与入参一致');
+	assert.ok(enriched.every((node) => node.children.length === 0), '无工作树与子模块时 children 为空');
+});
+
 test('loadReposSync：空数组返回空、path 原样回显、重复入参去重', async () => {
 	const { loadReposSync, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();

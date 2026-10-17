@@ -40,7 +40,8 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
-                    仓库树（use-repos.ts 以批量命令预取领先/落后；repo-tree.ts 树结构与选中、
+                    仓库树（repo-preload.ts 按主视图当前会话的工作区后台取数并发布快照、use-repos.ts 订阅快照
+                    并维护选中与展开；repo-tree.ts 树结构与选中、
                     enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
                     refresh-scheduler.ts 是两处事件驱动刷新共用的冷却与挂起调度、
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
@@ -170,14 +171,17 @@ Office）主动不认领，那些仍走宿主预览。
 （首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
 `bench-verify.mjs`。`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
 
-仓库树的领先/落后不在重载的两路请求里取：`panel/use-repos.ts` 在空闲回调里把当前可见且未缓存的节点
-（一次最多 24 个路径）交给批量命令 `loadReposSync` 一次取回，按路径在途去重，结果按节点 id 批量回写；
-宿主侧按仓库并发（上限 4），单个仓库失败以空值兜底，`path` 原样回显入参。分支与上游的领先/落后由
-一次 `git for-each-ref --format=… refs/heads` 取回（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，
-`%(HEAD)` 标出当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、
-上游为空、领先/落后为 0。仓库发现逐层并行，结果进 60 秒 TTL 的内存缓存（容量 16，超出按插入序淘汰），
-任何**成功**的仓库写操作作废该缓存；插件 `apply()` 注册路由后按已持久化的工作区根启动一次预扫
-（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，失败静默。
+仓库树的取数不在面板重载的两路请求里：客户端插件激活后按**主视图当前会话**的工作区后台预加载
+（`panel/repo-preload.ts` 的 `activeWorkspaceOf`，判据是会话行的 `retainedBy.mainView`），只取这一个
+工作区，不遍历会话列表里的其它工作区。一个工作区依次做浅层发现、位置纠正、补齐工作树与子模块、
+读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。各步都一次下发全部仓库，
+不按批切分、不设并发上限。领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
+`git for-each-ref --format=… refs/heads`（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，`%(HEAD)` 标出
+当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、上游为空、
+领先/落后为 0。单个仓库失败以空值兜底，`path` 原样回显入参。仓库发现逐层并行，结果进 60 秒 TTL
+的内存缓存（容量 16，超出按插入序淘汰），任何**成功**的仓库写操作作废该缓存；宿主 `apply()` 注册路由
+后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
+失败静默。
 
 ## 首屏空白
 
@@ -191,12 +195,12 @@ Office）主动不认领，那些仍走宿主预览。
 | 更改区 | `loadWorkingTreeSnapshot`：一次 `git status --porcelain=v2 --branch -z -uall` | 单次 status 约 90ms |
 | 图形区 | `loadCommits` 首屏：仓库信息 / 引用集合 / 贮藏 / 工作树分支同批并行，再与 `git log` 并行 | 最慢一路约 110ms |
 
-仓库列表先出**浅层树**（顶层仓库节点，`children` 全空），工作树与子模块随后由
-`enrichRepositories` 在空闲回调里补齐：`use-repos.ts` 按仓库路径把补齐结果存进 `childrenByPathRef`，
-`repo-tree.ts` 的 `attachChildren` 负责挂回。判据是「有没有补齐记录」而不是「当前有没有 children」，
-`rescan()` 清空记录与标记，因此重扫能反映工作树的增删。浅层树里没有工作树与子模块节点，持久化选中的
-若正是这类节点，`planSelection` 把它记为待认领、补齐后由 `claimPendingSelection` 认领回原节点；
-用户手动选中即作废待认领项。
+仓库列表先出**浅层树**（顶层仓库节点，`children` 全空），工作树与子模块随后补齐：预加载在
+`repo-preload.ts` 里按仓库路径把补齐结果存进 `childrenByPath`，`repo-tree.ts` 的 `attachChildren`
+负责挂回。判据是「有没有补齐记录」而不是「当前有没有 children」，`rescan()` 丢弃整个预加载状态，
+因此重扫能反映工作树的增删。浅层树里没有工作树与子模块节点，持久化选中的若正是这类节点，
+`planSelection` 把它记为待认领、补齐后由 `claimPendingSelection` 认领回原节点；用户手动选中即作废
+待认领项。
 
 补齐的占用登记与结局处理是两个纯模块：`enrich-claims.ts` 的 `createEnrichClaims()` 记在途与已完成，
 `enrich-run.ts` 的 `runEnrichBatch()` 按结局决定保留还是释放占用。取消、空结果与失败都必须释放，
@@ -343,6 +347,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
 | `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
+| `repo-preload.test.mjs` | 仓库树预加载：只取主视图当前会话的工作区、四步取数顺序与逐阶段发布、在途去重与 `force`、失败置 error、`dropWorkspace` 后重取、补齐空结果重试到上限 |
 | `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
 | `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出 |
 | `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |
