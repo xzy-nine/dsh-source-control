@@ -1,12 +1,16 @@
 /**
  * 重复代码门禁：用 jscpd 扫描 `src/`，出现基线之外的克隆即失败。
  *
- * 基线记的是当前已接受的重复（文件对 + 片段长度），只允许调低；确实无法消除的（如跨构建目标的
- * 类型镜像）才调高，并在提交信息里说明理由。
+ * 基线记的是当前已接受的重复（文件对 + 片段长度 + 片段内容摘要）及其出现次数，只允许调低；
+ * 确实无法消除的（如跨构建目标的类型镜像）才调高，并在提交信息里说明理由。
+ *
+ * 同一指纹在基线与当前各出现 N 次时视为未新增：jscpd 会把一处重复按相邻窗口合并成多条克隆，
+ * 只比对实例存在与否会让基线随首处重复的条数变化而失效。
  *
  * 用法：node scripts/check-duplication.mjs [--update]
  *   --update  按当前扫描结果重写基线。
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,9 +43,28 @@ async function scanClones() {
 }
 
 /**
+ * 计算片段内容摘要。
+ *
+ * 先归一化行尾再摘要：同一份片段在检出为 CRLF 与 LF 的机器上文本不同，不归一化会让基线
+ * 只在某一侧通过。摘要取两侧片段中字节序较小的一侧，使指纹与 A/B 侧归属无关（两侧片段通常不同）。
+ *
+ * @param a - 第一侧片段文本。
+ * @param b - 第二侧片段文本。
+ * @returns 摘要的前 16 位十六进制。
+ */
+function fragmentDigest(a, b) {
+	const normalize = (text) => text.replace(/\r\n?/g, '\n');
+	const first = normalize(a);
+	const second = normalize(b);
+	const [head, tail] = first <= second ? [first, second] : [second, first];
+	return createHash('sha256').update(`${head}\u0000${tail}`).digest('hex').slice(0, 16);
+}
+
+/**
  * 把克隆折成指纹。
  *
- * 指纹不含行号：行号随无关改动漂移，只按「文件对 + 片段长度」判定同一处重复。
+ * 指纹不含行号：行号随无关改动漂移。文件对 + 片段长度 + 片段内容摘要共同定位一处重复，
+ * 因此同文件对、同长度但内容被替换时视为新的重复。
  *
  * @param clones - 克隆列表。
  * @returns 指纹数组，已排序。
@@ -55,9 +78,22 @@ function fingerprints(clones) {
 				.map((name) => name.slice(root.length + 1).replace(/\\/g, '/'))
 				.sort()
 				.join('|');
-			return `${pair}|${a.end.line - a.start.line + 1}`;
+			const lines = Math.min(a.end.line - a.start.line + 1, b.end.line - b.start.line + 1);
+			return `${pair}|${lines}|${fragmentDigest(a.fragment ?? '', b.fragment ?? '')}`;
 		})
 		.sort();
+}
+
+/**
+ * 统计指纹出现次数。
+ *
+ * @param list - 指纹数组。
+ * @returns 指纹到次数的映射。
+ */
+function countByFingerprint(list) {
+	const counts = new Map();
+	for (const item of list) counts.set(item, (counts.get(item) ?? 0) + 1);
+	return counts;
 }
 
 const current = fingerprints(await scanClones());
@@ -80,8 +116,12 @@ if (!existsSync(baselinePath)) {
 }
 
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
-const known = new Set(baseline.fingerprints ?? []);
-const added = current.filter((item) => !known.has(item));
+const known = countByFingerprint(baseline.fingerprints ?? []);
+const seen = countByFingerprint(current);
+const added = [];
+for (const [item, times] of seen) {
+	for (let index = known.get(item) ?? 0; index < times; index += 1) added.push(item);
+}
 
 if (added.length > 0) {
 	console.error(`[duplication] 新增 ${added.length} 处重复（基线 ${baseline.count} 处，当前 ${current.length} 处）：`);

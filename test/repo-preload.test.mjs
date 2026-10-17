@@ -166,7 +166,10 @@ test('预加载：同一工作区在途只发一份请求，force 受冷却约�
 		preloadWorkspace(root);
 		preloadWorkspace(root);
 		preloadWorkspace(root);
-		await waitFor(() => discovers >= 1);
+		assert.ok(
+			await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'),
+			'首次预加载应完成',
+		);
 		assert.equal(discovers, 1, '在途期间重复调用只发一份请求');
 
 		/*
@@ -174,7 +177,6 @@ test('预加载：同一工作区在途只发一份请求，force 受冷却约�
 		 * 否则每挂一个面板就把上一份在途取数中止重来。
 		 */
 		preloadWorkspace(root, { force: true });
-		await waitFor(() => false);
 		assert.equal(discovers, 1, '冷却期内 force 不重取');
 	} finally {
 		stubbed.restore();
@@ -199,7 +201,7 @@ test('预加载：发现失败时状态为 error 且错误文本透出', async (
 	dropWorkspace(root);
 });
 
-test('dropWorkspace：丢弃后快照与订阅一并清除，重新预加载重新取数', async () => {
+test('dropWorkspace：保留条目与订阅者，发布空 loading 快照，重新预加载重新取数', async () => {
 	const root = '/work/preload-d';
 	let discovers = 0;
 	const stubbed = stubFetch({
@@ -212,15 +214,32 @@ test('dropWorkspace：丢弃后快照与订阅一并清除，重新预加载重�
 	});
 	try {
 		preloadWorkspace(root);
-		await waitFor(() => getWorkspaceSnapshot(root)?.nodes.length === 1);
-		assert.notEqual(getWorkspaceSnapshot(root), null);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+		const before = getWorkspaceSnapshot(root);
+		assert.equal(before.nodes.length, 1);
 
-		dropWorkspace(root);
-		assert.equal(getWorkspaceSnapshot(root), null, '丢弃后无快照');
+		// 订阅者在重置后仍然有效：重置会向它们发布一份空快照。
+		let notified = 0;
+		const unsubscribe = subscribeWorkspace(root, () => { notified += 1; });
+		try {
+			dropWorkspace(root);
+			const dropped = getWorkspaceSnapshot(root);
+			assert.notEqual(dropped, null, '条目保留，快照仍可取到');
+			assert.equal(dropped.nodes.length, 0, '节点清空');
+			assert.equal(dropped.status, 'loading', '回到取数中');
+			assert.equal(dropped.error, null);
+			assert.equal(dropped.syncById.size, 0);
+			assert.equal(dropped.discoveryRevision, before.discoveryRevision + 1, '重置递增发现代次');
+			assert.ok(notified >= 1, '订阅者收到发布');
+		} finally {
+			unsubscribe();
+		}
 
+		// 冷却不再挡住下一次取数：在途状态已清空、最近取数时刻已复位。
 		preloadWorkspace(root);
-		await waitFor(() => discovers >= 2);
-		assert.equal(discovers, 2, '重新预加载重新取数');
+		assert.ok(await waitFor(() => discovers >= 2), '重新预加载重新取数');
+		assert.equal(discovers, 2, '只重取一次');
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '重新取数后回到 ready');
 	} finally {
 		stubbed.restore();
 		dropWorkspace(root);

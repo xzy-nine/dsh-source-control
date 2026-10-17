@@ -464,10 +464,11 @@ export function useGraphData({
 	/*
 	 * 记下最近一次渲染的面板状态：切换会话会让面板重新挂载，下次进入同一仓库时先呈现它，
 	 * 不必从占位重新取数。只在有仓库且已有数据时记，避免把占位状态写进缓存。
+	 * 进行中的操作不随重新挂载延续，因此保存前清空它们。
 	 */
 	React.useEffect(() => {
 		if (workingTreePath === null || state.phase !== 'ready') return;
-		rememberPanelState(workingTreePath, state, maxCommits);
+		rememberPanelState(workingTreePath, { ...state, busy: [] }, maxCommits);
 	}, [workingTreePath, state, maxCommits]);
 
 	// 已加载的工作区签名：兜底轮询据此判断是否需要重载。

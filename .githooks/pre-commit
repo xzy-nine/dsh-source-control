@@ -3,6 +3,8 @@
 # pre-commit：对本次提交涉及的 TypeScript 文件跑 oxlint。
 #
 # 只查暂存的 .ts/.tsx（含新增、修改、重命名），存量文件不重复检查。
+# oxlint 只能检查磁盘上的文件，没有从标准输入读源码的入口：先确认暂存内容与工作区副本一致，
+# 不一致即拒绝提交，避免检查到的不是即将提交的那一版。
 # 规则集见仓库根的 .oxlintrc.json；type-aware 规则需要安装依赖。
 
 set -e
@@ -15,12 +17,31 @@ if [ ! -x node_modules/.bin/oxlint ] && [ ! -f node_modules/oxlint/dist/cli.js ]
 	exit 1
 fi
 
-files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.tsx?$' || true)
-if [ -z "$files" ]; then
+# 暂存的 TypeScript 路径，NUL 分隔：路径可含空格与制表符，按行切分会拆错。
+staged_ts_paths() {
+	git diff --cached --name-only --diff-filter=ACMR -z | grep -zE '^src/.*\.tsx?$' || true
+}
+
+staged_count=$(staged_ts_paths | tr -cd '\000' | wc -c | tr -d ' ')
+if [ "$staged_count" -eq 0 ]; then
 	exit 0
 fi
 
-# 逐行转成参数，避免路径含空格时被拆开。
-set -- $files
-echo "pre-commit: oxlint 检查 $(printf '%s\n' "$@" | wc -l | tr -d ' ') 个文件"
-node node_modules/oxlint/dist/cli.js --type-aware "$@"
+# 暂存内容与工作区副本不一致的路径。一次 git diff 覆盖全部路径，避免逐文件起子进程；
+# GIT_LITERAL_PATHSPECS 让路径里的 * 与 ? 按字面匹配。上面的计数保证此处输入非空，
+# 因此不依赖 GNU xargs 的 -r。
+mismatched=$(
+	staged_ts_paths |
+		GIT_LITERAL_PATHSPECS=1 xargs -0 git diff --name-only -z -- |
+		tr '\000' '\n' || true
+)
+if [ -n "$mismatched" ]; then
+	echo "pre-commit: 以下文件的暂存内容与工作区副本不一致，拒绝提交：" >&2
+	printf '%s\n' "$mismatched" | sed 's/^/  - /' >&2
+	echo "先把工作区内容并入暂存区（git add），或用 git restore --staged 撤销暂存后重试。" >&2
+	echo "确需跳过检查时用 git commit --no-verify。" >&2
+	exit 1
+fi
+
+echo "pre-commit: oxlint 检查 $staged_count 个文件"
+staged_ts_paths | xargs -0 node node_modules/oxlint/dist/cli.js --type-aware
