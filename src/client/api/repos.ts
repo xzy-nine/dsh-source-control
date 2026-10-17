@@ -196,6 +196,20 @@ export interface LoadGraphOptions {
 }
 
 /**
+ * 请宿主作废其内存缓存。
+ *
+ * 写操作已由宿主执行层自动作废该仓库的缓存；本命令覆盖外部进程改动仓库的情形——那种改动
+ * 不产生写事件，宿主无从得知，只能由读到 HEAD 变化的客户端显式请求。
+ *
+ * @param cwd - 会话工作区路径，作为 repo 传给宿主。
+ * @param signal - 取消信号。
+ * @returns 无。
+ */
+export async function invalidateHostCache(cwd: string, signal?: AbortSignal): Promise<void> {
+	await callApi(cwd, { command: 'invalidateCache' }, signal);
+}
+
+/**
  * 读取提交图。
  *
  * `withRepoInfo` 为 true 时宿主随本批取回仓库信息、引用集合与贮藏，这里不先发仓库信息请求：

@@ -435,7 +435,13 @@ test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐�
 		});
 
 		assert.equal(first.repoInfo.stashes.length, 1);
-		assert.equal(refresh.repoInfo, null, '刷新批不取仓库信息');
+		/*
+		 * 第二次调用与首屏参数相同，因此命中宿主缓存：命中时仓库信息一并回投（同样来自宿主
+		 * 缓存），客户端不必再补一次 `loadRepoInfo`。未命中缓存时该字段为 null。
+		 */
+		assert.ok(refresh.repoInfo !== null, '命中缓存时一并回投仓库信息');
+		assert.deepEqual(refresh.repoInfo.stashes, first.repoInfo.stashes, '回投的贮藏与首屏一致');
+		assert.deepEqual(refresh.repoInfo.remotes, first.repoInfo.remotes, '回投的远程与首屏一致');
 		assert.deepEqual(refresh.commits, first.commits, '给出已知远程与贮藏时提交图应与首屏批逐条一致');
 		assert.deepEqual(refresh.tags, first.tags);
 		assert.equal(refresh.head, first.head);

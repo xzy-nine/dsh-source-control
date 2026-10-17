@@ -11,34 +11,84 @@
  * 已知值；写操作后作废，使贮藏这类会变的字段重新读取。
  */
 import React from 'react';
-import { loadGraph, loadWorkingTreeSnapshot, type GraphData, type GraphStash, type WorkingTreeSnapshot } from '../api/index.ts';
+import { invalidateHostCache, loadGraph, loadWorkingTreeSnapshot, type WorkingTreeSnapshot } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
-import { createCommitGraphCache } from '../graph/cache.ts';
 import { isRepoBusy } from './busy.ts';
 import { branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from './commit-diff.ts';
 
-import type { BusyEntry, PanelState, Remote, RepoSync, Settings } from '../shared/types.ts';
+import type { BusyEntry, PanelState, RepoSync, Settings } from '../shared/types.ts';
 
 /**
- * 提交图窗口缓存。
+ * 各仓库最近一次渲染的面板状态。
  *
- * 写操作后的对账会再次请求同一段窗口，而每个窗口都是一次完整的 git log；容量按「同时活跃的
- * 窗口数」定，覆盖首屏与最近几页。
+ * 这是**渲染态**，不是数据缓存：数据缓存（提交图窗口、仓库信息、工作区快照）在宿主内存里，
+ * 见 `source-control/host-cache.ts`。这里只记住界面最后一次画出来的结果，供面板重新挂载时
+ * 首帧呈现——侧栏页签按会话存储，切换会话会让面板整体重新挂载。
  */
-const graphWindows = createCommitGraphCache<GraphData>();
+const lastPanelState = new Map<string, PanelState>();
 
-/** 一个仓库最近一次取到的仓库信息；供后续刷新随请求传入。 */
-interface KnownRepoInfo {
-	readonly remotes: Remote[];
-	readonly stashes: GraphStash[];
-	/** 当前分支名；分离头指针为 null。 */
-	readonly branch: string | null;
+/**
+ * 各仓库最近一次已加载的提交数上限。
+ *
+ * 重新挂载时 `maxCommits` 会回到初始值，宿主缓存键随之变化、命中不到已取过的窗口。
+ * 这是与渲染态配套的取数参数，因此与它一起留在客户端。
+ */
+const lastMaxCommits = new Map<string, number>();
+
+/** 状态缓存的仓库数上限；超出按插入序淘汰最旧。 */
+const LAST_PANEL_STATE_LIMIT = 8;
+
+/**
+ * 取一个仓库最近一次已加载的提交数上限。
+ *
+ * @param repoPath - 仓库路径。
+ * @returns 提交数上限；从未加载过时为 undefined。
+ */
+export function rememberedMaxCommits(repoPath: string): number | undefined {
+	return lastMaxCommits.get(repoKeyOf(repoPath));
 }
 
-/** 各仓库已知的仓库信息，键与提交图窗口缓存同一套归一化规则。 */
-const knownRepoInfo = new Map<string, KnownRepoInfo>();
+/**
+ * 记下一个仓库最近一次渲染的面板状态。
+ *
+ * @param repoPath - 仓库路径。
+ * @param state - 面板状态。
+ * @param maxCommits - 该状态对应的提交数上限。
+ * @returns 无。
+ */
+function rememberPanelState(repoPath: string, state: PanelState, maxCommits: number): void {
+	const key = repoKeyOf(repoPath);
+	lastPanelState.delete(key);
+	lastPanelState.set(key, state);
+	lastMaxCommits.delete(key);
+	lastMaxCommits.set(key, maxCommits);
+	while (lastPanelState.size > LAST_PANEL_STATE_LIMIT) {
+		const oldest = lastPanelState.keys().next();
+		if (oldest.done === true) break;
+		lastPanelState.delete(oldest.value);
+		lastMaxCommits.delete(oldest.value);
+	}
+}
+
+/**
+ * 取一个仓库最近一次渲染的面板状态。
+ *
+ * @param repoPath - 仓库路径。
+ * @returns 面板状态；从未渲染过时为 undefined。
+ */
+function rememberedPanelState(repoPath: string): PanelState | undefined {
+	return lastPanelState.get(repoKeyOf(repoPath));
+}
+
+/**
+ * 最近一次取数的仓库（模块级）。
+ *
+ * 不能用实例内的 ref：侧栏页签按会话存储，切换会话会让面板重新挂载，实例 ref 必为 null，
+ * 于是每次挂载都会被当成「换了仓库」而丢弃渲染态。
+ */
+let activeGraphRepo: string | null = null;
 
 /**
  * 取仓库信息的键。
@@ -51,40 +101,17 @@ function repoKeyOf(repoPath: string): string {
 }
 
 /**
- * 丢弃某个仓库的全部提交图窗口与已知仓库信息。
+ * 丢弃某个仓库的渲染态。
  *
- * 写操作与用户主动刷新后调用：引用、提交历史与贮藏可能已经变化。
+ * 写操作与用户主动刷新后调用：界面必须按新数据重建。数据缓存由宿主在写操作后自行作废，
+ * 这里不需要通知宿主。
  *
  * @param repoPath - 仓库路径。
  * @returns 无。
  */
 export function dropGraphWindows(repoPath: string): void {
-	graphWindows.dropRepo(repoPath);
-	knownRepoInfo.delete(repoKeyOf(repoPath));
-}
-
-/**
- * 取一次提交图请求的缓存键。
- *
- * 键包含仓库路径与全部取数参数，参数任一项不同都视为不同窗口。
- *
- * @param repoPath - 仓库路径。
- * @param maxCommits - 本窗口的提交数上限。
- * @param skip - 从起点跳过的提交数。
- * @param settings - 当前设置。
- * @returns 缓存键。
- */
-function graphKeyOf(repoPath: string, maxCommits: number, skip: number, settings: Settings): string {
-	return graphWindows.keyOf(repoPath, {
-		maxCommits,
-		skip,
-		ordering: settings.commitOrdering,
-		showStashes: settings.showStashes,
-		showTags: settings.showTags,
-		showRemoteBranches: settings.showRemoteBranches,
-		onlyFollowFirstParent: settings.onlyFollowFirstParent,
-		includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
-	});
+	lastPanelState.delete(repoKeyOf(repoPath));
+	lastMaxCommits.delete(repoKeyOf(repoPath));
 }
 
 /** 提交图数据 hook 的入参。 */
@@ -173,9 +200,18 @@ function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapshot): Pan
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 }: UseGraphDataOptions): UseGraphDataResult {
-	const [state, setState] = React.useState<PanelState>({
-		phase: 'loading', error: null, commits: [], head: null, more: false,
-		entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [],
+	/*
+	 * 初始状态直接取该仓库上一次的结果。
+	 *
+	 * 侧栏页签按会话存储，切换会话会让面板整体重新挂载；若从空占位开始，图形区与更改区
+	 * 必然先闪一次占位再重新取数，看起来就是「切换会话要重新加载」。
+	 */
+	const [state, setState] = React.useState<PanelState>(() => {
+		const remembered = workingTreePath === null ? undefined : rememberedPanelState(workingTreePath);
+		return remembered ?? {
+			phase: 'loading', error: null, commits: [], head: null, more: false,
+			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [],
+		};
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
@@ -187,8 +223,12 @@ export function useGraphData({
 	const stateRef = React.useRef(state);
 	stateRef.current = state;
 
-	/** 上一次取图的仓库；与当前不同时窗口缓存一律作废。 */
-	const loadedRepoRef = React.useRef<string | null>(null);
+	/**
+	 * 上一次取图的仓库；与当前不同时渲染态与请求参数一并重置。
+	 *
+	 * 初值取模块级记录：重新挂载时不能把「同一个仓库」误判成换了仓库。
+	 */
+	const loadedRepoRef = React.useRef<string | null>(activeGraphRepo);
 	/** 已加载提交图对应的 HEAD：取自同一轮快照，兜底轮询据此判断 HEAD 是否移动。 */
 	const loadedHeadRef = React.useRef<string | null>(null);
 
@@ -214,15 +254,27 @@ export function useGraphData({
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
-		// 换仓库后旧的窗口与已知仓库信息不再适用；用户主动刷新同样作废。
+		// 换仓库后旧的渲染态不再适用；用户主动刷新同样丢弃。
 		const repoChanged = loadedRepoRef.current !== workingTreePath;
 		if (mode === 'full' || repoChanged) dropGraphWindows(workingTreePath);
-		// 换仓库后旧 HEAD 不再适用；full 刷新沿用同仓库的旧值，直到本轮快照返回后写入。
+		activeGraphRepo = workingTreePath;
+		// 换仓库后旧 HEAD 不再适用；同仓库沿用旧值，直到本轮快照返回后写入。
 		if (repoChanged) loadedHeadRef.current = null;
 		loadedRepoRef.current = workingTreePath;
 		if (mode === 'full') {
 			setState((previous) => ({
 				...previous, phase: 'loading', error: null, commits: [], entries: [], detail: null, selectedHash: null,
+			}));
+		} else if (repoChanged) {
+			/*
+			 * 换到另一个仓库：先呈现该仓库上一次的结果（没有则占位）。重新挂载时 `repoChanged`
+			 * 为 false、初始状态已是上次结果，因此不进这里。
+			 */
+			const remembered = rememberedPanelState(workingTreePath);
+			setState((previous) => ({
+				...previous,
+				...(remembered ?? { phase: 'loading' as const, commits: [], entries: [], head: null, more: false }),
+				error: null,
 			}));
 		} else {
 			setState((previous) => ({ ...previous, error: null }));
@@ -230,23 +282,15 @@ export function useGraphData({
 		try {
 			/*
 			 * 提交图与工作区快照互不依赖，两路并行：串行要等两组请求依次结束，并行只等最慢的一组。
-			 * 提交图命中窗口缓存时只剩快照一路。
 			 *
 			 * 两路各自就绪即写入：工作区快照通常先回，更改区因此不必等提交图就能画出变更列表。
 			 * 只写 `entries`，不改 `phase` —— 图形区按 `phase === 'loading'` 显示占位，提前置
 			 * ready 会让它误显示「这个仓库还没有提交」。
 			 *
-			 * 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。
+			 * 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。窗口缓存也在宿主，
+			 * 命中与否由宿主决定，客户端不再自建一份。
 			 */
-			const key = graphKeyOf(workingTreePath, maxCommits, 0, settings);
-			const cached = mode === 'reconcile' ? graphWindows.get(key) : undefined;
-			/*
-			 * 仓库信息只在首次进入该仓库时取：已知的远程、贮藏与分支名随请求传入，宿主因此
-			 * 不重取仓库信息批。取回后存入本仓库的已知值，供后续刷新复用；换仓库与写操作后
-			 * 由 dropGraphWindows 一并作废。
-			 */
-			const known = knownRepoInfo.get(repoKeyOf(workingTreePath)) ?? null;
-			const graphSource = cached ?? loadGraph(workingTreePath, {
+			const graphSource = loadGraph(workingTreePath, {
 				maxCommits,
 				commitOrdering: settings.commitOrdering,
 				showStashes: settings.showStashes,
@@ -254,19 +298,7 @@ export function useGraphData({
 				showRemoteBranches: settings.showRemoteBranches,
 				onlyFollowFirstParent: settings.onlyFollowFirstParent,
 				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
-				withRepoInfo: known === null,
-				...(known === null ? {} : {
-					remotes: known.remotes, stashes: known.stashes, branch: known.branch,
-				}),
 				signal: controller.signal,
-			}).then((graph) => {
-				// 已中止的响应可能不完整，不写入已知仓库信息。
-				if (known === null && !controller.signal.aborted) {
-					knownRepoInfo.set(repoKeyOf(workingTreePath), {
-						remotes: graph.remotes, stashes: graph.stashes, branch: graph.head,
-					});
-				}
-				return graph;
 			});
 			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal).then((snapshot) => {
 				if (generation !== generationRef.current || controller.signal.aborted) return snapshot;
@@ -286,8 +318,6 @@ export function useGraphData({
 				return snapshot;
 			});
 			const [graph, snapshot] = await Promise.all([graphSource, snapshotSource]);
-			// 已中止的请求结果可能不完整，不写入缓存。
-			if (cached === undefined && !controller.signal.aborted) graphWindows.set(key, graph);
 			if (generation !== generationRef.current) return;
 			/*
 			 * 未提交伪提交行由这里补出：宿主不再为它读一次工作区，提交图的返回时刻因此不取决于
@@ -368,8 +398,8 @@ export function useGraphData({
 	 * 追加下一页。
 	 *
 	 * 偏移分页：下一页的起点是已加载条数。客户端保留从最新提交开始的完整前缀，因此向上滚动不需要
-	 * 再取数 —— 反向取回只在「从头部淘汰」时才需要，而这里不做淘汰。窗口按参数缓存，回看已取过的
-	 * 一段不再请求宿主。
+	 * 再取数 —— 反向取回只在「从头部淘汰」时才需要，而这里不做淘汰。窗口缓存由宿主维护，
+	 * 回看已取过的一段同样不再真正跑 git。
 	 *
 	 * @returns 无。
 	 */
@@ -378,26 +408,16 @@ export function useGraphData({
 		const skip = stateRef.current.commits.length;
 		const generation = generationRef.current;
 		try {
-			const key = graphKeyOf(workingTreePath, maxCommits, skip, settings);
-			let graph = graphWindows.get(key);
-			if (graph === undefined) {
-				// 翻页不取仓库信息；已知的远程与贮藏随请求传入，省去宿主侧的枚举。
-				const known = knownRepoInfo.get(repoKeyOf(workingTreePath)) ?? null;
-				graph = await loadGraph(workingTreePath, {
-					maxCommits,
-					skip,
-					commitOrdering: settings.commitOrdering,
-					showStashes: settings.showStashes,
-					showTags: settings.showTags,
-					showRemoteBranches: settings.showRemoteBranches,
-					onlyFollowFirstParent: settings.onlyFollowFirstParent,
-					includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
-					...(known === null ? {} : {
-						remotes: known.remotes, stashes: known.stashes, branch: known.branch,
-					}),
-				});
-				graphWindows.set(key, graph);
-			}
+			const graph = await loadGraph(workingTreePath, {
+				maxCommits,
+				skip,
+				commitOrdering: settings.commitOrdering,
+				showStashes: settings.showStashes,
+				showTags: settings.showTags,
+				showRemoteBranches: settings.showRemoteBranches,
+				onlyFollowFirstParent: settings.onlyFollowFirstParent,
+				includeCommitsMentionedByReflogs: settings.includeCommitsMentionedByReflogs,
+			});
 			if (generation !== generationRef.current) return;
 			setState((current) => {
 				const known = new Set(current.commits.map((commit) => commit.hash));
@@ -418,6 +438,15 @@ export function useGraphData({
 
 	React.useEffect(() => { void refresh(); }, [refresh]);
 	React.useEffect(() => { busyRef.current = state.busy; }, [state.busy]);
+
+	/*
+	 * 记下最近一次渲染的面板状态：切换会话会让面板重新挂载，下次进入同一仓库时先呈现它，
+	 * 不必从占位重新取数。只在有仓库且已有数据时记，避免把占位状态写进缓存。
+	 */
+	React.useEffect(() => {
+		if (workingTreePath === null || state.phase !== 'ready') return;
+		rememberPanelState(workingTreePath, state, maxCommits);
+	}, [workingTreePath, state, maxCommits]);
 
 	// 已加载的工作区签名：兜底轮询据此判断是否需要重载。
 	const loadedSigRef = React.useRef('');
@@ -464,22 +493,16 @@ export function useGraphData({
 					/*
 					 * 轮询读到的是**工作区**签名，它只说明有文件改动，不说明引用或提交历史变了。
 					 * 区分两者的是 HEAD：只有 HEAD 移动（提交、检出、重置等）才需要重取提交图 ——
-					 * 窗口缓存的键不含 HEAD，不作废会返回陈旧的一页。
+					 * 宿主缓存键不含 HEAD，不作废会返回陈旧的一页。
+					 *
+					 * 外部进程的提交不经过本插件的执行层，宿主收不到写事件、缓存不会自动作废，
+					 * 因此这里显式请宿主作废，再重新取数。
 					 *
 					 * 纯文件改动只更新变更区：一律作废缓存会让每次保存都重取整页提交
 					 * （大仓库数百毫秒），并让图形区整体重渲染。
 					 */
 					if (snapshot.head !== null && snapshot.head !== loadedHead()) {
-						graphWindows.dropRepo(workingTreePath);
-						/*
-						 * 快照已带回当前分支名：外部检出会改分支，就地更新已知值即可，不必为一次
-						 * 外部提交重取整批仓库信息。
-						 */
-						const repoKey = repoKeyOf(workingTreePath);
-						const known = knownRepoInfo.get(repoKey);
-						if (known !== undefined && known.branch !== snapshot.branch) {
-							knownRepoInfo.set(repoKey, { ...known, branch: snapshot.branch });
-						}
+						await invalidateHostCache(workingTreePath).catch(() => { /* 作废失败按未作废处理 */ });
 						void refresh();
 						return;
 					}

@@ -34,7 +34,7 @@ import { clearPersistedDraft, migrateLegacyState, takePersistedDraft } from '../
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
-import { dropGraphWindows, useGraphData } from './use-graph-data.ts';
+import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
@@ -100,13 +100,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
-	/**
-	 * 已加载的提交数上限。
-	 *
-	 * 触底自动加载会持续累加，切换仓库时重置回初始值：否则浏览过多个仓库后，每次刷新都要按
-	 * 累积后的规模重新拉取与解析，内存与耗时都随浏览历史增长。
-	 */
-	const [maxCommits, setMaxCommits] = React.useState(INITIAL_MAX_COMMITS);
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
@@ -203,6 +196,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		? selectedNode.path
 		: (treeStatus === 'loading' ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined;
+
+	/**
+	 * 已加载的提交数上限。
+	 *
+	 * 触底自动加载会持续累加，切换仓库时收回到该仓库上次的值（没有记录时用初始值）：避免跨仓库
+	 * 累积，同时保证切回同一仓库时提交图窗口缓存的键不变、不必重发 `git log`。初值同样取缓存，
+	 * 否则首帧会先按初始值取一次、再按恢复值重取。
+	 */
+	const [maxCommits, setMaxCommits] = React.useState(
+		() => (workingTreePath === null ? INITIAL_MAX_COMMITS : (rememberedMaxCommits(workingTreePath) ?? INITIAL_MAX_COMMITS)),
+	);
 
 	// 引用筛选按仓库持久化：每个仓库各有一套模式与勾选，默认「自动」。
 	const filterKey = workingTreePath === null ? null : `dsh-source-control-ref-filter:${workingTreePath}`;
@@ -666,8 +670,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const timer = setTimeout(goToHead, 60);
 		return () => { clearTimeout(timer); };
 	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
-	// 切换仓库时把已加载提交数收回初始值，避免跨仓库累积。
-	React.useEffect(() => { setMaxCommits(INITIAL_MAX_COMMITS); }, [workingTreePath]);
+	/*
+	 * 切换仓库时把已加载提交数收回到该仓库上次的值（没有记录时用初始值）：避免跨仓库累积，
+	 * 同时保证切回同一仓库时窗口缓存的键不变、不必重发 `git log`。
+	 */
+	React.useEffect(() => {
+		setMaxCommits(workingTreePath === null
+			? INITIAL_MAX_COMMITS
+			: (rememberedMaxCommits(workingTreePath) ?? INITIAL_MAX_COMMITS));
+	}, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
 	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);

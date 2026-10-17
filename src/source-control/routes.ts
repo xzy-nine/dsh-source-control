@@ -24,6 +24,9 @@ import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
+import {
+	clearHostCache, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
+} from './host-cache.js';
 import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
@@ -177,11 +180,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
 			break;
-		case 'loadWorkingTreeSnapshot':
+		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			await whenGitIdle(repo);
-			respond({ command: 'loadWorkingTreeSnapshot', repo, ...(await getWorkingTreeSnapshot(repo)) });
+			const cachedSnapshot = readSnapshot(repo);
+			if (cachedSnapshot !== undefined) {
+				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
+				break;
+			}
+			const snapshot = await getWorkingTreeSnapshot(repo);
+			// 失败结果同样缓存：紧接着的重试会命中，避免连续失败反复起 git。
+			writeSnapshot(repo, snapshot);
+			respond({ command: 'loadWorkingTreeSnapshot', repo, ...snapshot });
 			break;
+		}
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
 			break;
@@ -293,7 +305,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
 			await whenGitIdle(repo);
-			let repoInfo = await getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
+			const showRemoteBranches = bool('showRemoteBranches', true);
+			const showStashes = bool('showStashes', true);
+			const hideRemotes = arr<string>('hideRemotes');
+			let repoInfo = readRepoInfo(repo);
+			if (repoInfo === undefined) {
+				repoInfo = await getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes);
+				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
+				if (repoInfo.error === null) writeRepoInfo(repo, repoInfo);
+			}
 			let isRepo = true;
 			if (repoInfo.error) {
 				isRepo = (await repoRoot(repo)) !== null;
@@ -311,10 +331,50 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 *
 				 * 用偏移而不是 hash 游标：hash 游标只能从一个提交往更早方向走，向上回看时无法用它定位；
 				 * 偏移则正反向都能取，代价是 git 端多遍历 skip 条（纯指针跳转，无 IO）。
-				 * 不缓存已取列表：提交会因 rebase / amend 变化，缓存会读到陈旧内容。
 				 */
 				const limit = num('limit', num('maxCommits', 32));
 				const skip = num('skip', 0);
+				const showStashes = bool('showStashes', true);
+				const showRemoteBranches = bool('showRemoteBranches', true);
+				const hideRemotes = arr<string>('hideRemotes');
+				const branchesArg = msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null;
+				const graphParams = {
+					maxCommits: limit, skip,
+					ordering: (typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo'),
+					showTags: bool('showTags', true),
+					showRemoteBranches,
+					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					includeCommitsMentionedByReflogs: bool('includeCommitsMentionedByReflogs'),
+					hideRemotes,
+					branches: branchesArg,
+				};
+				/*
+				 * 窗口缓存留在宿主内存：切回同一仓库、翻页回看已取过的窗口都命中，客户端不必
+				 * 跨会话搬运数据。任何成功的仓库写操作都会作废该仓库的窗口。
+				 */
+				const cachedGraph = readGraph(repo, graphParams);
+				if (cachedGraph !== undefined) {
+					const lastCached = cachedGraph.commits.at(-1);
+					/*
+					 * 仓库信息同样来自宿主缓存：命中窗口时一并回投，客户端不必为远程与贮藏
+					 * 再发一次请求。缓存里没有时留给客户端按需补取。
+					 */
+					const cachedInfo = readRepoInfo(repo) ?? null;
+					respond({
+						command: 'loadCommits',
+						refreshId: num('refreshId'),
+						error: null,
+						onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+						commits: cachedGraph.commits,
+						head: cachedGraph.head,
+						tags: cachedGraph.tags,
+						moreCommitsAvailable: cachedGraph.moreCommitsAvailable,
+						nextCursor: cachedGraph.moreCommitsAvailable && lastCached !== undefined ? lastCached.hash : null,
+						foreignBranches: cachedGraph.foreignBranches,
+						repoInfo: cachedInfo,
+					});
+					break;
+				}
 				/*
 				 * 仓库信息批由 `withRepoInfo` 显式控制，与「是否首屏」无关：刷新（skip 为 0）不必
 				 * 重取仓库信息，调用方把已知的远程与贮藏随请求传入。
@@ -323,9 +383,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 * 仓库信息以 `repoInfo` 随响应发回，客户端首次进入因此只发一次请求。
 				 */
 				const withRepoInfo = msg.withRepoInfo === true;
-				const showStashes = bool('showStashes', true);
-				const showRemoteBranches = bool('showRemoteBranches', true);
-				const hideRemotes = arr<string>('hideRemotes');
 				/*
 				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
 				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
@@ -376,13 +433,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
-					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
+					branchesArg,
 					limit,
-					bool('showTags', true),
+					graphParams.showTags,
 					showRemoteBranches,
-					bool('includeCommitsMentionedByReflogs'),
-					bool('onlyFollowFirstParent'),
-					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
+					graphParams.includeCommitsMentionedByReflogs,
+					graphParams.onlyFollowFirstParent,
+					graphParams.ordering as never,
 					remoteNames,
 					hideRemotes,
 					stashes,
@@ -390,6 +447,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					batchSource?.then((batch) => batch?.refs ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes)) ?? undefined,
 				);
 				const batch = batchSource === null ? null : await batchSource;
+				// 仓库信息成功取回时写入缓存，后续命中窗口的请求因此能一并回投它。
+				if (batch !== null && batch.info.error === null) writeRepoInfo(repo, batch.info);
 				/*
 				 * 别的工作树占用的分支照常作为标签显示：它们确实指向该提交，只是不能在本工作树里
 				 * 检出或删除。这类分支名随响应回投，客户端据此禁用相应操作。
@@ -398,12 +457,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const all = data.commits;
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
 				const last = all.at(-1);
+				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
+				if (data.error === null) {
+					writeGraph(repo, graphParams, {
+						commits: all, head: data.head, tags: data.tags,
+						moreCommitsAvailable: data.moreCommitsAvailable, foreignBranches: [...foreign],
+					});
+				}
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
 					// 成功路径的 error 恒为 null：既有契约要求该字段存在。
 					error: null,
-					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
 					commits: all,
 					head: data.head,
 					tags: data.tags,
@@ -771,6 +837,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: 'editUserDetails', errors });
 			break;
 		}
+		/*
+		 * 主动作废宿主缓存：用户点刷新时使用。
+		 *
+		 * 写操作已由执行层自动作废该仓库的缓存；这个命令覆盖「外部进程改了仓库、但没有经过本插件」
+		 * 的情形——那种改动不产生写事件，宿主无从得知。
+		 */
+		case 'invalidateCache':
+			clearHostCache();
+			respond({ command: 'invalidateCache', repo, error: null });
+			break;
 
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));
