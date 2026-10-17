@@ -4,6 +4,6 @@
   "minTokens": 50,
   "count": 1,
   "fingerprints": [
-    "src/client/shared/types.ts|src/source-control/repo-discovery.ts|18|08b02074c62a522e"
+    "src/client/shared/types.ts|src/source-control/repo-discovery.ts|18|f9c9b47be4d41b82"
   ]
 }

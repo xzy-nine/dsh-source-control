@@ -45,15 +45,19 @@ async function scanClones() {
 /**
  * 计算片段内容摘要。
  *
- * 摘要取两侧片段中字节序较小的一侧，使指纹与 A/B 侧归属无关（两侧片段通常不同）。
+ * 先归一化行尾再摘要：同一份片段在检出为 CRLF 与 LF 的机器上文本不同，不归一化会让基线
+ * 只在某一侧通过。摘要取两侧片段中字节序较小的一侧，使指纹与 A/B 侧归属无关（两侧片段通常不同）。
  *
  * @param a - 第一侧片段文本。
  * @param b - 第二侧片段文本。
  * @returns 摘要的前 16 位十六进制。
  */
 function fragmentDigest(a, b) {
-	const [first, second] = a <= b ? [a, b] : [b, a];
-	return createHash('sha256').update(`${first}\u0000${second}`).digest('hex').slice(0, 16);
+	const normalize = (text) => text.replace(/\r\n?/g, '\n');
+	const first = normalize(a);
+	const second = normalize(b);
+	const [head, tail] = first <= second ? [first, second] : [second, first];
+	return createHash('sha256').update(`${head}\u0000${tail}`).digest('hex').slice(0, 16);
 }
 
 /**

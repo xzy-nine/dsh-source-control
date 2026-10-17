@@ -277,10 +277,11 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
 
 **重复代码门禁**：`scripts/check-duplication.mjs` 用 jscpd 扫 `src/`，与 `duplication-baseline.json`
 里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹由「文件对 + 片段行数 + 片段内容摘要」
-构成，不含行号：无关改动不会让基线失效，同文件对、同长度但片段内容被替换则算新的重复。比对按出现
-次数进行，当前次数超出基线次数才算新增（jscpd 会把一处重复按相邻窗口合并成多条克隆）。基线只允许
-调低；确实无法消除的（如跨构建目标的类型镜像）才用 `node scripts/check-duplication.mjs --update`
-调高，并在提交信息里说明理由。门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
+构成，不含行号，摘要按归一化行尾计算：无关改动与检出时的换行风格差异都不会让基线失效，同文件对、
+同长度但片段内容被替换则算新的重复。比对按出现次数进行，当前次数超出基线次数才算新增（jscpd 会把
+一处重复按相邻窗口合并成多条克隆）。基线只允许调低；确实无法消除的（如跨构建目标的类型镜像）才用
+`node scripts/check-duplication.mjs --update` 调高，并在提交信息里说明理由。门禁已挂在 `pretest` 上，
+`pnpm test` 必然经过它。
 
 - 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
   JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
