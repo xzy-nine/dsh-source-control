@@ -2,8 +2,9 @@
  * 宿主侧数据缓存：提交图窗口、仓库信息与工作区快照。
  *
  * 缓存留在宿主进程内存里，不落盘：数据随仓库写入变化，跨进程重启后按需重取即可。
- * 任何**成功**的仓库写操作都会作废该仓库的全部缓存（`onRepositoryWrite`），因此读到的
- * 内容不会比最近一次写操作更旧。
+ * 任何**成功**的仓库写操作都会清空全部缓存（`onRepositoryWrite`）：同一仓库的主工作树与
+ * 链接工作树是不同的路径，按执行目录作废只会漏掉另一半。因此读到的内容不会比最近一次
+ * 写操作更旧，代价是写操作后各仓库都要重取一次。
  *
  * 分三类，各自的有效期与容量按读取成本与变化频率定：
  * - 提交图窗口：一次完整 `git log`，按「仓库 + 取数参数」区分；翻页与切回同一仓库都命中。
@@ -56,10 +57,26 @@ const SNAPSHOT_LIMIT = 32;
 
 /** 提交图窗口缓存：键含仓库与全部取数参数。 */
 const graphs = new Map<string, Entry<CachedGraph>>();
-/** 仓库信息缓存：键为仓库。 */
+/** 仓库信息缓存：键为仓库与取数参数。 */
 const repoInfos = new Map<string, Entry<RepoInfo>>();
 /** 工作区快照缓存：键为仓库。 */
 const snapshots = new Map<string, Entry<CachedSnapshot>>();
+
+/**
+ * 影响仓库信息的取数参数。
+ *
+ * 这三个参数都会改变 `getRepoInfo` 的结果：远程分支是否枚举、贮藏是否枚举、要隐藏的远程。
+ * 它们必须进缓存键，否则先按一种参数取回的结果会被另一种参数命中原样回投。
+ */
+export interface RepoInfoParams {
+	/** 是否枚举远程分支。 */
+	readonly showRemoteBranches: boolean;
+	/** 是否枚举贮藏。 */
+	readonly showStashes: boolean;
+	/** 要隐藏的远程名。 */
+	readonly hideRemotes: readonly string[];
+}
+
 
 /**
  * 归一化仓库路径，作为缓存键。
@@ -69,6 +86,22 @@ const snapshots = new Map<string, Entry<CachedSnapshot>>();
  */
 function keyOf(repo: string): string {
 	return repo.replace(/[\\/]+$/, '').toLowerCase();
+}
+
+/**
+ * 生成仓库信息的缓存键。
+ *
+ * @param repo - 仓库路径。
+ * @param params - 影响仓库信息的取数参数。
+ * @returns 缓存键。
+ */
+function repoInfoKey(repo: string, params: RepoInfoParams): string {
+	return [
+		keyOf(repo),
+		params.showRemoteBranches ? 1 : 0,
+		params.showStashes ? 1 : 0,
+		params.hideRemotes.join(','),
+	].join('\0');
 }
 
 /**
@@ -121,16 +154,20 @@ export function graphKey(repo: string, params: {
 	readonly ordering: string;
 	readonly showTags: boolean;
 	readonly showRemoteBranches: boolean;
+	readonly showStashes: boolean;
 	readonly onlyFollowFirstParent: boolean;
 	readonly includeCommitsMentionedByReflogs: boolean;
 	readonly hideRemotes: readonly string[];
 	readonly branches: readonly string[] | null;
+	readonly remotes: readonly string[];
+	readonly stashes: readonly string[];
 }): string {
 	return [
 		keyOf(repo), params.maxCommits, params.skip, params.ordering,
-		params.showTags ? 1 : 0, params.showRemoteBranches ? 1 : 0,
+		params.showTags ? 1 : 0, params.showRemoteBranches ? 1 : 0, params.showStashes ? 1 : 0,
 		params.onlyFollowFirstParent ? 1 : 0, params.includeCommitsMentionedByReflogs ? 1 : 0,
 		params.hideRemotes.join(','), params.branches === null ? '*' : params.branches.join(','),
+		params.remotes.join(','), params.stashes.join(','),
 	].join('\0');
 }
 
@@ -161,21 +198,23 @@ export function writeGraph(repo: string, params: Parameters<typeof graphKey>[1],
  * 读仓库信息。
  *
  * @param repo - 仓库路径。
+ * @param params - 影响仓库信息的取数参数。
  * @returns 仓库信息；未命中时为 undefined。
  */
-export function readRepoInfo(repo: string): RepoInfo | undefined {
-	return get(repoInfos, keyOf(repo));
+export function readRepoInfo(repo: string, params: RepoInfoParams): RepoInfo | undefined {
+	return get(repoInfos, repoInfoKey(repo, params));
 }
 
 /**
  * 写入仓库信息。
  *
  * @param repo - 仓库路径。
+ * @param params - 影响仓库信息的取数参数。
  * @param value - 仓库信息。
  * @returns 无。
  */
-export function writeRepoInfo(repo: string, value: RepoInfo): void {
-	put(repoInfos, REPO_INFO_LIMIT, keyOf(repo), value, REPO_INFO_TTL_MS);
+export function writeRepoInfo(repo: string, params: RepoInfoParams, value: RepoInfo): void {
+	put(repoInfos, REPO_INFO_LIMIT, repoInfoKey(repo, params), value, REPO_INFO_TTL_MS);
 }
 
 /**
@@ -202,16 +241,18 @@ export function writeSnapshot(repo: string, value: CachedSnapshot): void {
 /**
  * 作废一个仓库的全部缓存。
  *
- * 按前缀匹配键，因此该仓库的所有提交图窗口（不同参数）一并失效。
+ * 按前缀匹配键，因此该仓库的所有提交图窗口与仓库信息（不同参数）一并失效。
  *
  * @param repo - 仓库路径。
  * @returns 无。
  */
 export function invalidateRepo(repo: string): void {
 	const key = keyOf(repo);
-	repoInfos.delete(key);
-	snapshots.delete(key);
 	const prefix = key + '\0';
+	snapshots.delete(key);
+	for (const infoKey of repoInfos.keys()) {
+		if (infoKey.startsWith(prefix)) repoInfos.delete(infoKey);
+	}
 	for (const graphKeyName of graphs.keys()) {
 		if (graphKeyName.startsWith(prefix)) graphs.delete(graphKeyName);
 	}
@@ -228,5 +269,10 @@ export function clearHostCache(): void {
 	snapshots.clear();
 }
 
-/* 成功的仓库写操作会改变引用、提交历史、工作区与仓库配置，缓存一律作废。 */
-onRepositoryWrite((repo) => { invalidateRepo(repo); });
+/*
+ * 成功的仓库写操作会改变引用、提交历史、工作区与仓库配置，缓存一律清空。
+ *
+ * 不能只按执行目录作废：同一仓库的主工作树与链接工作树是两个不同路径，按路径作废会漏掉
+ * 另一半，那些路径上的提交图与仓库信息会继续命中旧数据。
+ */
+onRepositoryWrite(() => { clearHostCache(); });

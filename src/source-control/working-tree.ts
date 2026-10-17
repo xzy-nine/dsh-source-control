@@ -418,15 +418,32 @@ const READ_ONLY_FORMS: ReadonlyArray<{ subcommand: string; allow?: readonly stri
 ];
 
 /**
+ * 取子命令在参数数组中的下标。
+ *
+ * git 允许全局选项出现在子命令之前，本仓库用过的是 `-c key=value`（见 `git-query.ts` 的
+ * `getLog`）。全局选项不改变子命令语义，但不先跳过就会让按首参识别子命令的判定把只读命令
+ * 当成写操作。未识别的全局选项不跳过，这类命令仍按写操作处理。
+ *
+ * @param args - 完整参数数组。
+ * @returns 子命令的下标。
+ */
+function subcommandIndex(args: readonly string[]): number {
+	let index = 0;
+	while (args[index] === '-c' && index + 1 < args.length) index += 2;
+	return index;
+}
+
+/**
  * 判断一条命令是否只读。
  *
  * @param args - 完整参数数组。
  * @returns 确认只读时为 true。
  */
 function isReadOnly(args: readonly string[]): boolean {
-	const form = READ_ONLY_FORMS.find((entry) => entry.subcommand === (args[0] ?? ''));
+	const start = subcommandIndex(args);
+	const form = READ_ONLY_FORMS.find((entry) => entry.subcommand === (args[start] ?? ''));
 	if (form === undefined) return false;
-	const rest = args.slice(1);
+	const rest = args.slice(start + 1);
 	if (form.deny !== undefined && rest.some((arg) => form.deny?.includes(arg))) return false;
 	// 有 allow 清单的子命令必须命中其一，避免 `git config key value`（写）被放行。
 	if (form.allow !== undefined && !rest.some((arg) => form.allow?.includes(arg))) return false;

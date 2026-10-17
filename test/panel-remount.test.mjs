@@ -26,14 +26,39 @@ test('数据缓存位于宿主内存', () => {
 	for (const fn of ['readGraph', 'writeGraph', 'readRepoInfo', 'writeRepoInfo', 'readSnapshot', 'writeSnapshot']) {
 		assert.match(hostCache, new RegExp(`export function ${fn}`), `宿主应导出 ${fn}`);
 	}
-	assert.match(hostCache, /onRepositoryWrite\(\(repo\) => \{ invalidateRepo\(repo\); \}\)/, '成功的写操作应作废该仓库缓存');
+	/*
+	 * 写操作后整表清空：同一仓库的主工作树与链接工作树路径不同，按执行目录作废会漏掉另一半。
+	 */
+	assert.match(hostCache, /onRepositoryWrite\(\(\) => \{ clearHostCache\(\); \}\)/, '成功的写操作应清空全部缓存');
 });
 
 test('宿主在读取路径上命中缓存', () => {
 	assert.match(routes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
 	assert.match(routes, /const cachedSnapshot = readSnapshot\(repo\)/, 'loadWorkingTreeSnapshot 应先查缓存');
-	assert.match(routes, /let repoInfo = readRepoInfo\(repo\)/, 'loadRepoInfo 应先查缓存');
+	assert.match(
+		routes,
+		/let repoInfo = readRepoInfo\(repo, \{ showRemoteBranches, showStashes, hideRemotes \}\)/,
+		'loadRepoInfo 应按取数参数查缓存',
+	);
 	assert.match(routes, /case 'invalidateCache'/, '应提供主动作废命令');
+	/*
+	 * 仓库信息的缓存键必须含三个取数参数：远程分支、贮藏与隐藏远程都会改变 getRepoInfo 的结果。
+	 */
+	assert.match(
+		hostCache,
+		/function repoInfoKey\(repo: string, params: RepoInfoParams\): string \{[\s\S]{0,400}?params\.hideRemotes\.join/,
+		'仓库信息缓存键应含取数参数',
+	);
+	assert.match(
+		hostCache,
+		/for \(const infoKey of repoInfos\.keys\(\)\) \{\s*if \(infoKey\.startsWith\(prefix\)\) repoInfos\.delete\(infoKey\)/,
+		'invalidateRepo 应按前缀清除该仓库所有参数组合',
+	);
+	assert.match(
+		hostCache,
+		/params\.remotes\.join\(','\), params\.stashes\.join\(','\)/,
+		'提交图缓存键应含远程标识与贮藏标识',
+	);
 });
 
 test('客户端不再自建数据缓存', () => {
@@ -47,7 +72,11 @@ test('客户端只保留渲染态与取数参数', () => {
 	assert.match(graphData, /const lastPanelState = new Map/, '应缓存渲染态');
 	assert.match(graphData, /const lastMaxCommits = new Map/, '应缓存提交数上限');
 	assert.match(graphData, /export function rememberedMaxCommits/, '面板需要读取该上限');
-	assert.match(graphData, /rememberPanelState\(workingTreePath, state, maxCommits\)/, '就绪后写入');
+	assert.match(
+		graphData,
+		/rememberPanelState\(workingTreePath, \{ \.\.\.state, busy: \[\] \}, maxCommits\)/,
+		'就绪后写入，且不把未完成的忙碌状态带进缓存',
+	);
 });
 
 test('重新挂载时初始状态直接取渲染态', () => {

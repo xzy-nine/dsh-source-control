@@ -426,9 +426,20 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
 	assert.match(menu, /function localBranchItem/, '本地分支操作应统一经占用判定');
 	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
+	/*
+	 * 按 builder 逐个截取：每个 builder 的范围从其定义到下一个 builder 定义之前。
+	 * 只截到文件末尾时，后面的 builder 会让断言误通过。
+	 */
+	const starts = [...menu.matchAll(/^\t([A-Za-z]+): \(ctx, meta\) =>/gm)];
+	assert.ok(starts.length >= 4, '应能定位各 builder 的定义');
+	const builderBody = (name) => {
+		const index = starts.findIndex((match) => match[1] === name);
+		assert.ok(index !== -1, `未找到 ${name} 的定义`);
+		const end = index + 1 < starts.length ? starts[index + 1].index : menu.length;
+		return menu.slice(starts[index].index, end);
+	};
 	for (const builder of ['checkoutBranch', 'renameBranch', 'deleteBranch', 'mergeIntoBranch']) {
-		const body = menu.slice(menu.indexOf(`${builder}: (ctx, meta) =>`));
-		assert.ok(body.includes('localBranchItem') || body.includes('isForeignBranch'), `${builder} 应判定占用分支`);
+		assert.ok(builderBody(builder).includes('localBranchItem'), `${builder} 应判定占用分支`);
 	}
 
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
@@ -439,11 +450,17 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 test('工作树右键提供移除入口', () => {
 	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
-	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
-	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录。
-	assert.match(panel, /await removeWorktree\(node\.path, node\.path, true\)/, '以工作树路径为目标执行移除');
-	assert.match(panel, /\}, node\.path\);\s*\n\s*\/\/ 该节点已不存在/, '移除后不对被删工作树做刷新');
+	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录，因此不经 run 直接执行。
+	assert.ok(!/run\('history',[\s\S]{0,120}?removeWorktree/.test(panel), '移除不经面板的 run 执行');
+	assert.match(
+		panel,
+		/try \{\s*await removeWorktree\(node\.path, node\.path, true\);\s*\} catch \(error\) \{[\s\S]{0,200}?reportError\(setState/,
+		'以工作树路径为目标执行移除，失败直接报告',
+	);
+	const removal = panel.slice(panel.indexOf('await removeWorktree(node.path, node.path, true)'));
+	assert.match(removal, /dropGraphWindows\(node\.path\)/, '移除成功后作废该工作树的窗口缓存');
+	assert.match(removal, /setSelectedId\([\s\S]{0,160}?rescan\(\)/, '移除成功后清选中并重扫');
 	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
@@ -458,10 +475,10 @@ test('删除当前分支时提示而非静默失败', () => {
 	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
 	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
 	assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
-	// 删除项不再置灰，改为点击后提示。
-	const deleteItem = /return \{ title: meta\.title, danger: meta\.danger, onClick/.exec(menu);
+	// 删除项本身不因当前分支置灰：点击后提示；被别的工作树检出时才由 localBranchItem 置灰。
+	const deleteItem = /return localBranchItem\(ctx, name, \{ title: meta\.title, danger: meta\.danger, onClick/.exec(menu);
 	assert.ok(deleteItem !== null, '未找到删除分支项');
-	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应置灰，改为点击后提示');
+	assert.ok(!/disabled/.test(deleteItem[0]), '删除项不应因当前分支置灰，改为点击后提示');
 	// 提示走顶部轻量横幅，不再使用需要关闭的模态弹窗。
 	const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
 	assert.match(toast, /export function showToast/, '应提供轻量提示');

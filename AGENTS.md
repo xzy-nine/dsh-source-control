@@ -276,10 +276,11 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
 ```
 
 **重复代码门禁**：`scripts/check-duplication.mjs` 用 jscpd 扫 `src/`，与 `duplication-baseline.json`
-里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹只含「文件对 + 片段行数」，不含行号，
-因此无关改动不会让基线失效。基线只允许调低；确实无法消除的（如跨构建目标的类型镜像）才用
-`node scripts/check-duplication.mjs --update` 调高，并在提交信息里说明理由。
-门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
+里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹由「文件对 + 片段行数 + 片段内容摘要」
+构成，不含行号：无关改动不会让基线失效，同文件对、同长度但片段内容被替换则算新的重复。比对按出现
+次数进行，当前次数超出基线次数才算新增（jscpd 会把一处重复按相邻窗口合并成多条克隆）。基线只允许
+调低；确实无法消除的（如跨构建目标的类型镜像）才用 `node scripts/check-duplication.mjs --update`
+调高，并在提交信息里说明理由。门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
 
 - 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
   JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
@@ -312,12 +313,13 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
   `no-unsafe-*` 系列依赖严格类型信息，故 `.oxlintrc.json` 对 `src/client/**` 单独关闭这五条。
 
 git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶段经
-`scripts/install-hooks.mjs` 把 `core.hooksPath` 设为 `.githooks`，克隆后无需额外步骤。
+`scripts/install-hooks.mjs` 安装，克隆后无需额外步骤。安装只写未设置过的 `core.hooksPath`：
+已配置成其它值时保留原值并提示，不覆盖（该值可能指向 husky 等工具的钩子目录）。
 `core.hooksPath` 是相对路径，按各 worktree 根解析，因此主检出与所有 worktree 共用同一份脚本。
 
 | 钩子 | 时机 | 检查内容 |
 |---|---|---|
-| `pre-commit` | 提交前 | 本次暂存的 `src/**/*.ts{,x}`（`ACMR`）跑 oxlint，反馈快 |
+| `pre-commit` | 提交前 | 本次暂存的 `src/**/*.ts{,x}`（`ACMR`）跑 oxlint，反馈快；暂存内容与工作区副本不一致时拒绝提交 |
 | `pre-push` | 推送前 | `src/` 全量 oxlint + 两段 `tsc --noEmit`，拦住跨文件类型问题 |
 
 绕过（仅在确有必要时）：`git commit --no-verify` / `git push --no-verify`。

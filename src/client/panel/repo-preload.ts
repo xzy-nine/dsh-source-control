@@ -396,7 +396,10 @@ export function preloadWorkspace(root: string, options: PreloadOptions = {}): vo
 }
 
 /**
- * 丢弃一个工作区的预加载状态并中止在途取数。
+ * 重置一个工作区的预加载状态。
+ *
+ * 保留工作区条目与订阅者，只重置取数状态与缓存数据，并发布一份空的 loading 快照。重新扫描后
+ * 树先回到占位，随后由 {@link preloadWorkspace} 重新取数并逐阶段发布。
  *
  * @param root - 工作区根路径。
  * @returns 无。
@@ -409,6 +412,12 @@ export function dropWorkspace(root: string): void {
 	entry.controller?.abort();
 	entry.controller = null;
 	entry.running = null;
-	entry.listeners.clear();
-	entries.delete(key);
+	entry.refreshedAt = 0;
+	entry.baseNodes = [];
+	entry.childrenByPath = new Map();
+	entry.claims.clear();
+	publish(entry, {
+		nodes: [], truncated: false, usedCache: false, status: 'loading', error: null,
+		discoveryRevision: entry.snapshot.discoveryRevision + 1, syncById: new Map(),
+	});
 }
