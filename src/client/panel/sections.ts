@@ -6,6 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	IconCloseOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -166,6 +167,10 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly hasLocalExclude: boolean;
 	/** 查看本地排除的条目。 */
 	readonly onShowLocalExclude: () => void;
+	/** 是否处于未完成的合并：为真时显示取消合并入口。 */
+	readonly merging: boolean;
+	/** 中止当前合并。 */
+	readonly onAbortMerge: () => void;
 }
 
 /**
@@ -182,6 +187,7 @@ export function ChangesSection({
 	canSubmit, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
+	merging, onAbortMerge,
 }: ChangesSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -245,7 +251,7 @@ export function ChangesSection({
 							variant: 'ghost', size: 'sm',
 							className: css.stashBtn, onClick: onShowLocalExclude,
 							title: '打开本地排除文件', 'aria-label': '本地排除',
-						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 })),
+						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 }), '本地排除'),
 						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
 						showTranslate && React.createElement(Button, {
 							variant: 'ghost', size: 'sm', disabled: translateBusy,
@@ -256,6 +262,12 @@ export function ChangesSection({
 							variant: 'ghost', size: 'sm', disabled: busy.commit || entries.length === 0,
 							className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
 						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
+						// 合并未完成时提供中止入口：把它推到这排按钮最右端，与其它入口分开。
+						merging && React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: busy.commit || busy.history,
+							className: css.abortMergeBtn, onClick: onAbortMerge,
+							title: '中止当前合并，恢复到合并前的状态', 'aria-label': '取消合并',
+						}, React.createElement(IconCloseOutlineRegular, { size: 14 }), '取消合并'),
 					),
 				),
 				showSyncButton

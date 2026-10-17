@@ -470,6 +470,18 @@ export async function merge(repo: string, obj: string, actionOn: string, createN
 }
 
 /**
+ * 中止进行中的合并，把工作区恢复到合并前。
+ *
+ * 已解决的冲突文件会随 `--abort` 一并回到合并前的状态；无冲突但 `--no-commit` 的合并同样适用。
+ *
+ * @param repo - 仓库路径。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+export async function abortMerge(repo: string): Promise<ErrorInfo> {
+	return gitErrorInfo(['merge', '--abort'], repo);
+}
+
+/**
  * 把当前分支变基到分支或提交。
  *
  * 交互式变基需要终端，本实现直接返回不支持。

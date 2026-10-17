@@ -10,7 +10,7 @@ import {
 	addRemote, addToGitignore, addToLocalExclude, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
-	localExcludeState, loadCommitMessage,
+	abortMerge, localExcludeState, loadCommitMessage,
 	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
@@ -514,6 +514,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		showToast(message);
 		return Promise.resolve();
 	}, []);
+
+	/** 中止进行中的合并，把工作区恢复到合并前。已解决的冲突改动会一并丢弃，因此先确认。 */
+	const handleAbortMerge = React.useCallback(() => {
+		void (async () => {
+			const ok = await showCheckbox({
+				title: '取消合并',
+				message: '中止当前合并，把工作区恢复到合并前的状态。\n已解决的冲突改动会一并丢弃。',
+				checkboxLabel: '确认取消合并', danger: true,
+			});
+			if (!ok) return;
+			await run('history', async () => {
+				await abortMerge(workingTreePath as string);
+			});
+		})();
+	}, [run, workingTreePath]);
 
 	/** 把当前改动存入贮藏；贮藏信息由用户输入，留空表示不指定。 */
 	const handleStash = React.useCallback(() => {
@@ -1495,6 +1510,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			stagePaths, unstagePaths, discardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
 			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
+			merging: state.merging, onAbortMerge: handleAbortMerge,
 		}),
 
 		// ── 图形 ────────────────────────────────────────────────

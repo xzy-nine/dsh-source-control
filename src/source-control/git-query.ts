@@ -374,17 +374,37 @@ export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
 }
 
 /**
+ * 判定是否处于未完成的合并。
+ *
+ * `MERGE_HEAD` 只在合并进行中且尚未提交时存在，因此它同时覆盖「有冲突待解决」与
+ * 「无冲突但用了 `--no-commit`」两种情形；`git status` 的 unmerged 记录只覆盖前者。
+ *
+ * @param repo - 仓库路径。
+ * @returns 合并进行中时为 true。
+ */
+async function mergeInProgress(repo: string): Promise<boolean> {
+	const result = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
+	return result.code === 0;
+}
+
+/**
  * 读取工作区快照：变更条目与当前分支的上游关系。
  *
  * 两条信息来自同一次 `git status --porcelain=v2 --branch -z -uall`：面板进入仓库与写操作后的
  * 对账都同时需要它们，分两次读会各起一个子进程，且两次输出之间工作区可能已经变化。
+ *
+ * 合并状态另起一次 `rev-parse --verify MERGE_HEAD`：它不在 status 输出里，且无法由 unmerged
+ * 记录完整判定（`--no-commit` 的无冲突合并没有 unmerged 记录）。
  *
  * @param repo - 仓库路径。
  * @returns 快照；读取失败时条目为空、分支为 null 且 `error` 为错误文本。
  */
 export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeSnapshotData> {
 	try {
-		const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
+		const [stdout, merging] = await Promise.all([
+			gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo),
+			mergeInProgress(repo),
+		]);
 		const snapshot = parseStatusSnapshot(stdout);
 		return {
 			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
@@ -393,10 +413,14 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			upstream: snapshot.upstream,
 			ahead: snapshot.ahead,
 			behind: snapshot.behind,
+			merging,
 			error: null,
 		};
 	} catch (error) {
-		return { entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, error: errorText(error) };
+		return {
+			entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, merging: false,
+			error: errorText(error),
+		};
 	}
 }
 

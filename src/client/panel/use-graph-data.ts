@@ -194,7 +194,7 @@ function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapshot): Pan
 		? previous.commits
 		: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
 	return {
-		...previous, error: null,
+		...previous, error: null, merging: snapshot.merging,
 		entries: entriesSame ? previous.entries : snapshot.entries,
 		commits,
 	};
@@ -213,7 +213,7 @@ export function useGraphData({
 		const remembered = workingTreePath === null ? undefined : rememberedPanelState(workingTreePath);
 		return remembered ?? {
 			phase: 'loading', error: null, commits: [], head: null, more: false, nextSkip: 0,
-			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [],
+			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
 		};
 	});
 	const generationRef = React.useRef(0);
@@ -346,7 +346,7 @@ export function useGraphData({
 				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
 				const foreignSame = keep && branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
 				return {
-					...previous, phase: 'ready', error: null,
+					...previous, phase: 'ready', error: null, merging: snapshot.merging,
 					commits: commitsSame ? previous.commits : commits,
 					head: graph.head, more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,

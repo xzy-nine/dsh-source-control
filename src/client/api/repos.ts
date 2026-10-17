@@ -117,6 +117,8 @@ export interface WorkingTreeSnapshot {
 	readonly upstream: string | null;
 	readonly ahead: number;
 	readonly behind: number;
+	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
+	readonly merging: boolean;
 }
 
 /**
@@ -124,7 +126,7 @@ export interface WorkingTreeSnapshot {
  *
  * @param cwd - 仓库路径。
  * @param signal - 取消信号。
- * @returns 变更条目与分支、上游、领先/落后数。
+ * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
 export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal): Promise<WorkingTreeSnapshot> {
 	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot' }, signal);
@@ -135,6 +137,7 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal)
 		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
 		behind: typeof payload.behind === 'number' ? payload.behind : 0,
+		merging: payload.merging === true,
 	};
 }
 

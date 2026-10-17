@@ -182,6 +182,16 @@ export async function merge(cwd: string, obj: string, createNewCommit = false, s
 }
 
 /**
+ * 中止进行中的合并，把工作区恢复到合并前。
+ *
+ * @param cwd - 会话工作区路径。
+ * @returns 无。
+ */
+export async function abortMerge(cwd: string): Promise<void> {
+	await callApi(cwd, { command: 'abortMerge' });
+}
+
+/**
  * 检出选中分支，并把检出前的当前分支合并过去，停在未提交状态。
  *
  * 宿主固定使用 `--no-ff --no-commit`，因此目标分支即使是当前分支的祖先也会建立待合并

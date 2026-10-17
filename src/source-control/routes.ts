@@ -13,7 +13,7 @@ import {
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
-	cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
+	abortMerge, cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
 	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash,
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
@@ -581,6 +581,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				command: 'merge',
 				actionOn: msg.actionOn,
 				error: await merge(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit')),
+			});
+			break;
+		case 'abortMerge':
+			await respondResult('abortMerge', async () => {
+				const error = await abortMerge(repo);
+				if (error !== null) throw new Error(error);
+				return { repo };
 			});
 			break;
 		case 'mergeIntoBranch': {

@@ -258,6 +258,8 @@ export interface PanelState {
 	remotes: Remote[];
 	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
 	foreignBranches: readonly string[];
+	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
+	merging: boolean;
 }
 
 /** AI 生成提交信息的用量统计。 */

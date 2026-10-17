@@ -70,6 +70,19 @@ async function snapshot(call) {
 	return call({ command: 'loadWorkingTreeSnapshot' });
 }
 
+/**
+ * 作废宿主缓存后请求一次快照。
+ *
+ * 快照结果在宿主有短暂 TTL，测试里两次快照之间仓库已变化，必须先作废才能读到新状态。
+ *
+ * @param call - 发送命令的函数。
+ * @returns 快照响应。
+ */
+async function freshSnapshot(call) {
+	await call({ command: 'invalidateCache' });
+	return snapshot(call);
+}
+
 /** 条目按契约四字段归一，用于逐条对照。 */
 function normalize(entries) {
 	return entries.map((entry) => ({
@@ -324,7 +337,67 @@ test('非仓库：error 为字符串且其余字段为空值', async () => {
 	assert.equal(snap.upstream, null);
 	assert.equal(snap.ahead, 0);
 	assert.equal(snap.behind, 0);
+	assert.equal(snap.merging, false, '读取失败时按未合并处理');
 	assert.equal((snap.entries ?? []).length, 0, '失败时 entries 应为空');
+});
+
+test('合并状态：冲突合并与无冲突 --no-commit 合并都判为合并中', async () => {
+	/*
+	 * 两种情形都要覆盖：`--no-commit` 的无冲突合并没有 unmerged 记录，
+	 * 只看 `git status` 的冲突列会漏判。
+	 */
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('checkout', '-q', '-b', 'feat');
+		write('a.txt', 'feat\n');
+		git('commit', '-q', '-am', 'feat');
+		git('checkout', '-q', 'main');
+		write('a.txt', 'main\n');
+		git('commit', '-q', '-am', 'main');
+
+		const call = await makeCaller(repo);
+		assert.equal((await freshSnapshot(call)).merging, false, '未合并时为 false');
+
+		// 冲突合并：git 以非零退出，合并状态仍建立。
+		try { git('merge', 'feat'); } catch { /* 冲突时 git 非零退出 */ }
+		assert.equal((await freshSnapshot(call)).merging, true, '冲突合并应判为合并中');
+
+		const aborted = await call({ command: 'abortMerge' });
+		assert.equal(aborted.error, null, '中止合并应成功');
+		const after = await freshSnapshot(call);
+		assert.equal(after.merging, false, '中止后不再处于合并中');
+		assert.equal(after.entries.length, 0, '中止后工作区恢复干净');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并状态：无冲突的 --no-commit 合并也判为合并中', async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('checkout', '-q', '-b', 'feat');
+		write('b.txt', 'feat\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'feat');
+		git('checkout', '-q', 'main');
+		write('c.txt', 'main\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'main');
+		git('merge', '--no-ff', '--no-commit', 'feat');
+
+		const call = await makeCaller(repo);
+		const snap = await snapshot(call);
+		assert.equal(snap.entries.some((entry) => entry.index === 'U' || entry.worktree === 'U'), false, '没有冲突记录');
+		assert.equal(snap.merging, true, '仍应判为合并中');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
 });
 
 test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', async () => {

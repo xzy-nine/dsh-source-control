@@ -669,6 +669,8 @@ export interface WorkingTreeSnapshot {
 	readonly ahead: number;
 	/** 相对上游的落后提交数。 */
 	readonly behind: number;
+	/** 是否处于未完成的合并：`MERGE_HEAD` 存在即为 true。 */
+	readonly merging: boolean;
 }
 
 /** v2 的 XY 列取值：`.` 表示该侧无改动，按空列输出。 */
@@ -736,7 +738,10 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
 		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
 	}
-	return { entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null, ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0 };
+	return {
+		entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
+		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false,
+	};
 }
 
 /**
