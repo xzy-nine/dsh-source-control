@@ -154,7 +154,8 @@ export interface ChangesSectionProps extends ChangeActions {
 	/** 当前分支是纯本地分支（无上游）且无改动时，提交按钮改为发布。 */
 	readonly showPublishButton: boolean;
 	readonly onPublish: () => void;
-	readonly stagedPaths: readonly string[];
+	/** 提交按钮是否可用：有暂存改动，或勾选修补（此时可只改提交信息）。 */
+	readonly canSubmit: boolean;
 	readonly onSubmit: () => void;
 	readonly onRefresh: () => void;
 	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string> };
@@ -178,7 +179,7 @@ export function ChangesSection({
 	showTranslate, translateBusy, onTranslate,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	showPublishButton, onPublish,
-	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+	canSubmit, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
 }: ChangesSectionProps): React.ReactElement {
@@ -272,7 +273,7 @@ export function ChangesSection({
 							onClick: onPublish,
 						}, React.createElement(PublishIcon), '发布')
 						: React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || stagedPaths.length === 0,
+							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || !canSubmit,
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),

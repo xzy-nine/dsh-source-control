@@ -695,9 +695,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			.catch(() => { /* 取不到正文时保留标题 */ });
 	}, [state.commits, workingTreePath]);
 
-	/** 提交暂存区。 */
+	/** 提交暂存区；勾选修补时允许没有暂存改动，只改提交信息。 */
 	const submit = (): void => {
-		if (busyFlags.commit || message.trim() === '' || stagedPaths.length === 0) return;
+		if (busyFlags.commit || message.trim() === '') return;
+		if (stagedPaths.length === 0 && !amend) return;
 		void run('commit', async () => {
 			await commitStaged(workingTreePath as string, message, amend);
 			setMessage('');
@@ -763,15 +764,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	);
 	const workAreaEmpty = state.entries.length === 0;
 	const hasRemoteDiff = currentSync !== undefined && (currentSync.ahead > 0 || currentSync.behind > 0);
-	const showSyncButton = workAreaEmpty && hasRemoteDiff;
+	/*
+	 * 修补期间提交框始终保留提交按钮：修补允许在没有任何暂存改动时只改提交信息，
+	 * 此时显示「同步」或「发布」会让唯一可做的动作不可达。
+	 */
+	const showSyncButton = workAreaEmpty && hasRemoteDiff && !amend;
 	/**
 	 * 当前分支是纯本地分支：有分支、无上游。
 	 *
 	 * `loadRepoSync` 无上游时 `upstream` 为 null，检出到游离头时 `branch` 为 null。
 	 */
 	const isUnpublishedBranch = currentSync !== undefined && currentSync.branch !== null && currentSync.upstream === null;
-	// 有暂存改动时优先提示提交，提交后再显示发布；无改动且未发布时显示发布。
-	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton;
+	// 有暂存改动时优先提示提交，提交后再显示发布；无改动且未发布时显示发布。修补期间同样让位给提交。
+	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton && !amend;
+	/** 提交按钮可用：有暂存改动，或勾选修补（此时可只改提交信息）。 */
+	const canSubmit = stagedPaths.length > 0 || amend;
 
 	/**
 	 * 是否显示提交信息框的翻译入口。
@@ -1464,7 +1471,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			stagedPaths, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
+			canSubmit, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
