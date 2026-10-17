@@ -1,7 +1,7 @@
 /**
  * 远程仓库与仓库配置：抓取、推送、远程增删改、用户身份与配置归档导出。
  */
-import { callApi, callApiRaw } from './http.ts';
+import { callApi, callApiRaw, commandError, errorList } from './http.ts';
 
 /**
  * 抓取远端引用。
@@ -26,7 +26,7 @@ export async function fetchRepo(cwd: string, name: string | null, prune = false,
  */
 export async function pushBranch(cwd: string, branchName: string, remotes: readonly string[]): Promise<string[]> {
 	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '' });
-	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+	return errorList(payload);
 }
 
 /**
@@ -40,7 +40,7 @@ export async function pushBranch(cwd: string, branchName: string, remotes: reado
 export async function pushUpstream(cwd: string): Promise<string | null> {
 	// 用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。
 	const payload = await callApiRaw(cwd, { command: 'pushUpstream' });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -63,7 +63,7 @@ export async function loadConfig(cwd: string, remotes: readonly string[]): Promi
  */
 export async function deleteRemote(cwd: string, name: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'deleteRemote', name });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -79,7 +79,7 @@ export async function deleteRemote(cwd: string, name: string): Promise<string | 
  */
 export async function editUserDetails(cwd: string, name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean): Promise<string[]> {
 	const payload = await callApiRaw(cwd, { command: 'editUserDetails', name, email, location, deleteLocalName, deleteLocalEmail });
-	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+	return errorList(payload);
 }
 
 /**
@@ -93,7 +93,7 @@ export async function editUserDetails(cwd: string, name: string, email: string, 
  */
 export async function deleteUserDetails(cwd: string, name: boolean, email: boolean, location: string): Promise<string[]> {
 	const payload = await callApiRaw(cwd, { command: 'deleteUserDetails', name, email, location });
-	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+	return errorList(payload);
 }
 
 /**
@@ -108,7 +108,7 @@ export async function deleteUserDetails(cwd: string, name: boolean, email: boole
  */
 export async function addRemote(cwd: string, name: string, url: string, pushUrl: string | null = null, fetch = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'addRemote', name, url, pushUrl, fetch });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -125,7 +125,7 @@ export async function addRemote(cwd: string, name: string, url: string, pushUrl:
  */
 export async function editRemote(cwd: string, nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'editRemote', nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -139,7 +139,7 @@ export async function editRemote(cwd: string, nameOld: string, nameNew: string, 
  */
 export async function createArchive(cwd: string, ref: string, format: string, outputPath: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'createArchive', ref, format, outputPath });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**

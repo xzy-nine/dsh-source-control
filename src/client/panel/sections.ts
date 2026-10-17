@@ -6,6 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
+	IconCloseOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -17,16 +18,30 @@ import { interfaceLanguage, needsTranslation } from './language.ts';
 import { RepoRow } from './repo-row.ts';
 import { anyBusy } from './busy.ts';
 import type {
-	AiStats, BusyFlags, BusyScope, Commit, CommitFile, CommitStats, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
+	AiStats, BusyFlags, ChangeActions, Commit, CommitCacheMaps, CommitFile, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../shared/types.ts';
 import css from '../css/sections.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
-const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '')
+const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent)
 	? '⌘'
 	: 'Ctrl';
+
+/**
+ * 分区标题栏的刷新按钮。
+ *
+ * @param disabled - 是否禁用。
+ * @param onRefresh - 点击回调。
+ * @returns 按钮元素。
+ */
+function refreshButton(disabled: boolean, onRefresh: () => void): React.ReactElement {
+	return React.createElement('button', {
+		type: 'button', className: css.iconBtn, title: '刷新', disabled,
+		onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
+	}, React.createElement(IconRefreshOutlineRegular, { size: 14 }));
+}
 
 /** 存储库分区。 */
 export interface RepoSectionProps {
@@ -113,7 +128,7 @@ export function RepoSection({
 }
 
 /** 更改分区。 */
-export interface ChangesSectionProps {
+export interface ChangesSectionProps extends ChangeActions {
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: BusyFlags;
 	readonly phase: PanelPhase;
@@ -140,26 +155,22 @@ export interface ChangesSectionProps {
 	/** 当前分支是纯本地分支（无上游）且无改动时，提交按钮改为发布。 */
 	readonly showPublishButton: boolean;
 	readonly onPublish: () => void;
-	readonly stagedPaths: readonly string[];
+	/** 提交按钮是否可用：有暂存改动，或勾选修补（此时可只改提交信息）。 */
+	readonly canSubmit: boolean;
 	readonly onSubmit: () => void;
 	readonly onRefresh: () => void;
 	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string> };
 	readonly groupExpanded: { staged: boolean; unstaged: boolean };
 	readonly toggleChange: (key: string, path: string) => void;
 	readonly toggleGroup: (key: string) => void;
-	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[]) => Promise<void>;
-	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
-	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
-	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
-	/** 把未暂存的路径加入 .gitignore。 */
-	readonly onAddToGitignore: (path: string) => void;
-	/** 把未暂存的路径加入本地排除文件。 */
-	readonly onAddToLocalExclude: (path: string) => void;
 	/** 当前工作树是否有本地排除条目；有才显示查看入口。 */
 	readonly hasLocalExclude: boolean;
 	/** 查看本地排除的条目。 */
 	readonly onShowLocalExclude: () => void;
+	/** 是否处于未完成的合并：为真时显示取消合并入口。 */
+	readonly merging: boolean;
+	/** 中止当前合并。 */
+	readonly onAbortMerge: () => void;
 }
 
 /**
@@ -173,9 +184,10 @@ export function ChangesSection({
 	showTranslate, translateBusy, onTranslate,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	showPublishButton, onPublish,
-	stagedPaths, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+	canSubmit, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
+	merging, onAbortMerge,
 }: ChangesSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -186,10 +198,7 @@ export function ChangesSection({
 			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'更改',
 			React.createElement('span', { className: css.headActions },
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy.read,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
-				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+				refreshButton(busy.read, onRefresh),
 			),
 		),
 		React.createElement(
@@ -206,7 +215,7 @@ export function ChangesSection({
 						placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${head ?? 'master'}'提交)`,
 						value: message,
 						disabled: aiBusy,
-						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => onMessageChange(event.currentTarget.value),
+						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { onMessageChange(event.currentTarget.value); },
 						onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
 							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
 								event.preventDefault();
@@ -242,7 +251,7 @@ export function ChangesSection({
 							variant: 'ghost', size: 'sm',
 							className: css.stashBtn, onClick: onShowLocalExclude,
 							title: '打开本地排除文件', 'aria-label': '本地排除',
-						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 })),
+						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 }), '本地排除'),
 						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
 						showTranslate && React.createElement(Button, {
 							variant: 'ghost', size: 'sm', disabled: translateBusy,
@@ -253,6 +262,12 @@ export function ChangesSection({
 							variant: 'ghost', size: 'sm', disabled: busy.commit || entries.length === 0,
 							className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
 						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
+						// 合并未完成时提供中止入口：把它推到这排按钮最右端，与其它入口分开。
+						merging && React.createElement(Button, {
+							variant: 'ghost', size: 'sm', disabled: busy.commit || busy.history,
+							className: css.abortMergeBtn, onClick: onAbortMerge,
+							title: '中止当前合并，恢复到合并前的状态', 'aria-label': '取消合并',
+						}, React.createElement(IconCloseOutlineRegular, { size: 14 }), '取消合并'),
 					),
 				),
 				showSyncButton
@@ -270,7 +285,7 @@ export function ChangesSection({
 							onClick: onPublish,
 						}, React.createElement(PublishIcon), '发布')
 						: React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || stagedPaths.length === 0,
+							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || !canSubmit,
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),
@@ -280,13 +295,13 @@ export function ChangesSection({
 				{ className: css.changesScroll },
 				ChangeGroup({
 					staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => toggleGroup('staged'),
+					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => { toggleGroup('staged'); },
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
 				}),
 				ChangeGroup({
 					staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => toggleGroup('unstaged'),
+					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => { toggleGroup('unstaged'); },
 					run, stagePaths, unstagePaths, discardPaths, openDiff,
 					onAddToGitignore, onAddToLocalExclude,
 					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
@@ -297,7 +312,7 @@ export function ChangesSection({
 }
 
 /** 图形分区。 */
-export interface GraphSectionProps {
+export interface GraphSectionProps extends CommitCacheMaps {
 	readonly open: boolean;
 	readonly height: number;
 	readonly busy: BusyFlags;
@@ -318,13 +333,6 @@ export interface GraphSectionProps {
 	readonly moreCommitsAvailable: boolean;
 	/** 因留存封顶而丢弃的提交总数。 */
 	/** 留存提交之前的泳道状态；裁头后由此续算。 */
-	readonly statsByHash: ReadonlyMap<string, CommitStats>;
-	/** 提交哈希 -> 完整提交信息；悬停时按需取回。 */
-	readonly messageByHash: ReadonlyMap<string, string>;
-	/** 提交哈希 -> 提交信息译文；未翻译过时缺省。 */
-	readonly translatedByHash: ReadonlyMap<string, string>;
-	/** 提交哈希 -> 已翻译的原文；与当前信息相同表示无需再译。 */
-	readonly translatedFromByHash: ReadonlyMap<string, string>;
 	/** 正在翻译的提交哈希；空闲时为 null。 */
 	readonly translatingHash: string | null;
 	/** 翻译服务是否可用；不可用时提交浮窗不给翻译入口。 */
@@ -440,10 +448,7 @@ export function GraphSection({
 					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy.network,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
 				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '刷新', disabled: busy.read,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
-				}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
+				refreshButton(busy.read, onRefresh),
 			),
 		),
 		open && (
@@ -497,7 +502,7 @@ export function GraphSection({
 								busy: busy.read,
 								loading: detail.loading,
 								collapsed: detailCollapsed,
-								onToggle: (path: string) => onToggleChange('detail', path),
+								onToggle: (path: string) => { onToggleChange('detail', path); },
 								// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
 								onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash); },
 							}),

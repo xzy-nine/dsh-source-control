@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# pre-push：推送前跑全量 oxlint 与两段类型检查。
+#
+# 与 pre-commit 的分工：pre-commit 只查本次提交涉及的文件（反馈快），
+# pre-push 查整个 src/ 并跑 tsc，拦住跨文件的类型问题与漏查的存量。
+#
+# 规则集见仓库根的 .oxlintrc.json。
+
+set -e
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if [ ! -f node_modules/oxlint/dist/cli.js ]; then
+	echo "pre-push: 未找到 oxlint，请先运行 pnpm install。" >&2
+	exit 1
+fi
+
+echo "pre-push: oxlint 全量检查 src/"
+node node_modules/oxlint/dist/cli.js --type-aware src
+
+echo "pre-push: 类型检查（宿主）"
+node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+
+echo "pre-push: 类型检查（客户端）"
+node node_modules/typescript/bin/tsc -p tsconfig.client.json --noEmit
+
+echo "pre-push: 通过"

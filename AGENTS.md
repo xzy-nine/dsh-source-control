@@ -37,10 +37,13 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
+                    stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
-                    仓库树（use-repos.ts 以批量命令预取领先/落后；repo-tree.ts 树结构与选中、
+                    仓库树（repo-preload.ts 按主视图当前会话的工作区后台取数并发布快照、use-repos.ts 订阅快照
+                    并维护选中与展开；repo-tree.ts 树结构与选中、
                     enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
+                    refresh-scheduler.ts 是两处事件驱动刷新共用的冷却与挂起调度、
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
@@ -168,14 +171,17 @@ Office）主动不认领，那些仍走宿主预览。
 （首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
 `bench-verify.mjs`。`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
 
-仓库树的领先/落后不在重载的两路请求里取：`panel/use-repos.ts` 在空闲回调里把当前可见且未缓存的节点
-（一次最多 24 个路径）交给批量命令 `loadReposSync` 一次取回，按路径在途去重，结果按节点 id 批量回写；
-宿主侧按仓库并发（上限 4），单个仓库失败以空值兜底，`path` 原样回显入参。分支与上游的领先/落后由
-一次 `git for-each-ref --format=… refs/heads` 取回（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，
-`%(HEAD)` 标出当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、
-上游为空、领先/落后为 0。仓库发现逐层并行，结果进 60 秒 TTL 的内存缓存（容量 16，超出按插入序淘汰），
-任何**成功**的仓库写操作作废该缓存；插件 `apply()` 注册路由后按已持久化的工作区根启动一次预扫
-（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，失败静默。
+仓库树的取数不在面板重载的两路请求里：客户端插件激活后按**主视图当前会话**的工作区后台预加载
+（`panel/repo-preload.ts` 的 `activeWorkspaceOf`，判据是会话行的 `retainedBy.mainView`），只取这一个
+工作区，不遍历会话列表里的其它工作区。一个工作区依次做浅层发现、位置纠正、补齐工作树与子模块、
+读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。各步都一次下发全部仓库，
+不按批切分、不设并发上限。领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
+`git for-each-ref --format=… refs/heads`（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，`%(HEAD)` 标出
+当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、上游为空、
+领先/落后为 0。单个仓库失败以空值兜底，`path` 原样回显入参。仓库发现逐层并行，结果进 60 秒 TTL
+的内存缓存（容量 16，超出按插入序淘汰），任何**成功**的仓库写操作作废该缓存；宿主 `apply()` 注册路由
+后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
+失败静默。
 
 ## 首屏空白
 
@@ -189,12 +195,12 @@ Office）主动不认领，那些仍走宿主预览。
 | 更改区 | `loadWorkingTreeSnapshot`：一次 `git status --porcelain=v2 --branch -z -uall` | 单次 status 约 90ms |
 | 图形区 | `loadCommits` 首屏：仓库信息 / 引用集合 / 贮藏 / 工作树分支同批并行，再与 `git log` 并行 | 最慢一路约 110ms |
 
-仓库列表先出**浅层树**（顶层仓库节点，`children` 全空），工作树与子模块随后由
-`enrichRepositories` 在空闲回调里补齐：`use-repos.ts` 按仓库路径把补齐结果存进 `childrenByPathRef`，
-`repo-tree.ts` 的 `attachChildren` 负责挂回。判据是「有没有补齐记录」而不是「当前有没有 children」，
-`rescan()` 清空记录与标记，因此重扫能反映工作树的增删。浅层树里没有工作树与子模块节点，持久化选中的
-若正是这类节点，`planSelection` 把它记为待认领、补齐后由 `claimPendingSelection` 认领回原节点；
-用户手动选中即作废待认领项。
+仓库列表先出**浅层树**（顶层仓库节点，`children` 全空），工作树与子模块随后补齐：预加载在
+`repo-preload.ts` 里按仓库路径把补齐结果存进 `childrenByPath`，`repo-tree.ts` 的 `attachChildren`
+负责挂回。判据是「有没有补齐记录」而不是「当前有没有 children」，`rescan()` 丢弃整个预加载状态，
+因此重扫能反映工作树的增删。浅层树里没有工作树与子模块节点，持久化选中的若正是这类节点，
+`planSelection` 把它记为待认领、补齐后由 `claimPendingSelection` 认领回原节点；用户手动选中即作废
+待认领项。
 
 补齐的占用登记与结局处理是两个纯模块：`enrich-claims.ts` 的 `createEnrichClaims()` 记在途与已完成，
 `enrich-run.ts` 的 `runEnrichBatch()` 按结局决定保留还是释放占用。取消、空结果与失败都必须释放，
@@ -204,7 +210,7 @@ Office）主动不认领，那些仍走宿主预览。
 
 `enrichRepositories` 对「无链接工作树且无 `.gitmodules`」的仓库零 git 调用（`linkedWorktreePresence`
 + `.gitmodules` 存在性判定，且要求 `.git` 为目录），有来源时才枚举。仓库判据与发现层对齐：`.git` 为
-目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `gitDirOf` 定位 `HEAD`，因此链接工作树与子模块也能
+目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `worktree-branches.ts` 的 `gitDirAt` 定位 `HEAD`，因此链接工作树与子模块也能
 解析出分支。`branchesOfOtherWorktrees` 先做无链接工作树判定，为空时直接返回空集。`getStashes` 先看
 `<commondir>/logs/refs/stash` 是否存在，不存在时不调用 git。`getRepoInfo` 的远程名由 config 派生
 （`remote.<name>.<任意子键>`），集合为空才回退 `git remote`。
@@ -261,10 +267,19 @@ Office）主动不认领，那些仍走宿主预览。
 
 ```bash
 pnpm install
-pnpm build        # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
-pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
-pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
+pnpm lint               # oxlint --type-aware src（规则集见 .oxlintrc.json）
+pnpm lint:fix           # 同上，能自动修的（花括号、可选链）就地改
+pnpm build              # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
+pnpm typecheck          # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
+pnpm check:duplication  # jscpd 扫描 src/，出现基线之外的重复即失败
+pnpm test               # pretest 先跑完整 build 与重复门禁，再 node --test test/*.test.mjs
 ```
+
+**重复代码门禁**：`scripts/check-duplication.mjs` 用 jscpd 扫 `src/`，与 `duplication-baseline.json`
+里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹只含「文件对 + 片段行数」，不含行号，
+因此无关改动不会让基线失效。基线只允许调低；确实无法消除的（如跨构建目标的类型镜像）才用
+`node scripts/check-duplication.mjs --update` 调高，并在提交信息里说明理由。
+门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
 
 - 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
   JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
@@ -282,10 +297,39 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
 
+## 静态检查与提交钩子
+
+规则集是仓库根的 `.oxlintrc.json`，对齐 DSH 主仓的严格档：正确性、可维护性与类型感知规则全开
+（`typescript/*` 的 type-aware 规则 + `eslint-plugin-sonarjs`）。**不启用 `@stylistic` 风格规则**：
+本仓库用 Tab 缩进与分号，与主仓的 2 空格、无分号相反，照搬会产生上万条纯排版告警。
+
+`oxlint --type-aware` 的类型信息由 `tsconfig.json` / `tsconfig.client.json` 提供，因此两处约束不可省：
+
+- 宿主 `tsconfig.json` 必须保留 `"types": ["node"]`。缺它时 tsgolint 解析不到 Node 全局类型，
+  会把 `process`、`setInterval` 判成 `error` 类型，凭空报出数百条 `no-unsafe-*`（`tsc` 因默认加载
+  `@types/*` 而不报，两边结论因此不一致）。
+- 客户端 `tsconfig.client.json` 是 `strict: false`（既有设计：大量界面代码走 JS 风格），
+  `no-unsafe-*` 系列依赖严格类型信息，故 `.oxlintrc.json` 对 `src/client/**` 单独关闭这五条。
+
+git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶段经
+`scripts/install-hooks.mjs` 把 `core.hooksPath` 设为 `.githooks`，克隆后无需额外步骤。
+`core.hooksPath` 是相对路径，按各 worktree 根解析，因此主检出与所有 worktree 共用同一份脚本。
+
+| 钩子 | 时机 | 检查内容 |
+|---|---|---|
+| `pre-commit` | 提交前 | 本次暂存的 `src/**/*.ts{,x}`（`ACMR`）跑 oxlint，反馈快 |
+| `pre-push` | 推送前 | `src/` 全量 oxlint + 两段 `tsc --noEmit`，拦住跨文件类型问题 |
+
+绕过（仅在确有必要时）：`git commit --no-verify` / `git push --no-verify`。
+
 ## 测试
 
-测试从 `src/` 直接导入（Node 原生 TS 支持），因此**被测模块不得有内部 `.js` 相对导入**——那会让直连
-`.ts` 时报 `ERR_MODULE_NOT_FOUND`；带这类导入的逻辑要么抽成无依赖的纯模块，要么改用 `lib/` 产物验证。
+**宿主侧测试一律从 `lib/` 产物导入**（经 `test/lib-import.mjs` 的 `importHostModule`）：宿主模块普遍带
+内部 `.js` 相对导入，由 `src/` 直连 `.ts` 会报 `ERR_MODULE_NOT_FOUND`。因此 `pretest` 必须先把宿主产物
+构建出来，缺产物即导入失败、测试报错——构建失败本身就是问题，不用 skip 掩盖。
+**客户端测试仍从 `src/` 直连 `.ts`**：客户端没有逐模块产物，只有打包后的 `lib/client.js`（ModuleLoader
+包络，仅暴露插件入口），无法取到内部纯函数。少数按外部环境跳过的用例（非 git 目录、ui-primitives
+源码检出、jsdom 缺失）保留 skip，它们不依赖本仓库构建。
 
 | 文件 | 覆盖 |
 |---|---|
@@ -303,6 +347,7 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
 | `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
 | `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
+| `repo-preload.test.mjs` | 仓库树预加载：只取主视图当前会话的工作区、四步取数顺序与逐阶段发布、在途去重与 `force`、失败置 error、`dropWorkspace` 后重取、补齐空结果重试到上限 |
 | `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
 | `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出 |
 | `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |

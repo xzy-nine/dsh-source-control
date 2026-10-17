@@ -10,7 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseUnifiedDiffHunks } from '../src/source-control/diff-hunks.ts';
+import { importHostModule } from './lib-import.mjs';
+
+const mod = await importHostModule('source-control/diff-hunks.js');
+const { parseUnifiedDiffHunks } = mod;
 
 /** 建一个临时仓库并在其中执行 git。 */
 function makeRepo() {

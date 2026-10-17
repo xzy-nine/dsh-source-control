@@ -214,6 +214,26 @@ export function parseStashReflog(stdout: string): StashEntry[] {
 }
 
 /**
+ * 由引用的对象名与解引用对象名构造一条标签记录。
+ *
+ * 附注标签的 `%(objectname)` 是标签对象本身，其解引用对象才是被标注的提交，因此附注标签以解
+ * 引用哈希标注到提交上。
+ *
+ * @param refname - 引用的全名。
+ * @param objectname - `%(objectname)`。
+ * @param peeled - `%(*objectname)`；空串表示轻量标签。
+ * @returns 标签记录。
+ */
+function tagOf(refname: string, objectname: string, peeled: string): RefTag {
+	const annotated = peeled !== '';
+	return {
+		hash: annotated ? peeled : objectname,
+		name: refname.slice('refs/tags/'.length),
+		annotated,
+	};
+}
+
+/**
  * 解析 `git for-each-ref --format=<REF_FORMAT>` 的输出。
  *
  * 记录以换行分隔、字段以 NUL 分隔。附注标签的 `%(objectname)` 是标签对象本身，
@@ -240,12 +260,7 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 		if (refname.startsWith('refs/heads/')) {
 			heads.push({ hash: objectname, name: refname.slice('refs/heads/'.length) });
 		} else if (refname.startsWith('refs/tags/')) {
-			const annotated = peeled !== '';
-			tags.push({
-				hash: annotated ? peeled : objectname,
-				name: refname.slice('refs/tags/'.length),
-				annotated,
-			});
+			tags.push(tagOf(refname, objectname, peeled));
 		} else if (refname.startsWith('refs/remotes/')) {
 			const short = refname.slice('refs/remotes/'.length);
 			// 远程 HEAD 是指向分支的符号引用，不是可操作的分支。
@@ -298,12 +313,7 @@ export function parseRefsAndBranches(stdout: string, hideRemotes: readonly strin
 			continue;
 		}
 		if (refname.startsWith('refs/tags/')) {
-			const annotated = peeled !== '';
-			tags.push({
-				hash: annotated ? peeled : objectname,
-				name: refname.slice('refs/tags/'.length),
-				annotated,
-			});
+			tags.push(tagOf(refname, objectname, peeled));
 			continue;
 		}
 		if (!refname.startsWith('refs/remotes/')) continue;
@@ -580,6 +590,7 @@ export function parseBranchSync(stdout: string): BranchSync {
  * @param remotes - 已知远程名，用于给远程分支标注所属远程。
  * @param showTags - 是否标注标签。
  * @param maxCommits - 请求的提交数上限。
+ * @param skip - 本窗口在 `git log` 中的起始偏移。
  * @returns 提交图。
  */
 export function assembleCommits(
@@ -589,10 +600,18 @@ export function assembleCommits(
 	remotes: readonly string[],
 	showTags: boolean,
 	maxCommits: number,
+	skip = 0,
 ): CommitGraph {
 	const commits: LogRecord[] = [...records];
 	const moreCommitsAvailable = commits.length === maxCommits + 1;
 	if (moreCommitsAvailable) commits.pop();
+	/*
+	 * 下一窗口的偏移按本页实际消费的日志记录数累加。
+	 *
+	 * 不能用本页 `commits` 长度：下面会插入贮藏行，它们是引用而不是 `git log` 记录，
+	 * 计入偏移会让下一页跳过真实提交。
+	 */
+	const nextSkip = skip + commits.length;
 
 	const nodes: CommitNode[] = commits.map((commit) => ({
 		...commit, heads: [], tags: [], remotes: [], stash: null,
@@ -646,6 +665,7 @@ export function assembleCommits(
 		head: refs.head,
 		tags: unique(refs.tags.map((tag) => tag.name)),
 		moreCommitsAvailable,
+		nextSkip,
 	};
 }
 

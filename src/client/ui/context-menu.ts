@@ -19,7 +19,7 @@ import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
  * @returns 写入成功返回 true。
  */
 export async function copyText(text: string): Promise<boolean> {
-	if (navigator.clipboard?.writeText) {
+	if (typeof navigator.clipboard.writeText === 'function') {
 		try {
 			await navigator.clipboard.writeText(text);
 			return true;
@@ -34,6 +34,8 @@ export async function copyText(text: string): Promise<boolean> {
 		textarea.style.opacity = '0';
 		document.body.appendChild(textarea);
 		textarea.select();
+		// 剪贴板接口不可用时的回退：execCommand 已废弃，但仍是唯一无需权限的同步复制路径。
+		// oxlint-disable-next-line typescript/no-deprecated -- 回退路径无替代 API。
 		const ok = document.execCommand('copy');
 		textarea.remove();
 		return ok;
@@ -116,6 +118,27 @@ function labelOf(title: string, hasChildren: boolean, hint?: string): React.Reac
 }
 
 /**
+ * 把一条自建菜单项登记进 handlers / selectedIds，并给出它是否带二级菜单。
+ *
+ * @param item - 自建菜单项。
+ * @param id - 该项在所属层级里的 id。
+ * @param handlers - 收集 id 到点击回调的映射。
+ * @param selectedIds - 收集需要显示勾选的 id。
+ * @returns 已过滤可见性的子项。
+ */
+function registerItem(
+	item: ContextMenuItem,
+	id: string,
+	handlers: Map<string, () => void>,
+	selectedIds: string[],
+): ContextMenuItem[] {
+	const children = (item.children ?? []).filter((child) => child.visible !== false);
+	if (item.onClick !== undefined) handlers.set(id, item.onClick);
+	if (item.checked === true) selectedIds.push(id);
+	return children;
+}
+
+/**
  * 把自建菜单项转成 Menu 的一级条目，并把可点击项的 id 收集进 handlers。
  *
  * @param items - 自建菜单项。
@@ -135,9 +158,7 @@ function toEntries(
 			entries.push({ type: 'separator', id: `sep-${id}` });
 			return;
 		}
-		const children = (item.children ?? []).filter((child) => child.visible !== false);
-		if (item.onClick !== undefined) handlers.set(id, item.onClick);
-		if (item.checked === true) selectedIds.push(id);
+		const children = registerItem(item, id, handlers, selectedIds);
 		entries.push({
 			id,
 			label: labelOf(item.title ?? '', children.length > 0, item.hint),
@@ -169,9 +190,7 @@ function toSubItems(
 	items.forEach((item, index) => {
 		if (item.type === 'divider') return;
 		const id = `${prefix}${index}`;
-		const children = (item.children ?? []).filter((child) => child.visible !== false);
-		if (item.onClick !== undefined) handlers.set(id, item.onClick);
-		if (item.checked === true) selectedIds.push(id);
+		const children = registerItem(item, id, handlers, selectedIds);
 		entries.push({
 			id,
 			label: item.hint === undefined ? (item.title ?? '') : React.createElement('span', { title: item.hint }, item.title ?? ''),
@@ -246,7 +265,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 	function MenuContent(): React.ReactElement {
 		const [open, setOpen] = React.useState(true);
 		React.useEffect(() => {
-			if (open === false) close();
+			if (!open) close();
 		}, [open]);
 		return React.createElement(Menu, {
 			open,
@@ -259,7 +278,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 				setOpen(false);
 				handlers.get(id)?.();
 			},
-			onClose: () => setOpen(false),
+			onClose: () => { setOpen(false); },
 		});
 	}
 	root.render(React.createElement(MenuContent));

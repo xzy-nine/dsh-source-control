@@ -114,4 +114,10 @@
 
 .commitActionsRow .stashBtn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
 
+/* 取消合并：推到这一排的最右端，与左侧的图标入口分开。 */
+
+.commitActionsRight .abortMergeBtn{margin-left:8px;padding:0 8px;background:transparent;color:var(--dsw-alias-label-secondary);gap:4px}
+
+.commitActionsRight .abortMergeBtn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
+
 .commitAiStats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}

@@ -50,7 +50,7 @@ export function parseRemoteAddress(url: string): RemoteAddress | null {
 				: scheme === 'http' ? 'http'
 					: scheme === 'git' ? 'git'
 						: 'other';
-		const path = (byUrl[3] ?? '').replace(/^\/+/, '');
+		const path = (byUrl.at(3) ?? '').replace(/^\/+/, '');
 		if (protocol === 'other' || path === '') return null;
 		return { protocol, form: 'url', host: byUrl[2], path };
 	}

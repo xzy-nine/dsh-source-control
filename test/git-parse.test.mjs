@@ -8,12 +8,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
+import { importHostModule } from './lib-import.mjs';
+
+const mod = await importHostModule('source-control/git-parse.js');
+const {
 	DETAILS_FORMAT, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
 	parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
 	splitRecords, UNCOMMITTED,
-} from '../src/source-control/git-parse.ts';
+} = mod;
 
 /**
  * 建一个临时仓库。
@@ -386,4 +389,39 @@ test('不显示标签时提交上不带标签但 tags 列表仍返回', () => {
 	const graph = assembleCommits(records, refs, [], [], false, 300);
 	assert.deepEqual(graph.commits[0].tags, []);
 	assert.deepEqual(graph.tags, ['v1']);
+});
+
+test('nextSkip 按日志记录数推进，不计入插入的贮藏行', () => {
+	/*
+	 * 贮藏行是引用而不是 `git log` 记录：按 `commits` 长度算偏移会让下一页跳过真实提交。
+	 * 这里取两条记录、上限 300（无更多），偏移从 0 起，期望推进 2 而不是 3。
+	 */
+	const records = [
+		{ hash: 'h2', parents: ['h1'], author: 'A', email: '', date: 20, message: 'second' },
+		{ hash: 'h1', parents: [], author: 'A', email: '', date: 10, message: 'first' },
+	];
+	const stash = {
+		selector: 'refs/stash@{0}', hash: 's1', baseHash: 'h1',
+		author: 'A', email: '', date: 15, message: 'stashed', untrackedFilesHash: null,
+	};
+	const graph = assembleCommits(records, { head: 'h2', heads: [], tags: [], remotes: [] }, [stash], [], true, 300, 0);
+	assert.equal(graph.commits.length, 3, '贮藏行确实插入了列表');
+	assert.equal(graph.nextSkip, 2, '偏移只计日志记录数');
+
+	// 从非零偏移开始：累加而不是重置。
+	const next = assembleCommits(records, { head: 'h2', heads: [], tags: [], remotes: [] }, [stash], [], true, 300, 40);
+	assert.equal(next.nextSkip, 42, '偏移在入参基础上累加');
+});
+
+test('nextSkip 在有更多时按实际消费的记录数推进', () => {
+	// 取 3 条、上限 2：多取的那条作哨兵后被弹出，偏移只推进 2。
+	const records = [
+		{ hash: 'h3', parents: [], author: 'A', email: '', date: 30, message: 'c' },
+		{ hash: 'h2', parents: [], author: 'A', email: '', date: 20, message: 'b' },
+		{ hash: 'h1', parents: [], author: 'A', email: '', date: 10, message: 'a' },
+	];
+	const graph = assembleCommits(records, { head: 'h3', heads: [], tags: [], remotes: [] }, [], [], true, 2, 0);
+	assert.equal(graph.moreCommitsAvailable, true);
+	assert.equal(graph.commits.length, 2);
+	assert.equal(graph.nextSkip, 2, '哨兵不计入偏移');
 });

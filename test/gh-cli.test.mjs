@@ -3,10 +3,15 @@
  *
  * 覆盖四类需要区分的情形：未安装、未登录、缺 scope、无权限。GitHub 对无权访问的资源
  * 常回 404，因此建仓库时的 404 要归入无权限而不是「不存在」。
+ *
+ * `gh-cli.ts` 有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入；
+ * `pretest` 会先重建产物。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyGhFailure } from '../src/source-control/gh-cli.ts';
+import { importHostModule } from './lib-import.mjs';
+
+const { classifyGhFailure } = await importHostModule('source-control/gh-cli.js');
 
 /** 构造一次 gh 调用结果。 */
 function result(code, stderr, stdout = '') {

@@ -13,9 +13,10 @@ import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
 import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './diff/better-sidebar-diff.ts';
-import { fileDiffContent } from './api/index.ts';
+import { fileDiffContent, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
+import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
 import css from './css/index.module.css';
 import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
@@ -158,7 +159,7 @@ function GitDiffTab(props) {
 		return entry?.cwd ?? null;
 	});
 	const gitCwd = repoRoot ?? cwd;
-	const [diffData, setDiffData] = React.useState(null);
+	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
 	const [wrap, setWrap] = React.useState(true);
@@ -200,12 +201,12 @@ function GitDiffTab(props) {
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
 				title: split ? '切换为统一视图' : '切换为左右并排',
-				onClick: () => setSplit((value) => !value),
+				onClick: () => { setSplit((value) => !value); },
 			}, split ? '并排' : '统一'),
 			React.createElement('button', {
 				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
 				title: wrap ? '不换行' : '换行',
-				onClick: () => setWrap((value) => !value),
+				onClick: () => { setWrap((value) => !value); },
 			}, wrap ? '不换行' : '换行'),
 		),
 		React.createElement(
@@ -226,12 +227,52 @@ function GitDiffTitle(props) {
 }
 
 /**
+ * 按主视图当前会话的工作区后台预加载仓库树。
+ *
+ * 预加载与面板是否打开无关：面板打开时直接呈现已取回的树。只取当前会话的那一个工作区，
+ * 不遍历会话列表里的其它工作区。列表快照变化时重放，切到别的工作区才取下一份。
+ *
+ * @param ctx - Cordis 上下文。
+ * @returns 取消订阅的函数；服务缺失时为空操作。
+ */
+function startWorkspacePreload(ctx) {
+	const sessions = ctx.get?.('sessions');
+	const list = sessions?.list;
+	if (list === undefined || typeof list.getSnapshot !== 'function' || typeof list.subscribe !== 'function') return () => {};
+	/** 失败后已重试过的工作区根：同一工作区只重试一次，避免失败状态下反复取数。 */
+	const retried = new Set();
+	const apply = () => {
+		let active = null;
+		try {
+			active = activeWorkspaceOf(list.getSnapshot());
+		} catch {
+			return;
+		}
+		if (active === null) return;
+		const existing = getWorkspaceSnapshot(active.cwd);
+		if (existing === null) {
+			preloadWorkspace(active.cwd);
+			return;
+		}
+		if (existing.status !== 'error' || retried.has(active.cwd)) return;
+		retried.add(active.cwd);
+		preloadWorkspace(active.cwd);
+	};
+	apply();
+	return list.subscribe(apply);
+}
+
+/**
  * 注册插件。
  *
  * @param ctx - Cordis 上下文。
  * @returns 无。
  */
 export function apply(ctx) {
+	// ── 后台预加载仓库树 ───────────────────────────────────────
+	// 与页签是否打开无关：页签打开时直接呈现已取回的树。
+	if (typeof ctx.effect === 'function') ctx.effect(() => startWorkspacePreload(ctx));
+
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
 

@@ -153,6 +153,41 @@ export interface CommitStats {
 	readonly deletions: number;
 }
 
+/** 提交哈希索引的四份缓存：统计、完整信息、译文与译文对应的原文。 */
+export interface CommitCacheMaps {
+	/** 提交哈希 -> 改动统计。 */
+	readonly statsByHash: ReadonlyMap<string, CommitStats>;
+	/** 提交哈希 -> 完整提交信息；未取到时缺省。 */
+	readonly messageByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 译文；未翻译过时缺省。 */
+	readonly translatedByHash: ReadonlyMap<string, string>;
+	/** 提交哈希 -> 译文对应的原文；与当前文本相同才可用该译文。 */
+	readonly translatedFromByHash: ReadonlyMap<string, string>;
+}
+
+/** 一次仓库操作的执行入口：按影响面记忙碌，成功后按需对账。 */
+export type RunOperation = (
+	scope: BusyScope,
+	operation: () => Promise<void>,
+	repo?: string,
+	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+	options?: { readonly historyChanged?: boolean },
+) => Promise<void>;
+
+/** 变更区与提交框共用的仓库操作入口。 */
+export interface ChangeActions {
+	/** 一次仓库操作的执行入口。 */
+	readonly run: RunOperation;
+	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
+	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
+	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	/** 把路径加入 .gitignore。 */
+	readonly onAddToGitignore: (path: string) => void;
+	/** 把路径加入本地排除文件。 */
+	readonly onAddToLocalExclude: (path: string) => void;
+}
+
 /** 引用列表项。 */
 export interface RefItem {
 	readonly name: string;
@@ -202,6 +237,13 @@ export interface PanelState {
 	head: string | null;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
+	/**
+	 * 下一个窗口在宿主 `git log` 中的偏移量。
+	 *
+	 * 由宿主按日志记录数给出，不按 `commits` 长度推导：列表里可能含贮藏行与未提交伪提交行，
+	 * 它们都不是日志记录。
+	 */
+	nextSkip: number;
 	entries: WorkingTreeEntry[];
 	selectedHash: string | null;
 	/**
@@ -214,6 +256,10 @@ export interface PanelState {
 	/** 进行中的操作；不同仓库、不同影响面之间互不阻塞。 */
 	busy: readonly BusyEntry[];
 	remotes: Remote[];
+	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
+	foreignBranches: readonly string[];
+	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
+	merging: boolean;
 }
 
 /** AI 生成提交信息的用量统计。 */

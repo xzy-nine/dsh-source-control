@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# pre-commit：对本次提交涉及的 TypeScript 文件跑 oxlint。
+#
+# 只查暂存的 .ts/.tsx（含新增、修改、重命名），存量文件不重复检查。
+# 规则集见仓库根的 .oxlintrc.json；type-aware 规则需要安装依赖。
+
+set -e
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if [ ! -x node_modules/.bin/oxlint ] && [ ! -f node_modules/oxlint/dist/cli.js ]; then
+	echo "pre-commit: 未找到 oxlint，请先运行 pnpm install。" >&2
+	exit 1
+fi
+
+files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.tsx?$' || true)
+if [ -z "$files" ]; then
+	exit 0
+fi
+
+# 逐行转成参数，避免路径含空格时被拆开。
+set -- $files
+echo "pre-commit: oxlint 检查 $(printf '%s\n' "$@" | wc -l | tr -d ' ') 个文件"
+node node_modules/oxlint/dist/cli.js --type-aware "$@"

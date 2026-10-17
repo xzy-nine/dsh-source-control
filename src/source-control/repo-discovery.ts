@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
-import { foreignWorktreeBranches, parseWorktreeList, resolveGitCommonDir } from './worktree-branches.js';
+import { foreignWorktreeBranches, gitDirAt, parseWorktreeList, resolveGitCommonDir } from './worktree-branches.js';
 
 /** 节点种类：主工作树仓库、链接工作树、子模块。 */
 export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
@@ -87,12 +87,6 @@ const DEFAULT_MAX_DEPTH = 3;
 /** 默认最多访问的目录数。 */
 const DEFAULT_MAX_DIRECTORIES = 5000;
 
-/** 批量同步仓库时的并发上限。 */
-const MAX_SYNC_CONCURRENCY = 4;
-
-/** 同一层内并发构造仓库节点的上限。 */
-const MAX_REPO_CONCURRENCY = 8;
-
 /** 发现结果缓存的存活毫秒数。 */
 const DISCOVERY_CACHE_TTL_MS = 60_000;
 
@@ -169,28 +163,6 @@ export function clearDiscoveryCache(): void {
 onRepositoryWrite(() => { clearDiscoveryCache(); });
 
 /**
- * 在并发上限内按顺序处理一组输入。
- *
- * @param items - 输入项。
- * @param limit - 并发上限。
- * @param task - 单项处理函数。
- * @returns 与输入同序的结果数组。
- */
-async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let cursor = 0;
-	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) {
-			const index = cursor;
-			cursor++;
-			results[index] = await task(items[index]);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
-
-/**
  * 把路径规范化为节点标识。
  *
  * @param path - 任意路径。
@@ -199,6 +171,32 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T
 export function nodeId(path: string): string {
 	const normalized = resolve(path).split(sep).join('/');
 	return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * 按入参顺序去重一组候选路径。
+ *
+ * 已在 `visited` 或 `submoduleIds` 中的路径跳过，保留首次出现的路径；命中的标识写入 `visited`。
+ *
+ * @param paths - 候选路径。
+ * @param visited - 已访问目录标识，就地更新。
+ * @param submoduleIds - 子模块路径标识。
+ * @returns 去重后的绝对路径，顺序与入参一致。
+ */
+function dedupeCandidates(
+	paths: readonly string[],
+	visited: Set<string>,
+	submoduleIds: ReadonlySet<string>,
+): string[] {
+	const candidates: string[] = [];
+	for (const candidate of paths) {
+		const dir = resolve(candidate);
+		const id = nodeId(dir);
+		if (visited.has(id) || submoduleIds.has(id)) continue;
+		visited.add(id);
+		candidates.push(dir);
+	}
+	return candidates;
 }
 
 /**
@@ -304,30 +302,6 @@ async function subdirectories(dir: string): Promise<string[]> {
 }
 
 /**
- * 解析目录的 git 目录。
- *
- * `.git` 为目录时即它本身；为文件时读其中 `gitdir:` 指向的路径（链接工作树与子模块检出的写法）。
- *
- * @param dir - 目录。
- * @returns git 目录绝对路径；`.git` 不存在或格式不可识别时为 null。
- */
-async function gitDirOf(dir: string): Promise<string | null> {
-	const entry = join(dir, '.git');
-	try {
-		const info = await stat(entry);
-		if (info.isDirectory()) return entry;
-		if (!info.isFile()) return null;
-		const pointer = await readFile(entry, 'utf8');
-		const line = pointer.split(/\r?\n/).find((row) => row.startsWith('gitdir:'));
-		if (line === undefined) return null;
-		const target = line.slice('gitdir:'.length).trim();
-		return target === '' ? null : resolve(dir, target);
-	} catch {
-		return null;
-	}
-}
-
-/**
  * 读取仓库自身的工作区分支。
  *
  * `HEAD` 位于 git 目录下：主工作树是 `<dir>/.git/HEAD`，链接工作树与子模块是 `.git` 文件中
@@ -337,7 +311,7 @@ async function gitDirOf(dir: string): Promise<string | null> {
  * @returns 分支名与分离头指针的短哈希。
  */
 async function headOf(dir: string): Promise<{ branch: string | null; head: string | null }> {
-	const gitDir = await gitDirOf(dir);
+	const gitDir = await gitDirAt(dir);
 	if (gitDir === null) return { branch: null, head: null };
 	try {
 		return parseHead(await readFile(join(gitDir, 'HEAD'), 'utf8'));
@@ -491,20 +465,12 @@ async function hasNoChildSources(dir: string): Promise<boolean> {
 export async function enrichRepositories(repos: readonly string[]): Promise<RepoNode[]> {
 	const submoduleIds = new Set<string>();
 	const visited = new Set<string>();
-	const candidates: string[] = [];
-	for (const repo of repos) {
-		const dir = resolve(repo);
-		const id = nodeId(dir);
-		if (visited.has(id) || submoduleIds.has(id)) continue;
-		visited.add(id);
-		candidates.push(dir);
-	}
+	const candidates = dedupeCandidates(repos, visited, submoduleIds);
 	const entries = await Promise.all(candidates.map((dir) => hasGitEntry(dir)));
 	const repoDirs = candidates.filter((dir, index) => entries[index]);
 	const trivial = await Promise.all(repoDirs.map((dir) => hasNoChildSources(dir)));
 	const targets = repoDirs.map((dir, index) => ({ dir, trivial: trivial[index] }));
-	return mapLimit(targets, MAX_REPO_CONCURRENCY, (target) =>
-		repoNodeOf(target.dir, 0, submoduleIds, target.trivial));
+	return Promise.all(targets.map((target) => repoNodeOf(target.dir, 0, submoduleIds, target.trivial)));
 }
 
 /**
@@ -578,6 +544,26 @@ export async function discoverWorkspace(
 }
 
 /**
+ * 收尾一次发现：补上工作区根所属的仓库，并按路径排序。
+ *
+ * @param root - 工作区根目录。
+ * @param nodes - 已发现的仓库节点，就地补入所属仓库。
+ * @param visited - 已访问目录标识。
+ * @param submoduleIds - 子模块路径标识。
+ * @returns 无。
+ */
+async function finishDiscovery(
+	root: string,
+	nodes: RepoNode[],
+	visited: Set<string>,
+	submoduleIds: Set<string>,
+): Promise<void> {
+	const enclosing = await enclosingRepo(root, visited, submoduleIds);
+	if (enclosing !== null) nodes.unshift(enclosing);
+	nodes.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+/**
  * 扫描工作区根下的仓库：逐层并行探测，层内按入队顺序去重与计数。
  *
  * @param root - 工作区根目录。
@@ -616,8 +602,8 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 		entries.forEach((entry, index) => { if (entry === 'dir') repoIndexes.push(index); });
 		// 仓库节点与子目录并发取；两者都完成后才进入下一层，子模块去重集合才完整。
 		const [repoNodes, children] = await Promise.all([
-			mapLimit(repoIndexes, MAX_REPO_CONCURRENCY, (index) =>
-				repoNodeOf(pending[index].dir, pending[index].depth, submoduleIds, options.shallow === true)),
+			Promise.all(repoIndexes.map((index) =>
+				repoNodeOf(pending[index].dir, pending[index].depth, submoduleIds, options.shallow === true))),
 			Promise.all(pending.map((current, index) => entries[index] === 'file' || current.depth >= maxDepth
 				? Promise.resolve([] as string[])
 				: subdirectories(current.dir))),
@@ -629,9 +615,7 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 		});
 		level = next;
 	}
-	const enclosing = await enclosingRepo(root, visited, submoduleIds);
-	if (enclosing !== null) nodes.unshift(enclosing);
-	nodes.sort((left, right) => left.path.localeCompare(right.path));
+	await finishDiscovery(root, nodes, visited, submoduleIds);
 	return { nodes, truncated };
 }
 
@@ -654,27 +638,18 @@ async function discoverKnownRepositories(
 	const submoduleIds = new Set<string>();
 	const visited = new Set<string>();
 	// 顺序去重：保留首次出现的路径，已在 visited 或子模块集合中的路径跳过。
-	const candidates: string[] = [];
-	for (const candidate of known) {
-		const dir = resolve(candidate);
-		const id = nodeId(dir);
-		if (visited.has(id) || submoduleIds.has(id)) continue;
-		visited.add(id);
-		candidates.push(dir);
-	}
+	const candidates = dedupeCandidates(known, visited, submoduleIds);
 	// `.git` 探测并发；仍是仓库的路径按原顺序并发构造节点。
 	const entries = await Promise.all(candidates.map((dir) => gitEntryOf(dir)));
 	const repoDirs = candidates.filter((dir, index) => entries[index] === 'dir');
-	const built = await mapLimit(repoDirs, MAX_REPO_CONCURRENCY, (dir) => repoNodeOf(dir, 0, submoduleIds, shallow));
+	const built = await Promise.all(repoDirs.map((dir) => repoNodeOf(dir, 0, submoduleIds, shallow)));
 	for (const node of built) nodes.push(node);
 	if (nodes.length === 0) {
 		return discoverRepositories(root, {
 			maxDepth: DEFAULT_MAX_DEPTH, maxDirectories: DEFAULT_MAX_DIRECTORIES, shallow,
 		});
 	}
-	const enclosing = await enclosingRepo(root, visited, submoduleIds);
-	if (enclosing !== null) nodes.unshift(enclosing);
-	nodes.sort((left, right) => left.path.localeCompare(right.path));
+	await finishDiscovery(root, nodes, visited, submoduleIds);
 	return { nodes, truncated: false };
 }
 
@@ -776,14 +751,14 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 		seen.add(repo);
 		unique.push(repo);
 	}
-	return mapLimit(unique, MAX_SYNC_CONCURRENCY, async (path) => {
+	return Promise.all(unique.map(async (path) => {
 		try {
 			const sync = await loadRepoSync(path);
 			return { path, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 		} catch {
 			return { path, branch: null, upstream: null, ahead: 0, behind: 0 };
 		}
-	});
+	}));
 }
 
 /**

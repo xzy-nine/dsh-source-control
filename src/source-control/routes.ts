@@ -13,7 +13,7 @@ import {
 } from './git-query.js';
 import {
 	addRemote, addTag, applyStash, branchFromStash, checkoutBranch, checkoutCommit, cherrypickCommit,
-	cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
+	abortMerge, cleanUntrackedFiles, createBranch, deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag,
 	dropCommit, dropStash, editRemote, fetch, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash,
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
@@ -24,6 +24,9 @@ import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
+import {
+	clearHostCache, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
+} from './host-cache.js';
 import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
@@ -46,7 +49,7 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 			try {
 				resolve(chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>) : {});
 			} catch (e) {
-				reject(e);
+				reject(e instanceof Error ? e : new Error(String(e)));
 			}
 		});
 		req.on('error', reject);
@@ -130,17 +133,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	try {
 		msg = await readBody(req);
 	} catch {
-		return sendBadRequest(res, '请求体不是合法 JSON');
+		sendBadRequest(res, '请求体不是合法 JSON');
+		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
 	if (!repo) {
-		return sendBadRequest(res, '缺少 repo');
+		sendBadRequest(res, '缺少 repo');
+		return;
 	}
 
-	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k] as string) : '');
-	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? (msg[k] as string) : null);
-	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? (msg[k] as boolean) : dflt);
-	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? (msg[k] as number) : dflt);
+	const str = (k: string): string => (typeof msg[k] === 'string' ? msg[k] : '');
+	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? msg[k] : null);
+	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? msg[k] : dflt);
+	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? msg[k] : dflt);
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
@@ -158,7 +163,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	 * @param cmd - 命令名，原样回投。
 	 * @param fn - 执行体，返回值会并入响应载荷。
 	 */
-	const respondResult = async (cmd: string, fn: () => Promise<Record<string, unknown>>): Promise<void> => {
+	const respondResult = async (cmd: string, fn: () => Record<string, unknown> | Promise<Record<string, unknown>>): Promise<void> => {
 		try {
 			respond({ command: cmd, ...(await fn()), error: null });
 		} catch (error) {
@@ -175,11 +180,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
 			break;
-		case 'loadWorkingTreeSnapshot':
+		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			await whenGitIdle(repo);
-			respond({ command: 'loadWorkingTreeSnapshot', repo, ...(await getWorkingTreeSnapshot(repo)) });
+			const cachedSnapshot = readSnapshot(repo);
+			if (cachedSnapshot !== undefined) {
+				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
+				break;
+			}
+			const snapshot = await getWorkingTreeSnapshot(repo);
+			// 失败结果同样缓存：紧接着的重试会命中，避免连续失败反复起 git。
+			writeSnapshot(repo, snapshot);
+			respond({ command: 'loadWorkingTreeSnapshot', repo, ...snapshot });
 			break;
+		}
 		case 'stagePaths':
 			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
 			break;
@@ -213,7 +227,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('branchesContaining', async () => {
 				const hash = str('commitHash');
 				const localOut = await gitOrThrow(['branch', '--contains', hash, '--format=%(refname:short)'], repo);
-				// 别的工作树占用的分支不可删除，不作为候选；当前工作树自己的分支保留。
+				// 别的工作树占用的分支不可删除，不作为删除候选；`foreign` 另行回投，供调用方禁用相关操作。
 				const foreign = await branchesOfOtherWorktrees(repo);
 				const local = localOut.split('\n').map((line) => line.trim())
 					.filter((line) => line !== '' && !foreign.has(line));
@@ -222,28 +236,28 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const remoteNames = new Set((await gitOrThrow(['remote'], repo)).split('\n').map((line) => line.trim()));
 				const remote = remoteOut.split('\n').map((line) => line.trim())
 					.filter((line) => line !== '' && !line.endsWith('/HEAD') && !remoteNames.has(line));
-				return { repo, local, remote };
+				return { repo, local, remote, foreign: [...foreign] };
 			});
 			break;
 
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
 		/* --- 插件状态持久化：设置、布局、引用筛选、仓库位置缓存（落 $DSH_HOME/dsh-source-control/） --- */
 		case 'readState':
-			await respondResult('readState', async () => ({ entries: readEntries() }));
+			await respondResult('readState', () => ({ entries: readEntries() }));
 			break;
 		case 'writeState':
-			await respondResult('writeState', async () => {
+			await respondResult('writeState', () => {
 				writeEntry(str('key'), msg.value === undefined ? null : msg.value);
 				return { repo };
 			});
 			break;
 		case 'readRepoLocations':
-			await respondResult('readRepoLocations', async () => ({ repos: readRepoLocations(repo) }));
+			await respondResult('readRepoLocations', () => ({ repos: readRepoLocations(repo) }));
 			break;
 		case 'writeRepoLocations':
-			await respondResult('writeRepoLocations', async () => {
+			await respondResult('writeRepoLocations', () => {
 				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
-					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.filter((item) => typeof item.path === 'string' && item.path !== '')
 					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
 				writeRepoLocations(repo, repos);
 				return { repo };
@@ -291,7 +305,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
 			await whenGitIdle(repo);
-			let repoInfo = await getRepoInfo(repo, bool('showRemoteBranches', true), bool('showStashes', true), arr('hideRemotes'));
+			const showRemoteBranches = bool('showRemoteBranches', true);
+			const showStashes = bool('showStashes', true);
+			const hideRemotes = arr<string>('hideRemotes');
+			let repoInfo = readRepoInfo(repo);
+			if (repoInfo === undefined) {
+				repoInfo = await getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes);
+				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
+				if (repoInfo.error === null) writeRepoInfo(repo, repoInfo);
+			}
 			let isRepo = true;
 			if (repoInfo.error) {
 				isRepo = (await repoRoot(repo)) !== null;
@@ -309,10 +331,51 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 *
 				 * 用偏移而不是 hash 游标：hash 游标只能从一个提交往更早方向走，向上回看时无法用它定位；
 				 * 偏移则正反向都能取，代价是 git 端多遍历 skip 条（纯指针跳转，无 IO）。
-				 * 不缓存已取列表：提交会因 rebase / amend 变化，缓存会读到陈旧内容。
 				 */
 				const limit = num('limit', num('maxCommits', 32));
 				const skip = num('skip', 0);
+				const showStashes = bool('showStashes', true);
+				const showRemoteBranches = bool('showRemoteBranches', true);
+				const hideRemotes = arr<string>('hideRemotes');
+				const branchesArg = msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null;
+				const graphParams = {
+					maxCommits: limit, skip,
+					ordering: (typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo'),
+					showTags: bool('showTags', true),
+					showRemoteBranches,
+					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					includeCommitsMentionedByReflogs: bool('includeCommitsMentionedByReflogs'),
+					hideRemotes,
+					branches: branchesArg,
+				};
+				/*
+				 * 窗口缓存留在宿主内存：切回同一仓库、翻页回看已取过的窗口都命中，客户端不必
+				 * 跨会话搬运数据。任何成功的仓库写操作都会作废该仓库的窗口。
+				 */
+				const cachedGraph = readGraph(repo, graphParams);
+				if (cachedGraph !== undefined) {
+					const lastCached = cachedGraph.commits.at(-1);
+					/*
+					 * 仓库信息同样来自宿主缓存：命中窗口时一并回投，客户端不必为远程与贮藏
+					 * 再发一次请求。缓存里没有时留给客户端按需补取。
+					 */
+					const cachedInfo = readRepoInfo(repo) ?? null;
+					respond({
+						command: 'loadCommits',
+						refreshId: num('refreshId'),
+						error: null,
+						onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+						commits: cachedGraph.commits,
+						head: cachedGraph.head,
+						tags: cachedGraph.tags,
+						moreCommitsAvailable: cachedGraph.moreCommitsAvailable,
+						nextSkip: cachedGraph.nextSkip,
+						nextCursor: cachedGraph.moreCommitsAvailable && lastCached !== undefined ? lastCached.hash : null,
+						foreignBranches: cachedGraph.foreignBranches,
+						repoInfo: cachedInfo,
+					});
+					break;
+				}
 				/*
 				 * 仓库信息批由 `withRepoInfo` 显式控制，与「是否首屏」无关：刷新（skip 为 0）不必
 				 * 重取仓库信息，调用方把已知的远程与贮藏随请求传入。
@@ -321,9 +384,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 * 仓库信息以 `repoInfo` 随响应发回，客户端首次进入因此只发一次请求。
 				 */
 				const withRepoInfo = msg.withRepoInfo === true;
-				const showStashes = bool('showStashes', true);
-				const showRemoteBranches = bool('showRemoteBranches', true);
-				const hideRemotes = arr<string>('hideRemotes');
 				/*
 				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
 				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
@@ -352,10 +412,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				/*
 				 * 别的工作树占用的分支：仓库信息批里已含该结果时直接取用，否则单独判定。
 				 * 该判定对没有链接工作树的仓库只读文件系统，不启动 git；先发出去，不占关键路径。
+				 *
+				 * 同样先挂吞错分支：下游提前失败时，未处理的 rejection 会让宿主进程直接退出。
 				 */
-				const foreignSource: Promise<Set<string>> = batchSource !== null
+				const foreignSource: Promise<Set<string>> = (batchSource !== null
 					? batchSource.then((batch) => batch?.foreign ?? branchesOfOtherWorktrees(repo))
-					: branchesOfOtherWorktrees(repo);
+					: branchesOfOtherWorktrees(repo)).catch(() => new Set<string>());
 				/*
 				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，这里取名字；
 				 * 直接传字符串数组的调用方同样接受。
@@ -368,19 +430,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const givenRemotes = arr<unknown>('remotes')
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
+				/*
+				 * 远程名可能来自仓库信息批，也可能需要单独读取。后者是一个 Promise：若下游在它
+				 * 落地前就失败，未处理的 rejection 会让宿主进程直接退出（表现为 fatal load failure），
+				 * 因此先挂一个吞错分支，真正的错误仍由 getCommits 内部的 catch 转成 error 字段。
+				 */
 				const remoteNames: readonly string[] | Promise<readonly string[]> = batchSource !== null
-					? batchSource.then((batch) => batch?.info?.remotes?.map((remote) => remote.name) ?? givenRemotes)
-					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo);
+					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
+					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo).catch(() => [] as string[]);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
-					msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null,
+					branchesArg,
 					limit,
-					bool('showTags', true),
+					graphParams.showTags,
 					showRemoteBranches,
-					bool('includeCommitsMentionedByReflogs'),
-					bool('onlyFollowFirstParent'),
-					(typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo') as never,
+					graphParams.includeCommitsMentionedByReflogs,
+					graphParams.onlyFollowFirstParent,
+					graphParams.ordering as never,
 					remoteNames,
 					hideRemotes,
 					stashes,
@@ -388,27 +455,38 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					batchSource?.then((batch) => batch?.refs ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes)) ?? undefined,
 				);
 				const batch = batchSource === null ? null : await batchSource;
-				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
+				// 仓库信息成功取回时写入缓存，后续命中窗口的请求因此能一并回投它。
+				if (batch !== null && batch.info.error === null) writeRepoInfo(repo, batch.info);
+				/*
+				 * 别的工作树占用的分支照常作为标签显示：它们确实指向该提交，只是不能在本工作树里
+				 * 检出或删除。这类分支名随响应回投，客户端据此禁用相应操作。
+				 */
 				const foreign = await foreignSource;
-				const all = foreign.size === 0
-					? (data.commits ?? [])
-					: (data.commits ?? []).map((commit) => ({
-						...commit,
-						heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
-					}));
+				const all = data.commits;
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
-				const last = all[all.length - 1];
+				const last = all.at(-1);
+				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
+				if (data.error === null) {
+					writeGraph(repo, graphParams, {
+						commits: all, head: data.head, tags: data.tags,
+						moreCommitsAvailable: data.moreCommitsAvailable, nextSkip: data.nextSkip,
+						foreignBranches: [...foreign],
+					});
+				}
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
 					// 成功路径的 error 恒为 null：既有契约要求该字段存在。
 					error: null,
-					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
 					commits: all,
 					head: data.head,
-					tags: data.tags ?? [],
-					moreCommitsAvailable: data.moreCommitsAvailable === true,
-					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
+					tags: data.tags,
+					moreCommitsAvailable: data.moreCommitsAvailable,
+					nextSkip: data.nextSkip,
+					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
+					// 别的工作树占用的分支：客户端据此禁用检出、删除与重命名。
+					foreignBranches: [...foreign],
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});
@@ -502,7 +580,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error: await merge(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit')),
+			});
+			break;
+		case 'abortMerge':
+			await respondResult('abortMerge', async () => {
+				const error = await abortMerge(repo);
+				if (error !== null) throw new Error(error);
+				return { repo };
 			});
 			break;
 		case 'mergeIntoBranch': {
@@ -530,13 +615,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				command: 'rebase',
 				actionOn: msg.actionOn,
 				interactive: bool('interactive'),
-				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
+				error: await rebase(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('ignoreDate', true), bool('interactive')),
 			});
 			break;
 
 		/* --- 标签 --- */
 		case 'addTag': {
-			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
+			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), typeof msg.type === 'number' ? msg.type : 0, str('message'), bool('force'))];
 			if (errors[0] === null && strOrNull('pushToRemote') !== null) {
 				errors.push(...(await pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
 			}
@@ -675,7 +760,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-source-control] ' + String(msg.message ?? ''));
+			console.error('[dsh-source-control] ' + (typeof msg.message === 'string' ? msg.message : ''));
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -769,6 +854,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: 'editUserDetails', errors });
 			break;
 		}
+		/*
+		 * 主动作废宿主缓存：用户点刷新时使用。
+		 *
+		 * 写操作已由执行层自动作废该仓库的缓存；这个命令覆盖「外部进程改了仓库、但没有经过本插件」
+		 * 的情形——那种改动不产生写事件，宿主无从得知。
+		 */
+		case 'invalidateCache':
+			clearHostCache();
+			respond({ command: 'invalidateCache', repo, error: null });
+			break;
 
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));
@@ -849,9 +944,9 @@ async function canDisableReasoning(llm: unknown, provider: string, model: string
 	if (!provider || !model || typeof svc.resolveModelInfo !== 'function') return false;
 	try {
 		const info = await svc.resolveModelInfo(provider, model) as { reasoning?: { efforts?: Array<{ id?: string }> } };
-		const efforts = info?.reasoning?.efforts;
+		const efforts = info.reasoning?.efforts;
 		if (!Array.isArray(efforts)) return false;
-		return efforts.some((e) => e?.id === 'off');
+		return efforts.some((e) => e.id === 'off');
 	} catch {
 		return false;
 	}
@@ -866,7 +961,7 @@ function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provi
 	if (typeof getAgentDefaultModel !== 'function') return null;
 	try {
 		const svc = getAgentDefaultModel() as { currentSelection?: () => unknown };
-		const sel = svc?.currentSelection?.() as { provider?: string; model?: string } | null;
+		const sel = svc.currentSelection?.() as { provider?: string; model?: string } | null;
 		if (sel === null || typeof sel !== 'object') return null;
 		const provider = typeof sel.provider === 'string' ? sel.provider : '';
 		const model = typeof sel.model === 'string' ? sel.model : '';
@@ -917,184 +1012,177 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDeps): Array<() => void> {
 	const disposers: Array<() => void> = [];
 
+	/**
+	 * 注册一条只接受单一 HTTP 方法的精确路由。
+	 *
+	 * 方法不符时回 405 并给出 `allow`；符合时执行 `handler`。
+	 *
+	 * @param path - 路由路径。
+	 * @param method - 允许的方法。
+	 * @param handler - 方法符合时的处理函数。
+	 * @returns 无。
+	 */
+	const registerMethodRoute = (
+		path: string,
+		method: 'GET' | 'POST',
+		handler: (req: http.IncomingMessage, res: http.ServerResponse) => void,
+	): void => {
+		disposers.push(
+			webServer.register({
+				kind: 'exact',
+				path,
+				handler: (req, res) => {
+					if (req.method !== method) {
+						res.writeHead(405, { allow: method });
+						res.end();
+						return;
+					}
+					handler(req, res);
+				},
+			}),
+		);
+	};
+
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
 	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
 
 	// 事件流（GET）：面板据此即时反映别处的写操作。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/events',
-			handler: (req, res) => {
-				if (req.method !== 'GET') {
-					res.writeHead(405, { allow: 'GET' });
-					res.end();
-					return;
-				}
-				handleEvents(req, res);
-			},
-		}),
-	);
+	registerMethodRoute('/dsh-source-control/gg/events', 'GET', (req, res) => { handleEvents(req, res); });
 
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/api',
-			handler: (req, res) => {
-				if (req.method !== 'POST') {
-					res.writeHead(405, { allow: 'POST' });
-					res.end();
-					return;
-				}
-				void handleApi(req, res, aiDeps).catch((e) => {
-					sendJson(res, 500, { error: String(e instanceof Error ? e.message : e) });
-				});
-			},
-		}),
-	);
+	registerMethodRoute('/dsh-source-control/gg/api', 'POST', (req, res) => {
+		void handleApi(req, res, aiDeps).catch((e: unknown) => {
+			sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+		});
+	});
 
 	// AI 模型目录（GET）：供应商列表 + 每供应商的模型 id。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/ai-models',
-			handler: (req, res) => {
-				if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-				const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
-				if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
-				const providers: Array<{ id: string; name: string }> = [];
+	registerMethodRoute('/dsh-source-control/gg/ai-models', 'GET', (req, res) => {
+		const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
+		if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
+		const providers: Array<{ id: string; name: string }> = [];
+		try {
+			const raw = llm.listProviders();
+			for (const p of (Array.isArray(raw) ? raw : [])) {
+				const id = (p as { id?: string }).id ?? '';
+				if (id.length > 0) providers.push({ id, name: (p as { name?: string }).name ?? id });
+			}
+		} catch { /* 目录不可用 */ }
+		void (async () => {
+			const modelsByProvider: Record<string, string[]> = {};
+			for (const p of providers) {
 				try {
-					const raw = llm.listProviders();
-					for (const p of (Array.isArray(raw) ? raw : [])) {
-						const id = (p as { id?: string })?.id ?? '';
-						if (id.length > 0) providers.push({ id, name: (p as { name?: string })?.name ?? id });
-					}
-				} catch { /* 目录不可用 */ }
-				void (async () => {
-					const modelsByProvider: Record<string, string[]> = {};
-					for (const p of providers) {
-						try {
-							const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
-							modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
-								.map((m) => (m as { id?: string })?.id ?? '')
-								.filter((id) => id.length > 0);
-						} catch { modelsByProvider[p.id] = []; }
-					}
-					const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
-					sendJson(res, 200, { providers, modelsByProvider, fallback });
-				})();
-			},
-		}),
-	);
+					const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
+					modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
+						.map((m) => (m as { id?: string }).id ?? '')
+						.filter((id) => id.length > 0);
+				} catch { modelsByProvider[p.id] = []; }
+			}
+			const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+			sendJson(res, 200, { providers, modelsByProvider, fallback });
+		})();
+	});
 
 	// AI 提交信息生成（POST，SSE 流式）：取暂存 diff → 调 llm.stream → 逐 chunk 推送。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/ai-commit',
-			handler: (req, res) => {
-				if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
-				void (async () => {
-					const body = await readBody(req);
-					const repo = typeof body.repo === 'string' ? body.repo : '';
-					if (!repo) { sendJson(res, 400, { error: '缺少 repo' }); return; }
-					const llm = aiDeps?.getLlm?.() as { stream?: (opts: unknown) => AsyncIterable<{ content?: string }> } | undefined;
-					if (!llm || typeof llm.stream !== 'function') { sendJson(res, 503, { error: 'llm 服务不可用' }); return; }
+	registerMethodRoute('/dsh-source-control/gg/ai-commit', 'POST', (req, res) => {
+		void (async () => {
+			const body = await readBody(req);
+			const repo = typeof body.repo === 'string' ? body.repo : '';
+			if (!repo) { sendJson(res, 400, { error: '缺少 repo' }); return; }
+			const llm = aiDeps?.getLlm?.() as { stream?: (opts: unknown) => AsyncIterable<{ content?: string }> } | undefined;
+			if (!llm || typeof llm.stream !== 'function') { sendJson(res, 503, { error: 'llm 服务不可用' }); return; }
 
-					// 模型解析：请求指定 > agent 默认（附警告）
-					let provider = typeof body.provider === 'string' ? body.provider : '';
-					let model = typeof body.model === 'string' ? body.model : '';
-					let warning = '';
-					if (provider === '' || model === '') {
-						const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
-						if (fallback !== null) { provider = fallback.provider; model = fallback.model; warning = '未配置专用模型，使用当前会话模型'; }
-						else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
+			// 模型解析：请求指定 > agent 默认（附警告）
+			let provider = typeof body.provider === 'string' ? body.provider : '';
+			let model = typeof body.model === 'string' ? body.model : '';
+			let warning = '';
+			if (provider === '' || model === '') {
+				const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+				if (fallback !== null) { provider = fallback.provider; model = fallback.model; warning = '未配置专用模型，使用当前会话模型'; }
+				else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
+			}
+
+			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
+			const amend = body.amend === true;
+			const diff = await collectDiff(repo, amend);
+			if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
+
+			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
+			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
+			const language = typeof body.language === 'string' ? body.language.trim() : '';
+			const systemPrompt = AI_COMMIT_PROMPTS.system
+				+ languageDirective(language)
+				+ (rules.length > 0 ? '\n\n' + rules : '');
+			const off = await canDisableReasoning(llm, provider, model);
+			const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
+			const streamOpts: Record<string, unknown> = {
+				provider,
+				model,
+				system: systemPrompt,
+				messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
+				maxTokens: 512,
+				temperature: 0,
+			};
+			if (off) streamOpts.reasoningEffort = 'off';
+
+			res.writeHead(200, {
+				'content-type': 'text/event-stream; charset=utf-8',
+				'cache-control': 'no-store',
+				'connection': 'keep-alive',
+			});
+			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+			if (warning !== '') sse('warning', warning);
+
+			const startTime = Date.now();
+			/*
+			 * 首个输出增量到达的时刻，作为 tok/s 的计时起点。
+			 *
+			 * 起点不含请求上传与提示词处理时间。`text-delta` 与 `reasoning-delta` 都算
+			 * 输出：`usage.outputTokens` 包含推理 token。
+			 */
+			let firstOutputTime: number | null = null;
+			let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
+			try {
+				const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
+				for await (const chunk of stream) {
+					if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+						if (firstOutputTime === null) firstOutputTime = Date.now();
+						sse('chunk', chunk.text);
+					} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+						if (firstOutputTime === null) firstOutputTime = Date.now();
+					} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
+					else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
+						const f = chunk.reason.failure;
+						const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
+						sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 					}
-
-					// 修补上一次提交时，把上一提交的改动一并纳入 diff。
-					const amend = body.amend === true;
-					const diff = await collectDiff(repo, amend);
-					if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
-
-					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
-					// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
-					const language = typeof body.language === 'string' ? body.language.trim() : '';
-					const systemPrompt = AI_COMMIT_PROMPTS.system
-						+ languageDirective(language)
-						+ (rules.length > 0 ? '\n\n' + rules : '');
-					const off = await canDisableReasoning(llm, provider, model);
-					const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
-					const streamOpts: Record<string, unknown> = {
-						provider,
-						model,
-						system: systemPrompt,
-						messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
-						maxTokens: 512,
-						temperature: 0,
-					};
-					if (off) streamOpts.reasoningEffort = 'off';
-
-					res.writeHead(200, {
-						'content-type': 'text/event-stream; charset=utf-8',
-						'cache-control': 'no-store',
-						'connection': 'keep-alive',
-					});
-					const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-					if (warning !== '') sse('warning', warning);
-
-					const startTime = Date.now();
-					/*
-					 * 首个输出增量到达的时刻，作为 tok/s 的计时起点。
-					 *
-					 * 起点不含请求上传与提示词处理时间。`text-delta` 与 `reasoning-delta` 都算
-					 * 输出：`usage.outputTokens` 包含推理 token。
-					 */
-					let firstOutputTime: number | null = null;
-					let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
-					try {
-						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
-						for await (const chunk of stream) {
-							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-								if (firstOutputTime === null) firstOutputTime = Date.now();
-								sse('chunk', chunk.text);
-							} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-								if (firstOutputTime === null) firstOutputTime = Date.now();
-							} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
-							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
-								const f = chunk.reason.failure;
-								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
-								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
-							}
-						}
-						const endTime = Date.now();
-						const totalSec = (endTime - startTime) / 1000;
-						/*
-						 * 时长拆两段：`elapsed` 为解码时长（总时长扣除首 token 延迟），
-						 * `ttft` 为首 token 延迟。全程无输出时 ttft 为 0、elapsed 为总时长。
-						 */
-						const ttftSec = firstOutputTime === null ? 0 : (firstOutputTime - startTime) / 1000;
-						const elapsedSec = totalSec - ttftSec;
-						const outTok = usage?.outputTokens ?? 0;
-						const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
-						sse('stats', {
-							tps,
-							elapsed: elapsedSec.toFixed(1) + 's',
-							ttft: ttftSec.toFixed(1) + 's',
-							inputTokens: usage?.inputTokens ?? 0,
-							outputTokens: outTok,
-							cacheReadTokens: usage?.cacheReadTokens ?? 0,
-							cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
-						});
-						sse('done', '');
-					} catch (e) {
-						sse('error', e instanceof Error ? e.message : String(e));
-					}
-					res.end();
-				})();
-			},
-		}),
-	);
+				}
+				const endTime = Date.now();
+				const totalSec = (endTime - startTime) / 1000;
+				/*
+				 * 时长拆两段：`elapsed` 为解码时长（总时长扣除首 token 延迟），
+				 * `ttft` 为首 token 延迟。全程无输出时 ttft 为 0、elapsed 为总时长。
+				 */
+				const ttftSec = firstOutputTime === null ? 0 : (firstOutputTime - startTime) / 1000;
+				const elapsedSec = totalSec - ttftSec;
+				const outTok = usage?.outputTokens ?? 0;
+				const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
+				sse('stats', {
+					tps,
+					elapsed: elapsedSec.toFixed(1) + 's',
+					ttft: ttftSec.toFixed(1) + 's',
+					inputTokens: usage?.inputTokens ?? 0,
+					outputTokens: outTok,
+					cacheReadTokens: usage?.cacheReadTokens ?? 0,
+					cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+				});
+				sse('done', '');
+			} catch (e) {
+				sse('error', e instanceof Error ? e.message : String(e));
+			}
+			res.end();
+		})();
+	});
 
 	return disposers;
 }

@@ -4,6 +4,40 @@
 import type { Commit, RefItem } from '../shared/types.ts';
 
 /**
+ * 按哈希索引提交，跳过工作区伪提交。
+ *
+ * @param commits - 提交列表。
+ * @returns 哈希到提交的映射。
+ */
+function indexByHash(commits: readonly Commit[]): Map<string, Commit> {
+	const commitByHash = new Map<string, Commit>();
+	for (const commit of commits) {
+		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
+	}
+	return commitByHash;
+}
+
+/**
+ * 从一批起点沿父提交求可达集。
+ *
+ * @param starts - 起点哈希。
+ * @param commitByHash - 哈希到提交的映射。
+ * @returns 可达提交哈希集合（含起点自身）。
+ */
+function reachableFrom(starts: Iterable<string>, commitByHash: ReadonlyMap<string, Commit>): Set<string> {
+	const reachable = new Set<string>();
+	const queue = [...starts];
+	while (queue.length > 0) {
+		const hash = queue.shift() as string;
+		if (reachable.has(hash)) continue;
+		reachable.add(hash);
+		const commit = commitByHash.get(hash);
+		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
+	}
+	return reachable;
+}
+
+/**
  * 从提交列表收集所有引用（分支、远程、标签），去重后按类型排序。
  *
  * @param commits - 提交列表。
@@ -87,25 +121,13 @@ export function sortRefs(
  */
 export function currentBranchHashes(commits: readonly Commit[], head: string | null): Set<string> {
 	if (head === null) return new Set();
-	const commitByHash = new Map<string, Commit>();
-	for (const commit of commits) {
-		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
-	}
+	const commitByHash = indexByHash(commits);
 	let headHash: string | null = null;
 	for (const commit of commits) {
 		if ((commit.heads ?? []).includes(head)) { headHash = commit.hash; break; }
 	}
 	if (headHash === null) return new Set();
-	const reachable = new Set<string>();
-	const queue = [headHash];
-	while (queue.length > 0) {
-		const hash = queue.shift() as string;
-		if (reachable.has(hash)) continue;
-		reachable.add(hash);
-		const commit = commitByHash.get(hash);
-		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
-	}
-	return reachable;
+	return reachableFrom([headHash], commitByHash);
 }
 
 /** 该提交是否带贮藏标记。 */
@@ -125,10 +147,7 @@ function isStash(commit: Commit): boolean {
  */
 export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: ReadonlySet<string>): readonly Commit[] {
 	if (selectedNames.size === 0) return commits;
-	const commitByHash = new Map<string, Commit>();
-	for (const commit of commits) {
-		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
-	}
+	const commitByHash = indexByHash(commits);
 	const rootHashes = new Set<string>();
 	for (const commit of commits) {
 		if (commit.hash === '*') continue;
@@ -136,15 +155,7 @@ export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: R
 		for (const remote of commit.remotes ?? []) if (selectedNames.has(remote.name)) rootHashes.add(commit.hash);
 		for (const tag of commit.tags ?? []) if (selectedNames.has(tag.name)) rootHashes.add(commit.hash);
 	}
-	const reachable = new Set<string>();
-	const queue = [...rootHashes];
-	while (queue.length > 0) {
-		const hash = queue.shift() as string;
-		if (reachable.has(hash)) continue;
-		reachable.add(hash);
-		const commit = commitByHash.get(hash);
-		if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
-	}
+	const reachable = reachableFrom(rootHashes, commitByHash);
 	return commits.filter((commit) => commit.hash === '*' || isStash(commit) || reachable.has(commit.hash));
 }
 

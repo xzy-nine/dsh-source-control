@@ -82,14 +82,14 @@ export async function loadCommitMessage(cwd: string, hash: string, signal?: Abor
  *
  * @param cwd - 会话工作区路径。
  * @param hash - 提交哈希。
- * @returns 本地与远程分支短名。
+ * @returns 本地与远程分支短名，以及被别的工作树检出的本地分支名。
  */
-export async function branchesContaining(cwd: string, hash: string): Promise<{ local: string[]; remote: string[] }> {
+export async function branchesContaining(cwd: string, hash: string): Promise<{ local: string[]; remote: string[]; foreign: string[] }> {
 	const payload = await callApi(cwd, { command: 'branchesContaining', commitHash: hash });
 	const read = (value: unknown): string[] => Array.isArray(value)
 		? value.filter((item): item is string => typeof item === 'string')
 		: [];
-	return { local: read(payload.local), remote: read(payload.remote) };
+	return { local: read(payload.local), remote: read(payload.remote), foreign: read(payload.foreign) };
 }
 
 /** 差异内容。 */

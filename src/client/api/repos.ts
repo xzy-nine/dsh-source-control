@@ -117,6 +117,8 @@ export interface WorkingTreeSnapshot {
 	readonly upstream: string | null;
 	readonly ahead: number;
 	readonly behind: number;
+	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
+	readonly merging: boolean;
 }
 
 /**
@@ -124,7 +126,7 @@ export interface WorkingTreeSnapshot {
  *
  * @param cwd - 仓库路径。
  * @param signal - 取消信号。
- * @returns 变更条目与分支、上游、领先/落后数。
+ * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
 export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal): Promise<WorkingTreeSnapshot> {
 	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot' }, signal);
@@ -135,6 +137,7 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal)
 		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
 		behind: typeof payload.behind === 'number' ? payload.behind : 0,
+		merging: payload.merging === true,
 	};
 }
 
@@ -162,8 +165,12 @@ export interface GraphData {
 	readonly remotes: Remote[];
 	/** 本批使用的贮藏列表；未取仓库信息时为调用方给出的那份。 */
 	readonly stashes: GraphStash[];
-	/** 下一页的游标（本页最后一条的 hash）；无更多时为 null。 */
+	/** 是否还有更多提交未返回。 */
 	readonly moreCommitsAvailable: boolean;
+	/** 下一个窗口的偏移量；按宿主 `git log` 记录数计，翻页直接用它。 */
+	readonly nextSkip: number;
+	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
+	readonly foreignBranches: string[];
 }
 
 /** 提交图读取选项。 */
@@ -191,6 +198,20 @@ export interface LoadGraphOptions {
 	/** 已知当前分支名；未取仓库信息时用它填充 `head`。 */
 	readonly branch?: string | null;
 	readonly signal?: AbortSignal;
+}
+
+/**
+ * 请宿主作废其内存缓存。
+ *
+ * 写操作已由宿主执行层自动作废该仓库的缓存；本命令覆盖外部进程改动仓库的情形——那种改动
+ * 不产生写事件，宿主无从得知，只能由读到 HEAD 变化的客户端显式请求。
+ *
+ * @param cwd - 会话工作区路径，作为 repo 传给宿主。
+ * @param signal - 取消信号。
+ * @returns 无。
+ */
+export async function invalidateHostCache(cwd: string, signal?: AbortSignal): Promise<void> {
+	await callApi(cwd, { command: 'invalidateCache' }, signal);
 }
 
 /**
@@ -241,5 +262,10 @@ export async function loadGraph(cwd: string, {
 		remotes: Array.isArray(remotes) ? remotes : [],
 		stashes: Array.isArray(stashes) ? stashes : [],
 		moreCommitsAvailable: commitsPayload.moreCommitsAvailable === true,
+		// 宿主未给出时按「本页之后」推进，兼容旧宿主的响应。
+		nextSkip: typeof commitsPayload.nextSkip === 'number' ? commitsPayload.nextSkip : skip + (Array.isArray(commitsPayload.commits) ? commitsPayload.commits.length : 0),
+		foreignBranches: Array.isArray(commitsPayload.foreignBranches)
+			? (commitsPayload.foreignBranches as unknown[]).filter((name): name is string => typeof name === 'string')
+			: [],
 	};
 }

@@ -2,7 +2,7 @@
  * 工作区变更、暂存提交、工作树移除、贮藏与清理操作。
  */
 import type { WorkingTreeEntry } from '../shared/types.ts';
-import { callApi, callApiRaw } from './http.ts';
+import { callApi, callApiRaw, commandError } from './http.ts';
 
 /**
  * 读取工作区变更。
@@ -87,7 +87,7 @@ export async function removeWorktree(repo: string, worktreePath: string, force: 
  */
 export async function applyStash(cwd: string, selector: string, reinstateIndex = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'applyStash', selector, reinstateIndex });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -100,7 +100,7 @@ export async function applyStash(cwd: string, selector: string, reinstateIndex =
  */
 export async function branchFromStash(cwd: string, selector: string, branchName: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'branchFromStash', selector, branchName });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -112,7 +112,7 @@ export async function branchFromStash(cwd: string, selector: string, branchName:
  */
 export async function dropStash(cwd: string, selector: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'dropStash', selector });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -125,7 +125,7 @@ export async function dropStash(cwd: string, selector: string): Promise<string |
  */
 export async function popStash(cwd: string, selector: string, reinstateIndex = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'popStash', selector, reinstateIndex });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -138,7 +138,7 @@ export async function popStash(cwd: string, selector: string, reinstateIndex = f
  */
 export async function pushStash(cwd: string, message: string, includeUntracked = true): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'pushStash', message, includeUntracked });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -150,5 +150,5 @@ export async function pushStash(cwd: string, message: string, includeUntracked =
  */
 export async function cleanUntrackedFiles(cwd: string, directories = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'cleanUntrackedFiles', directories });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }

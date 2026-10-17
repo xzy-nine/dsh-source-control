@@ -4,10 +4,10 @@
  * 探测一律非交互（`BatchMode=yes`）并带连接超时，避免在缺少凭据时挂起等待输入；
  * 检测不写入 `known_hosts` 等本地状态。
  */
-import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import nodePath from 'node:path';
+import { collectProcess } from './child-process.js';
 
 /** 本地 SSH 状态。 */
 export interface SshStatus {
@@ -52,31 +52,12 @@ interface SshResult {
  * @returns 退出码与输出。
  */
 function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> {
-	return new Promise((resolve) => {
-		const child = spawn('ssh', [...args], {
-			windowsHide: true,
-			env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-		});
-		let stdout = '';
-		let stderr = '';
-		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (result: SshResult): void => {
-			if (settled) return;
-			settled = true;
-			if (timer !== undefined) clearTimeout(timer);
-			resolve(result);
-		};
-		timer = setTimeout(() => {
-			child.kill();
-			finish({ code: -1, stdout, stderr: stderr === '' ? 'SSH 探测超时' : stderr });
-		}, timeoutMs);
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-		child.on('error', (error: Error) => finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message }));
-		child.on('close', (code) => finish({ code: code === null ? -1 : code, stdout, stderr }));
+	return collectProcess({
+		command: 'ssh',
+		args,
+		env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+		timeoutMs,
+		timeoutMessage: 'SSH 探测超时',
 	});
 }
 
@@ -91,7 +72,7 @@ function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> 
  */
 export function parseSshVersion(stdout: string, stderr: string): string | null {
 	const lines = `${stderr}\n${stdout}`.split('\n').map((line) => line.trim()).filter((line) => line !== '');
-	return lines.find((line) => /^OpenSSH/i.test(line)) ?? lines[0] ?? null;
+	return lines.find((line) => /^OpenSSH/i.test(line)) ?? lines.at(0) ?? null;
 }
 
 /**

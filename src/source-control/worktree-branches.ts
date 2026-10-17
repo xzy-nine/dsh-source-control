@@ -136,7 +136,7 @@ export async function readHeadRef(repo: string): Promise<HeadRef | null> {
  * @param dir - 目录。
  * @returns git 目录绝对路径；该目录没有 `.git` 或格式不可识别时为 null。
  */
-async function gitDirAt(dir: string): Promise<string | null> {
+export async function gitDirAt(dir: string): Promise<string | null> {
 	const gitEntry = join(dir, '.git');
 	try {
 		const info = await stat(gitEntry);

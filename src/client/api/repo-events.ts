@@ -8,6 +8,7 @@
  * 数据为发生变更的仓库路径。连接断开后按退避重连，因此宿主重启或页面长时间挂起都能自愈。
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
+import { readStreamText } from './stream.ts';
 
 /** 事件流地址。 */
 const EVENTS_PATH = '/dsh-source-control/gg/events';
@@ -78,7 +79,7 @@ export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent |
 	if (event !== 'repository-write' || data === '') return null;
 	try {
 		const parsed = JSON.parse(data) as { repo?: unknown };
-		return typeof parsed?.repo === 'string' && parsed.repo !== '' ? { repo: parsed.repo } : null;
+		return typeof parsed.repo === 'string' && parsed.repo !== '' ? { repo: parsed.repo } : null;
 	} catch {
 		return null;
 	}
@@ -121,19 +122,21 @@ export interface EventStreamTransport {
  * @returns 取消订阅；调用后不再重连。
  */
 export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions): () => void {
-	let disposed = false;
+	const disposed = { current: false };
+	/** 订阅是否已取消。 */
+	const isDisposed = (): boolean => disposed.current;
 	let controller: AbortController | null = null;
 	let timer: number | null = null;
 	let attempt = 0;
 
 	const scheduleReconnect = (): void => {
-		if (disposed) return;
+		if (disposed.current) return;
 		attempt++;
 		timer = window.setTimeout(() => { timer = null; void connect(); }, reconnectDelayMs(attempt));
 	};
 
 	const connect = async (): Promise<void> => {
-		if (disposed) return;
+		if (isDisposed()) return;
 		controller = new AbortController();
 		try {
 			const response = await fetch(EVENTS_PATH, {
@@ -144,31 +147,27 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 			if (!response.ok || response.body === null) throw new Error('事件流不可用');
 			attempt = 0;
 			options.onState?.('open');
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
 			let buffer = '';
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done || disposed) break;
-				buffer += decoder.decode(value, { stream: true });
+			await readStreamText(response.body, (text) => {
+				buffer += text;
 				const { frames, rest } = splitFrames(buffer);
 				buffer = rest;
 				for (const frame of frames) {
 					const event = parseRepositoryWriteFrame(frame);
 					if (event !== null) options.onWrite(event);
 				}
-			}
+			}, () => disposed.current);
 		} catch {
 			/* 连接失败或中断：走重连 */
 		} finally {
 			options.onState?.('closed');
 		}
-		if (!disposed) scheduleReconnect();
+		if (!disposed.current) scheduleReconnect();
 	};
 
 	void connect();
 	return () => {
-		disposed = true;
+		disposed.current = true;
 		if (timer !== null) window.clearTimeout(timer);
 		controller?.abort();
 	};

@@ -4,7 +4,7 @@
  * 子进程一律用数组参数直接 spawn、不经 shell，与 `working-tree.ts` 的 git 执行方式一致。
  * 需要凭据的操作在没有 `gh` 或未登录时返回可读错误，由前端提示。
  */
-import { spawn } from 'node:child_process';
+import { collectProcess } from './child-process.js';
 
 /** 一次 `gh` 调用的结果。 */
 export interface GhResult {
@@ -50,30 +50,12 @@ export interface GhOwner {
  * @returns 退出码与输出。
  */
 function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
-	return new Promise((resolve) => {
-		const child = spawn('gh', [...args], {
-			cwd,
-			windowsHide: true,
-			// 非交互：任何需要用户输入的提示都直接失败，避免子进程挂起等待。
-			env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
-		});
-		let stdout = '';
-		let stderr = '';
-		let settled = false;
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-		child.on('error', (error: Error) => {
-			if (settled) return;
-			settled = true;
-			resolve({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message });
-		});
-		child.on('close', (code) => {
-			if (settled) return;
-			settled = true;
-			resolve({ code: code === null ? -1 : code, stdout, stderr });
-		});
+	return collectProcess({
+		command: 'gh',
+		args,
+		cwd,
+		// 非交互：任何需要用户输入的提示都直接失败，避免子进程挂起等待。
+		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
 	});
 }
 

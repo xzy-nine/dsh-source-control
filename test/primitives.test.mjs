@@ -99,10 +99,11 @@ test('图形区拖拽手柄在图形标题之前', () => {
 
 test('图形区高度跟随拖动方向', () => {
 	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-	const source = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
-	const start = source.indexOf('const startGraphResize');
-	const body = source.slice(start, source.indexOf("window.addEventListener('pointermove'", start));
-	assert.match(body, /commitGraphHeight\(startHeight - \(moveEvent\.clientY - startY\)\)/, '拖拽位移必须取负号');
+	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
+	assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
+	const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');
+	assert.match(resize, /commit\(startHeight \+ \(direction === 'up' \? -delta : delta\)\)/, '拖拽位移必须按方向取符号');
 });
 
 test('改动文件区在图形区内展开', () => {
@@ -413,11 +414,23 @@ test('异步打开提交菜单前先取出事件字段', () => {
 	assert.match(body, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
 });
 
-test('工作树分支从图形区与删除候选中排除', () => {
-	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
+test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
+	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们，也不能在本工作树检出。
+	// 这类分支仍作为标签显示：它们确实指向该提交，隐藏会让图形区少一个真实存在的分支。
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
-	assert.match(routes, /heads: \(commit\.heads \?\? \[\]\)\.filter/, 'loadCommits 应过滤分支标签');
+	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
+	assert.match(routes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
+	assert.ok(!/heads: commit\.heads\.filter/.test(routes), '不得再从 heads 里删除占用分支');
+	assert.match(routes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
+
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	assert.match(menu, /function localBranchItem/, '本地分支操作应统一经占用判定');
+	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
+	for (const builder of ['checkoutBranch', 'renameBranch', 'deleteBranch', 'mergeIntoBranch']) {
+		const body = menu.slice(menu.indexOf(`${builder}: (ctx, meta) =>`));
+		assert.ok(body.includes('localBranchItem') || body.includes('isForeignBranch'), `${builder} 应判定占用分支`);
+	}
+
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
 	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
 	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');
@@ -428,11 +441,16 @@ test('工作树右键提供移除入口', () => {
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
 	assert.match(panel, /await removeWorktree\(/, '应调用移除命令');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
+	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录。
+	assert.match(panel, /await removeWorktree\(node\.path, node\.path, true\)/, '以工作树路径为目标执行移除');
+	assert.match(panel, /\}, node\.path\);\s*\n\s*\/\/ 该节点已不存在/, '移除后不对被删工作树做刷新');
 	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
 	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');
 	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
+	assert.match(host, /removalCwd/, '移除时的工作目录应避开被删目录');
+	assert.match(host, /resolveGitCommonDir/, '应退回 git 公共目录');
 });
 
 test('删除当前分支时提示而非静默失败', () => {

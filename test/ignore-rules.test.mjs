@@ -3,9 +3,12 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { importHostModule } from './lib-import.mjs';
+
+const mod = await importHostModule('source-control/ignore-rules.js');
+const {
 	appendIgnoreRule, hasIgnoreRule, ignoreEntriesOf, ignoreRuleOf, isIgnorableTarget, normalizeIgnoreTarget,
-} from '../src/source-control/ignore-rules.ts';
+} = mod;
 
 test('目标路径规范化为相对仓库根的形式', () => {
 	assert.equal(normalizeIgnoreTarget('./src/app.ts'), 'src/app.ts');

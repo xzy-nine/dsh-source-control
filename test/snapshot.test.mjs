@@ -6,15 +6,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
-const built = existsSync(routesPath);
-const skip = built ? false : '未找到宿主产物 lib/src/source-control/routes.js';
 
 /**
  * 建一个已配置身份的临时仓库。
@@ -72,6 +70,19 @@ async function snapshot(call) {
 	return call({ command: 'loadWorkingTreeSnapshot' });
 }
 
+/**
+ * 作废宿主缓存后请求一次快照。
+ *
+ * 快照结果在宿主有短暂 TTL，测试里两次快照之间仓库已变化，必须先作废才能读到新状态。
+ *
+ * @param call - 发送命令的函数。
+ * @returns 快照响应。
+ */
+async function freshSnapshot(call) {
+	await call({ command: 'invalidateCache' });
+	return snapshot(call);
+}
+
 /** 条目按契约四字段归一，用于逐条对照。 */
 function normalize(entries) {
 	return entries.map((entry) => ({
@@ -99,7 +110,7 @@ async function snapshotWithWorkingTree(call) {
 	return { snap, working };
 }
 
-test('干净仓库：entries 为空且无上游', { skip }, async () => {
+test('干净仓库：entries 为空且无上游', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -120,7 +131,7 @@ test('干净仓库：entries 为空且无上游', { skip }, async () => {
 	}
 });
 
-test('工作区快照：未跟踪、已修改、已暂存、重命名（含中文路径）与排序', { skip }, async () => {
+test('工作区快照：未跟踪、已修改、已暂存、重命名（含中文路径）与排序', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -182,7 +193,7 @@ test('工作区快照：未跟踪、已修改、已暂存、重命名（含中�
 	}
 });
 
-test('分离头指针：branch 为 null', { skip }, async () => {
+test('分离头指针：branch 为 null', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -202,7 +213,7 @@ test('分离头指针：branch 为 null', { skip }, async () => {
 	}
 });
 
-test('无上游：已配置远程但分支未跟踪时 upstream 为 null、ahead/behind 为 0', { skip }, async () => {
+test('无上游：已配置远程但分支未跟踪时 upstream 为 null、ahead/behind 为 0', async () => {
 	const { repo, git, write } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-snap-untracked-'));
 	try {
@@ -225,7 +236,7 @@ test('无上游：已配置远程但分支未跟踪时 upstream 为 null、ahead
 	}
 });
 
-test('有上游：领先 1 落后 0', { skip }, async () => {
+test('有上游：领先 1 落后 0', async () => {
 	const { repo, git, write } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-snap-ahead-'));
 	try {
@@ -252,7 +263,7 @@ test('有上游：领先 1 落后 0', { skip }, async () => {
 	}
 });
 
-test('上游引用被删除但 branch.<name>.remote 仍在：upstream 为 null、ahead/behind 为 0', { skip }, async () => {
+test('上游引用被删除但 branch.<name>.remote 仍在：upstream 为 null、ahead/behind 为 0', async () => {
 	const { repo, git, write } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-snap-gone-'));
 	try {
@@ -279,7 +290,7 @@ test('上游引用被删除但 branch.<name>.remote 仍在：upstream 为 null�
 	}
 });
 
-test('对照：复杂工作区下快照条目与 loadWorkingTree 条目一致', { skip }, async () => {
+test('对照：复杂工作区下快照条目与 loadWorkingTree 条目一致', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('keep.txt', 'keep\n');
@@ -316,7 +327,7 @@ test('对照：复杂工作区下快照条目与 loadWorkingTree 条目一致', 
 	}
 });
 
-test('非仓库：error 为字符串且其余字段为空值', { skip }, async () => {
+test('非仓库：error 为字符串且其余字段为空值', async () => {
 	const absent = join(tmpdir(), `gg-snap-absent-${Date.now()}`);
 	const snap = await snapshot(await makeCaller(absent));
 	assert.equal(snap.command, 'loadWorkingTreeSnapshot');
@@ -326,10 +337,70 @@ test('非仓库：error 为字符串且其余字段为空值', { skip }, async (
 	assert.equal(snap.upstream, null);
 	assert.equal(snap.ahead, 0);
 	assert.equal(snap.behind, 0);
+	assert.equal(snap.merging, false, '读取失败时按未合并处理');
 	assert.equal((snap.entries ?? []).length, 0, '失败时 entries 应为空');
 });
 
-test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', { skip }, async () => {
+test('合并状态：冲突合并与无冲突 --no-commit 合并都判为合并中', async () => {
+	/*
+	 * 两种情形都要覆盖：`--no-commit` 的无冲突合并没有 unmerged 记录，
+	 * 只看 `git status` 的冲突列会漏判。
+	 */
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('checkout', '-q', '-b', 'feat');
+		write('a.txt', 'feat\n');
+		git('commit', '-q', '-am', 'feat');
+		git('checkout', '-q', 'main');
+		write('a.txt', 'main\n');
+		git('commit', '-q', '-am', 'main');
+
+		const call = await makeCaller(repo);
+		assert.equal((await freshSnapshot(call)).merging, false, '未合并时为 false');
+
+		// 冲突合并：git 以非零退出，合并状态仍建立。
+		try { git('merge', 'feat'); } catch { /* 冲突时 git 非零退出 */ }
+		assert.equal((await freshSnapshot(call)).merging, true, '冲突合并应判为合并中');
+
+		const aborted = await call({ command: 'abortMerge' });
+		assert.equal(aborted.error, null, '中止合并应成功');
+		const after = await freshSnapshot(call);
+		assert.equal(after.merging, false, '中止后不再处于合并中');
+		assert.equal(after.entries.length, 0, '中止后工作区恢复干净');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并状态：无冲突的 --no-commit 合并也判为合并中', async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('checkout', '-q', '-b', 'feat');
+		write('b.txt', 'feat\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'feat');
+		git('checkout', '-q', 'main');
+		write('c.txt', 'main\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'main');
+		git('merge', '--no-ff', '--no-commit', 'feat');
+
+		const call = await makeCaller(repo);
+		const snap = await snapshot(call);
+		assert.equal(snap.entries.some((entry) => entry.index === 'U' || entry.worktree === 'U'), false, '没有冲突记录');
+		assert.equal(snap.merging, true, '仍应判为合并中');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -348,7 +419,7 @@ test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', { s
 	}
 });
 
-test('贮藏契约：链接工作树按公共目录读到主仓库的贮藏', { skip }, async () => {
+test('贮藏契约：链接工作树按公共目录读到主仓库的贮藏', async () => {
 	const { repo, git, write } = makeRepo();
 	const worktree = mkdtempSync(join(tmpdir(), 'gg-snap-wt-'));
 	rmSync(worktree, { recursive: true, force: true });
@@ -371,7 +442,7 @@ test('贮藏契约：链接工作树按公共目录读到主仓库的贮藏', { 
 	}
 });
 
-test('首屏贮藏契约：loadCommits 带 withRepoInfo 时自带仓库信息与贮藏', { skip }, async () => {
+test('首屏贮藏契约：loadCommits 带 withRepoInfo 时自带仓库信息与贮藏', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -392,7 +463,7 @@ test('首屏贮藏契约：loadCommits 带 withRepoInfo 时自带仓库信息与
 	}
 });
 
-test('刷新契约：不带 withRepoInfo 时响应 repoInfo 为 null，即使仓库有贮藏', { skip }, async () => {
+test('刷新契约：不带 withRepoInfo 时响应 repoInfo 为 null，即使仓库有贮藏', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -412,7 +483,7 @@ test('刷新契约：不带 withRepoInfo 时响应 repoInfo 为 null，即使仓
 	}
 });
 
-test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐条一致', { skip }, async () => {
+test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐条一致', async () => {
 	const { repo, git, write } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-snap-remote-'));
 	try {
@@ -437,7 +508,13 @@ test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐�
 		});
 
 		assert.equal(first.repoInfo.stashes.length, 1);
-		assert.equal(refresh.repoInfo, null, '刷新批不取仓库信息');
+		/*
+		 * 第二次调用与首屏参数相同，因此命中宿主缓存：命中时仓库信息一并回投（同样来自宿主
+		 * 缓存），客户端不必再补一次 `loadRepoInfo`。未命中缓存时该字段为 null。
+		 */
+		assert.ok(refresh.repoInfo !== null, '命中缓存时一并回投仓库信息');
+		assert.deepEqual(refresh.repoInfo.stashes, first.repoInfo.stashes, '回投的贮藏与首屏一致');
+		assert.deepEqual(refresh.repoInfo.remotes, first.repoInfo.remotes, '回投的远程与首屏一致');
 		assert.deepEqual(refresh.commits, first.commits, '给出已知远程与贮藏时提交图应与首屏批逐条一致');
 		assert.deepEqual(refresh.tags, first.tags);
 		assert.equal(refresh.head, first.head);
@@ -450,7 +527,7 @@ test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐�
 	}
 });
 
-test('首屏贮藏契约：调用方给出空贮藏列表时不插入贮藏行', { skip }, async () => {
+test('首屏贮藏契约：调用方给出空贮藏列表时不插入贮藏行', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -503,7 +580,7 @@ async function assertRemoteNames(call, git) {
 	return names;
 }
 
-test('远程名契约：只有 url 的远程', { skip }, async () => {
+test('远程名契约：只有 url 的远程', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -518,7 +595,7 @@ test('远程名契约：只有 url 的远程', { skip }, async () => {
 	}
 });
 
-test('远程名契约：只有 fetch 无 url 的远程', { skip }, async () => {
+test('远程名契约：只有 fetch 无 url 的远程', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
@@ -536,7 +613,7 @@ test('远程名契约：只有 fetch 无 url 的远程', { skip }, async () => {
 	}
 });
 
-test('远程名契约：有 url 与只有 fetch 的远程并存', { skip }, async () => {
+test('远程名契约：有 url 与只有 fetch 的远程并存', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');

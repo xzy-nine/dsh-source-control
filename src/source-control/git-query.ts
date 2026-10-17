@@ -6,7 +6,7 @@
  */
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
+import { forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
 import { resolveGitCommonDir, readHeadRef } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -151,9 +151,9 @@ export async function getCommits(
 		 * 放在日志之前会把两路并行压成串行。
 		 */
 		const remoteNames = await remotes;
-		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits), error: null };
+		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits, skip), error: null };
 	} catch (error) {
-		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, error: errorText(error) };
+		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, nextSkip: skip, error: errorText(error) };
 	}
 }
 
@@ -358,22 +358,13 @@ async function stashLogExists(commonDir: string): Promise<boolean> {
  */
 export async function getStatus(repo: string): Promise<StatusFiles> {
 	const stdout = await gitOrThrow(['status', '-s', '--untracked-files=all', '--porcelain', '-z'], repo);
-	const fields = stdout.split('\0');
 	const deleted: string[] = [];
 	const untracked: string[] = [];
-	let index = 0;
-	while (index < fields.length) {
-		const record = fields[index];
-		index++;
-		if (record === undefined || record.length < 4) break;
-		const indexStatus = record.slice(0, 1);
-		const worktreeStatus = record.slice(1, 2);
-		const path = record.slice(3);
-		if (indexStatus === 'D' || worktreeStatus === 'D') deleted.push(path);
-		else if (indexStatus === '?' || worktreeStatus === '?') untracked.push(path);
-		/* 重命名与复制的记录后紧跟一条原路径记录。 */
-		if (indexStatus === 'R' || indexStatus === 'C' || worktreeStatus === 'R' || worktreeStatus === 'C') index++;
-	}
+	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
+	forEachStatusRecord(stdout, Number.POSITIVE_INFINITY, (record) => {
+		if (record.index === 'D' || record.worktree === 'D') deleted.push(record.path);
+		else if (record.index === '?' || record.worktree === '?') untracked.push(record.path);
+	}, true);
 	return { deleted, untracked };
 }
 
@@ -383,17 +374,37 @@ export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
 }
 
 /**
+ * 判定是否处于未完成的合并。
+ *
+ * `MERGE_HEAD` 只在合并进行中且尚未提交时存在，因此它同时覆盖「有冲突待解决」与
+ * 「无冲突但用了 `--no-commit`」两种情形；`git status` 的 unmerged 记录只覆盖前者。
+ *
+ * @param repo - 仓库路径。
+ * @returns 合并进行中时为 true。
+ */
+async function mergeInProgress(repo: string): Promise<boolean> {
+	const result = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
+	return result.code === 0;
+}
+
+/**
  * 读取工作区快照：变更条目与当前分支的上游关系。
  *
  * 两条信息来自同一次 `git status --porcelain=v2 --branch -z -uall`：面板进入仓库与写操作后的
  * 对账都同时需要它们，分两次读会各起一个子进程，且两次输出之间工作区可能已经变化。
+ *
+ * 合并状态另起一次 `rev-parse --verify MERGE_HEAD`：它不在 status 输出里，且无法由 unmerged
+ * 记录完整判定（`--no-commit` 的无冲突合并没有 unmerged 记录）。
  *
  * @param repo - 仓库路径。
  * @returns 快照；读取失败时条目为空、分支为 null 且 `error` 为错误文本。
  */
 export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeSnapshotData> {
 	try {
-		const stdout = await gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo);
+		const [stdout, merging] = await Promise.all([
+			gitOrThrow(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], repo),
+			mergeInProgress(repo),
+		]);
 		const snapshot = parseStatusSnapshot(stdout);
 		return {
 			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
@@ -402,10 +413,14 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			upstream: snapshot.upstream,
 			ahead: snapshot.ahead,
 			behind: snapshot.behind,
+			merging,
 			error: null,
 		};
 	} catch (error) {
-		return { entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, error: errorText(error) };
+		return {
+			entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, merging: false,
+			error: errorText(error),
+		};
 	}
 }
 
@@ -458,6 +473,38 @@ async function readConfig(repo: string, location?: 'local' | 'global'): Promise<
 }
 
 /**
+ * 构造引用枚举的公共参数。
+ *
+ * 引用集合与分支列表读的是同一批引用，起点固定为 `refs/heads` 与 `refs/tags`，远程分支按开关追加。
+ *
+ * @param format - `--format` 的格式串。
+ * @param showRemoteBranches - 是否包含远程分支。
+ * @returns git 参数数组。
+ */
+function forEachRefArgs(format: string, showRemoteBranches: boolean): string[] {
+	const args = ['for-each-ref', `--format=${format}`, 'refs/heads', 'refs/tags'];
+	if (showRemoteBranches) args.push('refs/remotes');
+	return args;
+}
+
+/**
+ * 一次枚举取回引用原始输出与 `HEAD` 文件内容。
+ *
+ * 两者互不依赖，同批发出；`head` 由 `HEAD` 文件解析得到，不起 `git rev-parse`。
+ *
+ * @param args - git 参数数组。
+ * @param repo - 仓库路径。
+ * @returns 引用枚举的标准输出与 `HEAD` 的解析结果。
+ */
+async function readRefsRaw(args: readonly string[], repo: string): Promise<{ stdout: string; headRef: HeadRef | null }> {
+	const [stdout, headRef] = await Promise.all([
+		gitOrThrow(args, repo),
+		readHeadRef(repo),
+	]);
+	return { stdout, headRef };
+}
+
+/**
  * 一次枚举读取引用集合与分支列表。
  *
  * 提交图与仓库信息读的是同一批引用，只是取值不同；一次 `for-each-ref` 同时得到两者，首屏因此
@@ -469,12 +516,7 @@ async function readConfig(repo: string, location?: 'local' | 'global'): Promise<
  * @returns 引用集合（`head` 已补入）、分支名列表与当前分支名。
  */
 export async function getRefsAndBranches(repo: string, showRemoteBranches: boolean, hideRemotes: readonly string[]): Promise<RefsAndBranches> {
-	const args = ['for-each-ref', `--format=${REF_BRANCH_FORMAT}`, 'refs/heads', 'refs/tags'];
-	if (showRemoteBranches) args.push('refs/remotes');
-	const [stdout, headRef] = await Promise.all([
-		gitOrThrow(args, repo),
-		readHeadRef(repo),
-	]);
+	const { stdout, headRef } = await readRefsRaw(forEachRefArgs(REF_BRANCH_FORMAT, showRemoteBranches), repo);
 	const parsed = parseRefsAndBranches(stdout, hideRemotes);
 	return { ...parsed, refs: { ...parsed.refs, head: resolveHeadHash(parsed.refs, headRef) } };
 }
@@ -577,13 +619,7 @@ export function getRefsForGraph(repo: string, showRemoteBranches: boolean, hideR
  * @returns 引用集合；`head` 为 HEAD 指向的提交哈希。
  */
 async function getRefs(repo: string, showRemoteBranches: boolean, showRemoteHeads: boolean, hideRemotes: readonly string[]): Promise<RefData> {
-	const args = ['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads', 'refs/tags'];
-	if (showRemoteBranches) args.push('refs/remotes');
-
-	const [stdout, headRef] = await Promise.all([
-		gitOrThrow(args, repo),
-		readHeadRef(repo),
-	]);
+	const { stdout, headRef } = await readRefsRaw(forEachRefArgs(REF_FORMAT, showRemoteBranches), repo);
 	const refs = parseRefs(stdout, hideRemotes, showRemoteHeads);
 	return { ...refs, head: resolveHeadHash(refs, headRef) };
 }

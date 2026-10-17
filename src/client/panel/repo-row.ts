@@ -34,20 +34,20 @@ export interface RepoRowProps {
  * @returns 行元素。
  */
 export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, headHash }: RepoRowProps): React.ReactElement {
-	const hasChildren = (node.children ?? []).length > 0;
+	const hasChildren = node.children.length > 0;
 	const isWorktree = node.kind === 'worktree';
 	const isSubmodule = node.kind === 'submodule';
 	const guides: React.ReactElement[] = [];
 	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
 	const branchName = (sync?.branch ?? node.branch) ?? '';
-	const isDetached = branchName === '' && headHash !== null && headHash !== undefined;
+	const isDetached = branchName === '' && headHash !== null;
 	const refText = isDetached ? headHash.slice(0, 7) : branchName;
 	return React.createElement(
 		'div',
 		{
-			className: cx(css.repo, active && css.isActive, node.available === false && css.isMissing),
+			className: cx(css.repo, active && css.isActive, !node.available && css.isMissing),
 			title: node.path,
-			onClick: () => onSelect(node),
+			onClick: () => { onSelect(node); },
 			onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => { event.preventDefault(); onMoreActions?.(node, event); },
 		},
 		...guides,

@@ -5,6 +5,8 @@
  * `git-query.ts` 与 `git-actions.ts`，两者共用这里的执行与错误处理。
  */
 import { spawn } from 'node:child_process';
+import { collectProcess } from './child-process.js';
+import { resolveGitCommonDir } from './worktree-branches.js';
 
 /**
  * 工作区变更的解析上限。
@@ -538,36 +540,26 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 }
 
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
-	return new Promise((resolve) => {
-		const child = spawn('git', [...args], { cwd, windowsHide: true, env: gitEnvironment() });
-		// 只有联网命令需要放宽超时；本地查询在正常机器上远快于上限。
-		const deadline = Date.now() + (isNetworkCommand(args) ? GIT_TIMEOUT_REMOTE_MS : GIT_TIMEOUT_LOCAL_MS);
-		let stdout = '';
-		let stderr = '';
-		let settled = false;
-		const finish = (result: GitResult): void => {
-			if (settled) return;
-			settled = true;
-			liveChildren.delete(child);
-			resolve(result);
-		};
-		// 超时由看护统一触发；收尾不依赖 close，避免 kill 不掉时调用方永久挂起。
-		liveChildren.set(child, {
-			deadline,
-			label: args[0] ?? '',
-			onTimeout: () => { finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : `git ${args[0] ?? ''} 超时未结束` }); },
-		});
-		ensureWatchdog();
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-		child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-		child.on('error', (error: Error) => {
-			finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : error.message });
-		});
-		child.on('close', (code) => {
-			finish({ code: code === null ? -1 : code, stdout, stderr });
-		});
+	// 只有联网命令需要放宽超时；本地查询在正常机器上远快于上限。
+	const deadline = Date.now() + (isNetworkCommand(args) ? GIT_TIMEOUT_REMOTE_MS : GIT_TIMEOUT_LOCAL_MS);
+	return collectProcess({
+		command: 'git',
+		args,
+		cwd,
+		env: gitEnvironment(),
+		onChild: (child, finish, partial) => {
+			// 超时由看护统一触发；收尾不依赖 close，避免 kill 不掉时调用方永久挂起。
+			liveChildren.set(child, {
+				deadline,
+				label: args[0] ?? '',
+				onTimeout: () => {
+					const { stdout, stderr } = partial();
+					finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : `git ${args[0] ?? ''} 超时未结束` });
+				},
+			});
+			ensureWatchdog();
+		},
+		onSettled: (child) => { liveChildren.delete(child); },
 	});
 }
 
@@ -588,6 +580,65 @@ export async function gitOrThrow(args: readonly string[], cwd: string): Promise<
 }
 
 /**
+ * 一条 `git status --porcelain -z` 记录的字段。
+ *
+ * 记录格式为 `XY PATH`；重命名/复制的记录后紧跟一条原路径记录。
+ */
+export interface StatusRecord {
+	/** 索引状态码（第一列）。 */
+	readonly index: string;
+	/** 工作区状态码（第二列）。 */
+	readonly worktree: string;
+	/** 当前路径。 */
+	readonly path: string;
+	/** 重命名/复制前的路径；其余为 null。 */
+	readonly origPath: string | null;
+	/** 本记录消耗的记录数：重命名/复制为 2，其余为 1。 */
+	readonly consumed: number;
+}
+
+/**
+ * 逐条遍历 `git status --porcelain -z` 的输出。
+ *
+ * `-z` 以 NUL 分隔记录，路径不做转义；重命名与复制的记录后紧跟一条原路径记录。
+ *
+ * @param stdout - git 的标准输出。
+ * @param limit - 最多解析的记录数；超出即截断。
+ * @param visit - 每条记录的回调。
+ * @param renameInWorktree - 工作区列出现 `R`/`C` 时是否也算重命名记录。
+ * @returns 无。
+ */
+export function forEachStatusRecord(
+	stdout: string,
+	limit: number,
+	visit: (record: StatusRecord) => void,
+	renameInWorktree = false,
+): void {
+	const fields: (string | undefined)[] = stdout.split('\0');
+	let index = 0;
+	let count = 0;
+	while (index < fields.length && count < limit) {
+		const record = fields[index];
+		index++;
+		if (record === undefined || record.length < 4) break;
+		const indexStatus = record.slice(0, 1);
+		const worktreeStatus = record.slice(1, 2);
+		const path = record.slice(3);
+		const renamed = indexStatus === 'R' || indexStatus === 'C'
+			|| (renameInWorktree && (worktreeStatus === 'R' || worktreeStatus === 'C'));
+		let origPath: string | null = null;
+		let consumed = 1;
+		if (renamed) {
+			origPath = fields[index] ?? null;
+			index++;
+			consumed = 2;
+		}
+		count++;
+		visit({ index: indexStatus, worktree: worktreeStatus, path, origPath, consumed });
+	}
+}
+
+/**
  * 解析 `git status --porcelain -z` 的输出。
  *
  * 记录格式为 `XY PATH`，重命名/复制时追加 `ORIG` 记录；`-z` 以 NUL 分隔，路径不做转义。
@@ -597,23 +648,10 @@ export async function gitOrThrow(args: readonly string[], cwd: string): Promise<
  * @returns 工作区变更列表。
  */
 export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEntry[] {
-	const fields = stdout.split('\0');
 	const entries: WorkingTreeEntry[] = [];
-	let index = 0;
-	while (index < fields.length && entries.length < limit) {
-		const record = fields[index];
-		index++;
-		if (record === undefined || record.length < 4) break;
-		const indexStatus = record.slice(0, 1);
-		const worktreeStatus = record.slice(1, 2);
-		const path = record.slice(3);
-		let origPath: string | null = null;
-		if (indexStatus === 'R' || indexStatus === 'C') {
-			origPath = fields[index] ?? null;
-			index++;
-		}
-		entries.push({ path, origPath, index: indexStatus, worktree: worktreeStatus });
-	}
+	forEachStatusRecord(stdout, limit, (record) => {
+		entries.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
+	});
 	return entries;
 }
 
@@ -631,6 +669,8 @@ export interface WorkingTreeSnapshot {
 	readonly ahead: number;
 	/** 相对上游的落后提交数。 */
 	readonly behind: number;
+	/** 是否处于未完成的合并：`MERGE_HEAD` 存在即为 true。 */
+	readonly merging: boolean;
 }
 
 /** v2 的 XY 列取值：`.` 表示该侧无改动，按空列输出。 */
@@ -661,7 +701,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	while (index < tokens.length && entries.length < limit) {
 		const token = tokens[index];
 		index++;
-		if (token === undefined || token === '') continue;
+		if (token === '') continue;
 		if (token.startsWith('# ')) {
 			const space = token.indexOf(' ', 2);
 			const key = space === -1 ? token.slice(2) : token.slice(2, space);
@@ -672,8 +712,8 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
 				const [aheadRaw, behindRaw] = value.split(' ');
-				const ahead = Number.parseInt((aheadRaw ?? '').replace('+', ''), 10);
-				const behind = Number.parseInt((behindRaw ?? '').replace('-', ''), 10);
+				const ahead = Number.parseInt(aheadRaw.replace('+', ''), 10);
+				const behind = Number.parseInt(behindRaw.replace('-', ''), 10);
 				ab = { ahead: Number.isFinite(ahead) ? ahead : 0, behind: Number.isFinite(behind) ? behind : 0 };
 			}
 			continue;
@@ -698,7 +738,10 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
 		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
 	}
-	return { entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null, ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0 };
+	return {
+		entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
+		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false,
+	};
 }
 
 /**
@@ -785,6 +828,10 @@ export async function discardPaths(repo: string, paths: readonly string[], untra
  * 主工作树不能被移除（git 报 `is a main working tree`）。工作树内有未提交改动时 git 会
  * 拒绝并要求 `--force`；目录已不存在时 git 会直接清理登记项，因此两种情况都不需要重试。
  *
+ * git 子进程的工作目录不能落在被移除的工作树里：Windows 上该目录正被占用，删除会
+ * `Permission denied`；工作目录本身也可能在移除后不存在，导致后续命令 `spawn git ENOENT`。
+ * 因此从 `repo` 所在的工作树之外执行，拿不到仓库根时退回仓库自身的 git 公共目录。
+ *
  * @param repo - 仓库路径（任意工作树均可）。
  * @param worktreePath - 要移除的工作树路径。
  * @param force - 是否强制移除有改动的工作树。
@@ -792,5 +839,18 @@ export async function discardPaths(repo: string, paths: readonly string[], untra
  */
 export async function removeWorktree(repo: string, worktreePath: string, force: boolean): Promise<void> {
 	const args = force ? ['worktree', 'remove', '--force', worktreePath] : ['worktree', 'remove', worktreePath];
-	await gitOrThrow(args, repo);
+	await gitOrThrow(args, await removalCwd(repo));
+}
+
+/**
+ * 取移除工作树时 git 的工作目录。
+ *
+ * 用仓库的 git 公共目录：它不在任何工作树内，因此既不会因待移除的工作树正被占用而
+ * 删除失败，也不会在移除后消失。定位不到时退回调用方给出的路径。
+ *
+ * @param repo - 调用方给出的仓库路径。
+ * @returns 可用的工作目录。
+ */
+async function removalCwd(repo: string): Promise<string> {
+	return await resolveGitCommonDir(repo) ?? repo;
 }
