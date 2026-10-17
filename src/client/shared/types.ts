@@ -249,6 +249,8 @@ export interface PanelState {
 	/** 进行中的操作；不同仓库、不同影响面之间互不阻塞。 */
 	busy: readonly BusyEntry[];
 	remotes: Remote[];
+	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
+	foreignBranches: readonly string[];
 }
 
 /** AI 生成提交信息的用量统计。 */

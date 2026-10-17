@@ -209,3 +209,20 @@ export function entriesEqual(left: readonly WorkingTreeEntry[], right: readonly 
 		a.path === b.path && (a.origPath ?? null) === (b.origPath ?? null)
 		&& a.index === b.index && a.worktree === b.worktree);
 }
+
+/**
+ * 两个分支名列表是否相等。
+ *
+ * 顺序不敏感：分支名的排列不影响界面，只影响可用操作的判定。
+ *
+ * @param left - 左侧列表。
+ * @param right - 右侧列表。
+ * @returns 集合相同（不计顺序与重复）时为 true。
+ */
+export function branchNamesEqual(left: readonly string[], right: readonly string[]): boolean {
+	const a = new Set(left);
+	const b = new Set(right);
+	if (a.size !== b.size) return false;
+	for (const name of a) if (!b.has(name)) return false;
+	return true;
+}

@@ -414,11 +414,23 @@ test('异步打开提交菜单前先取出事件字段', () => {
 	assert.match(body, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
 });
 
-test('工作树分支从图形区与删除候选中排除', () => {
-	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
+test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
+	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们，也不能在本工作树检出。
+	// 这类分支仍作为标签显示：它们确实指向该提交，隐藏会让图形区少一个真实存在的分支。
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
-	assert.match(routes, /heads: commit\.heads\.filter\(\(name: string\) => !foreign\.has\(name\)\)/, 'loadCommits 应过滤分支标签');
+	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
+	assert.match(routes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
+	assert.ok(!/heads: commit\.heads\.filter/.test(routes), '不得再从 heads 里删除占用分支');
+	assert.match(routes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
+
+	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	assert.match(menu, /function localBranchItem/, '本地分支操作应统一经占用判定');
+	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
+	for (const builder of ['checkoutBranch', 'renameBranch', 'deleteBranch', 'mergeIntoBranch']) {
+		const body = menu.slice(menu.indexOf(`${builder}: (ctx, meta) =>`));
+		assert.ok(body.includes('localBranchItem') || body.includes('isForeignBranch'), `${builder} 应判定占用分支`);
+	}
+
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
 	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
 	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');

@@ -215,7 +215,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('branchesContaining', async () => {
 				const hash = str('commitHash');
 				const localOut = await gitOrThrow(['branch', '--contains', hash, '--format=%(refname:short)'], repo);
-				// 别的工作树占用的分支不可删除，不作为候选；当前工作树自己的分支保留。
+				// 别的工作树占用的分支不可删除，不作为删除候选；`foreign` 另行回投，供调用方禁用相关操作。
 				const foreign = await branchesOfOtherWorktrees(repo);
 				const local = localOut.split('\n').map((line) => line.trim())
 					.filter((line) => line !== '' && !foreign.has(line));
@@ -224,7 +224,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const remoteNames = new Set((await gitOrThrow(['remote'], repo)).split('\n').map((line) => line.trim()));
 				const remote = remoteOut.split('\n').map((line) => line.trim())
 					.filter((line) => line !== '' && !line.endsWith('/HEAD') && !remoteNames.has(line));
-				return { repo, local, remote };
+				return { repo, local, remote, foreign: [...foreign] };
 			});
 			break;
 
@@ -390,14 +390,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					batchSource?.then((batch) => batch?.refs ?? getRefsForGraph(repo, showRemoteBranches, hideRemotes)) ?? undefined,
 				);
 				const batch = batchSource === null ? null : await batchSource;
-				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
+				/*
+				 * 别的工作树占用的分支照常作为标签显示：它们确实指向该提交，只是不能在本工作树里
+				 * 检出或删除。这类分支名随响应回投，客户端据此禁用相应操作。
+				 */
 				const foreign = await foreignSource;
-				const all = foreign.size === 0
-					? data.commits
-					: data.commits.map((commit) => ({
-						...commit,
-						heads: commit.heads.filter((name: string) => !foreign.has(name)),
-					}));
+				const all = data.commits;
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
 				const last = all.at(-1);
 				respond({
@@ -411,6 +409,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					tags: data.tags,
 					moreCommitsAvailable: data.moreCommitsAvailable,
 					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
+					// 别的工作树占用的分支：客户端据此禁用检出、删除与重命名。
+					foreignBranches: [...foreign],
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});

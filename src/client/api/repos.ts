@@ -164,6 +164,8 @@ export interface GraphData {
 	readonly stashes: GraphStash[];
 	/** 下一页的游标（本页最后一条的 hash）；无更多时为 null。 */
 	readonly moreCommitsAvailable: boolean;
+	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
+	readonly foreignBranches: string[];
 }
 
 /** 提交图读取选项。 */
@@ -241,5 +243,8 @@ export async function loadGraph(cwd: string, {
 		remotes: Array.isArray(remotes) ? remotes : [],
 		stashes: Array.isArray(stashes) ? stashes : [],
 		moreCommitsAvailable: commitsPayload.moreCommitsAvailable === true,
+		foreignBranches: Array.isArray(commitsPayload.foreignBranches)
+			? (commitsPayload.foreignBranches as unknown[]).filter((name): name is string => typeof name === 'string')
+			: [],
 	};
 }

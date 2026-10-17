@@ -52,6 +52,8 @@ export interface GraphMenuDeps {
 	readonly handleCreatePullRequest: () => Promise<void>;
 	/** 当前分支是否有可创建 PR 的远程：无 GitHub 远程时该项不显示。 */
 	readonly canCreatePullRequest: boolean;
+	/** 被别的工作树检出的本地分支：照常显示，但检出、删除与重命名不可用。 */
+	readonly foreignBranches?: readonly string[];
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
 	readonly setCommitMessage: (message: string) => void;
 }
@@ -73,6 +75,13 @@ interface MenuContext {
 	readonly tagNames: readonly string[];
 	/** 该提交是否在当前分支上；重置这类改写当前分支的操作据此显示。 */
 	readonly onCurrentBranch: boolean;
+	/**
+	 * 被别的工作树检出的本地分支。
+	 *
+	 * 这类分支照常作为标签显示，但检出、删除与重命名都会失败或改变别的工作树的检出状态，
+	 * 菜单项因此置为不可用并说明原因。
+	 */
+	readonly foreignBranches: ReadonlySet<string>;
 }
 
 /** 一项引用操作：元数据来自 `menu-actions.json`，处理函数在 `BUILDERS` 里按 id 绑定。 */
@@ -94,6 +103,33 @@ interface MenuAction extends MenuActionMeta {
  */
 function shortBranchName(name: string): string {
 	return name.replace(/^[^/]+\//, '');
+}
+
+/** 分支被别的工作树检出时给出的说明；用于不可用的菜单项。 */
+const FOREIGN_BRANCH_HINT = '该分支正被别的工作树检出，不能在此工作树操作';
+
+/**
+ * 判定一个本地分支能否在本工作树操作。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 本地分支名。
+ * @returns 被别的工作树检出时为 true。
+ */
+function isForeignBranch(ctx: MenuContext, name: string): boolean {
+	return ctx.foreignBranches.has(name);
+}
+
+/**
+ * 把一项本地分支操作渲染成菜单项：被别的工作树检出时置灰并说明原因。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 本地分支名。
+ * @param item - 可用时的菜单项。
+ * @returns 菜单项。
+ */
+function localBranchItem(ctx: MenuContext, name: string, item: ContextMenuItem): ContextMenuItem {
+	if (!isForeignBranch(ctx, name)) return item;
+	return { ...item, disabled: true, title: `${item.title}（${FOREIGN_BRANCH_HINT}）` };
 }
 
 /**
@@ -196,10 +232,10 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 		const { deps } = ctx;
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;
-			return {
+			return localBranchItem(ctx, name, {
 				title: meta.title, disabled: name === deps.head,
 				onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
-			};
+			});
 		}
 		/*
 		 * 提交行右键：本地尖端分支与远程尖端分支都列。远程分支按去掉远程名的短名检出，由 git 决定
@@ -211,7 +247,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 		return {
 			title: meta.commitTitle,
 			children: [
-				...ctx.tipBranches.map((name) => ({
+				...ctx.tipBranches.map((name) => localBranchItem(ctx, name, {
 					title: name === deps.head ? fillText(meta.commitCurrentTitle, { name }) : name,
 					disabled: name === deps.head,
 					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
@@ -239,7 +275,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 	renameBranch: (ctx, meta) => {
 		if (ctx.ref === null) return null;
 		const name = ctx.ref.name;
-		return {
+		return localBranchItem(ctx, name, {
 			title: meta.title, disabled: name === ctx.deps.head,
 			onClick: () => {
 				void (async () => {
@@ -247,7 +283,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 					if (newName !== null && newName !== '' && newName !== name) void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
 				})();
 			},
-		};
+		});
 	},
 	mergeIntoBranch: (ctx, meta) => {
 		const { deps } = ctx;
@@ -276,14 +312,16 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;
 			if (name === deps.head || !ctx.tipBranches.includes(name)) return null;
-			return { title: meta.title, onClick: mergeInto(name) };
+			return localBranchItem(ctx, name, { title: meta.title, onClick: mergeInto(name) });
 		}
 		const tips = ctx.tipBranches.filter((name) => name !== deps.head);
 		if (tips.length === 0) return null;
-		if (tips.length === 1) return { title: fillText(meta.commitItemTitle, { name: tips[0] }), onClick: mergeInto(tips[0]) };
+		if (tips.length === 1) {
+			return localBranchItem(ctx, tips[0], { title: fillText(meta.commitItemTitle, { name: tips[0] }), onClick: mergeInto(tips[0]) });
+		}
 		return {
 			title: meta.commitTitle,
-			children: tips.map((name) => ({ title: name, onClick: mergeInto(name) })),
+			children: tips.map((name) => localBranchItem(ctx, name, { title: name, onClick: mergeInto(name) })),
 		};
 	},
 	rebaseOnto: (ctx, meta) => {
@@ -344,7 +382,12 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			})();
 		};
 		if (ctx.ref !== null) {
-			return { title: meta.title, danger: meta.danger, onClick: remove(ctx.ref.name) };
+			const name = ctx.ref.name;
+			// 被别的工作树检出的分支同样不可删除：git 会以 `used by worktree` 拒绝。
+			if (isForeignBranch(ctx, name)) {
+				return { title: meta.title, danger: meta.danger, disabled: true };
+			}
+			return { title: meta.title, danger: meta.danger, onClick: remove(name) };
 		}
 		/*
 		 * 提交行右键只列以该提交为尖端的本地与远程分支：包含该提交的分支（在其之上的分支）
@@ -357,7 +400,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 		return {
 			title: meta.commitTitle, danger: meta.danger,
 			children: [
-				...localTips.map((name) => ({ title: name, onClick: remove(name) })),
+				...localTips.map((name) => localBranchItem(ctx, name, { title: name, onClick: remove(name) })),
 				...remoteTips.map((name) => ({ title: name, onClick: removeRemote(name) })),
 			],
 		};
@@ -512,8 +555,8 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 	// 分支只由尖端提交标识，中间提交需按「包含」关系查询；查询失败时退回该提交自身的引用。
 	// 包含关系只用于判断提交是否已在远程上（GitHub 入口），不作为可操作的分支候选。
 	const containing = deps.workingTreePath === null || isUncommitted
-		? { local: [], remote: [] }
-		: await branchesContaining(repo, commit.hash).catch(() => ({ local: [], remote: [] }));
+		? { local: [], remote: [], foreign: [] }
+		: await branchesContaining(repo, commit.hash).catch(() => ({ local: [], remote: [], foreign: [] }));
 	return {
 		deps, commit, ref, repo, isUncommitted,
 		tipBranches: isUncommitted ? [] : (commit.heads ?? []),
@@ -526,6 +569,7 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 			: (commit.remotes ?? []).map((remote) => remote.name),
 		tagNames: (commit.tags ?? []).map((tag) => tag.name),
 		onCurrentBranch: isUncommitted || currentHashes.has(commit.hash),
+		foreignBranches: new Set([...(deps.foreignBranches ?? []), ...containing.foreign]),
 	};
 }
 

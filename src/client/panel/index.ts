@@ -1324,7 +1324,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		workingTreePath, run, remotes: state.remotes, handleCreateArchive, head: state.head,
 		notify, setCommitMessage: setMessage,
 		handleCreatePullRequest, canCreatePullRequest,
-	}), [workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify, handleCreatePullRequest, canCreatePullRequest]);
+		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
+		foreignBranches: state.foreignBranches,
+	}), [
+		workingTreePath, run, state.remotes, handleCreateArchive, state.head, notify,
+		handleCreatePullRequest, canCreatePullRequest, state.foreignBranches,
+	]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {

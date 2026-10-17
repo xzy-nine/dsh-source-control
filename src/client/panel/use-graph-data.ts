@@ -17,7 +17,7 @@ import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { createCommitGraphCache } from '../graph/cache.ts';
 import { isRepoBusy } from './busy.ts';
-import { commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from './commit-diff.ts';
+import { branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from './commit-diff.ts';
 
 import type { BusyEntry, PanelState, Remote, RepoSync, Settings } from '../shared/types.ts';
 
@@ -175,7 +175,7 @@ export function useGraphData({
 }: UseGraphDataOptions): UseGraphDataResult {
 	const [state, setState] = React.useState<PanelState>({
 		phase: 'loading', error: null, commits: [], head: null, more: false,
-		entries: [], selectedHash: null, detail: null, busy: [], remotes: [],
+		entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [],
 	});
 	const generationRef = React.useRef(0);
 	const controllerRef = React.useRef<AbortController | null>(null);
@@ -311,11 +311,13 @@ export function useGraphData({
 					&& commitsListEqual(previous.commits, commits);
 				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
 				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
+				const foreignSame = keep && branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
 				return {
 					...previous, phase: 'ready', error: null,
 					commits: commitsSame ? previous.commits : commits,
 					head: graph.head, more: graph.moreCommitsAvailable,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
+					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
 					entries: entriesSame ? previous.entries : snapshot.entries,
 					detail: mode === 'full' ? null : previous.detail,
 				};
@@ -403,6 +405,10 @@ export function useGraphData({
 					...current,
 					commits: [...current.commits, ...graph.commits.filter((commit) => !known.has(commit.hash))],
 					more: graph.moreCommitsAvailable,
+					// 翻页同样带回当前工作树的占用分支：新增提交上可能挂着这些分支。
+					foreignBranches: branchNamesEqual(current.foreignBranches, graph.foreignBranches)
+						? current.foreignBranches
+						: graph.foreignBranches,
 				};
 			});
 		} catch (error) {

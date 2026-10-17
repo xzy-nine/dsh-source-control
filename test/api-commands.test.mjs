@@ -454,6 +454,34 @@ test('提交对比与两提交文件差异', async () => {
 	}
 });
 
+test('被别的工作树检出的分支照常出现在提交图上，并回投占用名单', async () => {
+	const { repo, git } = makeRepo();
+	const worktreePath = mkdtempSync(join(tmpdir(), 'gg-api-wt-'));
+	try {
+		git('branch', 'linked');
+		git('worktree', 'add', '-q', worktreePath, 'linked');
+
+		const call = await makeCaller(repo);
+		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: false, hideRemotes: [] });
+		const commits = await call({
+			command: 'loadCommits', branches: null, maxCommits: 50, showTags: true, showRemoteBranches: true,
+			includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
+			remotes: info.remotes, hideRemotes: [], stashes: [],
+		});
+		const heads = commits.commits.flatMap((commit) => commit.heads ?? []);
+		assert.ok(heads.includes('main'), '当前分支照常显示');
+		assert.ok(heads.includes('linked'), '被别的工作树检出的分支照常显示');
+		assert.deepEqual(commits.foreignBranches, ['linked'], '占用名单随响应回投，供客户端禁用操作');
+
+		const containing = await call({ command: 'branchesContaining', commitHash: git('rev-parse', 'HEAD').trim() });
+		assert.ok(!containing.local.includes('linked'), '删除候选中排除占用分支');
+		assert.deepEqual(containing.foreign, ['linked'], 'branchesContaining 同样回投占用名单');
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true });
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('未知命令被拒绝且非仓库路径不抛错', async () => {
 	const { repo } = makeRepo();
 	try {
