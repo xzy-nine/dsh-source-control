@@ -6,3 +6,8 @@ allowBuilds:
 
 overrides:
   "@asamuzakjp/css-color": 7.1.5
+
+# pnpm 11 默认要求依赖发布满 1440 分钟才能安装。本插件紧跟 DSH 的预发布版本
+# （cordis、ui-primitives 均为当天发布的 rc），该门槛会让 CI 必然失败。
+# 依赖来源由 peerDependencies 的范围与 lockfile 共同限定，因此这里关闭时长门槛。
+minimumReleaseAge: 0
