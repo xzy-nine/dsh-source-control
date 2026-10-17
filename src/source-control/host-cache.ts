@@ -89,6 +89,19 @@ function keyOf(repo: string): string {
 }
 
 /**
+ * 把字符串列表编码进缓存键。
+ *
+ * 用 JSON 保留列表边界：远程名、分支名与标签名都允许含逗号，用逗号拼接会让「一个含逗号的
+ * 名字」与「多个名字」得到同一个键。null 表示调用方未指定该项，与空列表区分。
+ *
+ * @param values - 列表；null 表示未指定。
+ * @returns 编码文本。
+ */
+function listKey(values: readonly string[] | null): string {
+	return values === null ? '*' : JSON.stringify(values);
+}
+
+/**
  * 生成仓库信息的缓存键。
  *
  * @param repo - 仓库路径。
@@ -100,7 +113,7 @@ function repoInfoKey(repo: string, params: RepoInfoParams): string {
 		keyOf(repo),
 		params.showRemoteBranches ? 1 : 0,
 		params.showStashes ? 1 : 0,
-		params.hideRemotes.join(','),
+		listKey(params.hideRemotes),
 	].join('\0');
 }
 
@@ -166,8 +179,8 @@ export function graphKey(repo: string, params: {
 		keyOf(repo), params.maxCommits, params.skip, params.ordering,
 		params.showTags ? 1 : 0, params.showRemoteBranches ? 1 : 0, params.showStashes ? 1 : 0,
 		params.onlyFollowFirstParent ? 1 : 0, params.includeCommitsMentionedByReflogs ? 1 : 0,
-		params.hideRemotes.join(','), params.branches === null ? '*' : params.branches.join(','),
-		params.remotes.join(','), params.stashes.join(','),
+		listKey(params.hideRemotes), listKey(params.branches),
+		listKey(params.remotes), listKey(params.stashes),
 	].join('\0');
 }
 

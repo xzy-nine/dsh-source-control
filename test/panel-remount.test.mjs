@@ -46,7 +46,7 @@ test('宿主在读取路径上命中缓存', () => {
 	 */
 	assert.match(
 		hostCache,
-		/function repoInfoKey\(repo: string, params: RepoInfoParams\): string \{[\s\S]{0,400}?params\.hideRemotes\.join/,
+		/function repoInfoKey\(repo: string, params: RepoInfoParams\): string \{[\s\S]{0,400}?listKey\(params\.hideRemotes\)/,
 		'仓库信息缓存键应含取数参数',
 	);
 	assert.match(
@@ -56,8 +56,17 @@ test('宿主在读取路径上命中缓存', () => {
 	);
 	assert.match(
 		hostCache,
-		/params\.remotes\.join\(','\), params\.stashes\.join\(','\)/,
+		/listKey\(params\.hideRemotes\), listKey\(params\.branches\),\s*listKey\(params\.remotes\), listKey\(params\.stashes\)/,
 		'提交图缓存键应含远程标识与贮藏标识',
+	);
+	/*
+	 * 列表按 JSON 编码：远程名与分支名允许含逗号，逗号拼接会让「一个含逗号的名字」与
+	 * 「多个名字」得到同一个键。
+	 */
+	assert.match(
+		hostCache,
+		/function listKey\(values: readonly string\[\] \| null\): string \{[\s\S]{0,200}?JSON\.stringify\(values\)/,
+		'列表应保留边界地编码进缓存键',
 	);
 });
 
