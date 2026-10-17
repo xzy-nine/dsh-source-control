@@ -136,20 +136,6 @@ const UNCOMMITTED_MESSAGE = /^Uncommitted Changes \((\d+)\)$/;
 export const UNCOMMITTED_HASH = '*';
 
 /**
- * 取真实提交数：排除未提交伪提交行。
- *
- * 分页偏移按真实提交数计算——伪提交行不是 git 提交，不在 `git log` 输出里。
- *
- * @param commits - 提交列表，可能含首位伪提交行。
- * @returns 真实提交条数。
- */
-export function realCommitCount(commits: readonly Commit[]): number {
-	let count = 0;
-	for (const commit of commits) if (commit.hash !== UNCOMMITTED_HASH) count += 1;
-	return count;
-}
-
-/**
  * 按工作区条目数修正未提交伪提交行。
  *
  * 该行的文案是当时的条目数。宿主不在提交图里插入该行（为它读一次工作区会让提交图的返回时刻

@@ -17,7 +17,7 @@ import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
 import {
-	branchNamesEqual, commitsListEqual, entriesEqual, realCommitCount, remotesListEqual,
+	branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual,
 	uncommittedParentOf, withUncommittedCount,
 } from './commit-diff.ts';
 
@@ -212,7 +212,7 @@ export function useGraphData({
 	const [state, setState] = React.useState<PanelState>(() => {
 		const remembered = workingTreePath === null ? undefined : rememberedPanelState(workingTreePath);
 		return remembered ?? {
-			phase: 'loading', error: null, commits: [], head: null, more: false,
+			phase: 'loading', error: null, commits: [], head: null, more: false, nextSkip: 0,
 			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [],
 		};
 	});
@@ -276,7 +276,7 @@ export function useGraphData({
 			const remembered = rememberedPanelState(workingTreePath);
 			setState((previous) => ({
 				...previous,
-				...(remembered ?? { phase: 'loading' as const, commits: [], entries: [], head: null, more: false }),
+				...(remembered ?? { phase: 'loading' as const, commits: [], entries: [], head: null, more: false, nextSkip: 0 }),
 				error: null,
 			}));
 		} else {
@@ -348,7 +348,7 @@ export function useGraphData({
 				return {
 					...previous, phase: 'ready', error: null,
 					commits: commitsSame ? previous.commits : commits,
-					head: graph.head, more: graph.moreCommitsAvailable,
+					head: graph.head, more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
 					entries: entriesSame ? previous.entries : snapshot.entries,
@@ -409,10 +409,12 @@ export function useGraphData({
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
 		/*
-		 * 偏移量必须按**真实提交数**算：列表首位可能是未提交伪提交行（`hash === '*'`），
-		 * 它不是 git 提交、不在 `git log` 的输出里，计入偏移会让下一页多跳过一条真实提交。
+		 * 偏移量用宿主上一窗口给出的 `nextSkip`。
+		 *
+		 * 不能按已加载列表长度算：列表里除了 `git log` 记录，还可能插入贮藏行与未提交伪提交行，
+		 * 它们都不是日志记录，计入会让偏移虚高、下一页跳过真实提交，或停在原地反复请求同一窗口。
 		 */
-		const skip = realCommitCount(stateRef.current.commits);
+		const skip = stateRef.current.nextSkip;
 		const generation = generationRef.current;
 		try {
 			const graph = await loadGraph(workingTreePath, {
@@ -428,10 +430,23 @@ export function useGraphData({
 			if (generation !== generationRef.current) return;
 			setState((current) => {
 				const known = new Set(current.commits.map((commit) => commit.hash));
+				const fresh = graph.commits.filter((commit) => !known.has(commit.hash));
+				/*
+				 * 没有取回任何新提交时保持原引用并收敛 `more`。
+				 *
+				 * 图形区按 `commits` 引用判断「是否取回了新数据」并据此再补取一次；无条件新建数组
+				 * 会让「这一页全是已加载提交」也被判成有进展，于是反复请求同一偏移，表现为页末
+				 * 不停翻页。偏移没有推进时不可能再取到新内容。
+				 */
+				if (fresh.length === 0) {
+					if (!current.more) return current;
+					return { ...current, more: false, nextSkip: graph.nextSkip };
+				}
 				return {
 					...current,
-					commits: [...current.commits, ...graph.commits.filter((commit) => !known.has(commit.hash))],
+					commits: [...current.commits, ...fresh],
 					more: graph.moreCommitsAvailable,
+					nextSkip: graph.nextSkip,
 					// 翻页同样带回当前工作树的占用分支：新增提交上可能挂着这些分支。
 					foreignBranches: branchNamesEqual(current.foreignBranches, graph.foreignBranches)
 						? current.foreignBranches

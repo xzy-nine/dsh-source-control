@@ -369,6 +369,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 						head: cachedGraph.head,
 						tags: cachedGraph.tags,
 						moreCommitsAvailable: cachedGraph.moreCommitsAvailable,
+						nextSkip: cachedGraph.nextSkip,
 						nextCursor: cachedGraph.moreCommitsAvailable && lastCached !== undefined ? lastCached.hash : null,
 						foreignBranches: cachedGraph.foreignBranches,
 						repoInfo: cachedInfo,
@@ -468,7 +469,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				if (data.error === null) {
 					writeGraph(repo, graphParams, {
 						commits: all, head: data.head, tags: data.tags,
-						moreCommitsAvailable: data.moreCommitsAvailable, foreignBranches: [...foreign],
+						moreCommitsAvailable: data.moreCommitsAvailable, nextSkip: data.nextSkip,
+						foreignBranches: [...foreign],
 					});
 				}
 				respond({
@@ -481,6 +483,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					head: data.head,
 					tags: data.tags,
 					moreCommitsAvailable: data.moreCommitsAvailable,
+					nextSkip: data.nextSkip,
 					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
 					// 别的工作树占用的分支：客户端据此禁用检出、删除与重命名。
 					foreignBranches: [...foreign],

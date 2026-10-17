@@ -162,8 +162,10 @@ export interface GraphData {
 	readonly remotes: Remote[];
 	/** 本批使用的贮藏列表；未取仓库信息时为调用方给出的那份。 */
 	readonly stashes: GraphStash[];
-	/** 下一页的游标（本页最后一条的 hash）；无更多时为 null。 */
+	/** 是否还有更多提交未返回。 */
 	readonly moreCommitsAvailable: boolean;
+	/** 下一个窗口的偏移量；按宿主 `git log` 记录数计，翻页直接用它。 */
+	readonly nextSkip: number;
 	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
 	readonly foreignBranches: string[];
 }
@@ -257,6 +259,8 @@ export async function loadGraph(cwd: string, {
 		remotes: Array.isArray(remotes) ? remotes : [],
 		stashes: Array.isArray(stashes) ? stashes : [],
 		moreCommitsAvailable: commitsPayload.moreCommitsAvailable === true,
+		// 宿主未给出时按「本页之后」推进，兼容旧宿主的响应。
+		nextSkip: typeof commitsPayload.nextSkip === 'number' ? commitsPayload.nextSkip : skip + (Array.isArray(commitsPayload.commits) ? commitsPayload.commits.length : 0),
 		foreignBranches: Array.isArray(commitsPayload.foreignBranches)
 			? (commitsPayload.foreignBranches as unknown[]).filter((name): name is string => typeof name === 'string')
 			: [],

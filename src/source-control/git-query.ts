@@ -151,9 +151,9 @@ export async function getCommits(
 		 * 放在日志之前会把两路并行压成串行。
 		 */
 		const remoteNames = await remotes;
-		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits), error: null };
+		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits, skip), error: null };
 	} catch (error) {
-		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, error: errorText(error) };
+		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, nextSkip: skip, error: errorText(error) };
 	}
 }
 

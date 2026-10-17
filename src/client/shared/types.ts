@@ -237,6 +237,13 @@ export interface PanelState {
 	head: string | null;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
+	/**
+	 * 下一个窗口在宿主 `git log` 中的偏移量。
+	 *
+	 * 由宿主按日志记录数给出，不按 `commits` 长度推导：列表里可能含贮藏行与未提交伪提交行，
+	 * 它们都不是日志记录。
+	 */
+	nextSkip: number;
 	entries: WorkingTreeEntry[];
 	selectedHash: string | null;
 	/**

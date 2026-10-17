@@ -27,12 +27,10 @@ import { interfaceLanguage, showTranslateEntry, translatedTitle } from '../panel
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
+import { shouldLoadMore } from './auto-load.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
-
-/** 距底部不足该像素数时自动取下一页。 */
-const AUTO_LOAD_THRESHOLD = 120;
 
 /** 可视区之外额外渲染的行数：滚动时留出缓冲，避免边缘出现空白。 */
 const OVERSCAN_ROWS = 12;
@@ -672,6 +670,8 @@ export function CommitGraph({
 	const loadPendingRef = React.useRef(false);
 	/** 兜底解除占用的定时器：失败时提交列表不变，靠它恢复可重试。 */
 	const settleTimerRef = React.useRef<number | null>(null);
+	/** 上一次触发取数时的滚动位置：同一位置只触发一次，避免惯性滚动连锁取数。 */
+	const lastLoadedAtRef = React.useRef<number | null>(null);
 	/** 上次请求时的提交列表：引用变化说明确实取回了新数据。 */
 	const requestedForRef = React.useRef(commits);
 	const [loadingMore, setLoadingMore] = React.useState(false);
@@ -691,26 +691,45 @@ export function CommitGraph({
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 
-	/** 解除占用，允许下一次滚动再取。 */
-	const releasePending = React.useCallback(() => {
+	/**
+	 * 解除占用，允许下一次滚动再取。
+	 *
+	 * @param allowRetry - 是否清掉「上次触发位置」。成功取回时不清：位置未变说明用户还停在原处，
+	 * 惯性滚动的后续事件不该再触发一页。超时兜底时清，让同一位置在失败后仍能重试。
+	 * @returns 无。
+	 */
+	const releasePending = React.useCallback((allowRetry: boolean) => {
 		if (settleTimerRef.current !== null) {
 			clearTimeout(settleTimerRef.current);
 			settleTimerRef.current = null;
 		}
 		loadPendingRef.current = false;
+		if (allowRetry) lastLoadedAtRef.current = null;
 		setLoadingMore(false);
 	}, []);
 
-	/** 滚动到距底部 AUTO_LOAD_THRESHOLD 以内时取下一页。 */
-	const maybeLoadMore = React.useCallback(() => {
+	/**
+	 * 滚动到距底部 `AUTO_LOAD_THRESHOLD` 以内时取下一页。
+	 *
+	 * 判定见 `auto-load.ts` 的 `shouldLoadMore`。
+	 *
+	 * @param chain - 是否为「上一页刚取回」之后的自动续取。
+	 * @returns 无。
+	 */
+	const maybeLoadMore = React.useCallback((chain: boolean) => {
 		const element = graphRef.current;
-		if (element === null || !moreRef.current || loadPendingRef.current) return;
-		const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
-		if (remaining > AUTO_LOAD_THRESHOLD) return;
+		const metrics = element === null
+			? null
+			: { scrollHeight: element.scrollHeight, scrollTop: element.scrollTop, clientHeight: element.clientHeight };
+		if (!shouldLoadMore({
+			hasMore: moreRef.current, pending: loadPendingRef.current, metrics, chain,
+			lastLoadedAt: lastLoadedAtRef.current,
+		})) return;
+		lastLoadedAtRef.current = metrics === null ? null : metrics.scrollTop;
 		loadPendingRef.current = true;
 		setLoadingMore(true);
 		// 失败时提交列表不变，超时兜底解除，避免一次失败后自动加载永久停摆。
-		settleTimerRef.current = setTimeout(releasePending, LOAD_MORE_SETTLE_MS);
+		settleTimerRef.current = setTimeout(() => { releasePending(true); }, LOAD_MORE_SETTLE_MS);
 		onLoadMoreRef.current();
 	}, [releasePending]);
 
@@ -746,7 +765,8 @@ export function CommitGraph({
 		const element = graphRef.current;
 		if (element === null) return;
 		setScrollTop(element.scrollTop);
-		maybeLoadMore();
+		// 用户滚动：不限制续取，只要到了底部就取。
+		maybeLoadMore(false);
 		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
 		scrollSettleRef.current = window.setTimeout(() => {
 			scrollSettleRef.current = null;
@@ -771,13 +791,19 @@ export function CommitGraph({
 		return () => { observer.disconnect(); };
 	}, []);
 
-	// 取回新数据后解除占用，并补取：内容仍未填满容器时继续取下一页。
+	/*
+	 * 取回新数据后解除占用，并在内容仍未填满容器时续取下一页。
+	 *
+	 * 续取只补「首屏填不满」这一种情形：容器已可滚动时不续取，等用户再滚动触发，
+	 * 否则停在底部会一页接一页地连锁加载。
+	 */
 	React.useEffect(() => {
 		if (commits === requestedForRef.current) return;
 		requestedForRef.current = commits;
-		releasePending();
-		maybeLoadMore();
-	}, [commits, releasePending, maybeLoadMore]);
+		// 成功取回：保留「上次触发位置」，让惯性滚动的后续事件不再触发一页。
+		releasePending(false);
+		maybeLoadMore(true);
+	}, [commits, moreCommitsAvailable, releasePending, maybeLoadMore]);
 
 	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
 

@@ -590,6 +590,7 @@ export function parseBranchSync(stdout: string): BranchSync {
  * @param remotes - 已知远程名，用于给远程分支标注所属远程。
  * @param showTags - 是否标注标签。
  * @param maxCommits - 请求的提交数上限。
+ * @param skip - 本窗口在 `git log` 中的起始偏移。
  * @returns 提交图。
  */
 export function assembleCommits(
@@ -599,10 +600,18 @@ export function assembleCommits(
 	remotes: readonly string[],
 	showTags: boolean,
 	maxCommits: number,
+	skip = 0,
 ): CommitGraph {
 	const commits: LogRecord[] = [...records];
 	const moreCommitsAvailable = commits.length === maxCommits + 1;
 	if (moreCommitsAvailable) commits.pop();
+	/*
+	 * 下一窗口的偏移按本页实际消费的日志记录数累加。
+	 *
+	 * 不能用本页 `commits` 长度：下面会插入贮藏行，它们是引用而不是 `git log` 记录，
+	 * 计入偏移会让下一页跳过真实提交。
+	 */
+	const nextSkip = skip + commits.length;
 
 	const nodes: CommitNode[] = commits.map((commit) => ({
 		...commit, heads: [], tags: [], remotes: [], stash: null,
@@ -656,6 +665,7 @@ export function assembleCommits(
 		head: refs.head,
 		tags: unique(refs.tags.map((tag) => tag.name)),
 		moreCommitsAvailable,
+		nextSkip,
 	};
 }
 

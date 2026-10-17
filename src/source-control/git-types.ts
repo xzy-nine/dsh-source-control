@@ -85,6 +85,13 @@ export interface CommitGraph {
 	readonly tags: string[];
 	/** 是否还有更多提交未返回。 */
 	readonly moreCommitsAvailable: boolean;
+	/**
+	 * 下一个窗口应使用的偏移量。
+	 *
+	 * 按 `git log` 记录数计，不按本页 `commits` 长度：`commits` 可能插入贮藏行，它们是引用而非
+	 * 日志记录，计入会让偏移虚高、下一页跳过真实提交。
+	 */
+	readonly nextSkip: number;
 }
 
 /** 提交图读取结果。 */

@@ -23,6 +23,8 @@ export interface CachedGraph {
 	readonly tags: readonly string[];
 	/** 是否还有更多提交。 */
 	readonly moreCommitsAvailable: boolean;
+	/** 下一窗口的偏移量；按 `git log` 记录数计。 */
+	readonly nextSkip: number;
 	/** 本窗口的别的工作树占用分支。 */
 	readonly foreignBranches: readonly string[];
 }
