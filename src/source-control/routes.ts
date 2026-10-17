@@ -411,10 +411,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				/*
 				 * 别的工作树占用的分支：仓库信息批里已含该结果时直接取用，否则单独判定。
 				 * 该判定对没有链接工作树的仓库只读文件系统，不启动 git；先发出去，不占关键路径。
+				 *
+				 * 同样先挂吞错分支：下游提前失败时，未处理的 rejection 会让宿主进程直接退出。
 				 */
-				const foreignSource: Promise<Set<string>> = batchSource !== null
+				const foreignSource: Promise<Set<string>> = (batchSource !== null
 					? batchSource.then((batch) => batch?.foreign ?? branchesOfOtherWorktrees(repo))
-					: branchesOfOtherWorktrees(repo);
+					: branchesOfOtherWorktrees(repo)).catch(() => new Set<string>());
 				/*
 				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，这里取名字；
 				 * 直接传字符串数组的调用方同样接受。
@@ -427,9 +429,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const givenRemotes = arr<unknown>('remotes')
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
+				/*
+				 * 远程名可能来自仓库信息批，也可能需要单独读取。后者是一个 Promise：若下游在它
+				 * 落地前就失败，未处理的 rejection 会让宿主进程直接退出（表现为 fatal load failure），
+				 * 因此先挂一个吞错分支，真正的错误仍由 getCommits 内部的 catch 转成 error 字段。
+				 */
 				const remoteNames: readonly string[] | Promise<readonly string[]> = batchSource !== null
 					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
-					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo);
+					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo).catch(() => [] as string[]);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
 					repo,
