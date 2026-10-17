@@ -133,7 +133,21 @@ export function commitsListEqual(left: readonly Commit[], right: readonly Commit
 const UNCOMMITTED_MESSAGE = /^Uncommitted Changes \((\d+)\)$/;
 
 /** 未提交伪提交的哈希标记，与宿主 `git-parse.ts` 的 `UNCOMMITTED` 一致。 */
-const UNCOMMITTED_HASH = '*';
+export const UNCOMMITTED_HASH = '*';
+
+/**
+ * 取真实提交数：排除未提交伪提交行。
+ *
+ * 分页偏移按真实提交数计算——伪提交行不是 git 提交，不在 `git log` 输出里。
+ *
+ * @param commits - 提交列表，可能含首位伪提交行。
+ * @returns 真实提交条数。
+ */
+export function realCommitCount(commits: readonly Commit[]): number {
+	let count = 0;
+	for (const commit of commits) if (commit.hash !== UNCOMMITTED_HASH) count += 1;
+	return count;
+}
 
 /**
  * 按工作区条目数修正未提交伪提交行。

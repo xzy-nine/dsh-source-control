@@ -16,7 +16,10 @@ import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
-import { branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from './commit-diff.ts';
+import {
+	branchNamesEqual, commitsListEqual, entriesEqual, realCommitCount, remotesListEqual,
+	uncommittedParentOf, withUncommittedCount,
+} from './commit-diff.ts';
 
 import type { BusyEntry, PanelState, RepoSync, Settings } from '../shared/types.ts';
 
@@ -405,7 +408,11 @@ export function useGraphData({
 	 */
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
-		const skip = stateRef.current.commits.length;
+		/*
+		 * 偏移量必须按**真实提交数**算：列表首位可能是未提交伪提交行（`hash === '*'`），
+		 * 它不是 git 提交、不在 `git log` 的输出里，计入偏移会让下一页多跳过一条真实提交。
+		 */
+		const skip = realCommitCount(stateRef.current.commits);
 		const generation = generationRef.current;
 		try {
 			const graph = await loadGraph(workingTreePath, {
