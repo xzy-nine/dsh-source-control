@@ -11,7 +11,7 @@
 const FILE_ADDRESS_PREFIX = 'dsh-resource://file/session/';
 
 /** 统一分隔符并去掉尾斜杠。 */
-const normalize = (path: string | null | undefined): string => String(path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+const normalize = (path: string | null | undefined): string => (path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
 
 /** 盘符路径按 Windows 规则忽略大小写比较。 */
 const comparable = (path: string): string => (/^[a-zA-Z]:\//.test(path) ? path.toLowerCase() : path);
@@ -45,7 +45,7 @@ export function diffFileAddress(sessionId: string, workspaceRoot: string | null,
 	const root = normalize(repoRoot);
 	const absolute = /^[a-zA-Z]:\//.test(file) || file.startsWith('/') || root === '' ? file : `${root}/${file}`;
 	// 相对路径更短也更稳；区外保留绝对形式——POSIX 靠前导空段表达，盘符自带前缀。
-	const relative = workspaceRoot === null || workspaceRoot === undefined ? null : relativeTo(workspaceRoot, absolute);
+	const relative = workspaceRoot === null ? null : relativeTo(workspaceRoot, absolute);
 	const path = relative === null || relative === '' ? absolute : relative;
 	const encoded = path.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
 	return `${FILE_ADDRESS_PREFIX}${encodeURIComponent(sessionId)}/${encoded}`;
@@ -70,7 +70,7 @@ export interface GitDiffAddress {
  * @returns `dsh-resource://git-diff/session/<sessionId>/<hash>/<path>` 地址。
  */
 export function gitDiffAddress(sessionId: string, hash: string, filePath: string): string {
-	const encoded = String(filePath).split('/').map((s) => encodeURIComponent(s)).join('/');
+	const encoded = filePath.split('/').map((s) => encodeURIComponent(s)).join('/');
 	return `${GIT_DIFF_PREFIX}${encodeURIComponent(sessionId)}/${encodeURIComponent(hash)}/${encoded}`;
 }
 

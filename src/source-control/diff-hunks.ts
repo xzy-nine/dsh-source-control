@@ -32,12 +32,14 @@ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 function parseHeader(line: string): { oldStart: number; oldLines: number; newStart: number; newLines: number } | null {
 	const match = HUNK_HEADER.exec(line);
 	if (match === null) return null;
+	/* 可选捕获组未匹配时对应下标为 undefined。 */
+	const groups: ReadonlyArray<string | undefined> = match;
 	return {
-		oldStart: Number(match[1]),
+		oldStart: Number(groups[1]),
 		// 省略行数表示 1 行。
-		oldLines: match[2] === undefined ? 1 : Number(match[2]),
-		newStart: Number(match[3]),
-		newLines: match[4] === undefined ? 1 : Number(match[4]),
+		oldLines: groups[2] === undefined ? 1 : Number(groups[2]),
+		newStart: Number(groups[3]),
+		newLines: groups[4] === undefined ? 1 : Number(groups[4]),
 	};
 }
 

@@ -261,6 +261,8 @@ Office）主动不认领，那些仍走宿主预览。
 
 ```bash
 pnpm install
+pnpm lint         # oxlint --type-aware src（规则集见 .oxlintrc.json）
+pnpm lint:fix     # 同上，能自动修的（花括号、可选链）就地改
 pnpm build        # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
 pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
 pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
@@ -281,6 +283,31 @@ pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 nod
   `css/state-classes.ts`，样式与组件共用同一份。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
+
+## 静态检查与提交钩子
+
+规则集是仓库根的 `.oxlintrc.json`，对齐 DSH 主仓的严格档：正确性、可维护性与类型感知规则全开
+（`typescript/*` 的 type-aware 规则 + `eslint-plugin-sonarjs`）。**不启用 `@stylistic` 风格规则**：
+本仓库用 Tab 缩进与分号，与主仓的 2 空格、无分号相反，照搬会产生上万条纯排版告警。
+
+`oxlint --type-aware` 的类型信息由 `tsconfig.json` / `tsconfig.client.json` 提供，因此两处约束不可省：
+
+- 宿主 `tsconfig.json` 必须保留 `"types": ["node"]`。缺它时 tsgolint 解析不到 Node 全局类型，
+  会把 `process`、`setInterval` 判成 `error` 类型，凭空报出数百条 `no-unsafe-*`（`tsc` 因默认加载
+  `@types/*` 而不报，两边结论因此不一致）。
+- 客户端 `tsconfig.client.json` 是 `strict: false`（既有设计：大量界面代码走 JS 风格），
+  `no-unsafe-*` 系列依赖严格类型信息，故 `.oxlintrc.json` 对 `src/client/**` 单独关闭这五条。
+
+git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶段经
+`scripts/install-hooks.mjs` 把 `core.hooksPath` 设为 `.githooks`，克隆后无需额外步骤。
+`core.hooksPath` 是相对路径，按各 worktree 根解析，因此主检出与所有 worktree 共用同一份脚本。
+
+| 钩子 | 时机 | 检查内容 |
+|---|---|---|
+| `pre-commit` | 提交前 | 本次暂存的 `src/**/*.ts{,x}`（`ACMR`）跑 oxlint，反馈快 |
+| `pre-push` | 推送前 | `src/` 全量 oxlint + 两段 `tsc --noEmit`，拦住跨文件类型问题 |
+
+绕过（仅在确有必要时）：`git commit --no-verify` / `git push --no-verify`。
 
 ## 测试
 

@@ -50,7 +50,9 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 
 	React.useEffect(() => {
 		if (!enabled || workingTreePath === null) return undefined;
-		let cancelled = false;
+		const cancelled = { current: false };
+		/** 取消标志的取值函数；循环与循环体都经它读取。 */
+		const isCancelled = (): boolean => cancelled.current;
 		let timer: number | null = null;
 		let wake: (() => void) | null = null;
 
@@ -66,13 +68,13 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 
 		/** 等到窗口聚焦且面板空闲。 */
 		const whenIdleAndFocused = async (): Promise<void> => {
-			while (!cancelled && !(focused() && !isRepoBusy(busyRef.current, workingTreePath))) await sleep(GATE_RETRY_MS);
+			while (!isCancelled() && !(focused() && !isRepoBusy(busyRef.current, workingTreePath))) await sleep(GATE_RETRY_MS);
 		};
 
 		void (async () => {
-			while (!cancelled) {
+			while (!isCancelled()) {
 				await whenIdleAndFocused();
-				if (cancelled) return;
+				if (isCancelled()) return;
 				let fetched = false;
 				try {
 					await fetchRef.current(workingTreePath);
@@ -80,7 +82,7 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 				} catch {
 					/* 抓取失败不改设置；下一次周期重试 */
 				}
-				if (cancelled) return;
+				if (isCancelled()) return;
 				// 抓取成功才回调：失败时引用没变，重载没有意义。
 				if (fetched) onFetchedRef.current?.(workingTreePath);
 				// 周期下限另有兜底：设置值异常时也不会退化成密集抓取。
@@ -89,7 +91,7 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 		})();
 
 		return () => {
-			cancelled = true;
+			cancelled.current = true;
 			if (timer !== null) window.clearTimeout(timer);
 			wake?.();
 		};

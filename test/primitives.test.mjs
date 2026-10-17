@@ -99,10 +99,11 @@ test('图形区拖拽手柄在图形标题之前', () => {
 
 test('图形区高度跟随拖动方向', () => {
 	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-	const source = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
-	const start = source.indexOf('const startGraphResize');
-	const body = source.slice(start, source.indexOf("window.addEventListener('pointermove'", start));
-	assert.match(body, /commitGraphHeight\(startHeight - \(moveEvent\.clientY - startY\)\)/, '拖拽位移必须取负号');
+	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
+	assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
+	const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');
+	assert.match(resize, /commit\(startHeight \+ \(direction === 'up' \? -delta : delta\)\)/, '拖拽位移必须按方向取符号');
 });
 
 test('改动文件区在图形区内展开', () => {
@@ -417,7 +418,7 @@ test('工作树分支从图形区与删除候选中排除', () => {
 	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们。
 	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
 	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应排除别的工作树占用的分支');
-	assert.match(routes, /heads: \(commit\.heads \?\? \[\]\)\.filter/, 'loadCommits 应过滤分支标签');
+	assert.match(routes, /heads: commit\.heads\.filter\(\(name: string\) => !foreign\.has\(name\)\)/, 'loadCommits 应过滤分支标签');
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
 	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
 	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');

@@ -45,11 +45,11 @@ export function Dropdown({ options, value, onChange, id, fallbackLabel }: Dropdo
 		selectedId: value,
 		items: options.map((option) => ({ id: option.value, label: option.label, title: option.title })),
 		onSelect: (menuId: string) => { setOpen(false); onChange(menuId); },
-		onClose: () => setOpen(false),
+		onClose: () => { setOpen(false); },
 		anchor: React.createElement('button', {
 			type: 'button', ref: triggerRef, id, className: css.setDropdown,
 			'aria-haspopup': 'menu', 'aria-expanded': open,
-			onClick: () => setOpen((previous) => !previous),
+			onClick: () => { setOpen((previous) => !previous); },
 		},
 			React.createElement('span', { className: css.setDropdownText }, current?.label ?? fallbackLabel ?? value),
 			React.createElement(IconChevronDownOutlineRegular, { size: 13 }),

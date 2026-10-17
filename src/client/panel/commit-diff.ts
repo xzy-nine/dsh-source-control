@@ -147,15 +147,14 @@ const UNCOMMITTED_HASH = '*';
  * @returns 修正后的列表；无需改动时返回原引用。
  */
 export function withUncommittedCount(commits: Commit[], count: number, head: string | null = null): Commit[] {
-	const first = commits[0];
-	const existing = first !== undefined && first.hash === '*' ? first : undefined;
+	const existing = commits.length > 0 && commits[0].hash === UNCOMMITTED_HASH ? commits[0] : undefined;
 	if (count <= 0) {
 		if (existing === undefined) return commits;
 		return commits.slice(1);
 	}
 	const message = `Uncommitted Changes (${count})`;
 	if (existing !== undefined) {
-		const match = UNCOMMITTED_MESSAGE.exec(String(existing.message ?? ''));
+		const match = UNCOMMITTED_MESSAGE.exec(existing.message);
 		if (match !== null && Number.parseInt(match[1], 10) === count) return commits;
 		return [{ ...existing, message }, ...commits.slice(1)];
 	}

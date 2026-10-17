@@ -12,7 +12,7 @@ const EXPANDED_KEY = 'dsh-source-control-expanded';
 
 /** 运行环境是否按大小写不敏感比较路径。 */
 const CASE_INSENSITIVE = typeof navigator !== 'undefined'
-	&& (/Windows/i.test(navigator.userAgent ?? ''));
+	&& (/Windows/i.test(navigator.userAgent));
 
 /**
  * 把路径规范化为与宿主节点 id 一致的形式。
@@ -54,7 +54,7 @@ export function findNode(nodes, id) {
  */
 export function flattenVisible(nodes, expandedIds) {
 	const rows = [];
-	const walk = (list, level) => {
+	const walk = (list, level: number) => {
 		for (const node of list ?? []) {
 			rows.push({ node, depth: level });
 			if ((node.children ?? []).length > 0 && expandedIds?.has(node.id)) walk(node.children, level + 1);
@@ -219,7 +219,7 @@ export function saveExpanded(sessionId, ids) {
  * @returns {string|null} 存储值。
  */
 function readStored(prefix, sessionId) {
-	const value = loadValue(`${prefix}:${sessionId ?? ''}`, null);
+	const value = loadValue<string | null>(`${prefix}:${sessionId ?? ''}`, null);
 	return typeof value === 'string' ? value : null;
 }
 

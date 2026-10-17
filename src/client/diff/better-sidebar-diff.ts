@@ -140,7 +140,7 @@ export function resolveBetterSidebarDiff(service: unknown): BetterSidebarDiffSer
 	if (descriptor === undefined || descriptor === null) return null;
 	if (typeof candidate.isTabEnabled === 'function') {
 		try {
-			if (candidate.isTabEnabled('diff') === false) return null;
+			if (!candidate.isTabEnabled('diff')) return null;
 		} catch {
 			return null;
 		}

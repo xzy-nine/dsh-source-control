@@ -19,7 +19,7 @@ import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
  * @returns 写入成功返回 true。
  */
 export async function copyText(text: string): Promise<boolean> {
-	if (navigator.clipboard?.writeText) {
+	if (typeof navigator.clipboard.writeText === 'function') {
 		try {
 			await navigator.clipboard.writeText(text);
 			return true;
@@ -34,6 +34,8 @@ export async function copyText(text: string): Promise<boolean> {
 		textarea.style.opacity = '0';
 		document.body.appendChild(textarea);
 		textarea.select();
+		// 剪贴板接口不可用时的回退：execCommand 已废弃，但仍是唯一无需权限的同步复制路径。
+		// oxlint-disable-next-line typescript/no-deprecated -- 回退路径无替代 API。
 		const ok = document.execCommand('copy');
 		textarea.remove();
 		return ok;
@@ -246,7 +248,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 	function MenuContent(): React.ReactElement {
 		const [open, setOpen] = React.useState(true);
 		React.useEffect(() => {
-			if (open === false) close();
+			if (!open) close();
 		}, [open]);
 		return React.createElement(Menu, {
 			open,
@@ -259,7 +261,7 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 				setOpen(false);
 				handlers.get(id)?.();
 			},
-			onClose: () => setOpen(false),
+			onClose: () => { setOpen(false); },
 		});
 	}
 	root.render(React.createElement(MenuContent));

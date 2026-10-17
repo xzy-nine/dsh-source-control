@@ -139,8 +139,8 @@ export function splitRows(hunk: WorkspaceDiffHunk): SplitRow[] {
   let adds: NonNullable<SplitRow['right']>[] = []
   const flush = (): void => {
     for (let at = 0; at < Math.max(dels.length, adds.length); at += 1) {
-      const left = dels[at]
-      const right = adds[at]
+      const left = dels.at(at)
+      const right = adds.at(at)
       rows.push({ ...left === undefined ? {} : { left }, ...right === undefined ? {} : { right } })
     }
     dels = []
@@ -286,11 +286,11 @@ function TextDiff({ diff, split, wrap }: { diff: Extract<ChangesDiffState, { kin
             <div key={at} className={css.splitLine} data-diff-line={splitRowKind(row)}>
               <span className={`${css.cell} ${row.left === undefined ? css.empty : css[row.left.kind]}`}>
                 <span className={css.number}>{row.left?.no ?? ''}</span>
-                <DiffText text={row.left?.text ?? ''} spans={row.left === undefined ? undefined : highlighted?.old?.get(row.left.no)} />
+                <DiffText text={row.left?.text ?? ''} spans={row.left === undefined ? undefined : highlighted.old?.get(row.left.no)} />
               </span>
               <span className={`${css.cell} ${row.right === undefined ? css.empty : css[row.right.kind]}`}>
                 <span className={css.number}>{row.right?.no ?? ''}</span>
-                <DiffText text={row.right?.text ?? ''} spans={row.right === undefined ? undefined : highlighted?.new?.get(row.right.no)} />
+                <DiffText text={row.right?.text ?? ''} spans={row.right === undefined ? undefined : highlighted.new?.get(row.right.no)} />
               </span>
             </div>
           )) : hunkRows(hunk).map((row, at) => (
@@ -298,7 +298,7 @@ function TextDiff({ diff, split, wrap }: { diff: Extract<ChangesDiffState, { kin
               <span className={css.number}>{row.old ?? ''}</span>
               <span className={css.number}>{row.new ?? ''}</span>
               <span className={css.sign}>{row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' '}</span>
-              <DiffText text={row.text} spans={row.kind === 'add' ? highlighted?.new?.get(row.new as number) : highlighted?.old?.get(row.old as number)} />
+              <DiffText text={row.text} spans={row.kind === 'add' ? highlighted.new?.get(row.new as number) : highlighted.old?.get(row.old as number)} />
             </div>
           ))}
         </section>

@@ -46,7 +46,7 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 			try {
 				resolve(chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>) : {});
 			} catch (e) {
-				reject(e);
+				reject(e instanceof Error ? e : new Error(String(e)));
 			}
 		});
 		req.on('error', reject);
@@ -130,17 +130,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	try {
 		msg = await readBody(req);
 	} catch {
-		return sendBadRequest(res, '请求体不是合法 JSON');
+		sendBadRequest(res, '请求体不是合法 JSON');
+		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
 	if (!repo) {
-		return sendBadRequest(res, '缺少 repo');
+		sendBadRequest(res, '缺少 repo');
+		return;
 	}
 
-	const str = (k: string): string => (typeof msg[k] === 'string' ? (msg[k] as string) : '');
-	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? (msg[k] as string) : null);
-	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? (msg[k] as boolean) : dflt);
-	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? (msg[k] as number) : dflt);
+	const str = (k: string): string => (typeof msg[k] === 'string' ? msg[k] : '');
+	const strOrNull = (k: string): string | null => (typeof msg[k] === 'string' ? msg[k] : null);
+	const bool = (k: string, dflt = false): boolean => (typeof msg[k] === 'boolean' ? msg[k] : dflt);
+	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? msg[k] : dflt);
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
@@ -158,7 +160,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	 * @param cmd - 命令名，原样回投。
 	 * @param fn - 执行体，返回值会并入响应载荷。
 	 */
-	const respondResult = async (cmd: string, fn: () => Promise<Record<string, unknown>>): Promise<void> => {
+	const respondResult = async (cmd: string, fn: () => Record<string, unknown> | Promise<Record<string, unknown>>): Promise<void> => {
 		try {
 			respond({ command: cmd, ...(await fn()), error: null });
 		} catch (error) {
@@ -229,21 +231,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		/* --- 仓库发现（DSH 版新增：≤3 层递归 + 工作树/子模块权威枚举） --- */
 		/* --- 插件状态持久化：设置、布局、引用筛选、仓库位置缓存（落 $DSH_HOME/dsh-source-control/） --- */
 		case 'readState':
-			await respondResult('readState', async () => ({ entries: readEntries() }));
+			await respondResult('readState', () => ({ entries: readEntries() }));
 			break;
 		case 'writeState':
-			await respondResult('writeState', async () => {
+			await respondResult('writeState', () => {
 				writeEntry(str('key'), msg.value === undefined ? null : msg.value);
 				return { repo };
 			});
 			break;
 		case 'readRepoLocations':
-			await respondResult('readRepoLocations', async () => ({ repos: readRepoLocations(repo) }));
+			await respondResult('readRepoLocations', () => ({ repos: readRepoLocations(repo) }));
 			break;
 		case 'writeRepoLocations':
-			await respondResult('writeRepoLocations', async () => {
+			await respondResult('writeRepoLocations', () => {
 				const repos = arr<{ path?: unknown; name?: unknown }>('repos')
-					.filter((item) => typeof item?.path === 'string' && (item.path as string) !== '')
+					.filter((item) => typeof item.path === 'string' && item.path !== '')
 					.map((item) => ({ path: item.path as string, name: typeof item.name === 'string' ? item.name : '' }));
 				writeRepoLocations(repo, repos);
 				return { repo };
@@ -369,7 +371,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
 					.filter((name): name is string => typeof name === 'string' && name !== '');
 				const remoteNames: readonly string[] | Promise<readonly string[]> = batchSource !== null
-					? batchSource.then((batch) => batch?.info?.remotes?.map((remote) => remote.name) ?? givenRemotes)
+					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
 					: givenRemotes.length > 0 ? givenRemotes : getRemoteNames(repo);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
 				const data = await getCommits(
@@ -391,13 +393,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				/* 别的工作树占用的分支不是本仓库的分支：不作为标签显示（删除候选同理）。 */
 				const foreign = await foreignSource;
 				const all = foreign.size === 0
-					? (data.commits ?? [])
-					: (data.commits ?? []).map((commit) => ({
+					? data.commits
+					: data.commits.map((commit) => ({
 						...commit,
-						heads: (commit.heads ?? []).filter((name: string) => !foreign.has(name)),
+						heads: commit.heads.filter((name: string) => !foreign.has(name)),
 					}));
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
-				const last = all[all.length - 1];
+				const last = all.at(-1);
 				respond({
 					command: 'loadCommits',
 					refreshId: num('refreshId'),
@@ -406,9 +408,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
 					commits: all,
 					head: data.head,
-					tags: data.tags ?? [],
-					moreCommitsAvailable: data.moreCommitsAvailable === true,
-					nextCursor: data.moreCommitsAvailable === true && last !== undefined ? last.hash : null,
+					tags: data.tags,
+					moreCommitsAvailable: data.moreCommitsAvailable,
+					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
 					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
 					repoInfo: batch?.info ?? null,
 				});
@@ -502,7 +504,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await merge(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error: await merge(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit')),
 			});
 			break;
 		case 'mergeIntoBranch': {
@@ -530,13 +532,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				command: 'rebase',
 				actionOn: msg.actionOn,
 				interactive: bool('interactive'),
-				error: await rebase(repo, str('obj'), (typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch') as never, bool('ignoreDate', true), bool('interactive')),
+				error: await rebase(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('ignoreDate', true), bool('interactive')),
 			});
 			break;
 
 		/* --- 标签 --- */
 		case 'addTag': {
-			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), (typeof msg.type === 'number' ? msg.type : 0) as never, str('message'), bool('force'))];
+			const errors: unknown[] = [await addTag(repo, str('tagName'), str('commitHash'), typeof msg.type === 'number' ? msg.type : 0, str('message'), bool('force'))];
 			if (errors[0] === null && strOrNull('pushToRemote') !== null) {
 				errors.push(...(await pushTag(repo, str('tagName'), [str('pushToRemote')], str('commitHash'), bool('pushSkipRemoteCheck'))));
 			}
@@ -675,7 +677,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-source-control] ' + String(msg.message ?? ''));
+			console.error('[dsh-source-control] ' + (typeof msg.message === 'string' ? msg.message : ''));
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -849,9 +851,9 @@ async function canDisableReasoning(llm: unknown, provider: string, model: string
 	if (!provider || !model || typeof svc.resolveModelInfo !== 'function') return false;
 	try {
 		const info = await svc.resolveModelInfo(provider, model) as { reasoning?: { efforts?: Array<{ id?: string }> } };
-		const efforts = info?.reasoning?.efforts;
+		const efforts = info.reasoning?.efforts;
 		if (!Array.isArray(efforts)) return false;
-		return efforts.some((e) => e?.id === 'off');
+		return efforts.some((e) => e.id === 'off');
 	} catch {
 		return false;
 	}
@@ -866,7 +868,7 @@ function getAgentDefaultSelection(getAgentDefaultModel?: () => unknown): { provi
 	if (typeof getAgentDefaultModel !== 'function') return null;
 	try {
 		const svc = getAgentDefaultModel() as { currentSelection?: () => unknown };
-		const sel = svc?.currentSelection?.() as { provider?: string; model?: string } | null;
+		const sel = svc.currentSelection?.() as { provider?: string; model?: string } | null;
 		if (sel === null || typeof sel !== 'object') return null;
 		const provider = typeof sel.provider === 'string' ? sel.provider : '';
 		const model = typeof sel.model === 'string' ? sel.model : '';
@@ -947,8 +949,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					res.end();
 					return;
 				}
-				void handleApi(req, res, aiDeps).catch((e) => {
-					sendJson(res, 500, { error: String(e instanceof Error ? e.message : e) });
+				void handleApi(req, res, aiDeps).catch((e: unknown) => {
+					sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
 				});
 			},
 		}),
@@ -967,8 +969,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				try {
 					const raw = llm.listProviders();
 					for (const p of (Array.isArray(raw) ? raw : [])) {
-						const id = (p as { id?: string })?.id ?? '';
-						if (id.length > 0) providers.push({ id, name: (p as { name?: string })?.name ?? id });
+						const id = (p as { id?: string }).id ?? '';
+						if (id.length > 0) providers.push({ id, name: (p as { name?: string }).name ?? id });
 					}
 				} catch { /* 目录不可用 */ }
 				void (async () => {
@@ -977,7 +979,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 						try {
 							const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
 							modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
-								.map((m) => (m as { id?: string })?.id ?? '')
+								.map((m) => (m as { id?: string }).id ?? '')
 								.filter((id) => id.length > 0);
 						} catch { modelsByProvider[p.id] = []; }
 					}
@@ -1063,7 +1065,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 							} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
 								const f = chunk.reason.failure;
-								const parts = [f?.code, f?.status === undefined ? undefined : 'HTTP ' + f.status, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
+								const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
 								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 							}
 						}

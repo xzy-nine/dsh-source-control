@@ -57,17 +57,17 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 		function Content(): React.ReactElement {
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(false),
+				onClose: () => { finish(false); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, message),
 				footer: React.createElement(
 					React.Fragment,
 					null,
-					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(false) }, cancelLabel),
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { finish(false); } }, cancelLabel),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm', className: danger ? css.btnDanger : undefined,
-						onClick: () => finish(true),
+						onClick: () => { finish(true); },
 					}, confirmLabel),
 				),
 			});
@@ -93,15 +93,15 @@ export interface MessageOptions {
  * @returns 用户关闭后完成。
  */
 export function showMessage({ title, message, closeLabel = '知道了' }: MessageOptions): Promise<void> {
-	return runDialog<void>((finish) => {
+	return runDialog<undefined>((finish) => {
 		function Content(): React.ReactElement {
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(),
+				onClose: () => { finish(undefined); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement('div', { className: css.dialogHint }, message),
-				footer: React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => finish() }, closeLabel),
+				footer: React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, closeLabel),
 			});
 		}
 		return React.createElement(Content);
@@ -138,8 +138,8 @@ export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '�
 				acknowledged,
 				acknowledgeLabel: checkboxLabel,
 				onAcknowledgedChange: setAcknowledged,
-				onCancel: () => finish(false),
-				onConfirm: () => finish(true),
+				onCancel: () => { finish(false); },
+				onConfirm: () => { finish(true); },
 			});
 		}
 		return React.createElement(Content);
@@ -169,7 +169,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 			const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(null),
+				onClose: () => { finish(null); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement(
@@ -181,7 +181,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 						id: 'ggg-text-input',
 						value: text,
 						placeholder,
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => setText(event.target.value),
+						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
 						// 单行输入框里回车即确认：换行没有意义。
 						onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
 							if (event.key === 'Enter') { event.preventDefault(); submit(); }
@@ -191,7 +191,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 				footer: React.createElement(
 					React.Fragment,
 					null,
-					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { finish(null); } }, '取消'),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm', disabled: text.trim() === '', onClick: submit,
 					}, confirmLabel),
@@ -220,10 +220,10 @@ export interface SelectOptions {
 export function showSelect({ title, message = '', options, value, confirmLabel = '确定' }: SelectOptions): Promise<string | null> {
 	return runDialog<string | null>((finish) => {
 		function Content(): React.ReactElement {
-			const [selected, setSelected] = React.useState(value ?? options[0]?.value ?? '');
+			const [selected, setSelected] = React.useState(value ?? options.at(0)?.value ?? '');
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(null),
+				onClose: () => { finish(null); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement(
@@ -241,9 +241,9 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 				footer: React.createElement(
 					React.Fragment,
 					null,
-					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { finish(null); } }, '取消'),
 					React.createElement(Button, {
-						variant: 'primary', size: 'sm', onClick: () => finish(selected),
+						variant: 'primary', size: 'sm', onClick: () => { finish(selected); },
 					}, confirmLabel),
 				),
 			});
@@ -293,11 +293,11 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 				else initial[field.name] = field.value ?? '';
 			}
 			const [values, setValues] = React.useState<Record<string, unknown>>(initial);
-			const setField = (name: string, value: unknown): void => setValues((previous) => ({ ...previous, [name]: value }));
-			const submit = (): void => finish(values);
+			const setField = (name: string, value: unknown): void => { setValues((previous) => ({ ...previous, [name]: value })); };
+			const submit = (): void => { finish(values); };
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(null),
+				onClose: () => { finish(null); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement(
@@ -309,7 +309,7 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 				footer: React.createElement(
 					React.Fragment,
 					null,
-					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { finish(null); } }, '取消'),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm', onClick: submit,
 					}, confirmLabel),
@@ -376,10 +376,10 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 			const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
 			const active = pages.find((page) => page.value === activeValue) ?? pages[0];
 			const activeValues = values[active.value] ?? {};
-			const setField = (name: string, value: unknown): void => setValues((previous) => ({
+			const setField = (name: string, value: unknown): void => { setValues((previous) => ({
 				...previous,
 				[active.value]: { ...(previous[active.value] ?? {}), [name]: value },
-			}));
+			})); };
 			// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 			const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 				{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
@@ -388,10 +388,10 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
 				})),
 			];
-			const submit = (): void => finish({ page: active.value, ...activeValues });
+			const submit = (): void => { finish({ page: active.value, ...activeValues }); };
 			return React.createElement(Modal, {
 				open: true,
-				onClose: () => finish(null),
+				onClose: () => { finish(null); },
 				title,
 				closeLabel: '关闭',
 				children: React.createElement(
@@ -409,7 +409,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 				footer: React.createElement(
 					React.Fragment,
 					null,
-					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => finish(null) }, '取消'),
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { finish(null); } }, '取消'),
 					React.createElement(Button, {
 						variant: 'primary', size: 'sm',
 						onClick: submit,
@@ -471,7 +471,7 @@ function buildField(
 			React.createElement(Input, {
 				value: typeof current === 'string' ? current : '',
 				placeholder: field.placeholder ?? '',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => setField(field.name, event.target.value),
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setField(field.name, event.target.value); },
 				// 单行字段里回车即确认：该位置没有换行语义。
 				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
 					if (event.key === 'Enter') { event.preventDefault(); onEnter(); }
@@ -489,7 +489,7 @@ function buildField(
 				value: typeof current === 'string' ? current : '',
 				placeholder: field.placeholder ?? '',
 				rows: 4,
-				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => setField(field.name, event.target.value),
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setField(field.name, event.target.value); },
 				// 有换行语义的字段：回车确认，Shift+回车插入换行。
 				onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
 					if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onEnter(); }
@@ -504,7 +504,7 @@ function buildField(
 			{ key: field.name, className: cx(css.field, css.fieldInline) },
 			React.createElement(Checkbox, {
 				checked: current === true,
-				onChange: (next: boolean) => setField(field.name, next),
+				onChange: (next: boolean) => { setField(field.name, next); },
 				label: field.label ?? '',
 			}),
 		);
@@ -518,7 +518,7 @@ function buildField(
 				id: `ggg-field-${field.name}`,
 				label: field.label ?? field.name,
 				value: typeof current === 'string' ? current : '',
-				onChange: (next: string) => setField(field.name, next),
+				onChange: (next: string) => { setField(field.name, next); },
 				options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
 			}),
 		);
@@ -530,34 +530,31 @@ function buildField(
 			label: field.label,
 			options: field.options,
 			value: typeof current === 'string' ? current : '',
-			onChange: (next: string) => setField(field.name, next),
+			onChange: (next: string) => { setField(field.name, next); },
 		});
 	}
-	if (field.type === 'multiselect') {
-		const selected = Array.isArray(current) ? current as string[] : [];
-		return React.createElement(
-			'div',
-			{ key: field.name, className: css.field },
-			field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
-			...field.options.map((option) => {
-				const checked = selected.includes(option.value);
-				// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
-				return React.createElement(
-					'div',
-					{ key: option.value, className: cx(css.field, css.fieldInline) },
-					React.createElement(Checkbox, {
-						checked,
-						onChange: (next: boolean) => {
-							const values2 = next
-								? [...selected, option.value]
-								: selected.filter((item) => item !== option.value);
-							setField(field.name, values2);
-						},
-						label: option.label,
-					}),
-				);
-			}),
-		);
-	}
-	return null;
+	const selected = Array.isArray(current) ? current as string[] : [];
+	return React.createElement(
+		'div',
+		{ key: field.name, className: css.field },
+		field.label !== undefined && React.createElement('label', { className: css.fieldLabel }, field.label),
+		...field.options.map((option) => {
+			const checked = selected.includes(option.value);
+			// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
+			return React.createElement(
+				'div',
+				{ key: option.value, className: cx(css.field, css.fieldInline) },
+				React.createElement(Checkbox, {
+					checked,
+					onChange: (next: boolean) => {
+						const values2 = next
+							? [...selected, option.value]
+							: selected.filter((item) => item !== option.value);
+						setField(field.name, values2);
+					},
+					label: option.label,
+				}),
+			);
+		}),
+	);
 }

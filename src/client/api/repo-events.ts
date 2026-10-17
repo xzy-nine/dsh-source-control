@@ -78,7 +78,7 @@ export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent |
 	if (event !== 'repository-write' || data === '') return null;
 	try {
 		const parsed = JSON.parse(data) as { repo?: unknown };
-		return typeof parsed?.repo === 'string' && parsed.repo !== '' ? { repo: parsed.repo } : null;
+		return typeof parsed.repo === 'string' && parsed.repo !== '' ? { repo: parsed.repo } : null;
 	} catch {
 		return null;
 	}
@@ -121,19 +121,21 @@ export interface EventStreamTransport {
  * @returns 取消订阅；调用后不再重连。
  */
 export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions): () => void {
-	let disposed = false;
+	const disposed = { current: false };
+	/** 订阅是否已取消。 */
+	const isDisposed = (): boolean => disposed.current;
 	let controller: AbortController | null = null;
 	let timer: number | null = null;
 	let attempt = 0;
 
 	const scheduleReconnect = (): void => {
-		if (disposed) return;
+		if (disposed.current) return;
 		attempt++;
 		timer = window.setTimeout(() => { timer = null; void connect(); }, reconnectDelayMs(attempt));
 	};
 
 	const connect = async (): Promise<void> => {
-		if (disposed) return;
+		if (isDisposed()) return;
 		controller = new AbortController();
 		try {
 			const response = await fetch(EVENTS_PATH, {
@@ -149,7 +151,7 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 			let buffer = '';
 			for (;;) {
 				const { done, value } = await reader.read();
-				if (done || disposed) break;
+				if (done || disposed.current) break;
 				buffer += decoder.decode(value, { stream: true });
 				const { frames, rest } = splitFrames(buffer);
 				buffer = rest;
@@ -163,12 +165,12 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 		} finally {
 			options.onState?.('closed');
 		}
-		if (!disposed) scheduleReconnect();
+		if (!disposed.current) scheduleReconnect();
 	};
 
 	void connect();
 	return () => {
-		disposed = true;
+		disposed.current = true;
 		if (timer !== null) window.clearTimeout(timer);
 		controller?.abort();
 	};
