@@ -1,5 +1,8 @@
 /**
  * 工作区快照解析：用真实 git 输出校验 `--porcelain=v2 --branch -z` 的条目与分支字段。
+ *
+ * `working-tree.ts` 有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入；
+ * `pretest` 会先重建产物。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +10,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseStatusSnapshot } from '../src/source-control/working-tree.ts';
+import { importHostModule } from './lib-import.mjs';
+
+const { parseStatusSnapshot } = await importHostModule('source-control/working-tree.js');
 
 /**
  * 建一个临时仓库。

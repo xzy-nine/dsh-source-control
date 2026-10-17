@@ -5,15 +5,13 @@
  * 定时轮询不在此处：刷新完全由事件触发。
  */
 import React from 'react';
-import { AUTO_REFRESH_COOLDOWN_MS, hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
+import { hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
+import { createRefreshScheduler } from './refresh-scheduler.ts';
 import { isRepoBusy } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
 
 /** 事件窗口保留的事件数：一次写入的结果可能晚于调用到达。 */
 const EVENT_WINDOW = 400;
-
-/** 面板正忙时的复核间隔（毫秒）。 */
-const BUSY_RETRY_MS = 1000;
 
 /** 一条会话事件条目。 */
 interface EventEntryLike {
@@ -82,32 +80,13 @@ export function useFileChangeRefresh({
 		if (binding === undefined) return undefined;
 		const source = binding.eventSource;
 		let primed = false;
-		let disposed = false;
-		let lastRefreshAt = 0;
-		let timer: number | null = null;
 		const seen = new Set<string>();
 		let events: SessionEventLike[] = [];
-
-		/** 重载一次；面板忙时挂起到空闲。 */
-		const runRefresh = (): void => {
-			if (disposed) return;
-			if (isRepoBusy(busyRef.current, targetRef.current.path)) {
-				if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, BUSY_RETRY_MS);
-				return;
-			}
-			lastRefreshAt = Date.now();
-			void refreshRef.current().catch(() => { /* 重载失败由面板自身提示 */ });
-		};
-
-		/** 冷却满后再重载；冷却未满时挂起一次收尾。 */
-		const scheduleRefresh = (): void => {
-			const wait = AUTO_REFRESH_COOLDOWN_MS - (Date.now() - lastRefreshAt);
-			if (wait > 0) {
-				if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, wait);
-				return;
-			}
-			runRefresh();
-		};
+		const scheduler = createRefreshScheduler({
+			canRefresh: () => targetRef.current.path !== null,
+			isBusy: () => isRepoBusy(busyRef.current, targetRef.current.path),
+			refresh: () => refreshRef.current(),
+		});
 
 		/** 处理一批新到达的事件。 */
 		const consume = (incoming: readonly SessionEventLike[]): void => {
@@ -126,7 +105,7 @@ export function useFileChangeRefresh({
 			if (fresh.length === 0) return;
 			for (const change of fresh) seen.add(change.callId);
 			if (!hasRepositoryChange(fresh, target.path, target.cwd)) return;
-			scheduleRefresh();
+			scheduler.scheduleRefresh();
 		};
 
 		/** 取事件窗口里的持久事件。 */
@@ -149,8 +128,7 @@ export function useFileChangeRefresh({
 
 		const unsubscribe = source.subscribe(onEvent);
 		return () => {
-			disposed = true;
-			if (timer !== null) window.clearTimeout(timer);
+			scheduler.dispose();
 			unsubscribe();
 		};
 	}, [sessions, sessionId, workingTreePath, enabled, busyRef]);

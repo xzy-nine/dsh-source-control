@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -83,9 +83,7 @@ async function makeCaller(repo) {
 	});
 }
 
-const built = existsSync(routesPath);
-
-test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产物 lib/src/source-control/routes.js' }, async () => {
+test('仓库信息、提交图与配置', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -115,7 +113,7 @@ test('仓库信息、提交图与配置', { skip: !built && '未找到宿主产�
 	}
 });
 
-test('提交详情：普通、根、重命名、工作区与贮藏', { skip: !built && '未找到宿主产物' }, async () => {
+test('提交详情：普通、根、重命名、工作区与贮藏', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -152,7 +150,7 @@ test('提交详情：普通、根、重命名、工作区与贮藏', { skip: !bu
 });
 
 
-test('分支、标签、贮藏与远程的写操作', { skip: !built && '未找到宿主产物' }, async () => {
+test('分支、标签、贮藏与远程的写操作', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -178,7 +176,7 @@ test('分支、标签、贮藏与远程的写操作', { skip: !built && '未找�
 	}
 });
 
-test('合并到选中分支：检出、待合并、初始提交信息', { skip: !built && '未找到宿主产物' }, async () => {
+test('合并到选中分支：检出、待合并、初始提交信息', async () => {
 	const { repo, git } = makeRepo();
 	try {
 		/* 旧分支停在公共基础，新分支在其上多出提交：这是「合并到选中分支」的典型场景。 */
@@ -212,7 +210,7 @@ test('合并到选中分支：检出、待合并、初始提交信息', { skip: 
 	}
 });
 
-test('合并到选中分支：冲突仍保持待合并并给出信息', { skip: !built && '未找到宿主产物' }, async () => {
+test('合并到选中分支：冲突仍保持待合并并给出信息', async () => {
 	const { repo, git } = makeRepo();
 	try {
 		writeFileSync(join(repo, 'conflict.txt'), 'base');
@@ -244,7 +242,7 @@ test('合并到选中分支：冲突仍保持待合并并给出信息', { skip: 
 	}
 });
 
-test('合并到选中分支：非尖端与不存在的分支被拒绝且不检出', { skip: !built && '未找到宿主产物' }, async () => {
+test('合并到选中分支：非尖端与不存在的分支被拒绝且不检出', async () => {
 	const { repo, git } = makeRepo();
 	try {
 		git('branch', 'target-branch');
@@ -272,7 +270,7 @@ test('合并到选中分支：非尖端与不存在的分支被拒绝且不检�
 	}
 });
 
-test('用户身份读写与文件差异内容', { skip: !built && '未找到宿主产物' }, async () => {
+test('用户身份读写与文件差异内容', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -294,7 +292,7 @@ test('用户身份读写与文件差异内容', { skip: !built && '未找到宿�
 	}
 });
 
-test('远程分支标注与 hideRemotes', { skip: !built && '未找到宿主产物' }, async () => {
+test('远程分支标注与 hideRemotes', async () => {
 	const { repo, git } = makeRepo();
 	try {
 		const head = git('rev-parse', 'HEAD').trim();
@@ -330,7 +328,7 @@ test('远程分支标注与 hideRemotes', { skip: !built && '未找到宿主产�
 	}
 });
 
-test('重置三种模式与丢弃全部', { skip: !built && '未找到宿主产物' }, async () => {
+test('重置三种模式与丢弃全部', async () => {
 	const { repo, git } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -382,7 +380,7 @@ test('重置三种模式与丢弃全部', { skip: !built && '未找到宿主产�
 	}
 });
 
-test('贮藏改动与推送上游', { skip: !built && '未找到宿主产物' }, async () => {
+test('贮藏改动与推送上游', async () => {
 	const { repo, git } = makeRepo();
 	const remote = mkdtempSync(join(tmpdir(), 'gg-remote-'));
 	try {
@@ -418,7 +416,7 @@ test('贮藏改动与推送上游', { skip: !built && '未找到宿主产物' },
 	}
 });
 
-test('提交对比与两提交文件差异', { skip: !built && '未找到宿主产物' }, async () => {
+test('提交对比与两提交文件差异', async () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
@@ -456,7 +454,7 @@ test('提交对比与两提交文件差异', { skip: !built && '未找到宿主�
 	}
 });
 
-test('未知命令被拒绝且非仓库路径不抛错', { skip: !built && '未找到宿主产物' }, async () => {
+test('未知命令被拒绝且非仓库路径不抛错', async () => {
 	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);

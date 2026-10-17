@@ -2,6 +2,7 @@
  * AI 模型目录、流式提交信息生成与翻译。
  */
 import { callApi } from './http.ts';
+import { readStreamText } from './stream.ts';
 
 /** AI 模型目录端点。 */
 const AI_MODELS_PATH = '/dsh-source-control/gg/ai-models';
@@ -96,13 +97,9 @@ export async function generateCommitMessage(
 		const json = await res.json().catch(() => ({})) as { error?: string };
 		throw new Error(json.error || `宿主返回 ${res.status}`);
 	}
-	const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-	const decoder = new TextDecoder();
 	let buffer = '';
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
+	await readStreamText(res.body as ReadableStream<Uint8Array>, (text) => {
+		buffer += text;
 		const lines = buffer.split('\n');
 		buffer = lines.pop() ?? '';
 		let event = '';
@@ -117,5 +114,5 @@ export async function generateCommitMessage(
 				event = '';
 			}
 		}
-	}
+	});
 }

@@ -919,184 +919,177 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDeps): Array<() => void> {
 	const disposers: Array<() => void> = [];
 
+	/**
+	 * 注册一条只接受单一 HTTP 方法的精确路由。
+	 *
+	 * 方法不符时回 405 并给出 `allow`；符合时执行 `handler`。
+	 *
+	 * @param path - 路由路径。
+	 * @param method - 允许的方法。
+	 * @param handler - 方法符合时的处理函数。
+	 * @returns 无。
+	 */
+	const registerMethodRoute = (
+		path: string,
+		method: 'GET' | 'POST',
+		handler: (req: http.IncomingMessage, res: http.ServerResponse) => void,
+	): void => {
+		disposers.push(
+			webServer.register({
+				kind: 'exact',
+				path,
+				handler: (req, res) => {
+					if (req.method !== method) {
+						res.writeHead(405, { allow: method });
+						res.end();
+						return;
+					}
+					handler(req, res);
+				},
+			}),
+		);
+	};
+
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
 	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
 
 	// 事件流（GET）：面板据此即时反映别处的写操作。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/events',
-			handler: (req, res) => {
-				if (req.method !== 'GET') {
-					res.writeHead(405, { allow: 'GET' });
-					res.end();
-					return;
-				}
-				handleEvents(req, res);
-			},
-		}),
-	);
+	registerMethodRoute('/dsh-source-control/gg/events', 'GET', (req, res) => { handleEvents(req, res); });
 
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/api',
-			handler: (req, res) => {
-				if (req.method !== 'POST') {
-					res.writeHead(405, { allow: 'POST' });
-					res.end();
-					return;
-				}
-				void handleApi(req, res, aiDeps).catch((e: unknown) => {
-					sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
-				});
-			},
-		}),
-	);
+	registerMethodRoute('/dsh-source-control/gg/api', 'POST', (req, res) => {
+		void handleApi(req, res, aiDeps).catch((e: unknown) => {
+			sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+		});
+	});
 
 	// AI 模型目录（GET）：供应商列表 + 每供应商的模型 id。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/ai-models',
-			handler: (req, res) => {
-				if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-				const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
-				if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
-				const providers: Array<{ id: string; name: string }> = [];
+	registerMethodRoute('/dsh-source-control/gg/ai-models', 'GET', (req, res) => {
+		const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
+		if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
+		const providers: Array<{ id: string; name: string }> = [];
+		try {
+			const raw = llm.listProviders();
+			for (const p of (Array.isArray(raw) ? raw : [])) {
+				const id = (p as { id?: string }).id ?? '';
+				if (id.length > 0) providers.push({ id, name: (p as { name?: string }).name ?? id });
+			}
+		} catch { /* 目录不可用 */ }
+		void (async () => {
+			const modelsByProvider: Record<string, string[]> = {};
+			for (const p of providers) {
 				try {
-					const raw = llm.listProviders();
-					for (const p of (Array.isArray(raw) ? raw : [])) {
-						const id = (p as { id?: string }).id ?? '';
-						if (id.length > 0) providers.push({ id, name: (p as { name?: string }).name ?? id });
-					}
-				} catch { /* 目录不可用 */ }
-				void (async () => {
-					const modelsByProvider: Record<string, string[]> = {};
-					for (const p of providers) {
-						try {
-							const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
-							modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
-								.map((m) => (m as { id?: string }).id ?? '')
-								.filter((id) => id.length > 0);
-						} catch { modelsByProvider[p.id] = []; }
-					}
-					const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
-					sendJson(res, 200, { providers, modelsByProvider, fallback });
-				})();
-			},
-		}),
-	);
+					const list = typeof llm.listModels === 'function' ? await llm.listModels(p.id) : [];
+					modelsByProvider[p.id] = (Array.isArray(list) ? list : [])
+						.map((m) => (m as { id?: string }).id ?? '')
+						.filter((id) => id.length > 0);
+				} catch { modelsByProvider[p.id] = []; }
+			}
+			const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+			sendJson(res, 200, { providers, modelsByProvider, fallback });
+		})();
+	});
 
 	// AI 提交信息生成（POST，SSE 流式）：取暂存 diff → 调 llm.stream → 逐 chunk 推送。
-	disposers.push(
-		webServer.register({
-			kind: 'exact',
-			path: '/dsh-source-control/gg/ai-commit',
-			handler: (req, res) => {
-				if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
-				void (async () => {
-					const body = await readBody(req);
-					const repo = typeof body.repo === 'string' ? body.repo : '';
-					if (!repo) { sendJson(res, 400, { error: '缺少 repo' }); return; }
-					const llm = aiDeps?.getLlm?.() as { stream?: (opts: unknown) => AsyncIterable<{ content?: string }> } | undefined;
-					if (!llm || typeof llm.stream !== 'function') { sendJson(res, 503, { error: 'llm 服务不可用' }); return; }
+	registerMethodRoute('/dsh-source-control/gg/ai-commit', 'POST', (req, res) => {
+		void (async () => {
+			const body = await readBody(req);
+			const repo = typeof body.repo === 'string' ? body.repo : '';
+			if (!repo) { sendJson(res, 400, { error: '缺少 repo' }); return; }
+			const llm = aiDeps?.getLlm?.() as { stream?: (opts: unknown) => AsyncIterable<{ content?: string }> } | undefined;
+			if (!llm || typeof llm.stream !== 'function') { sendJson(res, 503, { error: 'llm 服务不可用' }); return; }
 
-					// 模型解析：请求指定 > agent 默认（附警告）
-					let provider = typeof body.provider === 'string' ? body.provider : '';
-					let model = typeof body.model === 'string' ? body.model : '';
-					let warning = '';
-					if (provider === '' || model === '') {
-						const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
-						if (fallback !== null) { provider = fallback.provider; model = fallback.model; warning = '未配置专用模型，使用当前会话模型'; }
-						else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
+			// 模型解析：请求指定 > agent 默认（附警告）
+			let provider = typeof body.provider === 'string' ? body.provider : '';
+			let model = typeof body.model === 'string' ? body.model : '';
+			let warning = '';
+			if (provider === '' || model === '') {
+				const fallback = getAgentDefaultSelection(aiDeps?.getAgentDefaultModel);
+				if (fallback !== null) { provider = fallback.provider; model = fallback.model; warning = '未配置专用模型，使用当前会话模型'; }
+				else { sendJson(res, 400, { error: '未配置模型且无法获取当前会话模型' }); return; }
+			}
+
+			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
+			const amend = body.amend === true;
+			const diff = await collectDiff(repo, amend);
+			if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
+
+			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
+			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
+			const language = typeof body.language === 'string' ? body.language.trim() : '';
+			const systemPrompt = AI_COMMIT_PROMPTS.system
+				+ languageDirective(language)
+				+ (rules.length > 0 ? '\n\n' + rules : '');
+			const off = await canDisableReasoning(llm, provider, model);
+			const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
+			const streamOpts: Record<string, unknown> = {
+				provider,
+				model,
+				system: systemPrompt,
+				messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
+				maxTokens: 512,
+				temperature: 0,
+			};
+			if (off) streamOpts.reasoningEffort = 'off';
+
+			res.writeHead(200, {
+				'content-type': 'text/event-stream; charset=utf-8',
+				'cache-control': 'no-store',
+				'connection': 'keep-alive',
+			});
+			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+			if (warning !== '') sse('warning', warning);
+
+			const startTime = Date.now();
+			/*
+			 * 首个输出增量到达的时刻，作为 tok/s 的计时起点。
+			 *
+			 * 起点不含请求上传与提示词处理时间。`text-delta` 与 `reasoning-delta` 都算
+			 * 输出：`usage.outputTokens` 包含推理 token。
+			 */
+			let firstOutputTime: number | null = null;
+			let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
+			try {
+				const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
+				for await (const chunk of stream) {
+					if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+						if (firstOutputTime === null) firstOutputTime = Date.now();
+						sse('chunk', chunk.text);
+					} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+						if (firstOutputTime === null) firstOutputTime = Date.now();
+					} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
+					else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
+						const f = chunk.reason.failure;
+						const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
+						sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
 					}
-
-					// 修补上一次提交时，把上一提交的改动一并纳入 diff。
-					const amend = body.amend === true;
-					const diff = await collectDiff(repo, amend);
-					if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
-
-					const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
-					// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
-					const language = typeof body.language === 'string' ? body.language.trim() : '';
-					const systemPrompt = AI_COMMIT_PROMPTS.system
-						+ languageDirective(language)
-						+ (rules.length > 0 ? '\n\n' + rules : '');
-					const off = await canDisableReasoning(llm, provider, model);
-					const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
-					const streamOpts: Record<string, unknown> = {
-						provider,
-						model,
-						system: systemPrompt,
-						messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
-						maxTokens: 512,
-						temperature: 0,
-					};
-					if (off) streamOpts.reasoningEffort = 'off';
-
-					res.writeHead(200, {
-						'content-type': 'text/event-stream; charset=utf-8',
-						'cache-control': 'no-store',
-						'connection': 'keep-alive',
-					});
-					const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-					if (warning !== '') sse('warning', warning);
-
-					const startTime = Date.now();
-					/*
-					 * 首个输出增量到达的时刻，作为 tok/s 的计时起点。
-					 *
-					 * 起点不含请求上传与提示词处理时间。`text-delta` 与 `reasoning-delta` 都算
-					 * 输出：`usage.outputTokens` 包含推理 token。
-					 */
-					let firstOutputTime: number | null = null;
-					let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
-					try {
-						const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
-						for await (const chunk of stream) {
-							if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-								if (firstOutputTime === null) firstOutputTime = Date.now();
-								sse('chunk', chunk.text);
-							} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-								if (firstOutputTime === null) firstOutputTime = Date.now();
-							} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
-							else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
-								const f = chunk.reason.failure;
-								const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
-								sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
-							}
-						}
-						const endTime = Date.now();
-						const totalSec = (endTime - startTime) / 1000;
-						/*
-						 * 时长拆两段：`elapsed` 为解码时长（总时长扣除首 token 延迟），
-						 * `ttft` 为首 token 延迟。全程无输出时 ttft 为 0、elapsed 为总时长。
-						 */
-						const ttftSec = firstOutputTime === null ? 0 : (firstOutputTime - startTime) / 1000;
-						const elapsedSec = totalSec - ttftSec;
-						const outTok = usage?.outputTokens ?? 0;
-						const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
-						sse('stats', {
-							tps,
-							elapsed: elapsedSec.toFixed(1) + 's',
-							ttft: ttftSec.toFixed(1) + 's',
-							inputTokens: usage?.inputTokens ?? 0,
-							outputTokens: outTok,
-							cacheReadTokens: usage?.cacheReadTokens ?? 0,
-							cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
-						});
-						sse('done', '');
-					} catch (e) {
-						sse('error', e instanceof Error ? e.message : String(e));
-					}
-					res.end();
-				})();
-			},
-		}),
-	);
+				}
+				const endTime = Date.now();
+				const totalSec = (endTime - startTime) / 1000;
+				/*
+				 * 时长拆两段：`elapsed` 为解码时长（总时长扣除首 token 延迟），
+				 * `ttft` 为首 token 延迟。全程无输出时 ttft 为 0、elapsed 为总时长。
+				 */
+				const ttftSec = firstOutputTime === null ? 0 : (firstOutputTime - startTime) / 1000;
+				const elapsedSec = totalSec - ttftSec;
+				const outTok = usage?.outputTokens ?? 0;
+				const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
+				sse('stats', {
+					tps,
+					elapsed: elapsedSec.toFixed(1) + 's',
+					ttft: ttftSec.toFixed(1) + 's',
+					inputTokens: usage?.inputTokens ?? 0,
+					outputTokens: outTok,
+					cacheReadTokens: usage?.cacheReadTokens ?? 0,
+					cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+				});
+				sse('done', '');
+			} catch (e) {
+				sse('error', e instanceof Error ? e.message : String(e));
+			}
+			res.end();
+		})();
+	});
 
 	return disposers;
 }

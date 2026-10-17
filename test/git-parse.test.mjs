@@ -8,12 +8,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
+import { importHostModule } from './lib-import.mjs';
+
+const mod = await importHostModule('source-control/git-parse.js');
+const {
 	DETAILS_FORMAT, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
 	parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
 	splitRecords, UNCOMMITTED,
-} from '../src/source-control/git-parse.ts';
+} = mod;
 
 /**
  * 建一个临时仓库。

@@ -1,7 +1,7 @@
 /**
  * 分支与提交级操作：检出、创建、删除、重命名、合并、变基、拣选与重置。
  */
-import { callApi, callApiRaw } from './http.ts';
+import { callApi, callApiRaw, commandError, firstError } from './http.ts';
 
 /** 合并到选中分支的结果。 */
 export interface MergeIntoBranchResult {
@@ -25,8 +25,7 @@ export interface MergeIntoBranchResult {
  */
 export async function checkoutBranch(cwd: string, branchName: string, remoteBranch: string | null = null): Promise<string | null> {
 	const payload = await callApi(cwd, { command: 'checkoutBranch', branchName, remoteBranch });
-	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
-	return errors.length > 0 ? errors[0] : null;
+	return firstError(payload);
 }
 
 /**
@@ -41,8 +40,7 @@ export async function checkoutBranch(cwd: string, branchName: string, remoteBran
  */
 export async function createBranch(cwd: string, branchName: string, commitHash: string, checkout = true, force = false): Promise<string | null> {
 	const payload = await callApi(cwd, { command: 'createBranch', branchName, commitHash, checkout, force });
-	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
-	return errors.length > 0 ? errors[0] : null;
+	return firstError(payload);
 }
 
 /**
@@ -56,8 +54,7 @@ export async function createBranch(cwd: string, branchName: string, commitHash: 
  */
 export async function deleteBranch(cwd: string, branchName: string, forceDelete = false, deleteOnRemotes: readonly string[] = []): Promise<string | null> {
 	const payload = await callApi(cwd, { command: 'deleteBranch', branchName, forceDelete, deleteOnRemotes });
-	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
-	return errors.length > 0 ? errors[0] : null;
+	return firstError(payload);
 }
 
 /**
@@ -70,7 +67,7 @@ export async function deleteBranch(cwd: string, branchName: string, forceDelete 
  */
 export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'renameBranch', oldName, newName });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -83,7 +80,7 @@ export async function renameBranch(cwd: string, oldName: string, newName: string
  */
 export async function deleteRemoteBranch(cwd: string, branchName: string, remote: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'deleteRemoteBranch', branchName, remote });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -98,7 +95,7 @@ export async function deleteRemoteBranch(cwd: string, branchName: string, remote
  */
 export async function fetchIntoLocalBranch(cwd: string, remote: string, remoteBranch: string, localBranch: string, force = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'fetchIntoLocalBranch', remote, remoteBranch, localBranch, force });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -113,7 +110,7 @@ export async function fetchIntoLocalBranch(cwd: string, remote: string, remoteBr
  */
 export async function pullBranch(cwd: string, branchName: string, remote: string, createNewCommit = false, squash = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'pullBranch', branchName, remote, createNewCommit, squash });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -125,7 +122,7 @@ export async function pullBranch(cwd: string, branchName: string, remote: string
  */
 export async function checkoutCommit(cwd: string, commitHash: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'checkoutCommit', commitHash });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -140,8 +137,7 @@ export async function checkoutCommit(cwd: string, commitHash: string): Promise<s
  */
 export async function cherrypickCommit(cwd: string, commitHash: string, parentIndex = -1, recordOrigin = false, noCommit = false): Promise<string | null> {
 	const payload = await callApi(cwd, { command: 'cherrypickCommit', commitHash, parentIndex, recordOrigin, noCommit });
-	const errors = Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
-	return errors.length > 0 ? errors[0] : null;
+	return firstError(payload);
 }
 
 /**
@@ -154,7 +150,7 @@ export async function cherrypickCommit(cwd: string, commitHash: string, parentIn
  */
 export async function resetToCommit(cwd: string, commitHash: string, resetMode = 'mixed'): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'resetToCommit', commit: commitHash, resetMode });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -167,7 +163,7 @@ export async function resetToCommit(cwd: string, commitHash: string, resetMode =
  */
 export async function revertCommit(cwd: string, commitHash: string, parentIndex = -1): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'revertCommit', commitHash, parentIndex });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -182,7 +178,7 @@ export async function revertCommit(cwd: string, commitHash: string, parentIndex 
  */
 export async function merge(cwd: string, obj: string, createNewCommit = false, squash = false, noCommit = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }
 
 /**
@@ -200,7 +196,7 @@ export async function merge(cwd: string, obj: string, createNewCommit = false, s
 export async function mergeIntoBranch(cwd: string, branchName: string, commitHash: string, message = ''): Promise<MergeIntoBranchResult> {
 	const payload = await callApiRaw(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message });
 	return {
-		error: typeof payload.error === 'string' && payload.error !== '' ? payload.error : null,
+		error: commandError(payload),
 		branchName: typeof payload.branchName === 'string' ? payload.branchName : branchName,
 		mergeMessage: typeof payload.mergeMessage === 'string' ? payload.mergeMessage : null,
 		conflicted: payload.conflicted === true,
@@ -218,5 +214,5 @@ export async function mergeIntoBranch(cwd: string, branchName: string, commitHas
  */
 export async function rebase(cwd: string, obj: string, ignoreDate = true, interactive = false): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'rebase', obj, actionOn: 'Branch', ignoreDate, interactive });
-	return typeof payload.error === 'string' && payload.error !== '' ? payload.error : null;
+	return commandError(payload);
 }

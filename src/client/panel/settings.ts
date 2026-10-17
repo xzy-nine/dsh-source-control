@@ -211,6 +211,27 @@ function NumberRow({ label, value, min, max, onChange }: {
 }
 
 /**
+ * 设置行：行内标签 + 控件。
+ *
+ * @param label - 行标签。
+ * @param labelClass - 标签的类名；下拉行与分段行各自的样式。
+ * @param control - 控件元素。
+ * @returns 行元素。
+ */
+function SettingRow({ label, labelClass, control }: {
+	label: string;
+	labelClass: string;
+	control: React.ReactElement;
+}): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: css.setRow },
+		React.createElement('span', { className: labelClass }, label),
+		control,
+	);
+}
+
+/**
  * 一个下拉行。
  *
  * @param props.label - 文案。
@@ -225,12 +246,11 @@ function SelectRow({ label, options, value, onChange }: {
 	value: string;
 	onChange: (next: string) => void;
 }): React.ReactElement {
-	return React.createElement(
-		'div',
-		{ className: css.setRow },
-		React.createElement('span', { className: css.setRowText }, label),
-		React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
-	);
+	return React.createElement(SettingRow, {
+		label,
+		labelClass: css.setRowText,
+		control: React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
+	});
 }
 
 /**
@@ -248,12 +268,11 @@ function DropdownRow({ label, options, value, onChange }: {
 	value: string;
 	onChange: (next: string) => void;
 }): React.ReactElement {
-	return React.createElement(
-		'div',
-		{ className: css.setRow },
-		React.createElement('span', { className: css.setLabel }, label),
-		React.createElement(Dropdown, { options, value, onChange }),
-	);
+	return React.createElement(SettingRow, {
+		label,
+		labelClass: css.setLabel,
+		control: React.createElement(Dropdown, { options, value, onChange }),
+	});
 }
 
 /**

@@ -8,12 +8,12 @@ import {
 	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular,
 	IconFolderCloseRegular, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { copyText, showContextMenu } from '../ui/context-menu.ts';
+import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
-import type { BusyScope, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
+import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
@@ -55,6 +55,57 @@ function guidesOf(depth: number): React.ReactElement[] {
 	return guides;
 }
 
+/**
+ * 在指针位置弹出某个目标的右键菜单，并在关闭时撤下高亮类。
+ *
+ * @param event - 右键事件；坐标取自它。
+ * @param build - 构建菜单项。
+ * @returns 无。
+ */
+function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => ContextMenuItem[]): void {
+	event.preventDefault();
+	const target = event.currentTarget;
+	target.classList.add(MENU_TARGET_CLASS);
+	showContextMenu({
+		x: event.clientX, y: event.clientY, items: build(),
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
+	});
+}
+
+/**
+ * 把一批条目按是否未跟踪拆成两条命令各自的路径集合。
+ *
+ * 未跟踪文件要经 `git clean` 删除、已跟踪文件要经 `git restore` 还原，两者是不同的命令；
+ * 混在一批里下发会让 `git restore` 因无效 pathspec 整体失败。
+ *
+ * @param entries - 工作区条目。
+ * @returns 已跟踪与未跟踪的路径，各自保持原有顺序。
+ */
+function splitUntracked(entries: readonly WorkingTreeEntry[]): { tracked: string[]; untracked: string[] } {
+	const tracked: string[] = [];
+	const untracked: string[] = [];
+	for (const entry of entries) {
+		if (entry.index === '?' && entry.worktree === '?') untracked.push(entry.path);
+		else tracked.push(entry.path);
+	}
+	return { tracked, untracked };
+}
+
+/**
+ * 生成丢弃改动的确认文案。
+ *
+ * @param scope - 目标前缀：文件夹为 `<路径> 下`，分组为 `''`。
+ * @param count - 涉及的条目数。
+ * @param untrackedCount - 其中未跟踪文件数；大于零时措辞说明这些文件会被删除。
+ * @returns 确认文案。
+ */
+function discardMessage(scope: string, count: number, untrackedCount: number): string {
+	const head = `确定丢弃 ${scope}这 ${count} 个文件的改动？`;
+	return untrackedCount > 0
+		? `${head}其中 ${untrackedCount} 个未跟踪文件会被删除，均无法恢复。`
+		: `${head}未提交的改动会丢失，且无法恢复。`;
+}
+
 /** 变更树内的文件夹行或文件行。 */
 export interface ChangeNodeRowProps {
 	readonly row: ChangeRow;
@@ -88,15 +139,11 @@ export function ChangeNodeRow({
 }: ChangeNodeRowProps): React.ReactElement {
 	if (row.kind === 'folder') {
 		const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
-			event.preventDefault();
 			event.stopPropagation();
-			const target = event.currentTarget;
-			target.classList.add(MENU_TARGET_CLASS);
-			const items = changeMenuItems({
+			openTargetMenu(event, () => changeMenuItems({
 				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
 				entry: null, untracked: false,
-			});
-			showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
+			}));
 		};
 		return React.createElement(
 			'div',
@@ -121,14 +168,10 @@ export function ChangeNodeRow({
 	const isNew = isNewFile(entry);
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
-		event.preventDefault();
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		const items = changeMenuItems({
+		openTargetMenu(event, () => changeMenuItems({
 			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
 			entry, untracked,
-		});
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
+		}));
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -238,7 +281,7 @@ export function CommitDetail({ files, busy, loading, collapsed, onToggle, onOpen
 }
 
 /** 一个变更分组：暂存的更改 / 更改。 */
-export interface ChangeGroupProps {
+export interface ChangeGroupProps extends ChangeActions {
 	readonly staged: boolean;
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: boolean;
@@ -248,15 +291,6 @@ export interface ChangeGroupProps {
 	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
-	readonly run: (scope: BusyScope, operation: () => Promise<void>, repo?: string, optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[], options?: { readonly historyChanged?: boolean }) => Promise<void>;
-	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
-	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
-	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
-	/** 把路径加入 .gitignore。 */
-	readonly onAddToGitignore: (path: string) => void;
-	/** 把路径加入本地排除文件。 */
-	readonly onAddToLocalExclude: (path: string) => void;
 	readonly forceShow?: boolean;
 }
 
@@ -274,39 +308,47 @@ export function ChangeGroup({
 		? (entry.index !== ' ' && entry.index !== '?')
 		: (entry.worktree !== ' '));
 	if (visible.length === 0 && !forceShow) return [];
-	const rows = changeRowsOf(visible, collapsed);
+	const rows: ChangeRow[] = changeRowsOf(visible, collapsed);
 	const title = staged ? '暂存的更改' : '更改';
 	const allPaths = visible.map((entry) => entry.path);
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 	const onStage = (paths: readonly string[]): void => { void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false }); };
 	const onUnstage = (paths: readonly string[]): void => { void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false }); };
 	/**
-	 * 丢弃某个文件夹下的全部改动。
+	 * 丢弃一批路径的改动；未跟踪与已跟踪分两条命令下发。
 	 *
-	 * 与「丢弃全部」同一套分拣：文件夹下的已跟踪条目经 `git restore` 还原、未跟踪条目经
-	 * `git clean` 删除，混在一批里下发会让 `git restore` 因无效 pathspec 整体失败。
+	 * @param tracked - 已跟踪的路径。
+	 * @param untrackedPaths - 未跟踪的路径。
+	 * @param optimistic - 对条目的推算；省略时不推算。
+	 * @returns 无。
+	 */
+	const discardBoth = async (
+		tracked: readonly string[],
+		untrackedPaths: readonly string[],
+		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+	): Promise<void> => {
+		// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
+		await run('commit', async () => {
+			if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
+			if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
+		}, undefined, optimistic, { historyChanged: false });
+	};
+	/**
+	 * 丢弃某个文件夹下的全部改动。
 	 *
 	 * @param folderPath - 文件夹路径，相对仓库根。
 	 */
 	const onDiscardFolder = (folderPath: string): void => {
-		const prefix = `${folderPath}/`;
-		const inside = visible.filter((entry) => entry.path.startsWith(prefix));
-		const tracked = inside.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
-		const untrackedPaths = inside.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
+		const inside = visible.filter((entry) => entry.path.startsWith(`${folderPath}/`));
+		const { tracked, untracked: untrackedPaths } = splitUntracked(inside);
 		void (async () => {
 			const ok = await showConfirmation({
 				title: '丢弃改动',
-				message: untrackedPaths.length > 0
-					? `确定丢弃 ${folderPath} 下这 ${inside.length} 个文件的改动？其中 ${untrackedPaths.length} 个未跟踪文件会被删除，均无法恢复。`
-					: `确定丢弃 ${folderPath} 下这 ${inside.length} 个文件的改动？未提交的改动会丢失，且无法恢复。`,
+				message: discardMessage(`${folderPath} 下`, inside.length, untrackedPaths.length),
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
-			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
-			await run('commit', async () => {
-				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
-				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			}, undefined, undefined, { historyChanged: false });
+			await discardBoth(tracked, untrackedPaths);
 		})();
 	};
 	const onDiscard = (paths: readonly string[], untracked: boolean): void => {
@@ -332,26 +374,18 @@ export function ChangeGroup({
 	/**
 	 * 丢弃该分组内全部改动。
 	 *
-	 * 未跟踪文件要经 `git clean` 删除、已跟踪文件要经 `git restore` 还原，两者是不同的
-	 * 命令；混在一批里下发会让 `git restore` 因无效 pathspec 整体失败。
+	 * @returns 无。
 	 */
 	const onDiscardAll = (): void => {
-		const tracked = visible.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
-		const untrackedPaths = visible.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
+		const { tracked, untracked: untrackedPaths } = splitUntracked(visible);
 		void (async () => {
 			const ok = await showConfirmation({
 				title: '丢弃改动',
-				message: untrackedPaths.length > 0
-					? `确定丢弃这 ${allPaths.length} 个文件的改动？其中 ${untrackedPaths.length} 个未跟踪文件会被删除，均无法恢复。`
-					: `确定丢弃这 ${allPaths.length} 个文件的改动？未提交的改动会丢失，且无法恢复。`,
+				message: discardMessage('', allPaths.length, untrackedPaths.length),
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
-			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
-			await run('commit', async () => {
-				if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
-				if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-			}, undefined, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]), { historyChanged: false });
+			await discardBoth(tracked, untrackedPaths, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]));
 		})();
 	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };
@@ -370,15 +404,11 @@ export function ChangeGroup({
 		onCopyPath: (path: string) => { void copyText(absolutePathOf(workingTreePath, path)); },
 	};
 	const handleHeadContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
-		event.preventDefault();
 		event.stopPropagation();
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		const items = changeMenuItems({
+		openTargetMenu(event, () => changeMenuItems({
 			target: 'group', deps: menu, path: null, paths: allPaths,
 			entry: null, untracked: false,
-		});
-		showContextMenu({ x: event.clientX, y: event.clientY, items, onClose: () => { target.classList.remove(MENU_TARGET_CLASS); } });
+		}));
 	};
 	return React.createElement(
 		'div',

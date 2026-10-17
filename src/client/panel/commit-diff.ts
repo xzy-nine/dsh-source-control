@@ -10,6 +10,32 @@
 import type { Commit, CommitRemote, CommitStash, CommitTag, Remote, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
+ * 两个列表是否逐项相等。
+ *
+ * 顺序敏感；undefined 按空数组处理，同一引用直接相等。逐项比较由调用方给出的判据决定，
+ * 因此字符串数组、标签、远程与工作区条目共用同一套长度与遍历。
+ *
+ * @param left - 左侧列表；undefined 按空数组处理。
+ * @param right - 右侧列表；undefined 按空数组处理。
+ * @param same - 逐项相等判据。
+ * @returns 长度相同且逐项相等时为 true。
+ */
+function listEqual<T>(
+	left: readonly T[] | undefined,
+	right: readonly T[] | undefined,
+	same: (a: T, b: T) => boolean,
+): boolean {
+	if (left === right) return true;
+	const a = left ?? [];
+	const b = right ?? [];
+	if (a.length !== b.length) return false;
+	for (let index = 0; index < a.length; index += 1) {
+		if (!same(a[index], b[index])) return false;
+	}
+	return true;
+}
+
+/**
  * 两个可选字符串数组是否严格相等。
  *
  * 顺序敏感：`heads` 与 `parents` 的顺序会影响图形绘制。
@@ -19,13 +45,7 @@ import type { Commit, CommitRemote, CommitStash, CommitTag, Remote, WorkingTreeE
  * @returns 长度相同且逐项全等时为 true。
  */
 function stringsEqual(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
-	const a = left ?? [];
-	const b = right ?? [];
-	if (a.length !== b.length) return false;
-	for (let index = 0; index < a.length; index += 1) {
-		if (a[index] !== b[index]) return false;
-	}
-	return true;
+	return listEqual(left, right, (a, b) => a === b);
 }
 
 /**
@@ -48,14 +68,7 @@ function annotatedOf(tag: CommitTag): unknown {
  * @returns 长度相同且逐项 `name` 与 `annotated` 全等时为 true。
  */
 function tagsEqual(left: readonly CommitTag[] | undefined, right: readonly CommitTag[] | undefined): boolean {
-	const a = left ?? [];
-	const b = right ?? [];
-	if (a.length !== b.length) return false;
-	for (let index = 0; index < a.length; index += 1) {
-		if (a[index].name !== b[index].name) return false;
-		if (annotatedOf(a[index]) !== annotatedOf(b[index])) return false;
-	}
-	return true;
+	return listEqual(left, right, (a, b) => a.name === b.name && annotatedOf(a) === annotatedOf(b));
 }
 
 /**
@@ -66,14 +79,7 @@ function tagsEqual(left: readonly CommitTag[] | undefined, right: readonly Commi
  * @returns 长度相同且逐项 `name` 与 `remote` 全等时为 true。
  */
 function remotesEqual(left: readonly CommitRemote[] | undefined, right: readonly CommitRemote[] | undefined): boolean {
-	const a = left ?? [];
-	const b = right ?? [];
-	if (a.length !== b.length) return false;
-	for (let index = 0; index < a.length; index += 1) {
-		if (a[index].name !== b[index].name) return false;
-		if (a[index].remote !== b[index].remote) return false;
-	}
-	return true;
+	return listEqual(left, right, (a, b) => a.name === b.name && a.remote === b.remote);
 }
 
 /**
@@ -116,12 +122,7 @@ export function commitsEqual(left: Commit, right: Commit): boolean {
  * @returns 长度相同且逐条相等时为 true。
  */
 export function commitsListEqual(left: readonly Commit[], right: readonly Commit[]): boolean {
-	if (left === right) return true;
-	if (left.length !== right.length) return false;
-	for (let index = 0; index < left.length; index += 1) {
-		if (!commitsEqual(left[index], right[index])) return false;
-	}
-	return true;
+	return listEqual(left, right, commitsEqual);
 }
 
 /**
@@ -190,16 +191,8 @@ export function uncommittedParentOf(commits: readonly Commit[], head: string | n
  * @returns 长度相同且逐条 `name`、`url`、`pushUrl` 全等时为 true。
  */
 export function remotesListEqual(left: readonly Remote[], right: readonly Remote[]): boolean {
-	if (left === right) return true;
-	if (left.length !== right.length) return false;
-	for (let index = 0; index < left.length; index += 1) {
-		const a = left[index];
-		const b = right[index];
-		if (a.name !== b.name) return false;
-		if ((a.url ?? null) !== (b.url ?? null)) return false;
-		if ((a.pushUrl ?? null) !== (b.pushUrl ?? null)) return false;
-	}
-	return true;
+	return listEqual(left, right, (a, b) =>
+		a.name === b.name && (a.url ?? null) === (b.url ?? null) && (a.pushUrl ?? null) === (b.pushUrl ?? null));
 }
 
 /**
@@ -212,15 +205,7 @@ export function remotesListEqual(left: readonly Remote[], right: readonly Remote
  * @returns 长度相同且逐条四字段全等时为 true。
  */
 export function entriesEqual(left: readonly WorkingTreeEntry[], right: readonly WorkingTreeEntry[]): boolean {
-	if (left === right) return true;
-	if (left.length !== right.length) return false;
-	for (let index = 0; index < left.length; index += 1) {
-		const a = left[index];
-		const b = right[index];
-		if (a.path !== b.path) return false;
-		if ((a.origPath ?? null) !== (b.origPath ?? null)) return false;
-		if (a.index !== b.index) return false;
-		if (a.worktree !== b.worktree) return false;
-	}
-	return true;
+	return listEqual(left, right, (a, b) =>
+		a.path === b.path && (a.origPath ?? null) === (b.origPath ?? null)
+		&& a.index === b.index && a.worktree === b.worktree);
 }

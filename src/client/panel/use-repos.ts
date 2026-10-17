@@ -21,6 +21,35 @@ const SYNC_BATCH = 24;
 /** 单次补齐工作树与子模块的仓库数上限；超出的仓库留到下一轮空闲回调。 */
 const ENRICH_BATCH = 24;
 
+/** 空闲回调的等待上限（毫秒）。 */
+const IDLE_TIMEOUT_MS = 1500;
+
+/** 无 `requestIdleCallback` 时的空闲回调延迟（毫秒）。 */
+const IDLE_FALLBACK_MS = 120;
+
+/**
+ * 取一对空闲回调的注册与取消函数。
+ *
+ * 浏览器支持 `requestIdleCallback` 时用它，否则退回定时器。
+ *
+ * @returns 注册与取消空闲回调的函数。
+ */
+function createIdleScheduler(): {
+	idle: (fn: () => void) => number;
+	cancelIdle: (handle: number) => void;
+} {
+	if (typeof window.requestIdleCallback === 'function') {
+		return {
+			idle: (fn) => window.requestIdleCallback(fn, { timeout: IDLE_TIMEOUT_MS }),
+			cancelIdle: (handle) => { window.cancelIdleCallback(handle); },
+		};
+	}
+	return {
+		idle: (fn) => window.setTimeout(fn, IDLE_FALLBACK_MS),
+		cancelIdle: (handle) => { window.clearTimeout(handle); },
+	};
+}
+
 /** 仓库发现 hook 的入参。 */
 export interface UseReposOptions {
 	/** 会话工作区路径；没有工作区时为 undefined。 */
@@ -247,12 +276,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		let cancelled = false;
 		// 本轮请求的取消信号：依赖变化或卸载时中止在途补齐。
 		const controller = new AbortController();
-		const idle = typeof window.requestIdleCallback === 'function'
-			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
-			: (fn: () => void): number => window.setTimeout(fn, 120);
-		const cancelIdle = typeof window.cancelIdleCallback === 'function'
-			? (handle: number): void => { window.cancelIdleCallback(handle); }
-			: (handle: number): void => { window.clearTimeout(handle); };
+		const { idle, cancelIdle } = createIdleScheduler();
 		/** 本次 effect 已下发的路径：取消时按批释放占用，见下方 cleanup。 */
 		let issued: string[] = [];
 		const handle = idle(() => {
@@ -323,12 +347,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		let cancelled = false;
 		// 本轮请求的取消信号：依赖变化或卸载时中止在途预取。
 		const controller = new AbortController();
-		const idle = typeof window.requestIdleCallback === 'function'
-			? (fn: () => void): number => window.requestIdleCallback(fn, { timeout: 1500 })
-			: (fn: () => void): number => window.setTimeout(fn, 120);
-		const cancelIdle = typeof window.cancelIdleCallback === 'function'
-			? (handle: number): void => { window.cancelIdleCallback(handle); }
-			: (handle: number): void => { window.clearTimeout(handle); };
+		const { idle, cancelIdle } = createIdleScheduler();
 		const handle = idle(() => {
 			void (async () => {
 				// 同一路径可能对应多个节点：按路径收集节点 id，结果一次写回。

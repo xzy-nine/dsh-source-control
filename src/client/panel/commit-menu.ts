@@ -18,6 +18,7 @@ import {
 } from '../api/index.ts';
 import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox, showConfirmation, showSelect, showText } from '../ui/dialog.ts';
+import type { ConfirmationOptions } from '../ui/dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { COMMIT_MENU, fillText, MENU_ACTIONS, type MenuActionMeta } from './menu-actions.ts';
@@ -93,6 +94,66 @@ interface MenuAction extends MenuActionMeta {
  */
 function shortBranchName(name: string): string {
 	return name.replace(/^[^/]+\//, '');
+}
+
+/**
+ * 把一项远程分支操作渲染成菜单项：先问本地分支名，确认后执行。
+ *
+ * @param ctx - 构建上下文。
+ * @param meta - 操作元数据，取菜单名称。
+ * @param title - 输入框标题。
+ * @param act - 拿到本地分支名后的执行体；入参为已收窄的引用目标。
+ * @param placeholder - 输入框占位提示。
+ * @returns 菜单项；没有引用目标时为 null。
+ */
+function branchFromRemoteItem(
+	ctx: MenuContext,
+	meta: MenuActionMeta,
+	title: string,
+	act: (ref: RefMenuTarget, localName: string) => void,
+	placeholder = '',
+): ContextMenuItem | null {
+	const ref = ctx.ref;
+	if (ref === null) return null;
+	const short = shortBranchName(ref.name);
+	return {
+		title: meta.title,
+		onClick: () => {
+			void (async () => {
+				const localName = await showText({ title, label: '本地分支名', value: short, placeholder });
+				if (localName !== null && localName !== '') act(ref, localName);
+			})();
+		},
+	};
+}
+
+/**
+ * 把「复制引用名」渲染成菜单项。
+ *
+ * @param ctx - 构建上下文。
+ * @param meta - 操作元数据，取菜单名称。
+ * @returns 菜单项；没有引用目标时为 null。
+ */
+function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): ContextMenuItem | null {
+	const ref = ctx.ref;
+	if (ref === null) return null;
+	return { title: meta.title, onClick: () => { void copyText(ref.name); } };
+}
+
+/**
+ * 先弹确认框，确认后执行一步仓库操作。
+ *
+ * @param confirm - 确认框选项。
+ * @param act - 确认后的执行体。
+ * @returns 点击处理函数。
+ */
+function confirmThenRun(confirm: ConfirmationOptions, act: () => void): () => void {
+	return () => {
+		void (async () => {
+			const ok = await showConfirmation(confirm);
+			if (ok) act();
+		})();
+	};
 }
 
 /**
@@ -238,11 +299,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			},
 		};
 	},
-	copyBranchName: (ctx, meta) => {
-		const ref = ctx.ref;
-		if (ref === null) return null;
-		return { title: meta.title, onClick: () => { void copyText(ref.name); } };
-	},
+	copyBranchName: (ctx, meta) => copyRefNameItem(ctx, meta),
 	createPullRequest: (ctx, meta) => {
 		// PR 是分支级操作：提交行右键时只在当前分支上有意义，引用右键时针对该分支。
 		const branch = ctx.ref !== null ? ctx.ref.name : ctx.deps.head;
@@ -305,48 +362,21 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			],
 		};
 	},
-	checkoutRemoteBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		const short = shortBranchName(name);
-		return {
-			title: meta.title,
-			onClick: () => {
-				void (async () => {
-					const localName = await showText({ title: '检出远程分支', label: '本地分支名', value: short, placeholder: 'feature/xxx' });
-					if (localName !== null && localName !== '') void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localName, name), checkoutFailureText); });
-				})();
-			},
-		};
-	},
-	fetchIntoLocalBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		const remote = ctx.ref.remote ?? '';
-		const short = shortBranchName(name);
-		return {
-			title: meta.title,
-			onClick: () => {
-				void (async () => {
-					const localName = await showText({ title: '创建本地分支', label: '本地分支名', value: short });
-					if (localName !== null && localName !== '') {
-						void ctx.deps.run('history', async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, remote, short, localName, false)); });
-					}
-				})();
-			},
-		};
-	},
+	checkoutRemoteBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '检出远程分支', (ref, localName) => {
+		void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localName, ref.name), checkoutFailureText); });
+	}, 'feature/xxx'),
+	fetchIntoLocalBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '创建本地分支', (ref, localName) => {
+		void ctx.deps.run('history', async () => { throwIfError(await fetchIntoLocalBranch(ctx.repo, ref.remote ?? '', shortBranchName(ref.name), localName, false)); });
+	}),
 	mergeRemoteIntoCurrent: (ctx, meta) => {
 		if (ctx.ref === null) return null;
 		const name = ctx.ref.name;
 		return {
 			title: meta.title,
-			onClick: () => {
-				void (async () => {
-					const ok = await showConfirmation({ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true });
-					if (ok) void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, name), checkoutFailureText); });
-				})();
-			},
+			onClick: confirmThenRun(
+				{ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true },
+				() => { void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, name), checkoutFailureText); }); },
+			),
 		};
 	},
 	deleteRemoteBranch: (ctx, meta) => {
@@ -367,11 +397,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			},
 		};
 	},
-	copyRemoteName: (ctx, meta) => {
-		const ref = ctx.ref;
-		if (ref === null) return null;
-		return { title: meta.title, onClick: () => { void copyText(ref.name); } };
-	},
+	copyRemoteName: (ctx, meta) => copyRefNameItem(ctx, meta),
 	checkoutTag: (ctx, meta) => {
 		const targets = tagTargets(ctx);
 		if (targets.length === 0) return null;
@@ -458,11 +484,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 			},
 		};
 	},
-	copyStashSelector: (ctx, meta) => {
-		const ref = ctx.ref;
-		if (ref === null) return null;
-		return { title: meta.title, onClick: () => { void copyText(ref.name); } };
-	},
+	copyStashSelector: (ctx, meta) => copyRefNameItem(ctx, meta),
 };
 
 /**

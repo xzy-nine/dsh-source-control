@@ -37,10 +37,12 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
+                    stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
                     state.ts 是状态读写与旧数据迁移入口
   src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
                     仓库树（use-repos.ts 以批量命令预取领先/落后；repo-tree.ts 树结构与选中、
                     enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
+                    refresh-scheduler.ts 是两处事件驱动刷新共用的冷却与挂起调度、
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
@@ -204,7 +206,7 @@ Office）主动不认领，那些仍走宿主预览。
 
 `enrichRepositories` 对「无链接工作树且无 `.gitmodules`」的仓库零 git 调用（`linkedWorktreePresence`
 + `.gitmodules` 存在性判定，且要求 `.git` 为目录），有来源时才枚举。仓库判据与发现层对齐：`.git` 为
-目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `gitDirOf` 定位 `HEAD`，因此链接工作树与子模块也能
+目录或文件都算仓库（`hasGitEntry`），`headOf` 经 `worktree-branches.ts` 的 `gitDirAt` 定位 `HEAD`，因此链接工作树与子模块也能
 解析出分支。`branchesOfOtherWorktrees` 先做无链接工作树判定，为空时直接返回空集。`getStashes` 先看
 `<commondir>/logs/refs/stash` 是否存在，不存在时不调用 git。`getRepoInfo` 的远程名由 config 派生
 （`remote.<name>.<任意子键>`），集合为空才回退 `git remote`。
@@ -261,12 +263,19 @@ Office）主动不认领，那些仍走宿主预览。
 
 ```bash
 pnpm install
-pnpm lint         # oxlint --type-aware src（规则集见 .oxlintrc.json）
-pnpm lint:fix     # 同上，能自动修的（花括号、可选链）就地改
-pnpm build        # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
-pnpm typecheck    # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
-pnpm test         # pretest 先跑完整 build（宿主 + 客户端），再 node --test test/*.test.mjs
+pnpm lint               # oxlint --type-aware src（规则集见 .oxlintrc.json）
+pnpm lint:fix           # 同上，能自动修的（花括号、可选链）就地改
+pnpm build              # build:host（tsc → lib/）+ build:client（esbuild → lib/client.js）
+pnpm typecheck          # 宿主（tsconfig.json）与客户端（tsconfig.client.json）两段
+pnpm check:duplication  # jscpd 扫描 src/，出现基线之外的重复即失败
+pnpm test               # pretest 先跑完整 build 与重复门禁，再 node --test test/*.test.mjs
 ```
+
+**重复代码门禁**：`scripts/check-duplication.mjs` 用 jscpd 扫 `src/`，与 `duplication-baseline.json`
+里的指纹逐条比对；出现基线之外的克隆即以退出码 1 失败。指纹只含「文件对 + 片段行数」，不含行号，
+因此无关改动不会让基线失效。基线只允许调低；确实无法消除的（如跨构建目标的类型镜像）才用
+`node scripts/check-duplication.mjs --update` 调高，并在提交信息里说明理由。
+门禁已挂在 `pretest` 上，`pnpm test` 必然经过它。
 
 - 数据源是 JSON，两端都直接 import（`resolveJsonModule` 已开启，宿主侧按 `type: 'json'` 导入属性读写）。
   JSON 随 `tsc` 产出到 `lib/`，esbuild 把它内联进客户端包，运行时不额外请求。`lib/` 只含构建产物，
@@ -311,8 +320,12 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 
 ## 测试
 
-测试从 `src/` 直接导入（Node 原生 TS 支持），因此**被测模块不得有内部 `.js` 相对导入**——那会让直连
-`.ts` 时报 `ERR_MODULE_NOT_FOUND`；带这类导入的逻辑要么抽成无依赖的纯模块，要么改用 `lib/` 产物验证。
+**宿主侧测试一律从 `lib/` 产物导入**（经 `test/lib-import.mjs` 的 `importHostModule`）：宿主模块普遍带
+内部 `.js` 相对导入，由 `src/` 直连 `.ts` 会报 `ERR_MODULE_NOT_FOUND`。因此 `pretest` 必须先把宿主产物
+构建出来，缺产物即导入失败、测试报错——构建失败本身就是问题，不用 skip 掩盖。
+**客户端测试仍从 `src/` 直连 `.ts`**：客户端没有逐模块产物，只有打包后的 `lib/client.js`（ModuleLoader
+包络，仅暴露插件入口），无法取到内部纯函数。少数按外部环境跳过的用例（非 git 目录、ui-primitives
+源码检出、jsdom 缺失）保留 skip，它们不依赖本仓库构建。
 
 | 文件 | 覆盖 |
 |---|---|
