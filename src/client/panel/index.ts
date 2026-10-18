@@ -1308,15 +1308,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 						});
 						if (!ok) return;
 						/*
-						 * 经仓库行自己的 `run` 执行：目标传该工作树路径。
-						 *
-						 * 不能走当前选中仓库的 `run`——被移除的可能正是当前选中的工作树，
-						 * 那之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
-						 * 目标不是当前仓库时 `run` 只作废该仓库的窗口缓存，不刷新视图。
+						 * 直接以该工作树路径为目标执行移除，不经面板的 `run`：被移除的可能正是当前
+						 * 选中的工作树，之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
 						 */
-						await run('history', async () => {
+						try {
 							await removeWorktree(node.path, node.path, true);
-						}, node.path);
+						} catch (error) {
+							reportError(setState, error instanceof Error ? error.message : String(error));
+							return;
+						}
+						dropGraphWindows(node.path);
 						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
 						setSelectedId((previous) => (previous === node.id ? null : previous));
 						rescan();
@@ -1329,7 +1330,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onClose: () => target.classList.remove(MENU_TARGET_CLASS),
 			items,
 		});
-	}, [selectNodeAndReset, run, refresh, state.busy, settings, workingTreePath, setSelectedId]);
+	}, [selectNodeAndReset, run, refresh, rescan, setState, state.busy, settings, workingTreePath, setSelectedId]);
 
 	/** 仓库行分支名点击：弹出分支切换菜单。 */
 	const handleBranchClick = React.useCallback((node, event) => {

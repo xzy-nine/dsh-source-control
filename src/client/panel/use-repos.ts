@@ -180,11 +180,13 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	/**
 	 * 重新扫描仓库树。
 	 *
-	 * 预加载状态一并丢弃：工作树与子模块可能已被增删，重新枚举才会反映变化。
+	 * 预加载状态一并重置：工作树与子模块可能已被增删，重新枚举才会反映变化。条目与订阅者保留，
+	 * 因此重置后显式请求一次取数；`scanSeq` 递增会重跑订阅 effect，在途时新请求被复用。
 	 */
 	const rescan = React.useCallback(() => {
 		if (cwd === undefined) return;
 		dropWorkspace(cwd);
+		preloadWorkspace(cwd);
 		setSyncById(new Map());
 		revisionRef.current = -1;
 		pendingSelectionRef.current = null;

@@ -308,11 +308,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			const showRemoteBranches = bool('showRemoteBranches', true);
 			const showStashes = bool('showStashes', true);
 			const hideRemotes = arr<string>('hideRemotes');
-			let repoInfo = readRepoInfo(repo);
+			let repoInfo = readRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes });
 			if (repoInfo === undefined) {
 				repoInfo = await getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes);
 				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
-				if (repoInfo.error === null) writeRepoInfo(repo, repoInfo);
+				if (repoInfo.error === null) writeRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes }, repoInfo);
 			}
 			let isRepo = true;
 			if (repoInfo.error) {
@@ -338,19 +338,44 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const showRemoteBranches = bool('showRemoteBranches', true);
 				const hideRemotes = arr<string>('hideRemotes');
 				const branchesArg = msg.branches === null || Array.isArray(msg.branches) ? (msg.branches as string[] | null) : null;
+				/*
+				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
+				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
+				 */
+				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
+				/*
+				 * 远程名：调用方在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，
+				 * 这里取名字；直接传字符串数组的调用方同样接受。
+				 *
+				 * 客户端首次取数后即持有远程列表并随每次刷新传入，因此空列表只在调用方未提供时出现。
+				 */
+				const givenRemotes = arr<unknown>('remotes')
+					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
+					.filter((name): name is string => typeof name === 'string' && name !== '');
+				/*
+				 * 缓存键含全部会改变 `getCommits` 结果的参数：除排序、分页与引用筛选外，贮藏标识与
+				 * 远程名也参与组装提交行，参数不同必须落到不同的窗口。
+				 */
 				const graphParams = {
 					maxCommits: limit, skip,
 					ordering: (typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo'),
 					showTags: bool('showTags', true),
 					showRemoteBranches,
+					showStashes,
 					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
 					includeCommitsMentionedByReflogs: bool('includeCommitsMentionedByReflogs'),
 					hideRemotes,
 					branches: branchesArg,
+					remotes: givenRemotes,
+					/*
+					 * 贮藏标识：调用方未给出时为 `*`，表示由宿主按 `showStashes` 自行枚举——那份
+					 * 结果通常非空，与「给出空列表」不是同一批提交行。
+					 */
+					stashes: givenStashes === null ? ['*'] : givenStashes.map((stash) => stash.hash),
 				};
 				/*
 				 * 窗口缓存留在宿主内存：切回同一仓库、翻页回看已取过的窗口都命中，客户端不必
-				 * 跨会话搬运数据。任何成功的仓库写操作都会作废该仓库的窗口。
+				 * 跨会话搬运数据。任何成功的仓库写操作都会清空该缓存。
 				 */
 				const cachedGraph = readGraph(repo, graphParams);
 				if (cachedGraph !== undefined) {
@@ -359,7 +384,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					 * 仓库信息同样来自宿主缓存：命中窗口时一并回投，客户端不必为远程与贮藏
 					 * 再发一次请求。缓存里没有时留给客户端按需补取。
 					 */
-					const cachedInfo = readRepoInfo(repo) ?? null;
+					const cachedInfo = readRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes }) ?? null;
 					respond({
 						command: 'loadCommits',
 						refreshId: num('refreshId'),
@@ -385,10 +410,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 */
 				const withRepoInfo = msg.withRepoInfo === true;
 				/*
-				 * 贮藏：调用方给出列表时以它为准（空数组同样表示没有贮藏）；未给出时按 `showStashes`
-				 * 单独枚举。该取值同时交给仓库信息批与 `getCommits`，两者因此共用一次读取。
+				 * 贮藏取自前面已解析的 `givenStashes`：给出列表时以它为准（空数组同样表示没有贮藏）；
+				 * 未给出时按 `showStashes` 单独枚举。该取值同时交给仓库信息批与 `getCommits`，
+				 * 两者因此共用一次读取。
 				 */
-				const givenStashes = Array.isArray(msg.stashes) ? (msg.stashes as StashEntry[]) : null;
 				const stashesSource: Promise<StashEntry[]> = givenStashes !== null
 					? Promise.resolve(givenStashes)
 					: showStashes ? getStashes(repo) : Promise.resolve<StashEntry[]>([]);
@@ -419,18 +444,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					? batchSource.then((batch) => batch?.foreign ?? branchesOfOtherWorktrees(repo))
 					: branchesOfOtherWorktrees(repo)).catch(() => new Set<string>());
 				/*
-				 * 远程列表在前端是 `Remote` 对象数组，数据层按远程名标注远程分支的归属，这里取名字；
-				 * 直接传字符串数组的调用方同样接受。
-				 *
-				 * 调用方未给出远程名时由宿主读取：提交图需要远程名才能标注远程分支的归属。客户端在
-				 * 首次取数后即持有远程列表并随每次刷新传入，因此这条回退只在调用方未提供时发生。
-				 * 仓库信息批里的远程名来自同批的配置读取，标注在提交图组装之后才发生，不必为它多等
-				 * 一次串行往返。
-				 */
-				const givenRemotes = arr<unknown>('remotes')
-					.map((remote) => (typeof remote === 'string' ? remote : (remote as { name?: unknown } | null)?.name))
-					.filter((name): name is string => typeof name === 'string' && name !== '');
-				/*
 				 * 远程名可能来自仓库信息批，也可能需要单独读取。后者是一个 Promise：若下游在它
 				 * 落地前就失败，未处理的 rejection 会让宿主进程直接退出（表现为 fatal load failure），
 				 * 因此先挂一个吞错分支，真正的错误仍由 getCommits 内部的 catch 转成 error 字段。
@@ -456,7 +469,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				);
 				const batch = batchSource === null ? null : await batchSource;
 				// 仓库信息成功取回时写入缓存，后续命中窗口的请求因此能一并回投它。
-				if (batch !== null && batch.info.error === null) writeRepoInfo(repo, batch.info);
+				if (batch !== null && batch.info.error === null) {
+					writeRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes }, batch.info);
+				}
 				/*
 				 * 别的工作树占用的分支照常作为标签显示：它们确实指向该提交，只是不能在本工作树里
 				 * 检出或删除。这类分支名随响应回投，客户端据此禁用相应操作。
@@ -1181,7 +1196,17 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				sse('error', e instanceof Error ? e.message : String(e));
 			}
 			res.end();
-		})();
+		})().catch((e: unknown) => {
+			/*
+			 * 响应头发出前的失败（读请求体、取 diff、解析模型）按 JSON 回 500；此时没有
+			 * 可用的 SSE 通道，不能走 `sse()`。响应头已发出时只结束响应。
+			 */
+			if (res.headersSent) {
+				res.end();
+				return;
+			}
+			sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+		});
 	});
 
 	return disposers;

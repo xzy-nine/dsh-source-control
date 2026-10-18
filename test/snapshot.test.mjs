@@ -502,25 +502,32 @@ test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐�
 			command: 'loadCommits', limit: 200, skip: 0, withRepoInfo: true, showTags: true,
 			showRemoteBranches: true, hideRemotes: [], remotes: [], stashes: info.stashes,
 		});
-		const refresh = await call({
+		const refreshParams = {
 			command: 'loadCommits', limit: 200, skip: 0, showTags: true, showRemoteBranches: true,
 			hideRemotes: [], remotes: info.remotes, stashes: info.stashes,
-		});
+		};
+		const refresh = await call(refreshParams);
+		const again = await call(refreshParams);
 
 		assert.equal(first.repoInfo.stashes.length, 1);
 		/*
-		 * 第二次调用与首屏参数相同，因此命中宿主缓存：命中时仓库信息一并回投（同样来自宿主
-		 * 缓存），客户端不必再补一次 `loadRepoInfo`。未命中缓存时该字段为 null。
+		 * 远程标识参与缓存键：刷新带的是真实远程名，首屏带的是空列表，两者落到不同窗口，
+		 * 因此本次刷新重新取数，结果仍应与首屏逐条一致。
 		 */
-		assert.ok(refresh.repoInfo !== null, '命中缓存时一并回投仓库信息');
-		assert.deepEqual(refresh.repoInfo.stashes, first.repoInfo.stashes, '回投的贮藏与首屏一致');
-		assert.deepEqual(refresh.repoInfo.remotes, first.repoInfo.remotes, '回投的远程与首屏一致');
 		assert.deepEqual(refresh.commits, first.commits, '给出已知远程与贮藏时提交图应与首屏批逐条一致');
 		assert.deepEqual(refresh.tags, first.tags);
 		assert.equal(refresh.head, first.head);
 		assert.ok(refresh.commits.some((commit) => commit.stash !== null && commit.stash !== undefined), '贮藏行应仍插入');
 		const remoteMarked = refresh.commits.find((commit) => (commit.remotes ?? []).length > 0);
 		assert.deepEqual(remoteMarked.remotes, [{ name: 'origin/main', remote: 'origin' }], '远程分支归属应来自调用方给出的远程名');
+
+		/*
+		 * 同一组参数再请求一次即命中宿主缓存：命中时仓库信息一并回投（同样来自宿主缓存），
+		 * 客户端不必再补一次 `loadRepoInfo`。未命中缓存时该字段为 null。
+		 */
+		assert.ok(again.repoInfo !== null, '命中缓存时一并回投仓库信息');
+		assert.deepEqual(again.repoInfo.stashes, first.repoInfo.stashes, '回投的贮藏与首屏一致');
+		assert.deepEqual(again.repoInfo.remotes, first.repoInfo.remotes, '回投的远程与首屏一致');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 		rmSync(remote, { recursive: true, force: true });

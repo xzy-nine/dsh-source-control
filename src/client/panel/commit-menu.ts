@@ -384,10 +384,7 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;
 			// 被别的工作树检出的分支同样不可删除：git 会以 `used by worktree` 拒绝。
-			if (isForeignBranch(ctx, name)) {
-				return { title: meta.title, danger: meta.danger, disabled: true };
-			}
-			return { title: meta.title, danger: meta.danger, onClick: remove(name) };
+			return localBranchItem(ctx, name, { title: meta.title, danger: meta.danger, onClick: remove(name) });
 		}
 		/*
 		 * 提交行右键只列以该提交为尖端的本地与远程分支：包含该提交的分支（在其之上的分支）

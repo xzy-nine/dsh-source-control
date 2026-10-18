@@ -19,9 +19,11 @@ import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
  * @returns 写入成功返回 true。
  */
 export async function copyText(text: string): Promise<boolean> {
-	if (typeof navigator.clipboard.writeText === 'function') {
+	// 非安全上下文下没有 clipboard 接口：按可能缺省读取，避免取属性时抛出而落到回退之外。
+	const clipboard = navigator.clipboard as Clipboard | undefined;
+	if (typeof clipboard?.writeText === 'function') {
 		try {
-			await navigator.clipboard.writeText(text);
+			await clipboard.writeText(text);
 			return true;
 		} catch {
 			return false;
