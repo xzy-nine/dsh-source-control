@@ -4,6 +4,7 @@
  * 只依赖 git 执行层与 node，因此可以被测试直接导入。
  * 分两条路径：普通提交取暂存（或工作区）的改动；修补上一次提交时取
  * `HEAD~1 → 工作区` 的合并 diff，把上一提交的改动一并纳入。
+ * 两条路径都按文件块截断超长 diff，再按小改动优先填至总量上限。
  */
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
@@ -13,6 +14,85 @@ import { gitOrThrow } from './working-tree.js';
 export const SINGLE_DIFF_MAX = 50_000;
 /** diff 总长度上限（字符）。 */
 export const DIFF_TOTAL_MAX = 500_000;
+/** 单文件 diff 被截断时追加的标记。 */
+export const TRUNCATED_NOTE = '\n... 差异过长，以下内容已截断 ...\n';
+
+/** 文件块分隔行；统一差异的每个文件块以该行开头。 */
+const BLOCK_HEADER = 'diff --git ';
+
+/**
+ * 把单文件 diff 收进长度上限。
+ *
+ * 超限时保留前段并追加截断标记：整段丢弃会让只有大文件改动的仓库
+ * 落到「无 diff」分支。
+ *
+ * @param diff - diff 文本。
+ * @param limit - 上限字符数。
+ * @returns 不超过上限的文本；未超限时原样返回。
+ */
+export function fitSingleDiff(diff: string, limit: number): string {
+	if (diff.length <= limit) return diff;
+	return diff.slice(0, Math.max(0, limit - TRUNCATED_NOTE.length)) + TRUNCATED_NOTE;
+}
+
+/**
+ * 按文件块切分统一差异。
+ *
+ * 差异正文的行以 `+`、`-` 或空格开头，因此行首的 `diff --git ` 只会出现在块首。
+ *
+ * @param diff - 整份统一差异。
+ * @returns 各文件块；空输入返回空数组。
+ */
+export function splitDiffBlocks(diff: string): string[] {
+	if (diff === '') return [];
+	const blocks: string[] = [];
+	let start = -1;
+	let offset = 0;
+	for (const line of diff.split('\n')) {
+		if (line.startsWith(BLOCK_HEADER)) {
+			if (start >= 0) blocks.push(diff.slice(start, offset));
+			start = offset;
+		}
+		offset += line.length + 1;
+	}
+	if (start >= 0) blocks.push(diff.slice(start));
+	return blocks;
+}
+
+/**
+ * 按长度升序贪心填充至总上限，使小改动优先进入提示词。
+ *
+ * @param blocks - 各文件块。
+ * @param budget - 上限字符数。
+ * @returns 拼接后的文本。
+ */
+function fillBudget(blocks: readonly string[], budget: number): string {
+	const sorted = [...blocks].sort((left, right) => left.length - right.length);
+	const parts: string[] = [];
+	let total = 0;
+	for (const block of sorted) {
+		if (total + block.length > budget) break;
+		parts.push(block);
+		total += block.length + 1;
+	}
+	return parts.join('\n');
+}
+
+/**
+ * 取一份统一差异并按文件块截断。
+ *
+ * @param repo - 仓库路径。
+ * @param args - 取 diff 的 git 参数，不含 `--no-color`。
+ * @returns 各文件块；git 失败时返回空数组。
+ */
+async function diffBlocks(repo: string, args: readonly string[]): Promise<string[]> {
+	try {
+		const diff = await gitOrThrow([...args, '--no-color'], repo);
+		return splitDiffBlocks(diff).map((block) => fitSingleDiff(block, SINGLE_DIFF_MAX));
+	} catch {
+		return [];
+	}
+}
 
 /**
  * 为未跟踪文件手工构造 patch。
@@ -40,9 +120,7 @@ export async function untrackedPatch(repo: string, filePath: string): Promise<st
 /**
  * 取一组路径。
  *
- * 一律用 `-z`：NUL 分隔下 git 不做转义，非 ASCII 路径（如中文文件名）保持原样，
- * 可直接作为 pathspec 使用。默认 `core.quotepath=true` 时，`--name-only` 会把非 ASCII
- * 路径写成加引号的八进制转义，拿它当 pathspec 匹配不到任何文件。
+ * 一律用 `-z`：NUL 分隔下 git 不做转义，非 ASCII 路径（如中文文件名）保持原样。
  *
  * @param repo - 仓库路径。
  * @param args - 取路径的 git 参数（不含 `-z`）。
@@ -62,65 +140,37 @@ async function listPaths(repo: string, args: readonly string[]): Promise<string[
  *
  * @param repo - 仓库路径。
  * @param budget - 还可容纳的字符数。
- * @returns patch 文本与各自长度之和。
+ * @returns 各文件块。
  */
-async function untrackedPatches(repo: string, budget: number): Promise<{ parts: string[]; total: number }> {
+async function untrackedPatches(repo: string, budget: number): Promise<string[]> {
 	const parts: string[] = [];
 	let total = 0;
 	for (const file of await listPaths(repo, ['ls-files', '--others', '--exclude-standard'])) {
 		const patch = await untrackedPatch(repo, file);
-		if (patch.length === 0 || patch.length >= SINGLE_DIFF_MAX) continue;
-		if (total + patch.length > budget) break;
-		parts.push(patch);
-		total += patch.length + 1;
+		if (patch.length === 0) continue;
+		const fitted = fitSingleDiff(patch, SINGLE_DIFF_MAX);
+		if (total + fitted.length > budget) break;
+		parts.push(fitted);
+		total += fitted.length + 1;
 	}
-	return { parts, total };
+	return parts;
 }
 
 /**
  * 收集普通提交的 diff：暂存优先，否则工作区 + 未跟踪。
  *
- * 逐文件取 diff，超 SINGLE_DIFF_MAX 丢弃，按长度升序贪心填至 DIFF_TOTAL_MAX。
+ * 暂存区有改动即以暂存内容为准：即使全为二进制等无文本差异的文件，
+ * 也不回退到工作区，否则会把未暂存的改动混进提交信息。
  *
  * @param repo - 仓库路径。
  * @returns diff 文本；无内容时返回空串。
  */
 async function collectWorkingDiff(repo: string): Promise<string> {
-	const diffs: string[] = [];
-	try {
-		const stagedFiles = await listPaths(repo, ['diff', '--cached', '--name-only']);
-		if (stagedFiles.length > 0) {
-			for (const f of stagedFiles) {
-				try {
-					const d = await gitOrThrow(['diff', '--cached', '--no-color', '--', f], repo);
-					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
-				} catch { /* 单个文件失败不影响其余 */ }
-			}
-		} else {
-			const workingFiles = await listPaths(repo, ['diff', '--name-only']);
-			for (const f of workingFiles) {
-				try {
-					const d = await gitOrThrow(['diff', '--no-color', '--', f], repo);
-					if (d.length > 0 && d.length < SINGLE_DIFF_MAX) diffs.push(d);
-				} catch { /* 单个文件失败不影响其余 */ }
-			}
-			const untracked = await untrackedPatches(repo, DIFF_TOTAL_MAX);
-			for (const patch of untracked.parts) {
-				if (patch.length > 0 && patch.length < SINGLE_DIFF_MAX) diffs.push(patch);
-			}
-		}
-	} catch {
-		return '';
-	}
-	diffs.sort((a, b) => a.length - b.length);
-	let total = 0;
-	const parts: string[] = [];
-	for (const d of diffs) {
-		if (total + d.length > DIFF_TOTAL_MAX) break;
-		parts.push(d);
-		total += d.length + 1;
-	}
-	return parts.join('\n');
+	const stagedNames = await listPaths(repo, ['diff', '--cached', '--name-only']);
+	if (stagedNames.length > 0) return fillBudget(await diffBlocks(repo, ['diff', '--cached']), DIFF_TOTAL_MAX);
+	const working = await diffBlocks(repo, ['diff']);
+	const untracked = await untrackedPatches(repo, DIFF_TOTAL_MAX);
+	return fillBudget([...working, ...untracked], DIFF_TOTAL_MAX);
 }
 
 /**
@@ -141,21 +191,10 @@ async function collectAmendDiff(repo: string): Promise<string> {
 	} catch {
 		base = '';
 	}
-	const parts: string[] = [];
-	let total = 0;
-	try {
-		const diff = await gitOrThrow(['diff', '--no-color', base === '' ? 'HEAD' : base], repo);
-		if (diff.length > 0 && diff.length < DIFF_TOTAL_MAX) {
-			parts.push(diff);
-			total += diff.length;
-		}
-	} catch {
-		/* 没有可比较的提交时只算未跟踪文件 */
-	}
+	const tracked = await diffBlocks(repo, ['diff', base === '' ? 'HEAD' : base]);
 	// `git diff` 不含未跟踪文件，单独补上。
-	const untracked = await untrackedPatches(repo, Math.max(0, DIFF_TOTAL_MAX - total));
-	parts.push(...untracked.parts);
-	return parts.join('\n');
+	const untracked = await untrackedPatches(repo, DIFF_TOTAL_MAX);
+	return fillBudget([...tracked, ...untracked], DIFF_TOTAL_MAX);
 }
 
 /**

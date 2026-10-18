@@ -1195,7 +1195,10 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
 			const amend = body.amend === true;
 			const diff = await collectDiff(repo, amend);
-			if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
+			if (diff.trim() === '') {
+				sendJson(res, 400, { error: amend ? '无 diff 可生成提交信息（上一次提交与工作区均无改动）' : '无 diff 可生成提交信息（暂存区与工作区均为空）' });
+				return;
+			}
 
 			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
