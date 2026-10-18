@@ -818,10 +818,12 @@ export async function unstagePaths(repo: string, paths: readonly string[]): Prom
  * @param repo - 仓库路径。
  * @param message - 提交信息。
  * @param amend - 是否修补上一次提交。
+ * @param skipHooks - 是否跳过提交钩子（`--no-verify`）。
  * @returns 新提交的完整哈希。
  */
-export async function commitStaged(repo: string, message: string, amend: boolean): Promise<string> {
+export async function commitStaged(repo: string, message: string, amend: boolean, skipHooks = false): Promise<string> {
 	const args = ['commit', '-m', message];
+	if (skipHooks) args.push('--no-verify');
 	if (amend) args.push('--amend');
 	await gitOrThrow(args, repo);
 	return (await gitOrThrow(['rev-parse', 'HEAD'], repo)).trim();

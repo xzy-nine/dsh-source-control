@@ -138,6 +138,18 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly onMessageChange: (message: string) => void;
 	readonly amend: boolean;
 	readonly onToggleAmend: (checked: boolean) => void;
+	/**
+	 * 钩子处于激活状态时为 true：此时提交框显示「运行 git 钩子」勾选项。
+	 */
+	readonly hooksActive: boolean;
+	/** 本次是否运行钩子。 */
+	readonly runHooks: boolean;
+	readonly onToggleRunHooks: (checked: boolean) => void;
+	/** 推送钩子处于激活状态时为 true：此时同步与发布按钮旁显示勾选项。 */
+	readonly pushHooksActive: boolean;
+	/** 本次推送是否运行钩子。 */
+	readonly runPushHooks: boolean;
+	readonly onToggleRunPushHooks: (checked: boolean) => void;
 	/** 把当前改动存入贮藏。 */
 	readonly onStash: () => void;
 	/** AI 生成完成且内容以非当前语言为主时，显示翻译按钮。 */
@@ -181,6 +193,7 @@ export interface ChangesSectionProps extends ChangeActions {
  */
 export function ChangesSection({
 	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
+	hooksActive, runHooks, onToggleRunHooks, pushHooksActive, runPushHooks, onToggleRunPushHooks,
 	showTranslate, translateBusy, onTranslate,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	showPublishButton, onPublish,
@@ -189,6 +202,43 @@ export function ChangesSection({
 	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
 	merging, onAbortMerge,
 }: ChangesSectionProps): React.ReactElement {
+	/*
+	 * 右侧动作组：贮藏固定在最右端，其余按出现顺序追加，不占固定位置。
+	 *
+	 * 每项只在自己条件成立时追加，因此同时出现时先追加的靠左，缺项不会留下空档。
+	 */
+	const rightActions: React.ReactNode[] = [];
+	if (hasLocalExclude) {
+		// 本地排除有内容时给出打开入口：图标取 .gitignore 的文件图标。
+		rightActions.push(React.createElement(Button, {
+			key: 'local-exclude',
+			variant: 'ghost', size: 'sm',
+			className: css.stashBtn, onClick: onShowLocalExclude,
+			title: '打开本地排除文件', 'aria-label': '本地排除',
+		}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 }), '本地排除'));
+	}
+	if (showTranslate) {
+		// AI 生成的内容不是当前语言时提供翻译：仅图标。
+		rightActions.push(React.createElement(Button, {
+			key: 'translate',
+			variant: 'ghost', size: 'sm', disabled: translateBusy,
+			className: css.stashBtn, onClick: onTranslate,
+			title: '把提交信息翻译为当前语言', 'aria-label': '翻译',
+		}, React.createElement(TranslateIcon)));
+	}
+	if (merging) {
+		rightActions.push(React.createElement(Button, {
+			key: 'abort-merge',
+			variant: 'ghost', size: 'sm', disabled: busy.commit || busy.history,
+			className: css.abortMergeBtn, onClick: onAbortMerge,
+			title: '中止当前合并，恢复到合并前的状态', 'aria-label': '取消合并',
+		}, React.createElement(IconCloseOutlineRegular, { size: 14 }), '取消合并'));
+	}
+	rightActions.push(React.createElement(Button, {
+		key: 'stash',
+		variant: 'ghost', size: 'sm', disabled: busy.commit || entries.length === 0,
+		className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
+	}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'));
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.workspace) },
@@ -244,31 +294,16 @@ export function ChangesSection({
 					` · ${aiStats.elapsed}+${aiStats.ttft}`,
 				),
 				React.createElement('div', { className: css.commitActionsRow },
-					React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
-					React.createElement('span', { className: css.commitActionsRight },
-						// 本地排除有内容时给出打开入口：图标取 .gitignore 的文件图标。
-						hasLocalExclude && React.createElement(Button, {
-							variant: 'ghost', size: 'sm',
-							className: css.stashBtn, onClick: onShowLocalExclude,
-							title: '打开本地排除文件', 'aria-label': '本地排除',
-						}, React.createElement(FileTypeIcon, { path: '.gitignore', size: 14 }), '本地排除'),
-						// AI 生成的内容不是当前语言时提供翻译：仅图标，贴在贮藏左侧。
-						showTranslate && React.createElement(Button, {
-							variant: 'ghost', size: 'sm', disabled: translateBusy,
-							className: css.stashBtn, onClick: onTranslate,
-							title: '把提交信息翻译为当前语言', 'aria-label': '翻译',
-						}, React.createElement(TranslateIcon)),
-						React.createElement(Button, {
-							variant: 'ghost', size: 'sm', disabled: busy.commit || entries.length === 0,
-							className: css.stashBtn, onClick: onStash, title: '把当前改动存入贮藏',
-						}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'),
-						// 合并未完成时提供中止入口：把它推到这排按钮最右端，与其它入口分开。
-						merging && React.createElement(Button, {
-							variant: 'ghost', size: 'sm', disabled: busy.commit || busy.history,
-							className: css.abortMergeBtn, onClick: onAbortMerge,
-							title: '中止当前合并，恢复到合并前的状态', 'aria-label': '取消合并',
-						}, React.createElement(IconCloseOutlineRegular, { size: 14 }), '取消合并'),
+					React.createElement('span', { className: css.commitActionsLeft },
+						React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+						hooksActive && React.createElement('span', { className: css.githookSlot },
+							React.createElement(Checkbox, {
+								checked: runHooks, onChange: onToggleRunHooks,
+								label: 'githook', title: '取消后本次提交跳过 pre-commit 等钩子（--no-verify），下次恢复',
+							}),
+						),
 					),
+					React.createElement('span', { className: css.commitActionsRight }, ...rightActions),
 				),
 				showSyncButton
 					? React.createElement(Button, {
@@ -288,6 +323,13 @@ export function ChangesSection({
 							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || !canSubmit,
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
+				// 推送钩子激活时，在推送类按钮下方给出本次是否运行的勾选项。
+				pushHooksActive && (showSyncButton || showPublishButton) && React.createElement('div', { className: css.commitActionsRow },
+					React.createElement(Checkbox, {
+						checked: runPushHooks, onChange: onToggleRunPushHooks,
+						label: 'githook', title: '取消后本次推送跳过 pre-push 钩子（--no-verify），下次恢复',
+					}),
+				),
 			),
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(

@@ -56,11 +56,38 @@ export async function discardPaths(cwd: string, paths: readonly string[], untrac
  * @param cwd - 会话工作区路径。
  * @param message - 提交信息。
  * @param amend - 是否修补上一次提交。
+ * @param skipHooks - 是否跳过提交钩子（`--no-verify`）。
  * @returns 新提交哈希。
  */
-export async function commitStaged(cwd: string, message: string, amend = false): Promise<string> {
-	const payload = await callApi(cwd, { command: 'commitStaged', message, amend });
+export async function commitStaged(cwd: string, message: string, amend = false, skipHooks = false): Promise<string> {
+	const payload = await callApi(cwd, { command: 'commitStaged', message, amend, skipHooks });
 	return typeof payload.hash === 'string' ? payload.hash : '';
+}
+
+/** 钩子探测结果。 */
+export interface HooksState {
+	/** 存在可执行的提交钩子。 */
+	readonly commit: boolean;
+	/** 存在可执行的推送钩子。 */
+	readonly push: boolean;
+	/** 钩子目录路径；无法定位时为 null。 */
+	readonly directory: string | null;
+}
+
+/**
+ * 探测仓库的 git 钩子状态。
+ *
+ * @param repo - 仓库路径。
+ * @param signal - 取消信号。
+ * @returns 提交钩子与推送钩子是否处于激活状态。
+ */
+export async function loadHooksState(repo: string, signal?: AbortSignal): Promise<HooksState> {
+	const payload = await callApi(repo, { command: 'hooksState' }, signal);
+	return {
+		commit: payload.commit === true,
+		push: payload.push === true,
+		directory: typeof payload.directory === 'string' ? payload.directory : null,
+	};
 }
 
 /**

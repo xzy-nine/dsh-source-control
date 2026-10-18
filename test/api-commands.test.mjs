@@ -7,9 +7,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -171,6 +171,81 @@ test('分支、标签、贮藏与远程的写操作', async () => {
 		assert.equal(withRemote.remotes[0].url, 'https://example.com/x.git');
 		assert.equal((await call({ command: 'editRemote', nameOld: 'origin', nameNew: 'upstream', urlOld: 'https://example.com/x.git', urlNew: 'https://example.com/y.git', pushUrlOld: null, pushUrlNew: null })).error, null);
 		assert.equal((await call({ command: 'deleteRemote', name: 'upstream' })).error, null);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活时为 false', async () => {
+	const { repo } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+
+		// 默认钩子目录里没有任何可执行钩子（只有 .sample）。
+		const none = await call({ command: 'hooksState' });
+		assert.equal(none.commit, false);
+		assert.equal(none.push, false);
+		assert.match(none.directory, /hooks$/, '默认钩子目录在 git 目录下');
+
+		// 放两个真实钩子文件：提交与推送各一个。
+		const hooksDir = none.directory;
+		mkdirSync(hooksDir, { recursive: true });
+		writeFileSync(join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 0\n');
+		writeFileSync(join(hooksDir, 'pre-push'), '#!/bin/sh\nexit 0\n');
+		const both = await call({ command: 'hooksState' });
+		assert.equal(both.commit, true, 'pre-commit 视为提交钩子');
+		assert.equal(both.push, true, 'pre-push 视为推送钩子');
+
+		// core.hooksPath 指向别处时以它为准：该目录为空即两个都未激活。
+		const elsewhere = mkdtempSync(join(tmpdir(), 'gg-hooks-'));
+		execFileSync('git', ['config', 'core.hooksPath', elsewhere], { cwd: repo, encoding: 'utf8' });
+		const moved = await call({ command: 'hooksState' });
+		assert.equal(moved.commit, false, 'core.hooksPath 决定钩子目录');
+		assert.equal(moved.push, false);
+		assert.equal(resolve(moved.directory), resolve(elsewhere));
+		rmSync(elsewhere, { recursive: true, force: true });
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('提交与推送：skipHooks 传 --no-verify，未传时照常运行钩子', async () => {
+	const { repo, git } = makeRepo();
+	const hooksDir = join(repo, '.git', 'hooks');
+	try {
+		const call = await makeCaller(repo);
+		// 在钩子目录里放一个拒绝所有提交的 pre-commit：以此判定 --no-verify 是否生效。
+		mkdirSync(hooksDir, { recursive: true });
+		writeFileSync(join(hooksDir, 'pre-commit'), '#!/bin/sh\necho blocked-by-hook >&2\nexit 1\n');
+
+		writeFileSync(join(repo, 'hooked.txt'), 'content');
+		git('add', '-A');
+
+		// 不跳过：被钩子挡住。
+		const blocked = await call({ command: 'commitStaged', message: 'should fail', amend: false });
+		assert.match(String(blocked.error), /blocked-by-hook/, '钩子拒绝时提交失败并回投钩子输出');
+
+		// 跳过：提交成功。
+		const skipped = await call({ command: 'commitStaged', message: 'skip hooks', amend: false, skipHooks: true });
+		assert.equal(skipped.error, null);
+		assert.equal(typeof skipped.hash, 'string');
+
+		// 推送侧的 --no-verify：用拒绝一切的 pre-push 验证同一个开关。
+		const remote = mkdtempSync(join(tmpdir(), 'gg-hooks-remote-'));
+		try {
+			execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
+			git('remote', 'add', 'origin', remote);
+			git('push', '-q', '--set-upstream', 'origin', 'main');
+			writeFileSync(join(hooksDir, 'pre-push'), '#!/bin/sh\necho blocked-push >&2\nexit 1\n');
+
+			const pushBlocked = await call({ command: 'pushUpstream' });
+			assert.match(String(pushBlocked.error), /blocked-push/, '推送钩子拒绝时推送失败');
+
+			const pushSkipped = await call({ command: 'pushUpstream', skipHooks: true });
+			assert.equal(pushSkipped.error, null, 'skipHooks 时跳过 pre-push');
+		} finally {
+			rmSync(remote, { recursive: true, force: true });
+		}
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}

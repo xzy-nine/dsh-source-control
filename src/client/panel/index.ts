@@ -30,7 +30,7 @@ import { showToast } from './toast.ts';
 import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import { draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue } from './storage.ts';
-import { clearPersistedDraft, migrateLegacyState, takePersistedDraft } from '../api/index.ts';
+import { clearPersistedDraft, migrateLegacyState, loadHooksState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
@@ -44,6 +44,7 @@ import { useResizeHandler } from './use-resize.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
+import type { HooksState } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
@@ -100,6 +101,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
+	/**
+	 * 本次提交是否运行 git 钩子。
+	 *
+	 * 钩子处于激活状态时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择：
+	 * 每次切换仓库与每次提交、推送完成后都回到默认勾选，不持久化。
+	 */
+	const [runHooks, setRunHooks] = React.useState(true);
+	/**
+	 * 本次推送是否运行 git 钩子。
+	 *
+	 * 与提交的同名状态分开：两处按钮各自独立勾选，互不影响。
+	 */
+	const [runPushHooks, setRunPushHooks] = React.useState(true);
+	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */
+	const [hooksState, setHooksState] = React.useState<HooksState>({ commit: false, push: false, directory: null });
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
@@ -336,6 +352,22 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
+	/*
+	 * git 钩子状态：换仓库时探测一次，决定提交框与发布按钮是否显示勾选项。
+	 *
+	 * 换仓库即回到「运行钩子」：勾选是临时选择，不跨仓库、不跨会话保留。
+	 */
+	React.useEffect(() => {
+		setRunHooks(true);
+		setRunPushHooks(true);
+		if (workingTreePath === null) { setHooksState({ commit: false, push: false, directory: null }); return undefined; }
+		let cancelled = false;
+		loadHooksState(workingTreePath)
+			.then((state) => { if (!cancelled) setHooksState(state); })
+			.catch(() => { if (!cancelled) setHooksState({ commit: false, push: false, directory: null }); });
+		return () => { cancelled = true; };
+	}, [workingTreePath]);
+
   /*
 	 * 提交信息草稿：按仓库根存会话级存储（sessionStorage），键为 ggg-commit-msg:<仓库根绝对路径>。
 	 *
@@ -501,9 +533,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	 * 这两类提示按 git 的实际措辞匹配，措辞变化时退回原文。
 	 *
 	 * @param repoPath - 目标仓库路径；省略时用当前选中的工作树。
+	 * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
 	 */
-	const pushCurrentBranch = React.useCallback(async (repoPath?: string) => {
-		const error = await pushUpstream(repoPath ?? (workingTreePath as string));
+	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false) => {
+		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks);
 		if (error === null) return;
 		if (/no configured push destination|no configured remote/i.test(error)) {
 			throw new Error('未配置远程仓库，请先在设置中添加远程。');
@@ -730,10 +763,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const submit = (): void => {
 		if (busyFlags.commit || message.trim() === '') return;
 		if (stagedPaths.length === 0 && !amend) return;
+		// 钩子激活且取消勾选时本次跳过；提交完成后回到默认勾选。
+		const skipHooks = hooksState.commit && !runHooks;
 		void run('commit', async () => {
-			await commitStaged(workingTreePath as string, message, amend);
+			await commitStaged(workingTreePath as string, message, amend, skipHooks);
 			setMessage('');
 			setAmend(false);
+			setRunHooks(true);
 		}, undefined, commitEntries);
 	};
 
@@ -981,6 +1017,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		if (busyFlags.network || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
 		const branch = currentSync.branch;
 		const path = workingTreePath;
+		// 推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。
+		const skipHooks = hooksState.push && !runPushHooks;
+		const publishDone = (): void => { setRunPushHooks(true); };
 		void (async () => {
 			let remote = '';
 			if (state.remotes.length === 1) {
@@ -1009,29 +1048,32 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				await run('network', async () => {
 					const addError = await addRemote(path, source.name, source.url, null, false);
 					if (addError !== null) throw new Error(addError);
-					const errors = await pushBranch(path, branch, [source.name]);
+					const errors = await pushBranch(path, branch, [source.name], skipHooks);
 					if (errors.length > 0) throw new Error(errors.join('\n'));
 				});
+				publishDone();
 				return;
 			}
 			await run('network', async () => {
-				const errors = await pushBranch(path, branch, [remote]);
+				const errors = await pushBranch(path, branch, [remote], skipHooks);
 				if (errors.length > 0) throw new Error(errors.join('\n'));
 			});
+			publishDone();
 		})();
-	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify]);
+	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, hooksState.push, runPushHooks]);
 
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
+		const skipHooks = hooksState.push && !runPushHooks;
 		void run('network', async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
-				await pushCurrentBranch();
+				await pushCurrentBranch(undefined, skipHooks);
 			}
-		});
+		}).finally(() => { setRunPushHooks(true); });
 	};
 
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
@@ -1149,19 +1191,26 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 				message: '输入远程仓库地址，下一步选择存放位置；克隆在 DSH 终端里执行。',
 				fields: [
 					{ type: 'text', name: 'url', label: '仓库地址', placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git' },
+					{ type: 'checkbox', name: 'shallow', label: '浅克隆（只取最近的历史）', value: false },
+					{
+						type: 'text', name: 'depth', label: '浅克隆深度', value: '1', placeholder: '1',
+						visibleWhen: (values) => values.shallow === true,
+					},
 				],
 				confirmLabel: '下一步',
 			});
 			if (form === null) return;
 			const url = trimmedTextOf(form.url);
 			if (url === '') return;
+			const shallow = form.shallow === true;
+			const depth = shallow ? (Number.parseInt(textOf(form.depth), 10) || 1) : 0;
 			if (pickDirectory === undefined) {
 				await notify('当前界面没有装载目录选择器，无法选择存放位置。');
 				return;
 			}
 			const parent = await pickDirectory();
 			if (parent === null) return;
-			const command = cloneTerminalCommand(parent, url);
+			const command = cloneTerminalCommand(parent, url, { depth });
 			if (command === null) {
 				await notify('地址或目录含无法自动转义的字符，请在终端里手动克隆。');
 				return;
@@ -1299,7 +1348,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const items: ContextMenuItem[] = [
 			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
 			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
-			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path), node.path); } },
+			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path, hooksState.push && !runPushHooks), node.path); } },
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
@@ -1530,6 +1579,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			entries: state.entries, busy: busyFlags, phase: state.phase,
 			workingTreePath, head: state.head,
 			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
+			hooksActive: hooksState.commit, runHooks, onToggleRunHooks: setRunHooks,
+			pushHooksActive: hooksState.push, runPushHooks, onToggleRunPushHooks: setRunPushHooks,
 			showTranslate, translateBusy, onTranslate: handleTranslate,
 			aiBusy, aiWarning, aiStats, onAiCommit: handleAiCommit,
 			showSyncButton,

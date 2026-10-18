@@ -35,7 +35,9 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、
                     仓库结构监视（repo-watcher.ts：按 git 公共目录去重监视 worktrees / modules 与
                     .gitmodules，变化后作废发现缓存并经事件流推 repository-tree）、子模块声明解析
-                    （submodule-parse.ts，发现层与监视共用）、插件状态
+                    （submodule-parse.ts，发现层与监视共用）、git 钩子探测
+                    （hooks.ts：按 core.hooksPath 或公共目录的 hooks 判定 pre-commit / pre-push，
+                    纯文件系统判定）、插件状态
                     持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/，
                     listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
@@ -92,7 +94,15 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
-`git/terminal-run.ts` 打开 DSH 终端页并在其中执行。
+`git/terminal-run.ts` 打开 DSH 终端页并在其中执行。浅克隆的 `--depth` / `--single-branch` /
+`--no-tags` 由 `shallowCloneArgs` 生成，深度按正整数处理、超上限收拢。
+
+git 钩子由 `hooks.ts` 探测（纯文件系统，不调 git）：配置了 `core.hooksPath` 时用它（相对路径按仓库根
+解析），否则用 **git 公共目录**下的 `hooks`，因此链接工作树与子模块共用主仓库的钩子目录。存在可执行的
+`pre-commit` / `prepare-commit-msg` / `commit-msg` 即视为提交钩子激活，`pre-push` 视为推送钩子激活；
+Windows 无执行位概念，文件存在即算可执行。客户端 `index.ts` 在换仓库时探测一次，取消勾选即给
+`commitStaged` / `pushUpstream` / `pushBranch` 传 `skipHooks`（宿主追加 `--no-verify`）。勾选状态**不持久化**：
+提交与推送完成后、以及切换仓库时都回到勾选。
 数据形状集中在 `git-types.ts`，其字段名即前端契约。多记录命令一律用 `-z` 取 NUL 分隔输出，
 记录内字段用 `%x00` 分隔；**`for-each-ref` 的转义是 `%00`**，写成 `%x00` 不会被展开，
 分支同步的格式串 `BRANCH_SYNC_FORMAT` 同样用 `%00`。
@@ -271,7 +281,7 @@ Office）主动不认领，那些仍走宿主预览。
 
 | 级别 | 载体 | 存活范围 | 适用 |
 |---|---|---|---|
-| 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`maxCommits`、分页与请求中标志 |
+| 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`runHooks` / `runPushHooks`（本次是否运行 git 钩子，不持久化，提交/推送完成与换仓库时复位）、`maxCommits`、分页与请求中标志 |
 | 会话级 | 浏览器 `sessionStorage`（客户端经 `panel/storage.ts` 的 `loadSessionValue` / `saveSessionValue` 读写） | 本次会话，关标签页即清 | 与具体仓库绑定、重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<仓库根绝对路径>`） |
 | 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、工作区仓库位置缓存 |
 
@@ -383,7 +393,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |
 | `git-messages.test.mjs` | git 失败文本的中文说明与原文回退 |
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
-| `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
+| `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时）；浅克隆参数 `shallowCloneArgs` 的深度归一与命令拼接位置 |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
 | `repo-events.test.mjs` | 仓库变更事件流：`repository-write` 与 `repository-tree` 两类帧的解析与互不认领、分帧、重连退避、事件与当前仓库的匹配 |
 | `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 `.gitmodules` / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、`.git` 事件被过滤 |
@@ -392,7 +402,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
-| `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入） |
+| `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入）；含钩子探测（默认目录 / `core.hooksPath`）与 `skipHooks` 的 `--no-verify` 语义 |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |
 | `ordering.test.mjs` | 三种提交排序 |
 

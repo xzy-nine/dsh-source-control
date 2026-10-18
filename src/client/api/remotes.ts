@@ -22,10 +22,11 @@ export async function fetchRepo(cwd: string, name: string | null, prune = false,
  * @param cwd - 会话工作区路径。
  * @param branchName - 要推送的分支名。
  * @param remotes - 目标远程仓库；空数组表示不推送。
+ * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 每条远程的结果错误，无错误时为空数组。
  */
-export async function pushBranch(cwd: string, branchName: string, remotes: readonly string[]): Promise<string[]> {
-	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '' });
+export async function pushBranch(cwd: string, branchName: string, remotes: readonly string[], skipHooks = false): Promise<string[]> {
+	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '', skipHooks });
 	return errorList(payload);
 }
 
@@ -35,11 +36,12 @@ export async function pushBranch(cwd: string, branchName: string, remotes: reado
  * 不带参数执行 `git push`，目标由 git 按分支的上游配置决定。
  *
  * @param cwd - 会话工作区路径。
+ * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 错误文本，无错误时返回 null。
  */
-export async function pushUpstream(cwd: string): Promise<string | null> {
+export async function pushUpstream(cwd: string, skipHooks = false): Promise<string | null> {
 	// 用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。
-	const payload = await callApiRaw(cwd, { command: 'pushUpstream' });
+	const payload = await callApiRaw(cwd, { command: 'pushUpstream', skipHooks });
 	return commandError(payload);
 }
 

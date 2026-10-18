@@ -24,6 +24,7 @@ import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
 import { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories } from './repo-watcher.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
+import { detectHooks } from './hooks.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import {
 	clearHostCache, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
@@ -246,7 +247,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('discardPaths', async () => { await discardPaths(repo, arr<string>('paths'), bool('untracked')); return { repo }; });
 			break;
 		case 'commitStaged':
-			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
+			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend'), bool('skipHooks')) }));
 			break;
 		case 'addToGitignore':
 			await respondResult('addToGitignore', async () => ({ result: await addToGitignore(repo, str('path')) }));
@@ -269,6 +270,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const submodulePath = str('submodulePath');
 				await initSubmodule(repo, submodulePath);
 				return { repo, submodulePath };
+			});
+			break;
+		case 'hooksState':
+			await respondResult('hooksState', async () => {
+				/*
+				 * `core.hooksPath` 由 git 解析（含 includeIf 等条件），因此读它的取值而不是只看
+				 * `.git/hooks`；读取失败时按未配置处理，退回默认钩子目录。
+				 */
+				const configured = await runGit(['config', '--get', 'core.hooksPath'], repo);
+				const hooksPath = configured.code === 0 ? configured.stdout.trim() : '';
+				const state = await detectHooks(repo, hooksPath);
+				return { repo, commit: state.commit, push: state.push, directory: state.directory };
 			});
 			break;
 		case 'branchesContaining':
@@ -622,11 +635,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'pushBranch',
 				willUpdateBranchConfig: bool('willUpdateBranchConfig'),
-				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never),
+				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never, bool('skipHooks')),
 			});
 			break;
 		case 'pushUpstream':
-			await respondError('pushUpstream', () => pushUpstream(repo));
+			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks')));
 			break;
 
 		/* --- 提交操作 --- */

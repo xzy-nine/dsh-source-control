@@ -243,12 +243,14 @@ export function fetch(repo: string, remote: string | null, prune: boolean, prune
  * @param remote - 目标远程名。
  * @param setUpstream - 是否设置上游分支。
  * @param mode - 推送模式；空串表示普通推送。
+ * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function pushBranch(repo: string, branchName: string, remote: string, setUpstream: boolean, mode: PushMode): Promise<ErrorInfo> {
+export function pushBranch(repo: string, branchName: string, remote: string, setUpstream: boolean, mode: PushMode, skipHooks = false): Promise<ErrorInfo> {
 	const args = ['push', remote, branchName];
 	if (setUpstream) args.push('--set-upstream');
 	if (mode !== '') args.push('--' + mode);
+	if (skipHooks) args.push('--no-verify');
 	return gitErrorInfo(args, repo);
 }
 
@@ -259,10 +261,13 @@ export function pushBranch(repo: string, branchName: string, remote: string, set
  * 因此无需调用方指定远程。当前分支没有上游时 git 会给出提示性错误。
  *
  * @param repo - 仓库路径。
+ * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function pushUpstream(repo: string): Promise<ErrorInfo> {
-	return gitErrorInfo(['push'], repo);
+export function pushUpstream(repo: string, skipHooks = false): Promise<ErrorInfo> {
+	const args = ['push'];
+	if (skipHooks) args.push('--no-verify');
+	return gitErrorInfo(args, repo);
 }
 
 /**
@@ -273,16 +278,17 @@ export function pushUpstream(repo: string): Promise<ErrorInfo> {
  * @param remotes - 目标远程名列表。
  * @param setUpstream - 是否设置上游分支。
  * @param mode - 推送模式；空串表示普通推送。
+ * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 各远程的结果错误；无错误时为空数组，遇到首个错误后不再继续推送。
  */
-export async function pushBranchToMultipleRemotes(repo: string, branchName: string, remotes: readonly string[], setUpstream: boolean, mode: PushMode): Promise<ErrorInfo[]> {
+export async function pushBranchToMultipleRemotes(repo: string, branchName: string, remotes: readonly string[], setUpstream: boolean, mode: PushMode, skipHooks = false): Promise<ErrorInfo[]> {
 	if (remotes.length === 0) {
 		return ['未指定要把分支 ' + branchName + ' 推送到哪个远程仓库。'];
 	}
 
 	const results: ErrorInfo[] = [];
 	for (const remote of remotes) {
-		const result = await pushBranch(repo, branchName, remote, setUpstream, mode);
+		const result = await pushBranch(repo, branchName, remote, setUpstream, mode, skipHooks);
 		results.push(result);
 		if (result !== null) break;
 	}
