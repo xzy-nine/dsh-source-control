@@ -102,18 +102,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 	const [amend, setAmend] = React.useState(false);
 	/**
-	 * 本次提交是否运行 git 钩子。
+	 * 本次提交与推送是否运行 git 钩子。
 	 *
-	 * 钩子处于激活状态时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择：
+	 * 提交钩子或推送钩子存在时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择：
 	 * 每次切换仓库与每次提交、推送完成后都回到默认勾选，不持久化。
 	 */
 	const [runHooks, setRunHooks] = React.useState(true);
-	/**
-	 * 本次推送是否运行 git 钩子。
-	 *
-	 * 与提交的同名状态分开：两处按钮各自独立勾选，互不影响。
-	 */
-	const [runPushHooks, setRunPushHooks] = React.useState(true);
 	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */
 	const [hooksState, setHooksState] = React.useState<HooksState>({ commit: false, push: false, directory: null });
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
@@ -353,13 +347,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 
 	/*
-	 * git 钩子状态：换仓库时探测一次，决定提交框与发布按钮是否显示勾选项。
+	 * git 钩子状态：换仓库时探测一次，决定提交框是否显示 githook 勾选项。
 	 *
 	 * 换仓库即回到「运行钩子」：勾选是临时选择，不跨仓库、不跨会话保留。
 	 */
 	React.useEffect(() => {
 		setRunHooks(true);
-		setRunPushHooks(true);
 		if (workingTreePath === null) { setHooksState({ commit: false, push: false, directory: null }); return undefined; }
 		let cancelled = false;
 		loadHooksState(workingTreePath)
@@ -1018,8 +1011,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const branch = currentSync.branch;
 		const path = workingTreePath;
 		// 推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。
-		const skipHooks = hooksState.push && !runPushHooks;
-		const publishDone = (): void => { setRunPushHooks(true); };
+		const skipHooks = hooksState.push && !runHooks;
+		const publishDone = (): void => { setRunHooks(true); };
 		void (async () => {
 			let remote = '';
 			if (state.remotes.length === 1) {
@@ -1060,11 +1053,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			});
 			publishDone();
 		})();
-	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, hooksState.push, runPushHooks]);
+	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, hooksState.push, runHooks]);
 
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
-		const skipHooks = hooksState.push && !runPushHooks;
+		const skipHooks = hooksState.push && !runHooks;
 		void run('network', async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
@@ -1073,7 +1066,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
 				await pushCurrentBranch(undefined, skipHooks);
 			}
-		}).finally(() => { setRunPushHooks(true); });
+		}).finally(() => { setRunHooks(true); });
 	};
 
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
@@ -1348,7 +1341,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const items: ContextMenuItem[] = [
 			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
 			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
-			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path, hooksState.push && !runPushHooks), node.path); } },
+			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path, hooksState.push && !runHooks), node.path); } },
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
@@ -1579,8 +1572,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			entries: state.entries, busy: busyFlags, phase: state.phase,
 			workingTreePath, head: state.head,
 			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
-			hooksActive: hooksState.commit, runHooks, onToggleRunHooks: setRunHooks,
-			pushHooksActive: hooksState.push, runPushHooks, onToggleRunPushHooks: setRunPushHooks,
+			// 任一类钩子存在即显示：同一个勾选项同时决定提交与推送是否带 --no-verify。
+			hooksActive: hooksState.commit || hooksState.push, runHooks, onToggleRunHooks: setRunHooks,
 			showTranslate, translateBusy, onTranslate: handleTranslate,
 			aiBusy, aiWarning, aiStats, onAiCommit: handleAiCommit,
 			showSyncButton,

@@ -139,17 +139,14 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly amend: boolean;
 	readonly onToggleAmend: (checked: boolean) => void;
 	/**
-	 * 钩子处于激活状态时为 true：此时提交框显示「运行 git 钩子」勾选项。
+	 * 钩子处于激活状态时为 true：此时提交框显示 githook 勾选项。
+	 *
+	 * 提交钩子与推送钩子任一存在即显示：同一个勾选项同时决定提交与推送是否带 `--no-verify`。
 	 */
 	readonly hooksActive: boolean;
-	/** 本次是否运行钩子。 */
+	/** 本次提交与推送是否运行钩子。 */
 	readonly runHooks: boolean;
 	readonly onToggleRunHooks: (checked: boolean) => void;
-	/** 推送钩子处于激活状态时为 true：此时同步与发布按钮旁显示勾选项。 */
-	readonly pushHooksActive: boolean;
-	/** 本次推送是否运行钩子。 */
-	readonly runPushHooks: boolean;
-	readonly onToggleRunPushHooks: (checked: boolean) => void;
 	/** 把当前改动存入贮藏。 */
 	readonly onStash: () => void;
 	/** AI 生成完成且内容以非当前语言为主时，显示翻译按钮。 */
@@ -193,7 +190,7 @@ export interface ChangesSectionProps extends ChangeActions {
  */
 export function ChangesSection({
 	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
-	hooksActive, runHooks, onToggleRunHooks, pushHooksActive, runPushHooks, onToggleRunPushHooks,
+	hooksActive, runHooks, onToggleRunHooks,
 	showTranslate, translateBusy, onTranslate,
 	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
 	showPublishButton, onPublish,
@@ -296,10 +293,11 @@ export function ChangesSection({
 				React.createElement('div', { className: css.commitActionsRow },
 					React.createElement('span', { className: css.commitActionsLeft },
 						React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+						// 一个勾选项同时管提交与推送：主按钮无论落在提交、同步还是发布上，它都在同一处。
 						hooksActive && React.createElement('span', { className: css.githookSlot },
 							React.createElement(Checkbox, {
 								checked: runHooks, onChange: onToggleRunHooks,
-								label: 'githook', title: '取消后本次提交跳过 pre-commit 等钩子（--no-verify），下次恢复',
+								label: 'githook', title: '取消后本次提交与推送跳过 pre-commit / pre-push 等钩子（--no-verify），下次恢复',
 							}),
 						),
 					),
@@ -323,13 +321,6 @@ export function ChangesSection({
 							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || !canSubmit,
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
-				// 推送钩子激活时，在推送类按钮下方给出本次是否运行的勾选项。
-				pushHooksActive && (showSyncButton || showPublishButton) && React.createElement('div', { className: css.commitActionsRow },
-					React.createElement(Checkbox, {
-						checked: runPushHooks, onChange: onToggleRunPushHooks,
-						label: 'githook', title: '取消后本次推送跳过 pre-push 钩子（--no-verify），下次恢复',
-					}),
-				),
 			),
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(
