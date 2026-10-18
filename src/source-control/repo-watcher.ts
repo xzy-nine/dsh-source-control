@@ -78,15 +78,19 @@ async function declaredSubmodules(repo: string): Promise<string[] | null> {
 /**
  * 取一个仓库需要监视的目标。
  *
- * 只监视两类目录：
- * - git 公共目录：`worktrees` 与 `modules` 两个目录的出现与消失（新建或移除工作树、初始化
+ * 三类目标：
+ * - git 公共目录：`worktrees` 与 `modules` 两个名字的出现与消失（新建或移除工作树、初始化
  *   子模块都会改动它们）；
- * - 仓库根：`.gitmodules` 与 `.git` 的变化；
+ * - 仓库根：`.gitmodules` 的出现与消失（新增或删除子模块声明）；
  * - 每个声明的子模块：其父目录（子模块目录的出现与消失）。
  *
+ * 仓库根只按 `.gitmodules` 过滤，**不含 `.git`**：`.git` 目录内部每次写操作都会以 `.git`
+ * 名字冒泡到父目录（实测一轮 `status` / `add` / `commit` 产生数十次），而结构变化本身已由
+ * 公共目录上的 `worktrees` / `modules` 名字事件覆盖。监视 `.git` 会形成
+ * 「事件 → 重扫 → git → 事件」的死循环。`.gitmodules` 在普通 git 操作中不产生事件。
+ *
  * 不监视 `worktrees` 与 `modules` 目录自身：Windows 上这两个目录的句柄在目录被删除后持续
- * 报错，且每次工作树操作会触发数万次事件。父目录上的 `worktrees`/`modules` 名字事件已覆盖
- * 全部增删场景。
+ * 报错，且每次工作树操作会触发数万次事件。
  *
  * @param repo - 仓库根或工作树根路径。
  * @param commonDir - 该仓库的 git 公共目录。
@@ -96,7 +100,7 @@ async function declaredSubmodules(repo: string): Promise<string[] | null> {
 export function structureWatchTargets(repo: string, commonDir: string, submodules: readonly string[] | null = null): WatchTarget[] {
 	const targets: WatchTarget[] = [
 		{ directory: commonDir, names: ['worktrees', 'modules'] },
-		{ directory: repo, names: ['.gitmodules', '.git'] },
+		{ directory: repo, names: ['.gitmodules'] },
 	];
 	for (const submodule of submodules ?? []) {
 		targets.push({ directory: dirname(submodule), names: [basename(submodule)] });

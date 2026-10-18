@@ -11,14 +11,23 @@ import { importHostModule } from './lib-import.mjs';
 const module = await importHostModule('source-control/repo-watcher.js');
 const { structureWatchTargets, isStructureChange } = module;
 
-test('监视目标覆盖工作树登记、子模块目录与仓库根', () => {
+test('监视目标覆盖工作树登记、子模块声明与子模块父目录', () => {
 	const repo = join('root', 'repo');
 	const common = join(repo, '.git');
 	const targets = structureWatchTargets(repo, common, []);
 	const directories = targets.map((target) => target.directory);
-	assert.ok(directories.includes(common), '公共目录本身：worktrees 与 modules 的出现与消失');
-	assert.ok(directories.includes(repo), '仓库根：.gitmodules 与 .git');
+	assert.ok(directories.includes(common), '公共目录：worktrees 与 modules 的出现与消失');
+	assert.ok(directories.includes(repo), '仓库根：.gitmodules');
 	assert.equal(directories.length, 2, '未声明子模块时只有两个目标');
+});
+
+test('仓库根只按 .gitmodules 过滤，不含 .git', () => {
+	const repo = join('root', 'repo');
+	const common = join(repo, '.git');
+	const target = structureWatchTargets(repo, common, []).find((item) => item.directory === repo);
+	assert.deepEqual(target.names, ['.gitmodules']);
+	assert.equal(isStructureChange(target, '.git'), false, '.git 内部变化不得触发结构事件');
+	assert.equal(isStructureChange(target, '.gitmodules'), true);
 });
 
 test('不监视 worktrees 与 modules 目录自身', () => {

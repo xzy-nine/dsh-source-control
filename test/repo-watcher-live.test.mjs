@@ -74,8 +74,36 @@ test('新建与移除链接工作树都会报告该仓库', async () => {
 	}
 });
 
-test('新增 .gitmodules 声明会报告该仓库', async () => {
+test('普通 git 操作不触发结构事件', async () => {
 	const repo = makeRepo();
+	const seen = [];
+	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
+	try {
+		watchRepositories([repo]);
+		await new Promise((done) => setTimeout(done, 300));
+
+		/*
+		 * 一轮完整的读写操作：每次写都会在仓库根以 `.git` 名字冒泡数十次事件。
+		 * 若监视目标含 `.git`，这里会持续报告结构变化，进而重扫、再起 git、再报事件。
+		 */
+		for (const name of ['b.txt', 'c.txt']) {
+			writeFileSync(join(repo, name), name);
+			gitIn(repo, 'status', '--porcelain');
+			gitIn(repo, 'add', '-A');
+			gitIn(repo, 'commit', '-q', '-m', `add ${name}`);
+			gitIn(repo, 'worktree', 'list', '--porcelain');
+		}
+		// 留足合并窗口与事件投递时间。
+		await new Promise((done) => setTimeout(done, 1200));
+		assert.deepEqual(seen, [], '普通 git 操作不产生结构事件');
+	} finally {
+		unsubscribe();
+		closeRepositoryWatchers();
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('新增 .gitmodules 声明会报告该仓库', async () => {	const repo = makeRepo();
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
 	try {

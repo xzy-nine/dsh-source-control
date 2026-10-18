@@ -29,8 +29,8 @@ export interface UseRepositoryWriteEventsOptions {
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 重载选中仓库的提交图与工作区。 */
 	readonly refresh: () => Promise<void>;
-	/** 重新枚举仓库树；结构事件命中工作区时调用。 */
-	readonly rescan: () => void;
+	/** 按最新结构重取仓库树，不清空已显示的树；结构事件命中工作区时调用。 */
+	readonly refreshTree: () => void;
 }
 
 /**
@@ -39,19 +39,20 @@ export interface UseRepositoryWriteEventsOptions {
  * 事件只带仓库路径，且可能来自任何会话；路径不在当前仓库内时忽略。面板自己发起的写操作也会
  * 收到一条事件，冷却与在途去重让这次重载与面板自身的对账刷新合并。
  *
- * 结构事件按工作区根过滤：命中即表示该工作区内的仓库树可能已变，重新枚举一次。重扫自身有
- * 30 秒冷却，因此连续的结构事件不会反复做全目录扫描。
+ * 结构事件按工作区根过滤：命中即表示该工作区内的仓库树可能已变，按最新结构重取一次。重取不清空
+ * 已显示的树，并受预加载模块的 30 秒冷却约束，因此连续的结构事件不会反复做全目录扫描、也不会让
+ * 仓库区闪回占位。
  *
  * @param options - 见 {@link UseRepositoryWriteEventsOptions}。
  * @returns 无。
  */
 export function useRepositoryWriteEvents({
-	workingTreePath, cwd, enabled, busyRef, refresh, rescan,
+	workingTreePath, cwd, enabled, busyRef, refresh, refreshTree,
 }: UseRepositoryWriteEventsOptions): void {
 	const refreshRef = React.useRef(refresh);
 	refreshRef.current = refresh;
-	const rescanRef = React.useRef(rescan);
-	rescanRef.current = rescan;
+	const refreshTreeRef = React.useRef(refreshTree);
+	refreshTreeRef.current = refreshTree;
 	const targetRef = React.useRef(workingTreePath);
 	targetRef.current = workingTreePath;
 	const cwdRef = React.useRef(cwd);
@@ -80,9 +81,9 @@ export function useRepositoryWriteEvents({
 			onTree: (event) => {
 				const root = cwdRef.current;
 				if (root === null || root === '') return;
-				// 结构事件可能来自工作区内的任一仓库：命中即重扫整棵树。
+				// 结构事件可能来自工作区内的任一仓库：命中即按最新结构重取整棵树。
 				if (!matchesRepository(root, event.repo) && !matchesRepository(event.repo, root)) return;
-				rescanRef.current();
+				refreshTreeRef.current();
 			},
 		});
 

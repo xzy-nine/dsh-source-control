@@ -188,11 +188,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 
 	const {
 		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSyncById, setSelectedId, rescan,
+		selectNode, toggleNode, setSyncById, setSelectedId, rescan, refreshTree,
 	} = useRepos({ cwd, sessionId });
 
 	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
-	const workingTreePath = selectedNode !== null
+	// 路径已不存在的节点（刚被移除的工作树或子模块）按未选中处理：否则 git 子进程的工作目录
+	// 不存在，命令以 `spawn git ENOENT` 失败，而重取尚未返回时节点仍在树上。
+	const workingTreePath = selectedNode !== null && selectedNode.available
 		? selectedNode.path
 		: (treeStatus === 'loading' ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined;
@@ -264,7 +266,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/*
 	 * 宿主事件流：别的会话、别的工作区或外部进程对当前仓库的写操作不产生本会话事件，
 	 * 事件驱动的刷新看不到。订阅宿主推送的仓库写事件补上这条通道，按仓库路径过滤。
-	 * 同一通道的结构事件（工作树登记、子模块目录、`.gitmodules`）触发仓库树重扫。
+	 * 同一通道的结构事件（工作树登记、子模块目录、`.gitmodules`）触发仓库树重取。
 	 */
 	useRepositoryWriteEvents({
 		workingTreePath,
@@ -272,7 +274,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		enabled: settings.autoRefresh,
 		busyRef,
 		refresh,
-		rescan,
+		refreshTree,
 	});
 
 	/*

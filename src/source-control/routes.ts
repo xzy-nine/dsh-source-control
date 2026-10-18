@@ -1117,7 +1117,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 
 	// 工作树登记、子模块目录与 `.gitmodules` 的变化推给所有面板：这类变化不经过执行层。
 	disposers.push(onRepositoryTreeChange((repo) => {
-		// 结构已变：发现结果缓存立即作废，重扫才能看到新增或消失的工作树与子模块。
+		// 结构已变：发现结果缓存立即作废，重取才能看到新增或消失的工作树与子模块。
 		clearDiscoveryCache();
 		broadcastRepositoryTree(repo);
 	}));

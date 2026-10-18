@@ -142,11 +142,21 @@ Office）主动不认领，那些仍走宿主预览。
 `use-repository-write-events.ts` 按仓库路径过滤后重载。
 
 同一通道还推 `repository-tree`：`repo-watcher.ts` 监视各仓库 git 公共目录的 `worktrees` 与 `modules`
-两个名字、仓库根的 `.gitmodules` 与 `.git`、以及各已声明子模块目录的出现。工作树与子模块的增删不一定
-经过执行层（宿主自己的工作树工具、外部命令、编辑器都会改），写事件覆盖不到。结构事件到达时宿主先
-作废发现缓存再广播，客户端按工作区根过滤后调用 `rescan()`。监视按 git 公共目录去重，主工作树、链接
-工作树与子模块共用一套句柄；事件合并窗口 250ms。**不监视 `worktrees` 与 `modules` 目录自身**：
-Windows 上这两个目录的句柄在目录被删除后持续报错，且一次工作树操作会触发数万次事件。
+两个名字、仓库根的 `.gitmodules`、以及各已声明子模块目录的出现。工作树与子模块的增删不一定经过
+执行层（宿主自己的工作树工具、外部命令、编辑器都会改），写事件覆盖不到。结构事件到达时宿主先
+作废发现缓存再广播，客户端按工作区根过滤后调用 `refreshTree()`（不清空已显示的树）。监视按 git
+公共目录去重，主工作树、链接工作树与子模块共用一套句柄；事件合并窗口 250ms。
+
+两处**不得**纳入监视目标：
+
+- `worktrees` 与 `modules` 目录自身：Windows 上句柄在目录被删除后持续报错，且一次工作树操作触发数万次事件。
+- 仓库根的 `.git`：`.git` 内部每次写操作都会以 `.git` 名字冒泡到父目录，一轮 `status` / `add` /
+  `commit` 实测数十次。监视它会形成「事件 → 重取 → git → 事件」的死循环，表现为页面反复刷新。
+  结构变化已由公共目录上的 `worktrees` / `modules` 名字事件覆盖，`.gitmodules` 在普通 git 操作中
+  不产生事件。
+
+结构事件的重取走 `repo-preload.ts` 的 `refreshWorkspace`（保留 `baseNodes`，只作废补齐记录，受 30 秒
+冷却与在途复用约束），不走 `dropWorkspace`：后者会发布空树，连续事件会让仓库区反复闪回占位。
 
 一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；仅首次进入时同时带回仓库信息、引用集合
 与贮藏）与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部
@@ -376,8 +386,8 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
 | `repo-events.test.mjs` | 仓库变更事件流：`repository-write` 与 `repository-tree` 两类帧的解析与互不认领、分帧、重连退避、事件与当前仓库的匹配 |
-| `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、按名字过滤事件 |
-| `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库 |
+| `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 `.gitmodules` / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、`.git` 事件被过滤 |
+| `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；普通 git 操作不产生结构事件 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |

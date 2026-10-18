@@ -65,6 +65,13 @@ interface WorkspaceEntry {
 	generation: number;
 	/** 最近一次取数完成或开始的时刻；用于重取冷却。 */
 	refreshedAt: number;
+	/**
+	 * 冷却期内到达的结构重取请求。
+	 *
+	 * 冷却只合并连续请求，不丢弃：丢弃会让「创建后立刻移除」这类紧随其后的结构变化永久
+	 * 不反映，节点留在指向已不存在目录的状态。
+	 */
+	pendingRefresh: ReturnType<typeof setTimeout> | null;
 }
 
 /** 工作区归一化键 -> 预加载状态。 */
@@ -179,6 +186,7 @@ function createEntry(root: string): WorkspaceEntry {
 		controller: null,
 		generation: 0,
 		refreshedAt: 0,
+		pendingRefresh: null,
 	};
 }
 
@@ -369,6 +377,14 @@ function start(entry: WorkspaceEntry): void {
 		if (entry.running !== run) return;
 		entry.running = null;
 		entry.controller = null;
+		/*
+		 * 取数期间登记的结构变更：它发生在本次发现之后，本次结果必然不含它，因此立即再取一次，
+		 * 不按冷却等待。`pendingRefresh` 清掉后只重取一次，不会因同一批事件反复重取。
+		 */
+		if (entry.pendingRefresh !== null) {
+			clearPendingRefresh(entry);
+			enrichAgain(entry);
+		}
 	});
 }
 
@@ -401,6 +417,8 @@ export function preloadWorkspace(root: string, options: PreloadOptions = {}): vo
  * 保留工作区条目与订阅者，只重置取数状态与缓存数据，并发布一份空的 loading 快照。重新扫描后
  * 树先回到占位，随后由 {@link preloadWorkspace} 重新取数并逐阶段发布。
  *
+ * 用户主动重扫用它：先清空再重取。结构事件驱动的重扫用 {@link refreshWorkspace}，它不清空树。
+ *
  * @param root - 工作区根路径。
  * @returns 无。
  */
@@ -408,6 +426,7 @@ export function dropWorkspace(root: string): void {
 	const key = rootKey(root);
 	const entry = entries.get(key);
 	if (entry === undefined) return;
+	clearPendingRefresh(entry);
 	entry.generation += 1;
 	entry.controller?.abort();
 	entry.controller = null;
@@ -420,4 +439,64 @@ export function dropWorkspace(root: string): void {
 		nodes: [], truncated: false, usedCache: false, status: 'loading', error: null,
 		discoveryRevision: entry.snapshot.discoveryRevision + 1, syncById: new Map(),
 	});
+}
+
+/**
+ * 取消一个挂起的结构重取。
+ *
+ * @param entry - 预加载状态。
+ * @returns 无。
+ */
+function clearPendingRefresh(entry: WorkspaceEntry): void {
+	if (entry.pendingRefresh === null) return;
+	clearTimeout(entry.pendingRefresh);
+	entry.pendingRefresh = null;
+}
+
+/**
+ * 按最新结构重取一个工作区的仓库树，不清空已发布的树。
+ *
+ * 供结构事件（工作树或子模块增删）使用：重取期间树继续显示上一轮结果，新结果到达后替换，
+ * 因此不闪回占位。作废补齐记录与占用登记，使新增的工作树与子模块被重新枚举。
+ *
+ * 不受重取冷却约束：结构事件是真实的目录变化，丢弃或延迟它会让树与实际不符 —— 创建后立刻
+ * 移除时，移除落在冷却期内，树会一直保留已不存在的工作树（点击它还报 `spawn git ENOENT`）。
+ * 冷却只用于面板挂载触发的重取，那里的重复请求没有语义差别。
+ *
+ * 在途期间到达的请求登记为 `pendingRefresh`，本次取数结束后立即再取一次：本次发现发生在
+ * 变化之前，结果必然不含该变化。
+ *
+ * @param root - 工作区根路径。
+ * @returns 无。
+ */
+export function refreshWorkspace(root: string): void {
+	if (root === '') return;
+	const key = rootKey(root);
+	const entry = entries.get(key);
+	if (entry === undefined) {
+		preloadWorkspace(root);
+		return;
+	}
+	if (entry.running !== null) {
+		entry.pendingRefresh ??= setTimeout(() => {
+			entry.pendingRefresh = null;
+			refreshWorkspace(entry.root);
+		}, 0);
+		return;
+	}
+	enrichAgain(entry);
+}
+
+/**
+ * 作废补齐结果并重新取数。
+ *
+ * 保留 `baseNodes` 与已发布的树，只清掉补齐记录：工作树与子模块要重新枚举。
+ *
+ * @param entry - 预加载状态。
+ * @returns 无。
+ */
+function enrichAgain(entry: WorkspaceEntry): void {
+	entry.childrenByPath = new Map();
+	entry.claims.clear();
+	start(entry);
 }
