@@ -11,7 +11,7 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	abortMerge, localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -264,12 +264,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	/*
 	 * 宿主事件流：别的会话、别的工作区或外部进程对当前仓库的写操作不产生本会话事件，
 	 * 事件驱动的刷新看不到。订阅宿主推送的仓库写事件补上这条通道，按仓库路径过滤。
+	 * 同一通道的结构事件（工作树登记、子模块目录、`.gitmodules`）触发仓库树重扫。
 	 */
 	useRepositoryWriteEvents({
 		workingTreePath,
+		cwd: cwd ?? null,
 		enabled: settings.autoRefresh,
 		busyRef,
 		refresh,
+		rescan,
 	});
 
 	/*
@@ -1289,6 +1292,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const branchName = node.branch ?? '';
 		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
 		const isLinkedWorktree = node.kind === 'worktree';
+		// 未检出的子模块在磁盘上没有工作区，需要初始化后才能读取。
+		const isUninitializedSubmodule = node.kind === 'submodule' && !node.available;
 		const items: ContextMenuItem[] = [
 			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
 			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
@@ -1296,6 +1301,30 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
+		if (isUninitializedSubmodule) {
+			items.push({ type: 'divider' }, {
+				title: '初始化子模块', disabled: isRepoBusy(state.busy, node.path, 'network'),
+				onClick: () => {
+					void (async () => {
+						/*
+						 * 以子模块路径为仓库目标：宿主按路径取父仓库并换算相对路径，因此子模块尚未
+						 * 检出（目录里没有 `.git`）时也能执行。该命令可能访问远端，按网络影响面记录。
+						 */
+						selectNodeAndReset(node);
+						setState((previous) => ({ ...previous, busy: addBusy(previous.busy, node.path, 'network'), error: null }));
+						try {
+							await initSubmodule(node.path, node.path);
+						} catch (error) {
+							reportError(setState, error instanceof Error ? error.message : String(error));
+							return;
+						} finally {
+							setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, node.path, 'network') }));
+						}
+						rescan();
+					})();
+				},
+			});
+		}
 		if (isLinkedWorktree) {
 			items.push({ type: 'divider' }, {
 				title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, workingTreePath, 'history'),

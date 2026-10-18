@@ -8,6 +8,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
+import { parseSubmodulePaths } from './submodule-parse.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
 import { foreignWorktreeBranches, gitDirAt, parseWorktreeList, resolveGitCommonDir } from './worktree-branches.js';
 
@@ -215,24 +216,7 @@ export function shouldPruneDirectory(name: string): boolean {
  * @param source - `.gitmodules` 文本。
  * @returns 相对仓库根的子模块路径，按出现顺序。
  */
-export function parseSubmodulePaths(source: string): string[] {
-	const paths: string[] = [];
-	const section = /^\s*\[.*\]\s*$/;
-	const submodule = /^\s*\[submodule\s+"/;
-	const pathProperty = /^\s*path\s*=\s*(.*)$/;
-	let inSubmodule = false;
-	for (const line of source.split(/\r?\n/)) {
-		if (section.test(line)) {
-			inSubmodule = submodule.test(line);
-			continue;
-		}
-		if (!inSubmodule) continue;
-		const match = pathProperty.exec(line);
-		const value = match === null ? '' : match[1].trim();
-		if (value !== '') paths.push(value);
-	}
-	return paths;
-}
+export { parseSubmodulePaths } from './submodule-parse.js';
 
 /**
  * 解析 `.git/HEAD`。

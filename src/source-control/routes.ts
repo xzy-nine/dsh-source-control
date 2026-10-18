@@ -18,10 +18,11 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
+import { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories } from './repo-watcher.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import {
@@ -66,13 +67,54 @@ const MAX_EVENT_STREAMS = 16;
 const eventStreams = new Set<http.ServerResponse>();
 
 /**
+ * 取节点树里全部节点路径。
+ *
+ * @param nodes - 仓库节点列表。
+ * @returns 全部路径，含工作树与子模块。
+ */
+function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
+	const paths: string[] = [];
+	const walk = (list: readonly RepoNode[]): void => {
+		for (const node of list) {
+			paths.push(node.path);
+			walk(node.children);
+		}
+	};
+	walk(nodes);
+	return paths;
+}
+
+/**
  * 向所有事件流连接推送一条仓库变更。
  *
  * @param repo - 发生变更的仓库路径。
  * @returns 无。
  */
 function broadcastRepositoryWrite(repo: string): void {
-	const frame = `event: repository-write\ndata: ${JSON.stringify({ repo })}\n\n`;
+	broadcastEvent('repository-write', repo);
+}
+
+/**
+ * 向所有事件流连接推送一条仓库结构变更。
+ *
+ * 结构变更指工作树登记、子模块目录或 `.gitmodules` 的变化；接收方据此重新枚举仓库树。
+ *
+ * @param repo - 结构发生变化的仓库路径。
+ * @returns 无。
+ */
+function broadcastRepositoryTree(repo: string): void {
+	broadcastEvent('repository-tree', repo);
+}
+
+/**
+ * 向所有事件流连接推送一条事件帧。
+ *
+ * @param event - 事件名。
+ * @param repo - 仓库路径。
+ * @returns 无。
+ */
+function broadcastEvent(event: string, repo: string): void {
+	const frame = `event: ${event}\ndata: ${JSON.stringify({ repo })}\n\n`;
 	for (const stream of eventStreams) {
 		try {
 			stream.write(frame);
@@ -222,6 +264,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				return { repo, worktreePath };
 			});
 			break;
+		case 'initSubmodule':
+			await respondResult('initSubmodule', async () => {
+				const submodulePath = str('submodulePath');
+				await initSubmodule(repo, submodulePath);
+				return { repo, submodulePath };
+			});
+			break;
 		case 'branchesContaining':
 			// 分支只由尖端提交标识，中间提交的 heads 为空；按包含关系查询才能列出所属分支。
 			await respondResult('branchesContaining', async () => {
@@ -273,6 +322,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					maxDepth: num('maxDepth', 3),
 					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
 				});
+				// 顶层仓库纳入结构监视：工作树与子模块的增删由此即时反映。
+				watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
 				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
 			});
 			break;
@@ -281,7 +332,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				// 入参为空时不扫目录：nodes 为空数组。
 				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
 				if (repos.length === 0) return { nodes: [] };
-				return { nodes: await enrichRepositories(repos) };
+				const nodes = await enrichRepositories(repos);
+				// 补齐结果里的工作树与子模块同样纳入监视：它们的登记项增删要即时反映。
+				watchRepositories(flattenRepoPaths(nodes));
+				return { nodes };
 			});
 			break;
 		case 'loadRepoSync':
@@ -1060,6 +1114,14 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
 	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
+
+	// 工作树登记、子模块目录与 `.gitmodules` 的变化推给所有面板：这类变化不经过执行层。
+	disposers.push(onRepositoryTreeChange((repo) => {
+		// 结构已变：发现结果缓存立即作废，重扫才能看到新增或消失的工作树与子模块。
+		clearDiscoveryCache();
+		broadcastRepositoryTree(repo);
+	}));
+	disposers.push(closeRepositoryWatchers);
 
 	// 事件流（GET）：面板据此即时反映别处的写操作。
 	registerMethodRoute('/dsh-source-control/gg/events', 'GET', (req, res) => { handleEvents(req, res); });

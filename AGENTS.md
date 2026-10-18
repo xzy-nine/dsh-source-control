@@ -32,7 +32,10 @@
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按已持久化的工作区根预扫仓库树
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
-                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、插件状态
+                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、
+                    仓库结构监视（repo-watcher.ts：按 git 公共目录去重监视 worktrees / modules 与
+                    .gitmodules，变化后作废发现缓存并经事件流推 repository-tree）、子模块声明解析
+                    （submodule-parse.ts，发现层与监视共用）、插件状态
                     持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/，
                     listRepoLocationsWorkspaces 列出已持久化的工作区根）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
@@ -137,6 +140,13 @@ Office）主动不认领，那些仍走宿主预览。
 执行层在每次**成功**的仓库写操作后推一条 `repository-write`（只带仓库路径），因此别的会话、别的
 工作区与外部进程造成的改动也能即时反映。客户端 `api/repo-events.ts` 解析帧、按退避重连，
 `use-repository-write-events.ts` 按仓库路径过滤后重载。
+
+同一通道还推 `repository-tree`：`repo-watcher.ts` 监视各仓库 git 公共目录的 `worktrees` 与 `modules`
+两个名字、仓库根的 `.gitmodules` 与 `.git`、以及各已声明子模块目录的出现。工作树与子模块的增删不一定
+经过执行层（宿主自己的工作树工具、外部命令、编辑器都会改），写事件覆盖不到。结构事件到达时宿主先
+作废发现缓存再广播，客户端按工作区根过滤后调用 `rescan()`。监视按 git 公共目录去重，主工作树、链接
+工作树与子模块共用一套句柄；事件合并窗口 250ms。**不监视 `worktrees` 与 `modules` 目录自身**：
+Windows 上这两个目录的句柄在目录被删除后持续报错，且一次工作树操作会触发数万次事件。
 
 一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；仅首次进入时同时带回仓库信息、引用集合
 与贮藏）与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部
@@ -365,7 +375,9 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `ignore-rules.test.mjs` | 忽略规则的路径规范化、规则写法、去重与追加、越界拒绝 |
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时） |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
-| `repo-events.test.mjs` | 仓库变更事件流：帧解析、分帧、重连退避、事件与当前仓库的匹配 |
+| `repo-events.test.mjs` | 仓库变更事件流：`repository-write` 与 `repository-tree` 两类帧的解析与互不认领、分帧、重连退避、事件与当前仓库的匹配 |
+| `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、按名字过滤事件 |
+| `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |

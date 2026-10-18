@@ -1,11 +1,12 @@
 /**
- * 仓库变更事件流：订阅宿主推送的「某仓库被写入」，用于即时反映别处的改动。
+ * 仓库变更事件流：订阅宿主推送的「某仓库被写入」与「某仓库结构已变」，用于即时反映别处的改动。
  *
  * 事件驱动的自动刷新只订阅当前会话的事件窗口，因此在别的会话、别的工作区或外部进程里
  * 对同一仓库做的改动收不到任何信号，只能等兜底轮询。本模块订阅宿主的事件流补上这条通道。
  *
  * 传输为 `text/event-stream`：宿主在每次**成功**的仓库写操作后推一条 `repository-write`，
- * 数据为发生变更的仓库路径。连接断开后按退避重连，因此宿主重启或页面长时间挂起都能自愈。
+ * 在 git 目录里的工作树登记、子模块目录或 `.gitmodules` 变化后推一条 `repository-tree`，
+ * 数据均为发生变更的仓库路径。连接断开后按退避重连，因此宿主重启或页面长时间挂起都能自愈。
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
 import { readStreamText } from './stream.ts';
@@ -22,6 +23,12 @@ const RECONNECT_MAX_MS = 30000;
 /** 一个仓库写事件。 */
 export interface RepositoryWriteEvent {
 	/** 发生变更的仓库路径。 */
+	readonly repo: string;
+}
+
+/** 一个仓库结构事件：工作树登记或子模块声明可能已变。 */
+export interface RepositoryTreeEvent {
+	/** 结构发生变化的仓库路径。 */
 	readonly repo: string;
 }
 
@@ -52,6 +59,8 @@ export function matchesRepository(viewed: string, eventRepo: string): boolean {
 export interface RepositoryWriteStreamOptions {
 	/** 收到一条仓库写事件。 */
 	readonly onWrite: (event: RepositoryWriteEvent) => void;
+	/** 收到一条仓库结构事件；省略时忽略。 */
+	readonly onTree?: (event: RepositoryTreeEvent) => void;
 	/** 连接状态变化；用于诊断，缺省不关心。 */
 	readonly onState?: (state: 'open' | 'closed') => void;
 }
@@ -59,13 +68,13 @@ export interface RepositoryWriteStreamOptions {
 /**
  * 解析一条事件流帧。
  *
- * 只识别 `repository-write` 事件；注释行、保活与其它事件一律忽略，`data` 不是合法 JSON 或
- * 缺少 `repo` 时同样忽略 —— 单条坏帧不应打断整条连接。
+ * 只识别 `repository-write` 与 `repository-tree` 事件；注释行、保活与其它事件一律忽略，
+ * `data` 不是合法 JSON 或缺少 `repo` 时同样忽略 —— 单条坏帧不应打断整条连接。
  *
  * @param frame - 一个完整的帧（已按空行切分）。
- * @returns 事件；不是可用的仓库写事件时为 null。
+ * @returns 事件；不是可用的仓库事件时为 null。
  */
-export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+export function parseRepositoryEventFrame(frame: string): { readonly kind: 'write' | 'tree'; readonly repo: string } | null {
 	let event = '';
 	let data = '';
 	for (const line of frame.split('\n')) {
@@ -76,13 +85,38 @@ export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent |
 		if (field === 'event') event = value;
 		else if (field === 'data') data += value;
 	}
-	if (event !== 'repository-write' || data === '') return null;
+	if ((event !== 'repository-write' && event !== 'repository-tree') || data === '') return null;
 	try {
 		const parsed = JSON.parse(data) as { repo?: unknown };
-		return typeof parsed.repo === 'string' && parsed.repo !== '' ? { repo: parsed.repo } : null;
+		if (typeof parsed.repo !== 'string' || parsed.repo === '') return null;
+		return { kind: event === 'repository-tree' ? 'tree' : 'write', repo: parsed.repo };
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * 解析一条仓库写事件帧。
+ *
+ * @param frame - 一个完整的帧（已按空行切分）。
+ * @returns 写事件；不是可用的写事件时为 null。
+ */
+export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+	const parsed = parseRepositoryEventFrame(frame);
+	return parsed !== null && parsed.kind === 'write' ? { repo: parsed.repo } : null;
+}
+
+/**
+ * 解析一条仓库结构事件帧。
+ *
+ * 结构事件表示仓库的工作树登记或子模块声明可能已变，接收方据此重新枚举。
+ *
+ * @param frame - 一个完整的帧（已按空行切分）。
+ * @returns 结构事件；不是可用的结构事件时为 null。
+ */
+export function parseRepositoryTreeFrame(frame: string): RepositoryTreeEvent | null {
+	const parsed = parseRepositoryEventFrame(frame);
+	return parsed !== null && parsed.kind === 'tree' ? { repo: parsed.repo } : null;
 }
 
 /**
@@ -153,8 +187,10 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 				const { frames, rest } = splitFrames(buffer);
 				buffer = rest;
 				for (const frame of frames) {
-					const event = parseRepositoryWriteFrame(frame);
-					if (event !== null) options.onWrite(event);
+					const event = parseRepositoryEventFrame(frame);
+					if (event === null) continue;
+					if (event.kind === 'tree') options.onTree?.({ repo: event.repo });
+					else options.onWrite({ repo: event.repo });
 				}
 			}, () => disposed.current);
 		} catch {

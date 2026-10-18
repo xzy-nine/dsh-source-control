@@ -78,6 +78,20 @@ export async function removeWorktree(repo: string, worktreePath: string, force: 
 }
 
 /**
+ * 初始化一个子模块。
+ *
+ * 按 `.gitmodules` 与索引里的 gitlink 检出子模块工作区，其内部声明的子模块一并初始化。
+ * 该命令可能访问远端。
+ *
+ * @param repo - 父仓库路径。
+ * @param submodulePath - 子模块路径，相对仓库根或绝对路径。
+ * @returns 无。
+ */
+export async function initSubmodule(repo: string, submodulePath: string): Promise<void> {
+	await callApi(repo, { command: 'initSubmodule', submodulePath });
+}
+
+/**
  * 应用贮藏。
  *
  * @param cwd - 会话工作区路径。

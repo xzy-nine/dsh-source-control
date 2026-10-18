@@ -3,12 +3,21 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesRepository, parseRepositoryWriteFrame, reconnectDelayMs, splitFrames } from '../src/client/api/repo-events.ts';
+import { matchesRepository, parseRepositoryEventFrame, parseRepositoryTreeFrame, parseRepositoryWriteFrame, reconnectDelayMs, splitFrames } from '../src/client/api/repo-events.ts';
 
 test('解析 repository-write 帧', () => {
 	assert.deepEqual(parseRepositoryWriteFrame('event: repository-write\ndata: {"repo":"E:/repo"}'), { repo: 'E:/repo' });
 	// 字段与冒号之间允许一个空格；注释行忽略。
 	assert.deepEqual(parseRepositoryWriteFrame(': ping\nevent: repository-write\ndata: {"repo":"/r"}'), { repo: '/r' });
+});
+
+test('解析 repository-tree 帧', () => {
+	assert.deepEqual(parseRepositoryTreeFrame('event: repository-tree\ndata: {"repo":"E:/repo"}'), { repo: 'E:/repo' });
+	assert.deepEqual(parseRepositoryEventFrame('event: repository-tree\ndata: {"repo":"/r"}'), { kind: 'tree', repo: '/r' });
+	assert.deepEqual(parseRepositoryEventFrame('event: repository-write\ndata: {"repo":"/r"}'), { kind: 'write', repo: '/r' });
+	// 两类帧互不认领。
+	assert.equal(parseRepositoryWriteFrame('event: repository-tree\ndata: {"repo":"/r"}'), null);
+	assert.equal(parseRepositoryTreeFrame('event: repository-write\ndata: {"repo":"/r"}'), null);
 });
 
 test('忽略保活、其它事件与坏数据', () => {

@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -482,8 +482,47 @@ test('被别的工作树检出的分支照常出现在提交图上，并回投�
 	}
 });
 
-test('未知命令被拒绝且非仓库路径不抛错', async () => {
-	const { repo } = makeRepo();
+test('初始化未检出的子模块：路径可给相对仓库根，也可给绝对路径', async () => {
+	const parent = mkdtempSync(join(tmpdir(), 'gg-api-sub-'));
+	const source = mkdtempSync(join(tmpdir(), 'gg-api-subsrc-'));
+	const bare = mkdtempSync(join(tmpdir(), 'gg-api-subbare-'));
+	const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+	try {
+		gitIn(source, 'init', '-q', '-b', 'main');
+		gitIn(source, 'config', 'user.email', 'sub@example.com');
+		gitIn(source, 'config', 'user.name', 'Sub');
+		writeFileSync(join(source, 'dep.txt'), 'dep');
+		gitIn(source, 'add', '-A');
+		gitIn(source, 'commit', '-q', '-m', 'dep');
+		gitIn(tmpdir(), 'clone', '-q', '--bare', source, bare);
+
+		gitIn(parent, 'init', '-q', '-b', 'main');
+		gitIn(parent, 'config', 'user.email', 'api@example.com');
+		gitIn(parent, 'config', 'user.name', 'Api');
+		writeFileSync(join(parent, 'a.txt'), 'a');
+		gitIn(parent, 'add', '-A');
+		gitIn(parent, 'commit', '-q', '-m', 'first');
+		gitIn(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', bare, 'lib/dep');
+		gitIn(parent, 'commit', '-q', '-m', 'add submodule');
+
+		// 模拟未检出的子模块：删掉工作区目录，登记项仍在索引里。
+		rmSync(join(parent, 'lib', 'dep'), { recursive: true, force: true });
+
+		const call = await makeCaller(parent);
+		assert.equal((await call({ command: 'initSubmodule', submodulePath: 'lib/dep' })).error, null);
+		assert.ok(existsSync(join(parent, 'lib', 'dep', 'dep.txt')), '相对路径初始化出工作区');
+
+		// 再删一次，按绝对路径初始化：宿主向上找到声明它的父仓库。
+		rmSync(join(parent, 'lib', 'dep'), { recursive: true, force: true });
+		const absolute = await makeCaller(join(parent, 'lib', 'dep'));
+		assert.equal((await absolute({ command: 'initSubmodule', submodulePath: join(parent, 'lib', 'dep') })).error, null);
+		assert.ok(existsSync(join(parent, 'lib', 'dep', 'dep.txt')), '绝对路径初始化出工作区');
+	} finally {
+		for (const dir of [parent, source, bare]) rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('未知命令被拒绝且非仓库路径不抛错', async () => {	const { repo } = makeRepo();
 	try {
 		const call = await makeCaller(repo);
 		const unknown = await call({ command: 'no-such-command' });
