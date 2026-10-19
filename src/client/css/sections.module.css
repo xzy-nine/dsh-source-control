@@ -129,3 +129,7 @@
 .commitActionsRight .abortMergeBtn:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
 
 .commitAiStats{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:2px 0;font-family:var(--dsw-alias-font-mono,monospace)}
+
+/* 待合并状态说明：提交是结束合并的唯一动作，提交信息可留空。 */
+
+.mergeHint{font-size:11px;color:var(--dsw-alias-label-secondary);padding:2px 0}

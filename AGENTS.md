@@ -94,7 +94,11 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 `git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `runGit` **不设超时**：等待由 git 自身承担（远端不可达、凭据缺失它自己会结束），提交与推送还要
 串行跑仓库自己的钩子（如 Gradle 的 `ktlintFormat`），其耗时不由插件限制。执行层只登记在跑的子进程，
-用于宿主退出与终止信号时按进程树清理（`killRunningGit`）。
+用于宿主退出与终止信号时按进程树清理（`killRunningGit`）。非只读命令结束时按 `onRepositoryWrite`
+通知一次（判据是命令跑完，不看退出码：冲突合并、拣选冲突与变基停下都以非零退出但已改动仓库），
+宿主据此清空快照、提交图与仓库信息缓存、作废发现缓存并广播 `repository-write`。
+`commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
+用于结束索引与 HEAD 无差异的待合并状态。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
@@ -151,7 +155,8 @@ Office）主动不认领，那些仍走宿主预览。
 不可见时退回 120s 的慢档；页签不可见、上一次未结束、面板正忙时跳过。
 
 宿主事件流（`GET /dsh-source-control/gg/events`，`text/event-stream`）补上事件窗口之外的另一半：
-执行层在每次**成功**的仓库写操作后推一条 `repository-write`（只带仓库路径），因此别的会话、别的
+执行层在每次非只读写命令结束后推一条 `repository-write`（只带仓库路径，判据是命令跑完，
+含以非零退出但已改动仓库的冲突合并、拣选冲突与变基停下），因此别的会话、别的
 工作区与外部进程造成的改动也能即时反映。客户端 `api/repo-events.ts` 解析帧、按退避重连，
 `use-repository-write-events.ts` 按仓库路径过滤后重载。
 
@@ -226,7 +231,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 `git for-each-ref --format=… refs/heads`（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，`%(HEAD)` 标出
 当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、上游为空、
 领先/落后为 0。单个仓库失败以空值兜底，`path` 原样回显入参。仓库发现逐层并行，结果进 60 秒 TTL
-的内存缓存（容量 16，超出按插入序淘汰），任何**成功**的仓库写操作作废该缓存；宿主 `apply()` 注册路由
+的内存缓存（容量 16，超出按插入序淘汰），任何仓库写命令结束后作废该缓存；宿主 `apply()` 注册路由
 后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
 失败静默。
 
@@ -390,7 +395,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `status-snapshot.test.mjs` | 工作区快照解析：v2 记录与空列、重命名、未合并、分支与上游、截断 |
 | `branch-sync.test.mjs` | 分支同步：`BRANCH_SYNC_FORMAT` 形状、`parseBranchSync` 的各 track 文本与 upstream 为 null 的情形；ahead/behind 与 `rev-list` 独立推导对照 |
 | `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler |
-| `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照 |
+| `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照；冲突合并后不作废缓存即读到合并状态 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
 | `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
 | `draft-storage.test.mjs` | 会话级存储：读写往返、非法值与缺失回退、按仓库根的草稿键 |
@@ -416,6 +421,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 `.gitmodules` / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、`.git` 事件被过滤；工作区级判定（已知与未知仓库的 `.git`、普通文件与目录、仓库目录消失、名字缺失、新建目录下探） |
 | `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；工作区里新建与删除仓库报告该工作区；普通 git 操作与普通文件改动都不产生结构事件 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
+| `submit-state.test.mjs` | 提交框判据：主按钮在合并中与修补期间固定为提交、同步与发布的切换条件、提交可用性、空信息在合并中不禁用提交 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |

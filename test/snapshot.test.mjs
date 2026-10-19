@@ -400,6 +400,40 @@ test('合并状态：无冲突的 --no-commit 合并也判为合并中', async (
 	}
 });
 
+test('合并状态：冲突合并后不作废缓存也能读到合并状态', async () => {
+	/*
+	 * 冲突合并以非零退出，但已建立待合并状态与未解决条目。宿主快照缓存由写命令结束时的通知
+	 * 清空；只在退出码为 0 时通知会让这里读到合并前的快照。
+	 */
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('checkout', '-q', '-b', 'feat');
+		write('a.txt', 'feat\n');
+		git('commit', '-q', '-am', 'feat');
+		git('checkout', '-q', 'main');
+		write('a.txt', 'main\n');
+		git('commit', '-q', '-am', 'main');
+
+		const call = await makeCaller(repo);
+		const before = await snapshot(call);
+		assert.equal(before.merging, false);
+		assert.deepEqual(before.entries, []);
+
+		const merged = await call({ command: 'merge', obj: 'feat', actionOn: 'Branch', createNewCommit: true });
+		assert.equal(typeof merged.error, 'string', '冲突合并不以成功返回');
+
+		// 不作废缓存：写命令结束时的通知应已清空宿主快照缓存。
+		const after = await snapshot(call);
+		assert.equal(after.merging, true, '冲突合并后应读到合并中');
+		assert.equal(after.entries.some((entry) => entry.index === 'U'), true, '冲突条目应出现');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('贮藏契约：无贮藏时 loadRepoInfo 返回空列表且无错误', async () => {
 	const { repo, git, write } = makeRepo();
 	try {

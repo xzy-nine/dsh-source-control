@@ -154,7 +154,7 @@ export function clearDiscoveryCache(): void {
 	discoveryCache.clear();
 }
 
-/* 仓库写操作会改变目录与仓库位置，写成功后立即作废发现缓存。 */
+/* 仓库写命令会改变目录与仓库位置，命令结束后立即作废发现缓存。 */
 onRepositoryWrite(() => { clearDiscoveryCache(); });
 
 /**

@@ -345,6 +345,51 @@ test('合并到选中分支：非尖端与不存在的分支被拒绝且不检�
 	}
 });
 
+test('合并到选中分支：空合并可用空提交信息结束，沿用 git 生成的合并信息', async () => {
+	/*
+	 * 无冲突合并停下后索引与 HEAD 可能没有差异：两个分支加了同样的内容时，合并结果与任一侧一致。
+	 * 此时提交仍然必须成立 —— 它是结束合并的唯一动作，信息留空表示沿用 MERGE_MSG。
+	 */
+	const { repo, git } = makeRepo();
+	try {
+		writeFileSync(join(repo, 'base.txt'), 'base\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		writeFileSync(join(repo, 'same.txt'), 'same\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'work side');
+		git('checkout', '-q', 'target-branch');
+		writeFileSync(join(repo, 'same.txt'), 'same\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'target side');
+		// 合并方向是「当前分支合并到选中分支」，因此由 work-branch 发起。
+		git('checkout', '-q', 'work-branch');
+		const targetTip = git('rev-parse', 'target-branch').trim();
+
+		const call = await makeCaller(repo);
+		const merged = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
+		assert.equal(merged.error, null);
+		assert.equal(merged.conflicted, false);
+
+		const snapshot = await call({ command: 'loadWorkingTreeSnapshot' });
+		assert.equal(snapshot.merging, true, '应处于待合并状态');
+		assert.deepEqual(snapshot.entries, [], '两侧内容一致时索引没有改动');
+
+		const commit = await call({ command: 'commitStaged', message: '', amend: false });
+		assert.equal(commit.error, null, '空提交信息应沿用 git 生成的合并信息');
+		assert.equal(typeof commit.hash, 'string');
+		assert.equal(existsSync(join(repo, '.git', 'MERGE_HEAD')), false, '合并应已结束');
+		assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length, 3, '合并提交应有两个父提交');
+
+		const after = await call({ command: 'loadWorkingTreeSnapshot' });
+		assert.equal(after.merging, false, '提交后不再处于合并中');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('用户身份读写与文件差异内容', async () => {
 	const { repo } = makeRepo();
 	try {

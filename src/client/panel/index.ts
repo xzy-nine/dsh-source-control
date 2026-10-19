@@ -39,6 +39,7 @@ import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries } from './optimistic.ts';
+import { canSubmitOf, commitButtonDisabledOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { useResizeHandler } from './use-resize.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
@@ -752,10 +753,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			.catch(() => { /* 取不到正文时保留标题 */ });
 	}, [state.commits, workingTreePath]);
 
-	/** 提交暂存区；勾选修补时允许没有暂存改动，只改提交信息。 */
+	/**
+	 * 提交暂存区。
+	 *
+	 * 勾选修补时允许没有暂存改动，只改提交信息；处于未完成的合并时同样允许，此时提交是结束合并
+	 * 的唯一动作，提交信息留空表示沿用 git 生成的合并信息。
+	 */
 	const submit = (): void => {
-		if (busyFlags.commit || message.trim() === '') return;
-		if (stagedPaths.length === 0 && !amend) return;
+		const merging = state.merging;
+		if (commitButtonDisabledOf({ busy: busyFlags.commit, canSubmit: canSubmitOf({ stagedCount: stagedPaths.length, amend, merging }), messageEmpty: message.trim() === '', merging })) return;
 		// 钩子激活且取消勾选时本次跳过；提交完成后回到默认勾选。
 		const skipHooks = hooksState.commit && !runHooks;
 		void run('commit', async () => {
@@ -824,21 +830,20 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	);
 	const workAreaEmpty = state.entries.length === 0;
 	const hasRemoteDiff = currentSync !== undefined && (currentSync.ahead > 0 || currentSync.behind > 0);
-	/*
-	 * 修补期间提交框始终保留提交按钮：修补允许在没有任何暂存改动时只改提交信息，
-	 * 此时显示「同步」或「发布」会让唯一可做的动作不可达。
-	 */
-	const showSyncButton = workAreaEmpty && hasRemoteDiff && !amend;
 	/**
 	 * 当前分支是纯本地分支：有分支、无上游。
 	 *
 	 * `loadRepoSync` 无上游时 `upstream` 为 null，检出到游离头时 `branch` 为 null。
 	 */
 	const isUnpublishedBranch = currentSync !== undefined && currentSync.branch !== null && currentSync.upstream === null;
-	// 有暂存改动时优先提示提交，提交后再显示发布；无改动且未发布时显示发布。修补期间同样让位给提交。
-	const showPublishButton = isUnpublishedBranch && workAreaEmpty && !showSyncButton && !amend;
-	/** 提交按钮可用：有暂存改动，或勾选修补（此时可只改提交信息）。 */
-	const canSubmit = stagedPaths.length > 0 || amend;
+	/*
+	 * 主按钮的动作：待合并状态与修补期间固定为提交，其余按有无暂存改动、领先落后与是否已发布决定。
+	 */
+	const primaryAction = primaryActionOf({ workAreaEmpty, hasRemoteDiff, isUnpublishedBranch, amend, merging: state.merging });
+	const showSyncButton = primaryAction === 'sync';
+	const showPublishButton = primaryAction === 'publish';
+	/** 提交按钮可用：有暂存改动、勾选修补，或处于未完成的合并。 */
+	const canSubmit = canSubmitOf({ stagedCount: stagedPaths.length, amend, merging: state.merging });
 
 	/**
 	 * 是否显示提交信息框的翻译入口。

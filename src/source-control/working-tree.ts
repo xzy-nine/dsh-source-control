@@ -412,15 +412,17 @@ const inFlightGit = new Map<string, Promise<GitResult>>();
  * 仓库写操作的观察者：参数为仓库路径（调用方给出的原样写法）。
  *
  * 面板订阅它来即时反映别的会话、别的工作区或外部进程对同一仓库的改动 —— 那些改动不产生
- * 当前会话的事件，事件驱动的刷新看不到。只在**写操作成功**后通知，且通知不携带任何数据，
- * 由接收方自行重读。
+ * 当前会话的事件，事件驱动的刷新看不到。通知不携带任何数据，由接收方自行重读。
+ *
+ * 判据是「写命令跑完了」，不是「退出码为 0」：冲突合并、拣选冲突与变基停下都以非零退出，
+ * 但仓库已被改动（建立了待合并状态与未解决条目），此时仍必须通知。
  */
 const writeListeners = new Set<(repo: string) => void>();
 
 /**
  * 订阅仓库写操作。
  *
- * @param listener - 写操作成功时调用。
+ * @param listener - 写命令结束后调用。
  * @returns 取消订阅。
  */
 export function onRepositoryWrite(listener: (repo: string) => void): () => void {
@@ -490,8 +492,9 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
 		if (readOnly && result.code === 0) setCachedResult(key, result);
-		// 写操作成功后才通知：失败的写没有改动仓库，通知只会让面板白读一次。
-		if (!readOnly && result.code === 0) notifyWrite(cwd);
+		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
+		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
+		if (!readOnly && result.code >= 0) notifyWrite(cwd);
 		return result;
 	} finally {
 		inFlightGit.delete(key);
@@ -792,14 +795,17 @@ export async function unstagePaths(repo: string, paths: readonly string[]): Prom
 /**
  * 提交暂存区内容。
  *
+ * 提交信息为空串时用 `--no-edit`，沿用 git 已有的待合并提交信息（`MERGE_MSG`）。
+ * 非合并状态下该信息不存在，git 会以「提交信息为空」拒绝提交。
+ *
  * @param repo - 仓库路径。
- * @param message - 提交信息。
+ * @param message - 提交信息；空串表示沿用 git 生成的合并信息。
  * @param amend - 是否修补上一次提交。
  * @param skipHooks - 是否跳过提交钩子（`--no-verify`）。
  * @returns 新提交的完整哈希。
  */
 export async function commitStaged(repo: string, message: string, amend: boolean, skipHooks = false): Promise<string> {
-	const args = ['commit', '-m', message];
+	const args = message.trim() === '' ? ['commit', '--no-edit'] : ['commit', '-m', message];
 	if (skipHooks) args.push('--no-verify');
 	if (amend) args.push('--amend');
 	await gitOrThrow(args, repo);

@@ -17,6 +17,7 @@ import { ChangeGroup, CommitDetail } from './changes.ts';
 import { interfaceLanguage, needsTranslation } from './language.ts';
 import { RepoRow } from './repo-row.ts';
 import { anyBusy } from './busy.ts';
+import { commitButtonDisabledOf } from './submit-state.ts';
 import type {
 	AiStats, BusyFlags, ChangeActions, Commit, CommitCacheMaps, CommitFile, PanelPhase, RepoNode, RepoSync, Settings, WorkingTreeEntry,
 } from '../shared/types.ts';
@@ -282,6 +283,7 @@ export function ChangesSection({
 					),
 				),
 				aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
+				merging && React.createElement('div', { className: css.mergeHint }, '合并中：提交即结束合并，提交信息留空时沿用 git 生成的合并信息。'),
 				aiStats !== null && React.createElement('div', { className: css.commitAiStats },
 					`${aiStats.tps} tok/s`,
 					` · 输入 ${aiStats.inputTokens}`,
@@ -318,7 +320,8 @@ export function ChangesSection({
 							onClick: onPublish,
 						}, React.createElement(PublishIcon), '发布')
 						: React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy.commit || message.trim() === '' || !canSubmit,
+							variant: 'primary', size: 'sm',
+							disabled: commitButtonDisabledOf({ busy: busy.commit, canSubmit, messageEmpty: message.trim() === '', merging }),
 							onClick: onSubmit,
 						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
 			),
