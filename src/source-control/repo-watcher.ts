@@ -510,14 +510,15 @@ function notify(repo: string): void {
  * 内部的结构变化由仓库级监视负责，这里只按 {@link isRepositorySetChange} 判定，普通 git 操作
  * 与文件读写都不触发。
  *
- * 同一工作区只挂一个句柄；超出上限时淘汰最早登记的工作区。
+ * 同一工作区只挂一个句柄：调用方可能给出同一路径的不同写法（分隔符与大小写都不同），去重按
+ * 规范化后的比较键。超出上限时淘汰最早登记的工作区。
  *
  * @param root - 工作区根路径。
  * @returns 无。
  */
 export function watchWorkspace(root: string): void {
 	if (root === '') return;
-	const key = root.toLowerCase();
+	const key = pathKey(root);
 	if (workspaces.has(key)) return;
 	let handle: FSWatcher;
 	try {

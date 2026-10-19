@@ -197,3 +197,27 @@ test('工作区里的文件读写与普通 git 操作不触发工作区级事件
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test('同一工作区的不同路径写法只挂一套句柄', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'gg-watch-ws-dedupe-'));
+	const seen = [];
+	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
+	try {
+		// 分隔符与大小写都不同的写法指向同一目录：只应挂一个句柄，因此只报一条事件。
+		watchWorkspace(root);
+		watchWorkspace(root.replace(/\\/g, '/'));
+		watchWorkspace(root.toUpperCase());
+		await new Promise((done) => setTimeout(done, 400));
+
+		const nested = join(root, 'new-repo');
+		mkdirSync(nested, { recursive: true });
+		makeRepo(nested);
+		assert.ok(await waitFor(() => seen.length > 0), '新建仓库应触发结构事件');
+		await new Promise((done) => setTimeout(done, 600));
+		assert.equal(seen.length, 1, '同一工作区只挂一套句柄，因此只报一条事件');
+	} finally {
+		unsubscribe();
+		closeRepositoryWatchers();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
