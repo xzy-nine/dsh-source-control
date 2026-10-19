@@ -66,34 +66,19 @@ export interface WorkingTreeEntry {
 	readonly worktree: string;
 }
 
-/**
-/**
- * 本地只读查询的超时上限。
- *
- * 单条 status 在本机约 80ms，但大仓库、冷启动、杀毒软件实时扫描下会明显变慢；
- * 这里的取值只用于兜住「永久挂住」，不用于限制正常慢查询。
- */
-const GIT_TIMEOUT_LOCAL_MS = 30000;
-
-/**
- * 远程操作的超时上限。
- *
- * fetch/push/pull 受网络与凭据影响，按本地查询的 10s 会误杀正常操作，因此单独放宽；
- * 但仍必须有上限，否则卡住的远程操作会永久占住子进程。
- */
-const GIT_TIMEOUT_REMOTE_MS = 120000;
-
 /** 一定访问远端的子命令。 */
 const NETWORK_SUBCOMMANDS = new Set(['fetch', 'push', 'pull', 'clone', 'ls-remote']);
 
 /**
- * 判断一条命令是否会访问远端（网络与凭据都可能让它长时间等待）。
+ * 判断一条命令是否会访问远端。
  *
  * 不能只看子命令名：`git remote`（列远程）、`git remote add/set-url`（改配置）都是纯本地，
  * 只有 `remote prune/update` 才联网；`git submodule` 单独用是本地，带 update 才联网。
  *
+ * 用途是操作类别判定（联网命令记为 `network`，参与面板的忙碌分级）。
+ *
  * @param args - 完整参数数组。
- * @returns 需要长超时时为 true。
+ * @returns 会访问远端时为 true。
  */
 function isNetworkCommand(args: readonly string[]): boolean {
 	const subcommand = args[0] ?? '';
@@ -115,59 +100,13 @@ function normalizeRepo(cwd: string): string {
 	return cwd.replace(/[\\/]+$/, '').toLowerCase();
 }
 
-/** 一条在跑的子进程：截止时刻、子命令名与超时后的收尾回调。 */
-interface LiveChild {
-	deadline: number;
-	readonly label: string;
-	/** 超时后调用：终止进程树并让调用方拿到失败结果，不依赖 close 事件。 */
-	readonly onTimeout: () => void;
-}
-
 /**
  * 已启动且未结束的子进程；宿主退出时逐个终止，避免留下孤儿 git.exe。
  *
- * 值里带截止时刻，超时由一个共享的看护定时器统一检查：每个子进程各挂一个 setTimeout 时，
- * 定时器数量会随并发数增长（100 个在跑就有 100 个待触发的定时器）。
+ * 不设截止时刻：远端不可达或凭据缺失时 git 自身会结束进程，钩子属于仓库自身的脚本，
+ * 其耗时不由本插件限制。本集合只用于宿主退出时的清理。
  */
-const liveChildren = new Map<ReturnType<typeof spawn>, LiveChild>();
-
-/** 超时看护定时器；有在跑的子进程时才会存在。 */
-let watchdog: ReturnType<typeof setInterval> | null = null;
-
-/** 看护检查间隔。 */
-const WATCHDOG_INTERVAL_MS = 1000;
-
-/**
- * 检查是否有子进程超过截止时刻，超时就整树终止。
- *
- * @returns 无。
- */
-function sweepTimeouts(): void {
-	if (liveChildren.size === 0) {
-		if (watchdog !== null) { clearInterval(watchdog); watchdog = null; }
-		return;
-	}
-	const now = Date.now();
-	for (const [child, info] of liveChildren) {
-		if (now < info.deadline) continue;
-		// 标记为已超时，避免下一轮重复触发。
-		info.deadline = Number.POSITIVE_INFINITY;
-		killTree(child);
-		info.onTimeout();
-	}
-}
-
-/**
- * 按需启动看护定时器。
- *
- * @returns 无。
- */
-function ensureWatchdog(): void {
-	if (watchdog !== null || liveChildren.size === 0) return;
-	watchdog = setInterval(sweepTimeouts, WATCHDOG_INTERVAL_MS);
-	// 看护本身不应阻止宿主退出。
-	if (typeof watchdog.unref === 'function') watchdog.unref();
-}
+const liveChildren = new Set<ReturnType<typeof spawn>>();
 
 /**
  * 按进程树终止一个 git 子进程。
@@ -198,7 +137,7 @@ function killTree(child: ReturnType<typeof spawn>): void {
  * @returns 无。
  */
 export function killRunningGit(): void {
-	for (const child of liveChildren.keys()) killTree(child);
+	for (const child of liveChildren) killTree(child);
 	liveChildren.clear();
 }
 
@@ -512,7 +451,7 @@ function notifyWrite(cwd: string): void {
  * stderr 为异常文本返回，使调用方的错误处理与 git 自身失败走同一条路径。
  *
  * 同一仓库上参数完全相同的并发调用共享一个子进程；只读命令另有短时结果缓存。
- * 并发受全局与单仓库两层闸门限制，超时按子命令分流。
+ * 不设超时：git 自身在远端不可达或凭据缺失时会结束进程，钩子是仓库自身的脚本。
  *
  * @param args - 参数数组，按原样传给 git（不经过 shell）。
  * @param cwd - 工作目录，必须是仓库或其子目录。
@@ -560,25 +499,12 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 }
 
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
-	// 只有联网命令需要放宽超时；本地查询在正常机器上远快于上限。
-	const deadline = Date.now() + (isNetworkCommand(args) ? GIT_TIMEOUT_REMOTE_MS : GIT_TIMEOUT_LOCAL_MS);
 	return collectProcess({
 		command: 'git',
 		args,
 		cwd,
 		env: gitEnvironment(),
-		onChild: (child, finish, partial) => {
-			// 超时由看护统一触发；收尾不依赖 close，避免 kill 不掉时调用方永久挂起。
-			liveChildren.set(child, {
-				deadline,
-				label: args[0] ?? '',
-				onTimeout: () => {
-					const { stdout, stderr } = partial();
-					finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : `git ${args[0] ?? ''} 超时未结束` });
-				},
-			});
-			ensureWatchdog();
-		},
+		onChild: (child) => { liveChildren.add(child); },
 		onSettled: (child) => { liveChildren.delete(child); },
 	});
 }
@@ -776,6 +702,57 @@ export async function loadWorkingTree(repo: string): Promise<WorkingTreeEntry[]>
 }
 
 /**
+ * 单次 git 调用的路径参数预算（字符）。
+ *
+ * Windows 单个命令行上限 32767 字符，超出时 spawn 直接以 ENAMETOOLONG 失败；路径还要
+ * 计入引号与分隔符，因此取上限的一半作预算。
+ */
+const PATH_BATCH_CHARS = 16000;
+
+/**
+ * 按字符预算切分路径参数。
+ *
+ * @param paths - 要传给 git 的路径。
+ * @returns 逐批的路径；空输入时为空数组。
+ */
+function pathBatches(paths: readonly string[]): string[][] {
+	const batches: string[][] = [];
+	let current: string[] = [];
+	let size = 0;
+	for (const path of paths) {
+		// 每个参数按「内容 + 引号 + 分隔符」估算。
+		const cost = path.length + 3;
+		if (current.length > 0 && size + cost > PATH_BATCH_CHARS) {
+			batches.push(current);
+			current = [];
+			size = 0;
+		}
+		current.push(path);
+		size += cost;
+	}
+	if (current.length > 0) batches.push(current);
+	return batches;
+}
+
+/**
+ * 分批执行一条带路径参数的 git 命令，逐批串行。
+ *
+ * @param repo - 仓库路径。
+ * @param argsOf - 由一批路径构造完整参数数组。
+ * @param paths - 要传给 git 的路径。
+ * @returns 各批标准输出拼接。
+ */
+async function gitInPathBatches(
+	repo: string,
+	argsOf: (batch: readonly string[]) => string[],
+	paths: readonly string[],
+): Promise<string> {
+	let output = '';
+	for (const batch of pathBatches(paths)) output += await gitOrThrow(argsOf(batch), repo);
+	return output;
+}
+
+/**
  * 暂存指定路径；不传路径时暂存全部变更。
  *
  * @param repo - 仓库路径。
@@ -785,7 +762,7 @@ export async function loadWorkingTree(repo: string): Promise<WorkingTreeEntry[]>
 export function stagePaths(repo: string, paths: readonly string[]): Promise<string> {
 	return paths.length === 0
 		? gitOrThrow(['add', '--all'], repo)
-		: gitOrThrow(['add', '--', ...paths], repo);
+		: gitInPathBatches(repo, (batch) => ['add', '--', ...batch], paths);
 }
 
 /**
@@ -802,13 +779,13 @@ export async function unstagePaths(repo: string, paths: readonly string[]): Prom
 	// 空数组表示全部：restore 与 rm 都用 `.` 这个 pathspec。
 	const target = paths.length === 0 ? ['.'] : [...paths];
 	try {
-		return await gitOrThrow(['restore', '--staged', '--', ...target], repo);
+		return await gitInPathBatches(repo, (batch) => ['restore', '--staged', '--', ...batch], target);
 	} catch (error) {
 		// 走查错误信息：仅当仓库没有 HEAD 时才退回 rm --cached，其余失败原样抛出。
 		// git 的实际措辞带引号（could not resolve 'HEAD'），正则因此不能写死无引号形式。
 		const message = error instanceof Error ? error.message : String(error);
 		if (!NO_HEAD_PATTERN.test(message)) throw error;
-		return gitOrThrow(['rm', '--cached', '-r', '--quiet', '--', ...target], repo);
+		return gitInPathBatches(repo, (batch) => ['rm', '--cached', '-r', '--quiet', '--', ...batch], target);
 	}
 }
 
@@ -839,9 +816,9 @@ export async function commitStaged(repo: string, message: string, amend: boolean
  * @param untracked - 这些路径是否都是未跟踪文件。
  * @returns 无。
  */
-export async function discardPaths(repo: string, paths: readonly string[], untracked: boolean): Promise<string> {
-	if (untracked) return gitOrThrow(['clean', '-f', '--', ...paths], repo);
-	return gitOrThrow(['restore', '--', ...paths], repo);
+export function discardPaths(repo: string, paths: readonly string[], untracked: boolean): Promise<string> {
+	if (untracked) return gitInPathBatches(repo, (batch) => ['clean', '-f', '--', ...batch], paths);
+	return gitInPathBatches(repo, (batch) => ['restore', '--', ...batch], paths);
 }
 
 /**
@@ -881,7 +858,7 @@ async function removalCwd(repo: string): Promise<string> {
  * 初始化一个子模块。
  *
  * `submodule update --init` 按 `.gitmodules` 与索引里的 gitlink 检出子模块工作区；
- * `--recursive` 一并初始化其内部声明的子模块。该命令可能访问远端，按网络命令放宽超时。
+ * `--recursive` 一并初始化其内部声明的子模块。该命令可能访问远端。
  *
  * 子模块尚未检出时目录里没有 `.git`，因此 `repo` 给出的是子模块路径时先向上找声明它的父
  * 仓库；`submodulePath` 为绝对路径时同样如此。
