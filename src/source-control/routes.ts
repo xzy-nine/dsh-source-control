@@ -22,7 +22,7 @@ import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree,
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
-import { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories } from './repo-watcher.js';
+import { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
 import { detectHooks } from './hooks.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
@@ -337,6 +337,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				});
 				// 顶层仓库纳入结构监视：工作树与子模块的增删由此即时反映。
 				watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
+				// 工作区根本身纳入监视：新建或删除的仓库此前没有任何句柄，只能由这一层发现。
+				watchWorkspace(repo);
 				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
 			});
 			break;

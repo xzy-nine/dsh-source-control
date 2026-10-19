@@ -33,8 +33,9 @@
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按已持久化的工作区根预扫仓库树
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
                     （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、
-                    仓库结构监视（repo-watcher.ts：按 git 公共目录去重监视 worktrees / modules 与
-                    .gitmodules，变化后作废发现缓存并经事件流推 repository-tree）、子模块声明解析
+                    仓库结构监视（repo-watcher.ts：两层——按 git 公共目录去重监视 worktrees / modules
+                    与 .gitmodules；按工作区根递归监视仓库集合的增删。变化后作废发现缓存并经事件流推
+                    repository-tree）、子模块声明解析
                     （submodule-parse.ts，发现层与监视共用）、git 钩子探测
                     （hooks.ts：按 core.hooksPath 或公共目录的 hooks 判定 pre-commit / pre-push，
                     纯文件系统判定）、插件状态
@@ -151,11 +152,24 @@ Office）主动不认领，那些仍走宿主预览。
 工作区与外部进程造成的改动也能即时反映。客户端 `api/repo-events.ts` 解析帧、按退避重连，
 `use-repository-write-events.ts` 按仓库路径过滤后重载。
 
-同一通道还推 `repository-tree`：`repo-watcher.ts` 监视各仓库 git 公共目录的 `worktrees` 与 `modules`
-两个名字、仓库根的 `.gitmodules`、以及各已声明子模块目录的出现。工作树与子模块的增删不一定经过
-执行层（宿主自己的工作树工具、外部命令、编辑器都会改），写事件覆盖不到。结构事件到达时宿主先
-作废发现缓存再广播，客户端按工作区根过滤后调用 `refreshTree()`（不清空已显示的树）。监视按 git
-公共目录去重，主工作树、链接工作树与子模块共用一套句柄；事件合并窗口 250ms。
+同一通道还推 `repository-tree`：`repo-watcher.ts` 分两层监视。**仓库级**看各仓库 git 公共目录的
+`worktrees` 与 `modules` 两个名字、仓库根的 `.gitmodules`、以及各已声明子模块目录的出现，监视按
+git 公共目录去重，主工作树、链接工作树与子模块共用一套句柄，事件合并窗口 250ms。**工作区级**递归
+监视工作区根，只判定「仓库集合是否可能已变」：新建的仓库与工作树此前没有句柄，只能由这一层发现；
+事件合并窗口 400ms，判定见下。工作树与子模块的增删不一定经过执行层（宿主自己的工作树工具、外部
+命令、编辑器都会改），写事件覆盖不到，因此需要这两层。结构事件到达时宿主先作废发现缓存再广播，
+客户端按工作区根过滤后调用 `refreshTree()`（不清空已显示的树）。
+
+工作区级判定是纯函数 `isRepositorySetChange`，三类信号：名字里有 `.git` 段时取其所属仓库根，根
+未知才算变化（已知仓库内部的 `.git` 写操作由仓库级监视负责，否则会形成「事件 → 重新发现 → 读
+`.git` → 事件」的死循环）；名字是普通路径且事件为 `rename` 时，该路径自身或下探两层内出现或消失
+了仓库，或该路径是已知仓库及其祖先；名字缺失时核对已知仓库是否仍存在 —— Windows 的递归句柄删除
+目录树时只报不带名字的 `change`，这是仓库被整个删除的唯一信号。
+
+仓库级监视的目标**不含** `.git` 与 `worktrees`/`modules` 目录自身，原因见下表。名字缺失的仓库级
+事件不直接当作结构变化：Windows 上普通 `git status` 也会在公共目录产生一条，直接重扫会让面板反复
+刷新。此时按 `structureState` 读一次结构状态（各监视目标下被监视名字的存在形态）并与上次比对，未变
+即忽略；首次比对因没有基线而按变化处理。
 
 两处**不得**纳入监视目标：
 
@@ -387,7 +401,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
 | `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |
-| `worktree-branches.test.mjs` | 工作树占用分支的判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
+| `worktree-branches.test.mjs` | 工作树登记：`core` 段解析、`gitdir` 还原工作树根、与 `git worktree list` 逐条对照、子模块与裸仓库的主工作树推导、登记项残留；占用分支判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
 | `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
 | `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
 | `github-remote.test.mjs` | GitHub 远端识别与提交页地址 |
@@ -396,8 +410,8 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `clone-command.test.mjs` | 终端克隆命令的构造与终端执行（开页、等待可写、超时）；浅克隆参数 `shallowCloneArgs` 的深度归一与命令拼接位置 |
 | `change-events.test.mjs` | 文件改动事件判据：落地判定、嵌套调用、仓库内判定、冷却与定时参数 |
 | `repo-events.test.mjs` | 仓库变更事件流：`repository-write` 与 `repository-tree` 两类帧的解析与互不认领、分帧、重连退避、事件与当前仓库的匹配 |
-| `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 `.gitmodules` / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、`.git` 事件被过滤 |
-| `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；普通 git 操作不产生结构事件 |
+| `repo-watcher.test.mjs` | 仓库结构监视判据：监视目标集合（公共目录 / 仓库根 `.gitmodules` / 子模块父目录）、不监视 `worktrees` 与 `modules` 自身、`.git` 事件被过滤；工作区级判定（已知与未知仓库的 `.git`、普通文件与目录、仓库目录消失、名字缺失、新建目录下探） |
+| `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；工作区里新建与删除仓库报告该工作区；普通 git 操作与普通文件改动都不产生结构事件 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |

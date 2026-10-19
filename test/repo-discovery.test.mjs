@@ -547,7 +547,7 @@ test('findEnclosingRepoDir：工作区根即仓库 / 在仓库子目录内 / 不
 	assert.equal(gitSpawns, 0, '判定只走文件系统');
 });
 
-test('branchesOfOtherWorktrees：无链接工作树时零 git 调用', async () => {
+test('branchesOfOtherWorktrees：读取工作树登记，零 git 调用', async () => {
 	const { branchesOfOtherWorktrees } = await import(pathToFileURL(discoveryPath).href);
 	const tree = makeTree();
 
@@ -556,11 +556,12 @@ test('branchesOfOtherWorktrees：无链接工作树时零 git 调用', async () 
 	assert.equal(gitSpawns, 0, '无链接工作树时不启动 git');
 
 	gitSpawns = 0;
-	assert.deepEqual([...await branchesOfOtherWorktrees(tree.top)].sort(), ['linked'], '有链接工作树时仍枚举');
-	assert.ok(gitSpawns > 0);
+	assert.deepEqual([...await branchesOfOtherWorktrees(tree.top)].sort(), ['linked'], '有链接工作树时读登记项');
+	assert.equal(gitSpawns, 0, '枚举工作树不启动 git');
 
 	gitSpawns = 0;
 	assert.deepEqual([...await branchesOfOtherWorktrees(tree.linked)].sort(), ['main'], '查看链接工作树时排除主工作树的当前分支');
+	assert.equal(gitSpawns, 0, '枚举工作树不启动 git');
 });
 
 test('enrichRepositories：三类仓库的结构与完整扫描一致，无来源时零 git 调用', async () => {
@@ -590,12 +591,12 @@ test('enrichRepositories：三类仓库的结构与完整扫描一致，无来�
 
 	gitSpawns = 0;
 	const subOnly = await enrichRepositories([tree.sub]);
-	assert.ok(gitSpawns >= 1, '有子模块时仍枚举');
+	assert.equal(gitSpawns, 0, '子模块与工作树的枚举都不启动 git');
 	assert.deepEqual(subOnly.map((node) => shapeOf(node)), [shapeOf(byPath.get(tree.sub))], 'sub-repo 结构与完整扫描一致');
 
 	gitSpawns = 0;
 	const wtOnly = await enrichRepositories([tree.wt]);
-	assert.ok(gitSpawns >= 1, '有链接工作树时仍枚举');
+	assert.equal(gitSpawns, 0, '有链接工作树时读登记项，不启动 git');
 	assert.deepEqual(wtOnly.map((node) => shapeOf(node)), [shapeOf(byPath.get(tree.wt))], 'wt-repo 结构与完整扫描一致');
 
 	clearDiscoveryCache();
@@ -650,14 +651,16 @@ test('enrichRepositories：子模块路径与发现层一致，bare 仓库两处
 	clearDiscoveryCache();
 	const tree = makeTree();
 
-	// 子模块的 `.git` 是文件：`git worktree list` 会把 git 目录本身列为一条工作树记录。
+	// 子模块的 `.git` 是文件，指向外层仓库 `.git/modules/<名>`；其公共目录即该目录，
+	// 主工作树由 `core.worktree` 推导回子模块目录，与自身相同，因此不产生工作树节点。
 	const submodule = join(tree.mid, 'sub');
 	const inner = join(submodule, 'deep');
 	mkdirSync(inner, { recursive: true });
 	const viaEnclosing = await discoverRepositories(inner, {});
 	const enclosing = viaEnclosing.nodes.find((node) => node.kind === 'repo');
 	assert.equal(resolve(enclosing.path), resolve(submodule), '发现层把子模块根作为仓库节点');
-	assert.ok(enclosing.children.length > 0, '子模块节点的 git 目录被枚举为工作树记录');
+	assert.equal(enclosing.branch, 'main', '子模块从自己的 HEAD 解析出分支');
+	assert.deepEqual(enclosing.children, [], '子模块自身不产生工作树节点');
 
 	clearDiscoveryCache();
 	const enriched = await enrichRepositories([submodule]);

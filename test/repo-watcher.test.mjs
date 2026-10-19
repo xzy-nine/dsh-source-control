@@ -5,11 +5,13 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
 
 const module = await importHostModule('source-control/repo-watcher.js');
-const { structureWatchTargets, isStructureChange } = module;
+const { structureWatchTargets, isStructureChange, isRepositorySetChange } = module;
 
 test('监视目标覆盖工作树登记、子模块声明与子模块父目录', () => {
 	const repo = join('root', 'repo');
@@ -71,4 +73,58 @@ test('名字不可知时按结构变化处理', () => {
 test('不限定名字的目标接受任意变化', () => {
 	const target = { directory: 'x', names: [] };
 	assert.equal(isStructureChange(target, 'anything'), true);
+});
+
+/* --- 工作区级判据：仓库集合是否可能已变 --- */
+
+test('已知仓库内部的 .git 事件不触发工作区级重新发现', async () => {
+	const repo = join('root', 'known-repo');
+	const before = await isRepositorySetChange(join(repo, '.git', 'index.lock'), 'rename', [repo]);
+	assert.equal(before, false, '普通 git 操作在 .git 下的写事件不得触发');
+	assert.equal(await isRepositorySetChange(join(repo, '.git'), 'change', [repo]), false);
+});
+
+test('未知仓库的 .git 事件触发工作区级重新发现', async () => {
+	const known = [join('root', 'known-repo')];
+	assert.equal(
+		await isRepositorySetChange(join('root', 'brand-new', '.git'), 'rename', known),
+		true,
+		'新建仓库的 .git 出现时该路径尚无句柄',
+	);
+});
+
+test('普通文件与普通目录的事件不触发工作区级重新发现', async () => {
+	const known = [join('root', 'known-repo')];
+	assert.equal(await isRepositorySetChange(join('root', 'notes.md'), 'rename', known), false);
+	assert.equal(await isRepositorySetChange(join('root', 'plain-dir'), 'rename', known), false, '普通目录没有 .git 条目');
+	assert.equal(await isRepositorySetChange(join('root', 'plain-dir'), 'change', known), false, 'change 事件只认 .git 路径');
+});
+
+test('已知仓库目录消失时触发工作区级重新发现', async () => {
+	const repo = join('root', 'known-repo');
+	assert.equal(await isRepositorySetChange(repo, 'rename', [repo]), true, '仓库目录被整体删除');
+	assert.equal(await isRepositorySetChange(join('root'), 'rename', [repo]), true, '仓库的祖先目录被删除');
+	assert.equal(await isRepositorySetChange(join('root', 'known-repo-other'), 'rename', [repo]), false, '同名前缀不算祖先');
+});
+
+test('名字缺失时按已知仓库是否仍存在判定', async () => {
+	// 删除目录树时 Windows 的递归句柄只报 change 而不给名字，只有这条信号可判断。
+	assert.equal(await isRepositorySetChange(null, 'change', []), false, '没有已知仓库时无从判断，不触发');
+	assert.equal(await isRepositorySetChange(null, 'change', [join('root', 'not-created')]), true, '已知仓库不存在');
+});
+
+test('新建目录里初始化的仓库按下探层数发现', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'gg-watch-probe-'));
+	try {
+		const deep = join(root, 'nested', 'repo');
+		mkdirSync(deep, { recursive: true });
+		mkdirSync(join(deep, '.git'), { recursive: true });
+		// 事件只给一级目录名：要下探两层才看得到 nested/repo/.git。
+		assert.equal(await isRepositorySetChange(join(root, 'nested'), 'rename', []), true, '下探层数内出现仓库');
+		const flat = join(root, 'flat');
+		mkdirSync(flat);
+		assert.equal(await isRepositorySetChange(flat, 'rename', []), false, '普通目录不触发');
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
