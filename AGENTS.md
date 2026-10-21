@@ -97,6 +97,8 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 用于宿主退出与终止信号时按进程树清理（`killRunningGit`）。非只读命令结束时按 `onRepositoryWrite`
 通知一次（判据是命令跑完，不看退出码：冲突合并、拣选冲突与变基停下都以非零退出但已改动仓库），
 宿主据此清空快照、提交图与仓库信息缓存、作废发现缓存并广播 `repository-write`。
+`runGit` 的只读结果缓存按毫秒计有效期，插件之外的写（编辑器、外部命令）不会让它失效，因此
+**判定性读取**（子模块的 HEAD 与脏状态）以 `noCache` 选项跳过缓存，读当前值。
 `commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
 用于结束索引与 HEAD 无差异的待合并状态。
 `discardPaths` 区分子模块条目与普通路径：索引模式 `160000` 的条目（由 `git ls-files -s` 判定，

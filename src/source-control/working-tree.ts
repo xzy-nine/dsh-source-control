@@ -33,6 +33,17 @@ export interface GitResult {
 /** 仓库尚无提交时 `git restore --staged` 的报错；git 会给出带引号的 HEAD。 */
 const NO_HEAD_PATTERN = /could not resolve ['"]?HEAD['"]?|unknown revision|ambiguous argument ['"]?HEAD['"]?/i;
 
+/** 一次 git 调用的选项。 */
+export interface GitOptions {
+	/**
+	 * 跳过只读结果缓存，强制读取当前值。
+	 *
+	 * 判定性读取用它：缓存按毫秒计有效期，期间插件之外的写（编辑器、外部命令）不会让缓存失效，
+	 * 读到的可能是旧值。
+	 */
+	readonly noCache?: boolean;
+}
+
 /**
  * 子进程环境：在父进程环境上禁用凭据交互与分页。
  *
@@ -458,15 +469,16 @@ function notifyWrite(cwd: string): void {
  *
  * @param args - 参数数组，按原样传给 git（不经过 shell）。
  * @param cwd - 工作目录，必须是仓库或其子目录。
+ * @param options - 见 {@link GitOptions}；省略时只读命令走缓存。
  * @returns 退出码与输出。
  */
-export async function runGit(args: readonly string[], cwd: string): Promise<GitResult> {
+export async function runGit(args: readonly string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {
 	const readOnly = isReadOnly(args);
 	const repo = normalizeRepo(cwd);
 	// 参数用 JSON 序列化：join(' ') 会让 ['a b'] 与 ['a','b'] 撞成同一个键。
 	const key = `${repo}\u0000${JSON.stringify(args)}`;
 
-	if (readOnly) {
+	if (readOnly && options.noCache !== true) {
 		const cached = resultCache.get(key);
 		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
 		const pendingCached = inFlightGit.get(key);
@@ -492,7 +504,8 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 	try {
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
-		if (readOnly && result.code === 0) setCachedResult(key, result);
+		// 跳过缓存的调用不写入，也不取用：它读的是当前值，入缓存会把该值再固化 200ms。
+		if (readOnly && result.code === 0 && options.noCache !== true) setCachedResult(key, result);
 		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
 		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
 		if (!readOnly && result.code >= 0) notifyWrite(cwd);
@@ -958,7 +971,8 @@ async function gitlinksIn(repo: string, paths: readonly string[]): Promise<Map<s
 async function discardSubmodule(repo: string, path: string, sha: string): Promise<SubmoduleDiscardOutcome> {
 	const dir = nodePath.join(repo, ...path.split('/'));
 	if (!(await hasGitEntry(dir))) return { path, status: 'uninitialized', reason: null, dirty: false };
-	const head = await runGit(['rev-parse', 'HEAD'], dir);
+	// HEAD 与脏状态都跳过缓存：两者决定是否移动 HEAD，必须读到当前值。
+	const head = await runGit(['rev-parse', 'HEAD'], dir, { noCache: true });
 	if (head.code !== 0) return { path, status: 'uninitialized', reason: head.stderr.trim() || null, dirty: false };
 	const dirty = await submoduleDirty(dir);
 	if (head.stdout.trim() === sha) return { path, status: 'unchanged', reason: null, dirty };
@@ -972,11 +986,14 @@ async function discardSubmodule(repo: string, path: string, sha: string): Promis
 /**
  * 子模块工作区是否有未提交改动。
  *
+ * 跳过只读缓存：判定结果取决于工作区的当前内容，而插件之外的写（编辑器、外部命令）不会让
+ * 缓存失效，命中缓存会读到改动前的旧值。
+ *
  * @param dir - 子模块工作区路径。
  * @returns 有改动时为 true。
  */
 async function submoduleDirty(dir: string): Promise<boolean> {
-	const status = await runGit(['status', '--porcelain', '-z', '--untracked-files=all'], dir);
+	const status = await runGit(['status', '--porcelain', '-z', '--untracked-files=all'], dir, { noCache: true });
 	return status.code === 0 && status.stdout !== '';
 }
 
