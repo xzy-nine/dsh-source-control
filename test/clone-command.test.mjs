@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneTerminalCommand, repositoryNameOf } from '../src/client/git/clone-command.ts';
+import { cloneTerminalCommand, repositoryNameOf, shallowCloneArgs } from '../src/client/git/clone-command.ts';
 
 /** 一个可观察替身：手动触发订阅者。 */
 function observableOf(initial) {
@@ -56,8 +56,33 @@ test('克隆命令只依赖 git -C 与引号包裹的地址', () => {
 	);
 });
 
-test('仓库名取地址末段并去掉 .git 后缀', () => {
-	assert.equal(repositoryNameOf('https://github.com/owner/repo.git'), 'repo');
+test('浅克隆参数：深度为正整数时才追加', () => {
+	assert.deepEqual(shallowCloneArgs(undefined), [], '未指定时不浅克隆');
+	assert.deepEqual(shallowCloneArgs(0), [], '深度 0 表示完整克隆');
+	assert.deepEqual(shallowCloneArgs(-1), [], '负深度按完整克隆处理');
+	assert.deepEqual(shallowCloneArgs(Number.NaN), [], '非数值按完整克隆处理');
+	assert.deepEqual(shallowCloneArgs(1), ['--depth=1', '--single-branch', '--no-tags']);
+	assert.deepEqual(shallowCloneArgs(50), ['--depth=50', '--single-branch', '--no-tags']);
+	// 小数向下取整；超上限收拢到上限。
+	assert.deepEqual(shallowCloneArgs(3.9), ['--depth=3', '--single-branch', '--no-tags']);
+	assert.deepEqual(shallowCloneArgs(10_000_000), ['--depth=100000', '--single-branch', '--no-tags']);
+});
+
+test('浅克隆命令把参数放在 clone 与 -- 之间', () => {
+	assert.equal(
+		cloneTerminalCommand('C:\\repos', 'https://github.com/owner/repo.git', { depth: 1 }),
+		'git -C "C:\\repos" clone --depth=1 --single-branch --no-tags -- "https://github.com/owner/repo.git"',
+	);
+	// 未给深度时命令与完整克隆一致。
+	assert.equal(
+		cloneTerminalCommand('C:\\repos', 'https://github.com/owner/repo.git', {}),
+		'git -C "C:\\repos" clone -- "https://github.com/owner/repo.git"',
+	);
+	// 浅克隆不放松安全判据。
+	assert.equal(cloneTerminalCommand('C:\\re$pos', 'https://github.com/owner/repo.git', { depth: 1 }), null);
+});
+
+test('仓库名取地址末段并去掉 .git 后缀', () => {	assert.equal(repositoryNameOf('https://github.com/owner/repo.git'), 'repo');
 	assert.equal(repositoryNameOf('git@github.com:owner/repo.git'), 'repo');
 	assert.equal(repositoryNameOf('ssh://git@github.com/owner/repo'), 'repo');
 	assert.equal(repositoryNameOf('https://github.com'), '');

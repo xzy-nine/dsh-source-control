@@ -5,7 +5,11 @@
  * `git-query.ts` 与 `git-actions.ts`，两者共用这里的执行与错误处理。
  */
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
+import nodePath from 'node:path';
 import { collectProcess } from './child-process.js';
+import { GITLINK_MODE, parseIndexEntries } from './git-parse.js';
+import { isSubmodulePathWithin, parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { resolveGitCommonDir } from './worktree-branches.js';
 
 /**
@@ -28,6 +32,17 @@ export interface GitResult {
 
 /** 仓库尚无提交时 `git restore --staged` 的报错；git 会给出带引号的 HEAD。 */
 const NO_HEAD_PATTERN = /could not resolve ['"]?HEAD['"]?|unknown revision|ambiguous argument ['"]?HEAD['"]?/i;
+
+/** 一次 git 调用的选项。 */
+export interface GitOptions {
+	/**
+	 * 跳过只读结果缓存，强制读取当前值。
+	 *
+	 * 判定性读取用它：缓存按毫秒计有效期，期间插件之外的写（编辑器、外部命令）不会让缓存失效，
+	 * 读到的可能是旧值。
+	 */
+	readonly noCache?: boolean;
+}
 
 /**
  * 子进程环境：在父进程环境上禁用凭据交互与分页。
@@ -63,34 +78,19 @@ export interface WorkingTreeEntry {
 	readonly worktree: string;
 }
 
-/**
-/**
- * 本地只读查询的超时上限。
- *
- * 单条 status 在本机约 80ms，但大仓库、冷启动、杀毒软件实时扫描下会明显变慢；
- * 这里的取值只用于兜住「永久挂住」，不用于限制正常慢查询。
- */
-const GIT_TIMEOUT_LOCAL_MS = 30000;
-
-/**
- * 远程操作的超时上限。
- *
- * fetch/push/pull 受网络与凭据影响，按本地查询的 10s 会误杀正常操作，因此单独放宽；
- * 但仍必须有上限，否则卡住的远程操作会永久占住子进程。
- */
-const GIT_TIMEOUT_REMOTE_MS = 120000;
-
 /** 一定访问远端的子命令。 */
 const NETWORK_SUBCOMMANDS = new Set(['fetch', 'push', 'pull', 'clone', 'ls-remote']);
 
 /**
- * 判断一条命令是否会访问远端（网络与凭据都可能让它长时间等待）。
+ * 判断一条命令是否会访问远端。
  *
  * 不能只看子命令名：`git remote`（列远程）、`git remote add/set-url`（改配置）都是纯本地，
  * 只有 `remote prune/update` 才联网；`git submodule` 单独用是本地，带 update 才联网。
  *
+ * 用途是操作类别判定（联网命令记为 `network`，参与面板的忙碌分级）。
+ *
  * @param args - 完整参数数组。
- * @returns 需要长超时时为 true。
+ * @returns 会访问远端时为 true。
  */
 function isNetworkCommand(args: readonly string[]): boolean {
 	const subcommand = args[0] ?? '';
@@ -112,59 +112,13 @@ function normalizeRepo(cwd: string): string {
 	return cwd.replace(/[\\/]+$/, '').toLowerCase();
 }
 
-/** 一条在跑的子进程：截止时刻、子命令名与超时后的收尾回调。 */
-interface LiveChild {
-	deadline: number;
-	readonly label: string;
-	/** 超时后调用：终止进程树并让调用方拿到失败结果，不依赖 close 事件。 */
-	readonly onTimeout: () => void;
-}
-
 /**
  * 已启动且未结束的子进程；宿主退出时逐个终止，避免留下孤儿 git.exe。
  *
- * 值里带截止时刻，超时由一个共享的看护定时器统一检查：每个子进程各挂一个 setTimeout 时，
- * 定时器数量会随并发数增长（100 个在跑就有 100 个待触发的定时器）。
+ * 不设截止时刻：远端不可达或凭据缺失时 git 自身会结束进程，钩子属于仓库自身的脚本，
+ * 其耗时不由本插件限制。本集合只用于宿主退出时的清理。
  */
-const liveChildren = new Map<ReturnType<typeof spawn>, LiveChild>();
-
-/** 超时看护定时器；有在跑的子进程时才会存在。 */
-let watchdog: ReturnType<typeof setInterval> | null = null;
-
-/** 看护检查间隔。 */
-const WATCHDOG_INTERVAL_MS = 1000;
-
-/**
- * 检查是否有子进程超过截止时刻，超时就整树终止。
- *
- * @returns 无。
- */
-function sweepTimeouts(): void {
-	if (liveChildren.size === 0) {
-		if (watchdog !== null) { clearInterval(watchdog); watchdog = null; }
-		return;
-	}
-	const now = Date.now();
-	for (const [child, info] of liveChildren) {
-		if (now < info.deadline) continue;
-		// 标记为已超时，避免下一轮重复触发。
-		info.deadline = Number.POSITIVE_INFINITY;
-		killTree(child);
-		info.onTimeout();
-	}
-}
-
-/**
- * 按需启动看护定时器。
- *
- * @returns 无。
- */
-function ensureWatchdog(): void {
-	if (watchdog !== null || liveChildren.size === 0) return;
-	watchdog = setInterval(sweepTimeouts, WATCHDOG_INTERVAL_MS);
-	// 看护本身不应阻止宿主退出。
-	if (typeof watchdog.unref === 'function') watchdog.unref();
-}
+const liveChildren = new Set<ReturnType<typeof spawn>>();
 
 /**
  * 按进程树终止一个 git 子进程。
@@ -195,7 +149,7 @@ function killTree(child: ReturnType<typeof spawn>): void {
  * @returns 无。
  */
 export function killRunningGit(): void {
-	for (const child of liveChildren.keys()) killTree(child);
+	for (const child of liveChildren) killTree(child);
 	liveChildren.clear();
 }
 
@@ -357,12 +311,21 @@ const resultCache = new Map<string, { result: GitResult; expiresAt: number }>();
 const MAX_CACHE_ENTRIES = 64;
 
 /**
- * 只读查询结果缓存时长。
+ * 只读子命令的结果缓存时长。
  *
  * 面板在编辑期间会按节拍反复读同一份不变的数据；一次 git 约 70–90ms，若调用间隔大于
  * 执行时间，在途复用命不中，缓存按节拍命中即可避免整轮重复起进程。
  */
 const CACHE_TTL_MS = 200;
+
+/**
+ * 输出取决于工作区或索引当前内容的只读子命令：它们不进结果缓存。
+ *
+ * 缓存的失效只覆盖插件自己执行的写命令，插件之外的写（编辑器、外部命令）无从感知，
+ * 缓存期内读到的因此可能是旧值。子模块的内部改动更会改变父仓库 `status` 的结果，
+ * 失效范围再宽也覆盖不到。因此这类命令一律现读现用。
+ */
+const WORKTREE_DEPENDENT_SUBCOMMANDS: ReadonlySet<string> = new Set(['status', 'diff', 'ls-files']);
 
 /**
  * 写入一条只读结果，并维持缓存上限。
@@ -451,15 +414,34 @@ function isReadOnly(args: readonly string[]): boolean {
 }
 
 /**
+ * 判断一条只读命令的输出是否随工作区或索引的当前内容变化。
+ *
+ * @param args - 完整参数数组。
+ * @returns 依赖当前内容时为 true。
+ */
+function dependsOnWorktree(args: readonly string[]): boolean {
+	return WORKTREE_DEPENDENT_SUBCOMMANDS.has(args[subcommandIndex(args)] ?? '');
+}
+
+/**
  * 清掉某个仓库的只读缓存。
+ *
+ * 失效范围含该路径的所有祖先：子模块的写会改变父仓库 `status` 的结果（父仓库把子模块的
+ * 内部改动记成自身的一条条目），因此子模块目录下的写必须让父仓库的缓存一并失效。
+ * 链接工作树与主仓库共用 git 公共目录，两者的状态互为镜像，同样由前缀关系覆盖。
  *
  * @param repo - 规范化后的仓库路径。
  * @returns 无。
  */
 function invalidateRepo(repo: string): void {
-	const prefix = repo + '\u0000';
 	for (const key of resultCache.keys()) {
-		if (key.startsWith(prefix)) resultCache.delete(key);
+		// 键形如 `<仓库>\0<参数>`：取仓库部分与各祖先前缀比对。
+		const separator = key.indexOf('\u0000');
+		if (separator === -1) continue;
+		const cached = key.slice(0, separator);
+		if (cached === repo || repo.startsWith(`${cached}/`) || cached.startsWith(`${repo}/`)) {
+			resultCache.delete(key);
+		}
 	}
 }
 
@@ -470,15 +452,17 @@ const inFlightGit = new Map<string, Promise<GitResult>>();
  * 仓库写操作的观察者：参数为仓库路径（调用方给出的原样写法）。
  *
  * 面板订阅它来即时反映别的会话、别的工作区或外部进程对同一仓库的改动 —— 那些改动不产生
- * 当前会话的事件，事件驱动的刷新看不到。只在**写操作成功**后通知，且通知不携带任何数据，
- * 由接收方自行重读。
+ * 当前会话的事件，事件驱动的刷新看不到。通知不携带任何数据，由接收方自行重读。
+ *
+ * 判据是「写命令跑完了」，不是「退出码为 0」：冲突合并、拣选冲突与变基停下都以非零退出，
+ * 但仓库已被改动（建立了待合并状态与未解决条目），此时仍必须通知。
  */
 const writeListeners = new Set<(repo: string) => void>();
 
 /**
  * 订阅仓库写操作。
  *
- * @param listener - 写操作成功时调用。
+ * @param listener - 写命令结束后调用。
  * @returns 取消订阅。
  */
 export function onRepositoryWrite(listener: (repo: string) => void): () => void {
@@ -509,19 +493,22 @@ function notifyWrite(cwd: string): void {
  * stderr 为异常文本返回，使调用方的错误处理与 git 自身失败走同一条路径。
  *
  * 同一仓库上参数完全相同的并发调用共享一个子进程；只读命令另有短时结果缓存。
- * 并发受全局与单仓库两层闸门限制，超时按子命令分流。
+ * 不设超时：git 自身在远端不可达或凭据缺失时会结束进程，钩子是仓库自身的脚本。
  *
  * @param args - 参数数组，按原样传给 git（不经过 shell）。
  * @param cwd - 工作目录，必须是仓库或其子目录。
+ * @param options - 见 {@link GitOptions}；省略时只读命令走缓存。
  * @returns 退出码与输出。
  */
-export async function runGit(args: readonly string[], cwd: string): Promise<GitResult> {
+export async function runGit(args: readonly string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {
 	const readOnly = isReadOnly(args);
 	const repo = normalizeRepo(cwd);
 	// 参数用 JSON 序列化：join(' ') 会让 ['a b'] 与 ['a','b'] 撞成同一个键。
 	const key = `${repo}\u0000${JSON.stringify(args)}`;
+	// 输出随工作区或索引当前内容变化的只读命令不进缓存。
+	const cacheable = readOnly && !dependsOnWorktree(args) && options.noCache !== true;
 
-	if (readOnly) {
+	if (cacheable) {
 		const cached = resultCache.get(key);
 		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
 		const pendingCached = inFlightGit.get(key);
@@ -547,9 +534,11 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 	try {
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
-		if (readOnly && result.code === 0) setCachedResult(key, result);
-		// 写操作成功后才通知：失败的写没有改动仓库，通知只会让面板白读一次。
-		if (!readOnly && result.code === 0) notifyWrite(cwd);
+		// 跳过缓存的调用不写入，也不取用：它读的是当前值，入缓存会把该值再固化 200ms。
+		if (cacheable && result.code === 0) setCachedResult(key, result);
+		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
+		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
+		if (!readOnly && result.code >= 0) notifyWrite(cwd);
 		return result;
 	} finally {
 		inFlightGit.delete(key);
@@ -557,25 +546,12 @@ export async function runGit(args: readonly string[], cwd: string): Promise<GitR
 }
 
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
-	// 只有联网命令需要放宽超时；本地查询在正常机器上远快于上限。
-	const deadline = Date.now() + (isNetworkCommand(args) ? GIT_TIMEOUT_REMOTE_MS : GIT_TIMEOUT_LOCAL_MS);
 	return collectProcess({
 		command: 'git',
 		args,
 		cwd,
 		env: gitEnvironment(),
-		onChild: (child, finish, partial) => {
-			// 超时由看护统一触发；收尾不依赖 close，避免 kill 不掉时调用方永久挂起。
-			liveChildren.set(child, {
-				deadline,
-				label: args[0] ?? '',
-				onTimeout: () => {
-					const { stdout, stderr } = partial();
-					finish({ code: -1, stdout, stderr: stderr !== '' ? stderr : `git ${args[0] ?? ''} 超时未结束` });
-				},
-			});
-			ensureWatchdog();
-		},
+		onChild: (child) => { liveChildren.add(child); },
 		onSettled: (child) => { liveChildren.delete(child); },
 	});
 }
@@ -773,6 +749,57 @@ export async function loadWorkingTree(repo: string): Promise<WorkingTreeEntry[]>
 }
 
 /**
+ * 单次 git 调用的路径参数预算（字符）。
+ *
+ * Windows 单个命令行上限 32767 字符，超出时 spawn 直接以 ENAMETOOLONG 失败；路径还要
+ * 计入引号与分隔符，因此取上限的一半作预算。
+ */
+const PATH_BATCH_CHARS = 16000;
+
+/**
+ * 按字符预算切分路径参数。
+ *
+ * @param paths - 要传给 git 的路径。
+ * @returns 逐批的路径；空输入时为空数组。
+ */
+function pathBatches(paths: readonly string[]): string[][] {
+	const batches: string[][] = [];
+	let current: string[] = [];
+	let size = 0;
+	for (const path of paths) {
+		// 每个参数按「内容 + 引号 + 分隔符」估算。
+		const cost = path.length + 3;
+		if (current.length > 0 && size + cost > PATH_BATCH_CHARS) {
+			batches.push(current);
+			current = [];
+			size = 0;
+		}
+		current.push(path);
+		size += cost;
+	}
+	if (current.length > 0) batches.push(current);
+	return batches;
+}
+
+/**
+ * 分批执行一条带路径参数的 git 命令，逐批串行。
+ *
+ * @param repo - 仓库路径。
+ * @param argsOf - 由一批路径构造完整参数数组。
+ * @param paths - 要传给 git 的路径。
+ * @returns 各批标准输出拼接。
+ */
+async function gitInPathBatches(
+	repo: string,
+	argsOf: (batch: readonly string[]) => string[],
+	paths: readonly string[],
+): Promise<string> {
+	let output = '';
+	for (const batch of pathBatches(paths)) output += await gitOrThrow(argsOf(batch), repo);
+	return output;
+}
+
+/**
  * 暂存指定路径；不传路径时暂存全部变更。
  *
  * @param repo - 仓库路径。
@@ -782,7 +809,7 @@ export async function loadWorkingTree(repo: string): Promise<WorkingTreeEntry[]>
 export function stagePaths(repo: string, paths: readonly string[]): Promise<string> {
 	return paths.length === 0
 		? gitOrThrow(['add', '--all'], repo)
-		: gitOrThrow(['add', '--', ...paths], repo);
+		: gitInPathBatches(repo, (batch) => ['add', '--', ...batch], paths);
 }
 
 /**
@@ -799,44 +826,230 @@ export async function unstagePaths(repo: string, paths: readonly string[]): Prom
 	// 空数组表示全部：restore 与 rm 都用 `.` 这个 pathspec。
 	const target = paths.length === 0 ? ['.'] : [...paths];
 	try {
-		return await gitOrThrow(['restore', '--staged', '--', ...target], repo);
+		return await gitInPathBatches(repo, (batch) => ['restore', '--staged', '--', ...batch], target);
 	} catch (error) {
 		// 走查错误信息：仅当仓库没有 HEAD 时才退回 rm --cached，其余失败原样抛出。
 		// git 的实际措辞带引号（could not resolve 'HEAD'），正则因此不能写死无引号形式。
 		const message = error instanceof Error ? error.message : String(error);
 		if (!NO_HEAD_PATTERN.test(message)) throw error;
-		return gitOrThrow(['rm', '--cached', '-r', '--quiet', '--', ...target], repo);
+		return gitInPathBatches(repo, (batch) => ['rm', '--cached', '-r', '--quiet', '--', ...batch], target);
 	}
 }
 
 /**
  * 提交暂存区内容。
  *
+ * 提交信息为空串时用 `--no-edit`，沿用 git 已有的待合并提交信息（`MERGE_MSG`）。
+ * 非合并状态下该信息不存在，git 会以「提交信息为空」拒绝提交。
+ * 修补上一次提交（`--amend`）且提交信息为空时拒绝执行：`--no-edit` 在修补语境下会沿用
+ * 被修补提交的信息，与「空信息表示沿用合并信息」的约定不符。
+ *
  * @param repo - 仓库路径。
- * @param message - 提交信息。
+ * @param message - 提交信息；空串表示沿用 git 生成的合并信息。
  * @param amend - 是否修补上一次提交。
+ * @param skipHooks - 是否跳过提交钩子（`--no-verify`）。
  * @returns 新提交的完整哈希。
  */
-export async function commitStaged(repo: string, message: string, amend: boolean): Promise<string> {
-	const args = ['commit', '-m', message];
+export async function commitStaged(repo: string, message: string, amend: boolean, skipHooks = false): Promise<string> {
+	if (amend && message.trim() === '') throw new Error('修补上一次提交需要提交信息。');
+	const args = message.trim() === '' ? ['commit', '--no-edit'] : ['commit', '-m', message];
+	if (skipHooks) args.push('--no-verify');
 	if (amend) args.push('--amend');
 	await gitOrThrow(args, repo);
 	return (await gitOrThrow(['rev-parse', 'HEAD'], repo)).trim();
 }
 
+/** 一次丢弃里一个子模块条目的结局。 */
+export type SubmoduleDiscardStatus = 'moved' | 'unchanged' | 'blocked' | 'uninitialized';
+
+/** 一次丢弃里一个子模块条目的处置结果。 */
+export interface SubmoduleDiscardOutcome {
+	/** 子模块路径，相对仓库根，`/` 分隔。 */
+	readonly path: string;
+	/**
+	 * 结局：
+	 * - `moved`：子模块 HEAD 已移动到索引记录的提交。
+	 * - `unchanged`：HEAD 已是索引记录的提交，未做改动。
+	 * - `blocked`：HEAD 需要移动，但 git 拒绝（通常是本地改动会被覆盖）。
+	 * - `uninitialized`：子模块工作区未检出，未做任何操作。
+	 */
+	readonly status: SubmoduleDiscardStatus;
+	/** 阻止移动的 git 原文；其余结局为 null。 */
+	readonly reason: string | null;
+	/** 处置后子模块工作区是否仍有未提交改动。 */
+	readonly dirty: boolean;
+}
+
+/** 一次丢弃的结局。 */
+export interface DiscardOutcome {
+	/** 丢弃后该条目应从变更列表消失的路径。 */
+	readonly discarded: readonly string[];
+	/** 涉及的子模块条目及其结局。 */
+	readonly submodules: readonly SubmoduleDiscardOutcome[];
+	/** 未跟踪但未被删除的路径：其内是独立仓库，`git clean` 会跳过。 */
+	readonly skippedRepositories: readonly string[];
+}
+
 /**
  * 丢弃指定路径的工作区改动。
  *
- * 未跟踪文件用 `git clean` 删除，已跟踪文件用 `git restore` 还原到 HEAD。
+ * 未跟踪文件用 `git clean` 删除，已跟踪文件用 `git restore` 还原到索引内容。子模块条目
+ * （索引模式 `160000`）不适用 `restore`：`restore` 对它只移动工作区的 HEAD，不保证成功且
+ * 不会清理内部改动；这里改为显式移动子模块 HEAD，并且**不触碰子模块内部的未提交改动**，
+ * 处置结局随返回值回报。
  *
  * @param repo - 仓库路径。
  * @param paths - 要丢弃的路径。
  * @param untracked - 这些路径是否都是未跟踪文件。
- * @returns 无。
+ * @returns 丢弃结局。
  */
-export async function discardPaths(repo: string, paths: readonly string[], untracked: boolean): Promise<string> {
-	if (untracked) return gitOrThrow(['clean', '-f', '--', ...paths], repo);
-	return gitOrThrow(['restore', '--', ...paths], repo);
+export async function discardPaths(repo: string, paths: readonly string[], untracked: boolean): Promise<DiscardOutcome> {
+	if (untracked) return discardUntracked(repo, paths);
+	const gitlinks = await gitlinksIn(repo, paths);
+	if (gitlinks.size === 0) {
+		if (paths.length > 0) await gitInPathBatches(repo, (batch) => ['restore', '--', ...batch], paths);
+		return { discarded: [...paths], submodules: [], skippedRepositories: [] };
+	}
+	// 子模块条目本身不交给 restore：目录型 pathspec 里它们的子路径仍要还原，因此只剔除精确匹配。
+	const plain = paths.filter((path) => !gitlinks.has(normalizeSlashes(path)));
+	if (plain.length > 0) await gitInPathBatches(repo, (batch) => ['restore', '--', ...batch], plain);
+	/*
+	 * 报告里只列变更列表的条目：包含子模块的目录是容器，不是条目，它自身不出现在变更列表里，
+	 * 由其中的子模块路径代表。
+	 */
+	const containers = ancestorsOf([...gitlinks.keys()]);
+	const discarded: string[] = plain.filter((path) => !containers.has(normalizeSlashes(path)));
+	const submodules: SubmoduleDiscardOutcome[] = [];
+	for (const [path, sha] of gitlinks) {
+		const outcome = await discardSubmodule(repo, path, sha);
+		submodules.push(outcome);
+		// 只有处置后工作区干净的条目才会从变更列表消失：内部仍有改动时父仓库照常显示该行。
+		const settled = outcome.status === 'moved' || outcome.status === 'unchanged';
+		if (settled && !outcome.dirty) discarded.push(path);
+	}
+	return { discarded, submodules, skippedRepositories: [] };
+}
+
+/**
+ * 取一组路径的全部上级目录。
+ *
+ * @param paths - 相对仓库根的路径。
+ * @returns 上级目录路径集合。
+ */
+function ancestorsOf(paths: readonly string[]): Set<string> {
+	const out = new Set<string>();
+	for (const path of paths) {
+		const segments = path.split('/');
+		for (let index = 1; index < segments.length; index += 1) out.add(segments.slice(0, index).join('/'));
+	}
+	return out;
+}
+
+/**
+ * 丢弃未跟踪路径。
+ *
+ * @param repo - 仓库路径。
+ * @param paths - 未跟踪路径。
+ * @returns 丢弃结局；仍存在的路径是 `git clean` 跳过的独立仓库。
+ */
+async function discardUntracked(repo: string, paths: readonly string[]): Promise<DiscardOutcome> {
+	if (paths.length > 0) await gitInPathBatches(repo, (batch) => ['clean', '-f', '--', ...batch], paths);
+	const discarded: string[] = [];
+	const skippedRepositories: string[] = [];
+	for (const path of paths) {
+		if (await pathExists(nodePath.join(repo, ...normalizeSlashes(path).split('/')))) skippedRepositories.push(path);
+		else discarded.push(path);
+	}
+	return { discarded, submodules: [], skippedRepositories };
+}
+
+/**
+ * 取给定路径里属于子模块的条目。
+ *
+ * 路径既可以是子模块本身，也可以是包含子模块的目录：目录型 pathspec 命中的子模块同样要处置，
+ * 否则对文件夹「丢弃改动」时子模块条目会静默留下。
+ *
+ * @param repo - 仓库路径。
+ * @param paths - 要丢弃的路径。
+ * @returns 子模块相对路径到索引记录提交哈希的映射，按路径顺序。
+ */
+async function gitlinksIn(repo: string, paths: readonly string[]): Promise<Map<string, string>> {
+	const wanted = paths.map((path) => normalizeSlashes(path)).filter((path) => path !== '');
+	const found = new Map<string, string>();
+	if (wanted.length === 0) return found;
+	const stdout = await gitInPathBatches(repo, (batch) => ['ls-files', '-s', '-z', '--', ...batch], paths);
+	for (const entry of parseIndexEntries(stdout)) {
+		if (entry.stage !== 0 || entry.mode !== GITLINK_MODE) continue;
+		const hit = wanted.some((path) => entry.path === path || entry.path.startsWith(`${path}/`));
+		if (!hit || found.has(entry.path)) continue;
+		found.set(entry.path, entry.sha);
+	}
+	return found;
+}
+
+/**
+ * 把一个子模块条目处置到索引记录的提交。
+ *
+ * 只移动 HEAD，不还原也不清理子模块内部的任何改动：工作区有改动时 git 仍会保留它们，
+ * 改动会与目标提交冲突时 git 拒绝移动，此时按 `blocked` 回报原文。
+ *
+ * @param repo - 父仓库路径。
+ * @param path - 子模块路径，相对仓库根。
+ * @param sha - 索引记录的提交哈希。
+ * @returns 处置结局。
+ */
+async function discardSubmodule(repo: string, path: string, sha: string): Promise<SubmoduleDiscardOutcome> {
+	const dir = nodePath.join(repo, ...path.split('/'));
+	if (!(await hasGitEntry(dir))) return { path, status: 'uninitialized', reason: null, dirty: false };
+	// HEAD 与脏状态都跳过缓存：两者决定是否移动 HEAD，必须读到当前值。
+	const head = await runGit(['rev-parse', 'HEAD'], dir, { noCache: true });
+	if (head.code !== 0) return { path, status: 'uninitialized', reason: head.stderr.trim() || null, dirty: false };
+	const dirty = await submoduleDirty(dir);
+	if (head.stdout.trim() === sha) return { path, status: 'unchanged', reason: null, dirty };
+	const checkout = await runGit(['checkout', '--detach', sha], dir);
+	if (checkout.code !== 0) {
+		return { path, status: 'blocked', reason: checkout.stderr.trim() || checkout.stdout.trim() || null, dirty };
+	}
+	return { path, status: 'moved', reason: null, dirty: await submoduleDirty(dir) };
+}
+
+/**
+ * 子模块工作区是否有未提交改动。
+ *
+ * 跳过只读缓存：判定结果取决于工作区的当前内容，而插件之外的写（编辑器、外部命令）不会让
+ * 缓存失效，命中缓存会读到改动前的旧值。
+ *
+ * @param dir - 子模块工作区路径。
+ * @returns 有改动时为 true。
+ */
+async function submoduleDirty(dir: string): Promise<boolean> {
+	const status = await runGit(['status', '--porcelain', '-z', '--untracked-files=all'], dir, { noCache: true });
+	return status.code === 0 && status.stdout !== '';
+}
+
+/**
+ * 路径是否存在。
+ *
+ * @param path - 绝对路径。
+ * @returns 存在时为 true。
+ */
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await fs.stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 目录里是否有 git 入口（`.git` 目录或文件）。
+ *
+ * @param dir - 目录路径。
+ * @returns 存在时为 true。
+ */
+async function hasGitEntry(dir: string): Promise<boolean> {
+	return pathExists(nodePath.join(dir, '.git'));
 }
 
 /**
@@ -870,4 +1083,96 @@ export async function removeWorktree(repo: string, worktreePath: string, force: 
  */
 async function removalCwd(repo: string): Promise<string> {
 	return await resolveGitCommonDir(repo) ?? repo;
+}
+
+/**
+ * 初始化一个子模块。
+ *
+ * `submodule update --init` 按 `.gitmodules` 与索引里的 gitlink 检出子模块工作区；
+ * `--recursive` 一并初始化其内部声明的子模块。该命令可能访问远端。
+ *
+ * 子模块尚未检出时目录里没有 `.git`，因此 `repo` 给出的是子模块路径时先向上找声明它的父
+ * 仓库；`submodulePath` 为绝对路径时同样如此。
+ *
+ * @param repo - 父仓库路径，或子模块路径。
+ * @param submodulePath - 子模块路径，相对仓库根或绝对路径。
+ * @returns 无。
+ */
+export async function initSubmodule(repo: string, submodulePath: string): Promise<void> {
+	if (!isAbsolutePath(submodulePath)) {
+		// 相对路径必须落在仓库根之内：越界的路径不指向本仓库的子模块。
+		if (!isSubmodulePathWithin(repo, normalizeSlashes(submodulePath))) {
+			throw new Error('子模块路径不在仓库内');
+		}
+		await gitOrThrow(['submodule', 'update', '--init', '--recursive', '--', submodulePath], repo);
+		return;
+	}
+	const target = normalizeSlashes(submodulePath);
+	const found = await declaringRepoOf(target);
+	if (found === null) throw new Error('子模块路径不在任何含 .gitmodules 的仓库内');
+	await gitOrThrow(['submodule', 'update', '--init', '--recursive', '--', found.relative], found.root);
+}
+
+/**
+ * 统一分隔符并去掉尾斜杠。
+ *
+ * @param value - 路径。
+ * @returns 以 `/` 分隔的路径。
+ */
+function normalizeSlashes(value: string): string {
+	return value.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * 判定路径是否为绝对路径。
+ *
+ * @param path - 待判定路径。
+ * @returns 绝对路径时为 true。
+ */
+function isAbsolutePath(path: string): boolean {
+	return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('/') || path.startsWith('\\\\');
+}
+
+/**
+ * 向上查找声明了某个子模块路径的父仓库。
+ *
+ * 判定只读 `.gitmodules`：从目标路径起逐级取父目录，第一个在 `.gitmodules` 里声明了该路径
+ * 的目录即为父仓库。Windows 上路径比较忽略盘符大小写。
+ *
+ * @param target - 子模块绝对路径，已统一分隔符。
+ * @returns 父仓库根与子模块相对路径；找不到时为 null。
+ */
+async function declaringRepoOf(target: string): Promise<{ root: string; relative: string } | null> {
+	const fold = (value: string): string => (/^[a-zA-Z]:\//.test(value) ? value.toLowerCase() : value);
+	const wanted = fold(target);
+	let dir = nodePath.dirname(target);
+	for (;;) {
+		const root = normalizeSlashes(dir);
+		const prefix = fold(root);
+		if (wanted.startsWith(`${prefix}/`)) {
+			const relative = target.slice(root.length + 1);
+			const declared = await declaredSubmodules(root);
+			if (declared.includes(relative)) return { root, relative };
+		}
+		const parent = nodePath.dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+}
+
+/**
+ * 读取一个仓库在 `.gitmodules` 里声明的子模块相对路径。
+ *
+ * 只取落在仓库根之内的声明：越界的路径不指向本仓库的子模块。
+ *
+ * @param root - 仓库根。
+ * @returns 相对路径列表；没有 `.gitmodules` 时为空数组。
+ */
+async function declaredSubmodules(root: string): Promise<string[]> {
+	try {
+		const source = await fs.readFile(nodePath.join(root, '.gitmodules'), 'utf8');
+		return submodulePathsWithin(root, parseSubmodulePaths(source));
+	} catch {
+		return [];
+	}
 }

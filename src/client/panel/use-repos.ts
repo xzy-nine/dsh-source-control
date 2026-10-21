@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import {
-	dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, subscribeWorkspace, type WorkspaceSnapshot,
+	dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace, type WorkspaceSnapshot,
 } from './repo-preload.ts';
 import {
 	ancestryOf, claimPendingSelection, findNode, flattenVisible, loadExpanded, loadSelection,
@@ -50,6 +50,8 @@ export interface UseReposResult {
 	readonly setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>;
 	/** 重新扫描仓库树；克隆出新仓库后调用。 */
 	readonly rescan: () => void;
+	/** 按最新结构重取仓库树，不清空已显示的树；结构事件命中时调用。 */
+	readonly refreshTree: () => void;
 }
 
 /**
@@ -193,6 +195,17 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		setScanSeq((previous) => previous + 1);
 	}, [cwd]);
 
+	/**
+	 * 按最新结构重取仓库树，不清空已显示的树。
+	 *
+	 * 供结构事件（工作树或子模块增删）使用：`rescan` 会先发布空树，连续的结构事件会让仓库区
+	 * 反复闪回占位。这里保留现有节点，只作废补齐结果后重取；在途复用的判据由预加载模块负责。
+	 */
+	const refreshTree = React.useCallback(() => {
+		if (cwd === undefined) return;
+		refreshWorkspace(cwd);
+	}, [cwd]);
+
 	/** 选中一个仓库节点并持久化。 */
 	const selectNode = React.useCallback((node: RepoNode) => {
 		// 用户手动选中即作废待认领的持久化选中，避免补齐后把选中改回去。
@@ -231,6 +244,6 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 
 	return {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSelectedId, setSyncById, rescan,
+		selectNode, toggleNode, setSelectedId, setSyncById, rescan, refreshTree,
 	};
 }

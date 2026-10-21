@@ -1,15 +1,17 @@
 /**
  * 仓库发现：从工作区根按层递归寻找最多三层的 git 仓库，并枚举各仓库的工作树与子模块。
  *
- * 递归只用于仓库发现。子模块按 `.gitmodules` 判定、工作树按 `git worktree list`
- * 枚举，两者都不参与递归、不受层数限制，工作树可位于工作区根之外。
+ * 递归只用于仓库发现。子模块按 `.gitmodules` 判定、工作树按 git 公共目录下的登记项读取，
+ * 两者都不参与递归、不受层数限制，工作树可位于工作区根之外。
  */
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
+import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
-import { foreignWorktreeBranches, gitDirAt, parseWorktreeList, resolveGitCommonDir } from './worktree-branches.js';
+import { watchRepositories, watchWorkspace } from './repo-watcher.js';
+import { foreignWorktreeBranches, gitDirAt, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 
 /** 节点种类：主工作树仓库、链接工作树、子模块。 */
 export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
@@ -61,17 +63,10 @@ export interface DiscoveryOptions {
 	/**
 	 * 只产出顶层仓库节点。
 	 *
-	 * 为 true 时每个仓库节点的 `children` 一律为空数组，不调用 `git worktree list`、
-	 * 不读 `.gitmodules`；工作树与子模块由 {@link enrichRepositories} 事后补齐。
+	 * 为 true 时每个仓库节点的 `children` 一律为空数组，不读工作树登记、不读 `.gitmodules`；
+	 * 工作树与子模块由 {@link enrichRepositories} 事后补齐。
 	 */
 	readonly shallow?: boolean;
-}
-
-/** 一个工作树的枚举结果。 */
-interface WorktreeInfo {
-	readonly path: string;
-	readonly branch: string | null;
-	readonly head: string | null;
 }
 
 /** 递归时跳过的目录名。 */
@@ -159,7 +154,7 @@ export function clearDiscoveryCache(): void {
 	discoveryCache.clear();
 }
 
-/* 仓库写操作会改变目录与仓库位置，写成功后立即作废发现缓存。 */
+/* 仓库写命令会改变目录与仓库位置，命令结束后立即作废发现缓存。 */
 onRepositoryWrite(() => { clearDiscoveryCache(); });
 
 /**
@@ -215,24 +210,7 @@ export function shouldPruneDirectory(name: string): boolean {
  * @param source - `.gitmodules` 文本。
  * @returns 相对仓库根的子模块路径，按出现顺序。
  */
-export function parseSubmodulePaths(source: string): string[] {
-	const paths: string[] = [];
-	const section = /^\s*\[.*\]\s*$/;
-	const submodule = /^\s*\[submodule\s+"/;
-	const pathProperty = /^\s*path\s*=\s*(.*)$/;
-	let inSubmodule = false;
-	for (const line of source.split(/\r?\n/)) {
-		if (section.test(line)) {
-			inSubmodule = submodule.test(line);
-			continue;
-		}
-		if (!inSubmodule) continue;
-		const match = pathProperty.exec(line);
-		const value = match === null ? '' : match[1].trim();
-		if (value !== '') paths.push(value);
-	}
-	return paths;
-}
+export { parseSubmodulePaths } from './submodule-parse.js';
 
 /**
  * 解析 `.git/HEAD`。
@@ -245,18 +223,6 @@ export function parseHead(source: string): { branch: string | null; head: string
 	const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(text);
 	if (ref !== null) return { branch: ref[1].trim(), head: null };
 	return { branch: null, head: /^[0-9a-f]{7,40}$/.test(text) ? text.slice(0, 7) : null };
-}
-
-/**
- * 解析 `git worktree list --porcelain` 的输出。
- *
- * @param stdout - git 的标准输出。
- * @returns 每个非 bare 工作树的路径、分支与短哈希。
- */
-export function parseWorktrees(stdout: string): WorktreeInfo[] {
-	return parseWorktreeList(stdout)
-		.filter((entry) => !entry.bare)
-		.map((entry) => ({ path: entry.path, branch: entry.branch, head: entry.head }));
 }
 
 /**
@@ -323,23 +289,26 @@ async function headOf(dir: string): Promise<{ branch: string | null; head: strin
 /**
  * 枚举一个仓库的工作树并构造节点，不挂子模块。
  *
+ * 读公共目录下的工作树登记项，不起 git 子进程。自身那一项跳过；工作树目录已删除而登记项
+ * 仍在时照常列出，标记为不可用。
+ *
  * @param dir - 仓库根。
  * @returns 工作树节点列表（不含自身）。
  */
 async function worktreesOf(dir: string): Promise<RepoNode[]> {
-	const nodes: RepoNode[] = [];
+	const commonDir = await resolveGitCommonDir(dir);
+	if (commonDir === null) return [];
 	const selfId = nodeId(dir);
+	const nodes: RepoNode[] = [];
 	try {
-		const listed = await runGit(['worktree', 'list', '--porcelain'], dir);
-		if (listed.code === 0) {
-			for (const worktree of parseWorktrees(listed.stdout)) {
-				if (nodeId(worktree.path) === selfId) continue;
-				nodes.push({
-					id: nodeId(worktree.path), path: worktree.path, name: basename(worktree.path),
-					kind: 'worktree', depth: 1, branch: worktree.branch, head: worktree.head,
-					available: true, children: [],
-				});
-			}
+		const records = await readWorktrees(commonDir);
+		for (const worktree of records) {
+			if (worktree.bare || nodeId(worktree.path) === selfId) continue;
+			nodes.push({
+				id: nodeId(worktree.path), path: worktree.path, name: basename(worktree.path),
+				kind: 'worktree', depth: 1, branch: worktree.branch, head: worktree.head,
+				available: await gitDirAt(worktree.path) !== null, children: [],
+			});
 		}
 	} catch {
 		/* 工作树枚举失败不影响仓库节点 */
@@ -380,7 +349,7 @@ async function submodulesOf(dir: string, submoduleIds: Set<string>): Promise<Rep
 	const nodes: RepoNode[] = [];
 	try {
 		const source = await readFile(join(dir, '.gitmodules'), 'utf8');
-		for (const relativePath of parseSubmodulePaths(source)) {
+		for (const relativePath of submodulePathsWithin(dir, parseSubmodulePaths(source))) {
 			const path = resolve(dir, relativePath);
 			submoduleIds.add(nodeId(path));
 			nodes.push({
@@ -431,11 +400,10 @@ async function repoNodeOf(
  * 判定仓库是否没有任何可补齐的子节点来源。
  *
  * 判定只走文件系统，且只对 `.git` 为目录的仓库生效：`.git` 为文件时（链接工作树、子模块）
- * `git worktree list` 会把 git 目录本身列为一条工作树记录，其路径不等于工作路径、过滤不掉，
- * 因此这类路径一律走完整枚举。
+ * 主工作树要从 `core.worktree` 推导，这类路径一律走完整枚举。
  *
- * `.git` 为目录且没有链接工作树记录、也没有 `.gitmodules` 时，`git worktree list` 与子模块
- * 枚举都只会得到空结果。
+ * `.git` 为目录且没有链接工作树记录、也没有 `.gitmodules` 时，工作树与子模块枚举都只会
+ * 得到空结果。
  *
  * @param dir - 仓库根。
  * @returns 无需枚举工作树与子模块时为 true。
@@ -454,10 +422,10 @@ async function hasNoChildSources(dir: string): Promise<boolean> {
 /**
  * 为顶层仓库路径补齐工作树与子模块。
  *
- * 每个路径构造一个完整仓库节点（含 `git worktree list` 枚举的工作树与 `.gitmodules` 声明的子模块），
+ * 每个路径构造一个完整仓库节点（含工作树登记项枚举的工作树与 `.gitmodules` 声明的子模块），
  * 与完整扫描得到的节点结构一致；不是仓库的路径被忽略。
  *
- * 没有链接工作树、也没有 `.gitmodules` 的仓库不调用 git：这类仓库的两个来源都必然为空。
+ * 没有链接工作树、也没有 `.gitmodules` 的仓库不读工作树登记：这类仓库的两个来源都必然为空。
  *
  * @param repos - 顶层仓库路径，按入参顺序去重。
  * @returns 仓库节点列表，顺序与去重后的入参一致。
@@ -701,11 +669,11 @@ async function enclosingRepo(root: string, visited: Set<string>, submoduleIds: S
  */
 export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string>> {
 	try {
-		// 无链接工作树记录时无需枚举：普通仓库不为此付出一次 git 启动。
+		// 无链接工作树记录时无需枚举：普通仓库不为此读工作树登记。
 		if (await linkedWorktreePresence(repo) === 'none') return new Set();
-		const listed = await runGit(['worktree', 'list', '--porcelain'], repo);
-		if (listed.code !== 0) return new Set();
-		return foreignWorktreeBranches(parseWorktreeList(listed.stdout), repo, nodeId);
+		const commonDir = await resolveGitCommonDir(repo);
+		if (commonDir === null) return new Set();
+		return foreignWorktreeBranches(await readWorktrees(commonDir), repo, nodeId);
 	} catch {
 		/* 枚举失败时不排除任何分支 */
 		return new Set();
@@ -764,7 +732,8 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 /**
  * 按已持久化的工作区根预热仓库发现缓存。
  *
- * 只走「按已知仓库位置取树」的快路径，不逐层扫描；逐项失败静默，不抛错。
+ * 只走「按已知仓库位置取树」的快路径，不逐层扫描；逐项失败静默，不抛错。预扫成功的工作区
+ * 同时纳入结构监视：面板首次请求之前创建的仓库与工作树也能被发现。
  *
  * @returns 无。
  */
@@ -773,7 +742,9 @@ export async function primeCachedWorkspaces(): Promise<void> {
 		try {
 			const known = readRepoLocations(root).map((repo) => repo.path);
 			if (known.length === 0) continue;
-			await discoverRepositories(root, { knownRepos: known, shallow: true });
+			const result = await discoverRepositories(root, { knownRepos: known, shallow: true });
+			watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
+			watchWorkspace(root);
 		} catch {
 			/* 预扫失败不影响后续请求 */
 		}

@@ -18,11 +18,13 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
-import { branchesOfOtherWorktrees, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from './repo-discovery.js';
+import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
+import { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from './gh-cli.js';
+import { detectHooks } from './hooks.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import {
 	clearHostCache, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
@@ -66,13 +68,57 @@ const MAX_EVENT_STREAMS = 16;
 const eventStreams = new Set<http.ServerResponse>();
 
 /**
+ * 取节点树里全部可用节点的路径。
+ *
+ * 只有磁盘上确实存在的节点才纳入：目录已删除的工作树与子模块留在监视集合里，会让此后每一条
+ * 名字缺失的事件都判定为仓库集合变化。
+ *
+ * @param nodes - 仓库节点列表。
+ * @returns 全部可用路径，含工作树与子模块。
+ */
+function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
+	const paths: string[] = [];
+	const walk = (list: readonly RepoNode[]): void => {
+		for (const node of list) {
+			if (node.available) paths.push(node.path);
+			walk(node.children);
+		}
+	};
+	walk(nodes);
+	return paths;
+}
+
+/**
  * 向所有事件流连接推送一条仓库变更。
  *
  * @param repo - 发生变更的仓库路径。
  * @returns 无。
  */
 function broadcastRepositoryWrite(repo: string): void {
-	const frame = `event: repository-write\ndata: ${JSON.stringify({ repo })}\n\n`;
+	broadcastEvent('repository-write', repo);
+}
+
+/**
+ * 向所有事件流连接推送一条仓库结构变更。
+ *
+ * 结构变更指工作树登记、子模块目录或 `.gitmodules` 的变化；接收方据此重新枚举仓库树。
+ *
+ * @param repo - 结构发生变化的仓库路径。
+ * @returns 无。
+ */
+function broadcastRepositoryTree(repo: string): void {
+	broadcastEvent('repository-tree', repo);
+}
+
+/**
+ * 向所有事件流连接推送一条事件帧。
+ *
+ * @param event - 事件名。
+ * @param repo - 仓库路径。
+ * @returns 无。
+ */
+function broadcastEvent(event: string, repo: string): void {
+	const frame = `event: ${event}\ndata: ${JSON.stringify({ repo })}\n\n`;
 	for (const stream of eventStreams) {
 		try {
 			stream.write(frame);
@@ -201,10 +247,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('unstagePaths', async () => { await unstagePaths(repo, arr<string>('paths')); return { repo }; });
 			break;
 		case 'discardPaths':
-			await respondResult('discardPaths', async () => { await discardPaths(repo, arr<string>('paths'), bool('untracked')); return { repo }; });
+			await respondResult('discardPaths', async () => {
+				const outcome = await discardPaths(repo, arr<string>('paths'), bool('untracked'));
+				return { repo, ...outcome };
+			});
 			break;
 		case 'commitStaged':
-			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend')) }));
+			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend'), bool('skipHooks')) }));
 			break;
 		case 'addToGitignore':
 			await respondResult('addToGitignore', async () => ({ result: await addToGitignore(repo, str('path')) }));
@@ -220,6 +269,25 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const worktreePath = str('worktreePath');
 				await removeWorktree(repo, worktreePath, bool('force'));
 				return { repo, worktreePath };
+			});
+			break;
+		case 'initSubmodule':
+			await respondResult('initSubmodule', async () => {
+				const submodulePath = str('submodulePath');
+				await initSubmodule(repo, submodulePath);
+				return { repo, submodulePath };
+			});
+			break;
+		case 'hooksState':
+			await respondResult('hooksState', async () => {
+				/*
+				 * `core.hooksPath` 由 git 解析（含 includeIf 等条件），因此读它的取值而不是只看
+				 * `.git/hooks`；读取失败时按未配置处理，退回默认钩子目录。
+				 */
+				const configured = await runGit(['config', '--get', 'core.hooksPath'], repo);
+				const hooksPath = configured.code === 0 ? configured.stdout.trim() : '';
+				const state = await detectHooks(repo, hooksPath);
+				return { repo, commit: state.commit, push: state.push, directory: state.directory };
 			});
 			break;
 		case 'branchesContaining':
@@ -273,6 +341,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					maxDepth: num('maxDepth', 3),
 					knownRepos: knownRepos.length > 0 ? knownRepos : undefined,
 				});
+				// 顶层仓库纳入结构监视：工作树与子模块的增删由此即时反映。
+				watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
+				// 工作区根本身纳入监视：新建或删除的仓库此前没有任何句柄，只能由这一层发现。
+				watchWorkspace(repo);
 				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
 			});
 			break;
@@ -281,7 +353,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				// 入参为空时不扫目录：nodes 为空数组。
 				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
 				if (repos.length === 0) return { nodes: [] };
-				return { nodes: await enrichRepositories(repos) };
+				const nodes = await enrichRepositories(repos);
+				// 补齐结果里的工作树与子模块同样纳入监视：它们的登记项增删要即时反映。
+				watchRepositories(flattenRepoPaths(nodes));
+				return { nodes };
 			});
 			break;
 		case 'loadRepoSync':
@@ -568,11 +643,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({
 				command: 'pushBranch',
 				willUpdateBranchConfig: bool('willUpdateBranchConfig'),
-				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never),
+				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never, bool('skipHooks')),
 			});
 			break;
 		case 'pushUpstream':
-			await respondError('pushUpstream', () => pushUpstream(repo));
+			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks')));
 			break;
 
 		/* --- 提交操作 --- */
@@ -1061,6 +1136,14 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
 	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
 
+	// 工作树登记、子模块目录与 `.gitmodules` 的变化推给所有面板：这类变化不经过执行层。
+	disposers.push(onRepositoryTreeChange((repo) => {
+		// 结构已变：发现结果缓存立即作废，重取才能看到新增或消失的工作树与子模块。
+		clearDiscoveryCache();
+		broadcastRepositoryTree(repo);
+	}));
+	disposers.push(closeRepositoryWatchers);
+
 	// 事件流（GET）：面板据此即时反映别处的写操作。
 	registerMethodRoute('/dsh-source-control/gg/events', 'GET', (req, res) => { handleEvents(req, res); });
 
@@ -1120,7 +1203,10 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
 			const amend = body.amend === true;
 			const diff = await collectDiff(repo, amend);
-			if (diff.trim() === '') { sendJson(res, 400, { error: '无 diff 可生成提交信息（暂存区与工作区均为空）' }); return; }
+			if (diff.trim() === '') {
+				sendJson(res, 400, { error: amend ? '无 diff 可生成提交信息（上一次提交与工作区均无改动）' : '无 diff 可生成提交信息（暂存区与工作区均为空）' });
+				return;
+			}
 
 			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。

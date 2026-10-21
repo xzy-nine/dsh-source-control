@@ -1,9 +1,11 @@
 /**
- * `git worktree list --porcelain` 的解析与「别的工作树占用的分支」判定。
+ * 工作树登记与「别的工作树占用的分支」判定。
  *
- * 与 git 调用分离的纯逻辑，便于直接单测。
+ * 工作树登记在 git 公共目录的 `worktrees` 下：每一项是一个目录，`gitdir` 指向工作树的
+ * `.git` 文件、`HEAD` 给出该工作树的分支。因此枚举工作树读文件即可，不需要
+ * `git worktree list`。判定与 git 调用分离，便于直接单测。
  */
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 /** `HEAD` 文件的解析结果。 */
@@ -15,52 +17,152 @@ export interface HeadRef {
 }
 
 /** 一条工作树记录。 */
-export interface WorktreeEntry {
+export interface WorktreeRecord {
 	/** 工作树路径。 */
 	readonly path: string;
 	/** 检出的分支名；分离头指针为 null。 */
 	readonly branch: string | null;
 	/** 提交短哈希。 */
 	readonly head: string | null;
-	/** 是否为裸仓库。 */
+	/** 是否为裸仓库；此时 `path` 是裸仓库的 git 目录。 */
 	readonly bare: boolean;
 }
 
+/** git 配置文件里 `core` 段的两项取值。 */
+export interface CoreConfig {
+	/** `core.bare`；缺省为 false。 */
+	readonly bare: boolean;
+	/** `core.worktree` 的原文；缺省为 null。 */
+	readonly worktree: string | null;
+}
+
+/** 把 git 配置值去掉引号并还原转义。 */
+function unquote(value: string): string {
+	if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) return value;
+	return value.slice(1, -1).replace(/\\([\\"])/g, '$1');
+}
+
+/** 把 `core.bare` 的文本按 git 的布尔写法求值。 */
+function toBoolean(value: string): boolean {
+	const text = value.toLowerCase();
+	return !(text === '' || text === 'false' || text === 'no' || text === 'off' || text === '0');
+}
+
 /**
- * 解析 `git worktree list --porcelain` 的输出。
+ * 解析 git 配置文件里的 `core` 段。
  *
- * 记录以空行分隔；`worktree <path>` 开始一条记录，`bare` 标记裸仓库。
+ * 只取 `bare` 与 `worktree` 两项：段名与键名大小写不敏感，值可带引号，整行注释与反斜杠
+ * 续行按 git 的写法处理。子段（`[core "name"]`）与其它段一律忽略。
  *
- * @param stdout - git 的标准输出。
- * @returns 全部工作树记录（含裸仓库，由调用方决定是否过滤）。
+ * @param source - 配置文件正文。
+ * @returns `core.bare` 与 `core.worktree`。
  */
-export function parseWorktreeList(stdout: string): WorktreeEntry[] {
-	const entries: WorktreeEntry[] = [];
-	let current: { path: string; branch: string | null; head: string | null; bare: boolean } | null = null;
-	const flush = (): void => {
-		if (current !== null) entries.push(current);
-		current = null;
-	};
-	for (const line of stdout.split(/\r?\n/)) {
-		if (line === '') {
-			flush();
+export function parseCoreConfig(source: string): CoreConfig {
+	let bare = false;
+	let worktree: string | null = null;
+	let inCore = false;
+	let buffer = '';
+	for (const raw of source.split(/\r?\n/)) {
+		buffer += raw;
+		if (buffer.endsWith('\\')) {
+			buffer = buffer.slice(0, -1);
 			continue;
 		}
-		const at = line.indexOf(' ');
-		const key = at === -1 ? line : line.slice(0, at);
-		const value = at === -1 ? '' : line.slice(at + 1);
-		if (key === 'worktree') {
-			flush();
-			current = { path: value, branch: null, head: null, bare: false };
+		const text = buffer.trim();
+		buffer = '';
+		if (text === '' || text.startsWith('#') || text.startsWith(';')) continue;
+		const section = /^\[([^\]\s.]+)(?:\s+"[^"]*")?\]$/.exec(text);
+		if (section !== null) {
+			// 带子段名的写法（`[core "x"]`）是 `core.x.*`，不是 `core` 段。
+			const named = /^\[[^\]]*\s+"/.test(text);
+			inCore = !named && section[1].toLowerCase() === 'core';
 			continue;
 		}
-		if (current === null) continue;
-		if (key === 'HEAD') current.head = value.slice(0, 7);
-		else if (key === 'branch') current.branch = value.replace(/^refs\/heads\//, '');
-		else if (key === 'bare') current.bare = true;
+		if (!inCore) continue;
+		const at = text.indexOf('=');
+		const key = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase();
+		const value = at === -1 ? 'true' : unquote(text.slice(at + 1).trim());
+		if (key === 'bare') bare = toBoolean(value);
+		else if (key === 'worktree') worktree = value;
 	}
-	flush();
-	return entries;
+	return { bare, worktree };
+}
+
+/**
+ * 把工作树里 `.git` 文件的绝对路径还原成工作树根。
+ *
+ * 工作树登记里的 `gitdir` 记的就是 `<工作树>/.git`；`worktree.useRelativePaths` 打开时
+ * 记为相对路径，调用方先按登记目录解析成绝对路径。
+ *
+ * @param gitDir - 工作树 `.git` 文件的绝对路径。
+ * @returns 工作树根；路径不以 `.git` 结尾时为 null。
+ */
+export function worktreeRootOf(gitDir: string): string | null {
+	const normalized = gitDir.replace(/\\/g, '/').replace(/\/+$/, '');
+	const root = normalized.replace(/\/\.git$/i, '');
+	return root === normalized || root === '' ? null : root;
+}
+
+/** 读一个 `HEAD` 文件的分支与短哈希。 */
+async function readHeadRecord(headPath: string): Promise<{ branch: string | null; head: string | null }> {
+	try {
+		const ref = parseHeadRef(await readFile(headPath, 'utf8'));
+		return { branch: ref.branch, head: ref.hash === null ? null : ref.hash.slice(0, 7) };
+	} catch {
+		return { branch: null, head: null };
+	}
+}
+
+/** 读一个文件，失败时返回 null。 */
+async function readTextFile(path: string): Promise<string | null> {
+	try {
+		return await readFile(path, 'utf8');
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 枚举一个仓库的全部工作树。
+ *
+ * 主工作树由公共目录推导：`core.bare` 为真时是裸仓库，记一条 `bare` 记录；否则有
+ * `core.worktree` 时按它解析、没有时取公共目录的父目录，并且只有该目录确实是工作树
+ * （自身含 `.git` 条目）时才记一条。链接工作树逐个读 `worktrees` 下的登记项，工作树
+ * 目录已删除而登记项仍在的记录照常列出，与 `git worktree list` 一致。
+ *
+ * @param commonDir - git 公共目录。
+ * @returns 全部工作树记录，主工作树在首位（裸仓库时为 `bare` 记录）。
+ */
+export async function readWorktrees(commonDir: string): Promise<WorktreeRecord[]> {
+	const config = parseCoreConfig((await readTextFile(join(commonDir, 'config'))) ?? '');
+	const records: WorktreeRecord[] = [];
+	if (config.bare) {
+		records.push({ path: commonDir, ...(await readHeadRecord(join(commonDir, 'HEAD'))), bare: true });
+	} else {
+		const root = config.worktree === null ? dirname(commonDir) : resolve(commonDir, config.worktree);
+		if (await gitDirAt(root) !== null) {
+			records.push({ path: root, ...(await readHeadRecord(join(commonDir, 'HEAD'))), bare: false });
+		}
+	}
+	const dir = join(commonDir, 'worktrees');
+	let entries;
+	try {
+		entries = await readdir(dir, { withFileTypes: true });
+	} catch {
+		return records;
+	}
+	const linked = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+		const recordDir = join(dir, entry.name);
+		const pointer = await readTextFile(join(recordDir, 'gitdir'));
+		if (pointer === null) return null;
+		const target = pointer.trim();
+		if (target === '') return null;
+		const root = worktreeRootOf(resolve(recordDir, target));
+		if (root === null) return null;
+		return { path: root, ...(await readHeadRecord(join(recordDir, 'HEAD'))), bare: false };
+	}));
+	for (const record of linked) if (record !== null) records.push(record);
+	return records;
 }
 
 /**
@@ -76,7 +178,7 @@ export function parseWorktreeList(stdout: string): WorktreeEntry[] {
  * @returns 被别的工作树占用的分支名集合。
  */
 export function foreignWorktreeBranches(
-	entries: readonly WorktreeEntry[],
+	entries: readonly WorktreeRecord[],
 	selfPath: string,
 	normalize: (path: string) => string,
 ): Set<string> {
@@ -196,6 +298,24 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 }
 
 /**
+ * 由 git 目录解析其公共目录。
+ *
+ * `commondir` 文件给出公共目录相对于该 git 目录的路径；链接工作树与子模块据此回到公共目录。
+ * 读不到该文件时公共目录即 git 目录本身。
+ *
+ * @param gitDir - git 目录的绝对路径。
+ * @returns 公共目录的绝对路径。
+ */
+export async function gitCommonDirOf(gitDir: string): Promise<string> {
+	try {
+		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
+		return common === '' ? gitDir : resolve(gitDir, common);
+	} catch {
+		return gitDir;
+	}
+}
+
+/**
  * 解析一个仓库的 git 公共目录（common dir）。
  *
  * 判定全部走文件系统，不调用 git：先由 {@link resolveGitDir} 得到 git 目录；该目录内存在
@@ -207,11 +327,30 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 export async function resolveGitCommonDir(repo: string): Promise<string | null> {
 	const gitDir = await resolveGitDir(repo);
 	if (gitDir === null) return null;
+	return gitCommonDirOf(gitDir);
+}
 
-	try {
-		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
-		return common === '' ? gitDir : resolve(gitDir, common);
-	} catch {
-		return gitDir;
+/**
+ * 取一个 git 目录的相对路径解析基准目录。
+ *
+ * 链接工作树的 git 目录在公共目录的 `worktrees` 下，其中的 `gitdir` 文件指向工作树的
+ * `.git` 文件，据此还原工作树根；子模块的 git 目录在 `modules` 下，工作区根由
+ * `core.worktree` 给出；裸仓库没有工作区，基准即 git 目录本身。
+ *
+ * @param gitDir - git 目录的绝对路径。
+ * @returns 基准目录的绝对路径。
+ */
+export async function workTreeBaseOf(gitDir: string): Promise<string> {
+	const pointer = await readTextFile(join(gitDir, 'gitdir'));
+	if (pointer !== null) {
+		const target = pointer.trim();
+		if (target !== '') {
+			const root = worktreeRootOf(resolve(gitDir, target));
+			if (root !== null) return root;
+		}
 	}
+	const config = parseCoreConfig((await readTextFile(join(gitDir, 'config'))) ?? '');
+	if (config.worktree !== null) return resolve(gitDir, config.worktree);
+	if (config.bare) return gitDir;
+	return dirname(gitDir);
 }

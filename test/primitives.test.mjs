@@ -443,8 +443,9 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 	}
 
 	const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
-	assert.match(discovery, /'worktree', 'list', '--porcelain'/, '应枚举工作树');
-	assert.match(discovery, /foreignWorktreeBranches\(parseWorktreeList/, '应复用纯函数判定');
+	assert.match(discovery, /readWorktrees\(commonDir\)/, '应读工作树登记枚举工作树');
+	assert.match(discovery, /foreignWorktreeBranches\(await readWorktrees/, '应复用纯函数判定');
+	assert.ok(!/'worktree', 'list'/.test(discovery), '不调用 git worktree list');
 });
 
 test('工作树右键提供移除入口', () => {
