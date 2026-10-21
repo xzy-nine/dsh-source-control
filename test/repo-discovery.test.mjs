@@ -680,3 +680,75 @@ test('enrichRepositories：子模块路径与发现层一致，bare 仓库两处
 	);
 	assert.deepEqual(await enrichRepositories([bare]), [], '补齐层同样不认 bare 仓库');
 });
+
+test('子模块声明的越界路径被拒绝，仓库内的声明照常列出', async () => {
+	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
+	clearDiscoveryCache();
+	const rootDir = makeTemp('gg-disc-escape-');
+	const repo = makeRepoAt(rootDir, 'repo');
+	const outside = makeRepoAt(rootDir, 'outside');
+
+	// `.gitmodules` 是仓库内可改写的普通文件，其中的路径不保证相对仓库根。
+	writeFileSync(join(repo, '.gitmodules'), [
+		'[submodule "evil"]',
+		'\tpath = ../outside',
+		'\turl = https://example.com/evil.git',
+		'[submodule "deep"]',
+		'\tpath = a/../../escape',
+		'\turl = https://example.com/deep.git',
+		'[submodule "abs"]',
+		'\tpath = /etc/passwd',
+		'\turl = https://example.com/abs.git',
+		'[submodule "ok"]',
+		'\tpath = libs/dep',
+		'\turl = https://example.com/ok.git',
+	].join('\n'));
+	mkdirSync(join(repo, 'libs', 'dep'), { recursive: true });
+	gitIn(repo, 'add', '-A');
+	gitIn(repo, 'commit', '-q', '-m', 'add gitmodules');
+
+	const result = await discoverRepositories(repo, { maxDepth: 1 });
+	const repoNode = result.nodes.find((node) => node.kind === 'repo');
+	assert.ok(repoNode !== undefined, '仓库节点存在');
+	const subs = submodulesOf(repoNode);
+	assert.deepEqual(
+		subs.map((node) => resolve(node.path)),
+		[resolve(join(repo, 'libs', 'dep'))],
+		'只列出仓库内的声明，越界的声明被拒绝',
+	);
+	assert.ok(
+		!subs.some((node) => resolve(node.path) === resolve(outside)),
+		'仓库外的路径不得成为节点',
+	);
+});
+
+test('子模块路径的边界判定：相对路径按仓库根核对，绝对路径一律拒绝', async () => {
+	const { isSubmodulePathWithin, submodulePathsWithin } = await import(
+		pathToFileURL(join(root, 'lib', 'src', 'source-control', 'submodule-parse.js')).href
+	);
+	const repoRoot = resolve(join(tmpdir(), 'gg-disc-bound-repo'));
+	for (const [path, within] of [
+		['libs/dep', true],
+		['a/b/c', true],
+		['dep', true],
+		['../outside', false],
+		['a/../../escape', false],
+		['../../etc/passwd', false],
+		['/etc/passwd', false],
+		['C:/Windows/System32', false],
+		['..', false],
+		['.', false],
+		['', false],
+	]) {
+		assert.equal(
+			isSubmodulePathWithin(repoRoot, path),
+			within,
+			`${JSON.stringify(path)} 的边界判定`,
+		);
+	}
+	assert.deepEqual(
+		submodulePathsWithin(repoRoot, ['libs/dep', '../outside', 'a/../../escape', 'other']),
+		['libs/dep', 'other'],
+		'过滤后只留仓库内的路径，保持入参顺序',
+	);
+});

@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { collectProcess } from './child-process.js';
 import { GITLINK_MODE, parseIndexEntries } from './git-parse.js';
-import { parseSubmodulePaths } from './submodule-parse.js';
+import { isSubmodulePathWithin, parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { resolveGitCommonDir } from './worktree-branches.js';
 
 /**
@@ -1100,6 +1100,10 @@ async function removalCwd(repo: string): Promise<string> {
  */
 export async function initSubmodule(repo: string, submodulePath: string): Promise<void> {
 	if (!isAbsolutePath(submodulePath)) {
+		// 相对路径必须落在仓库根之内：越界的路径不指向本仓库的子模块。
+		if (!isSubmodulePathWithin(repo, normalizeSlashes(submodulePath))) {
+			throw new Error('子模块路径不在仓库内');
+		}
 		await gitOrThrow(['submodule', 'update', '--init', '--recursive', '--', submodulePath], repo);
 		return;
 	}
@@ -1159,12 +1163,15 @@ async function declaringRepoOf(target: string): Promise<{ root: string; relative
 /**
  * 读取一个仓库在 `.gitmodules` 里声明的子模块相对路径。
  *
+ * 只取落在仓库根之内的声明：越界的路径不指向本仓库的子模块。
+ *
  * @param root - 仓库根。
  * @returns 相对路径列表；没有 `.gitmodules` 时为空数组。
  */
 async function declaredSubmodules(root: string): Promise<string[]> {
 	try {
-		return parseSubmodulePaths(await fs.readFile(nodePath.join(root, '.gitmodules'), 'utf8'));
+		const source = await fs.readFile(nodePath.join(root, '.gitmodules'), 'utf8');
+		return submodulePathsWithin(root, parseSubmodulePaths(source));
 	} catch {
 		return [];
 	}

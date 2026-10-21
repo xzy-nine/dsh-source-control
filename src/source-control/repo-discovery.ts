@@ -8,7 +8,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
-import { parseSubmodulePaths } from './submodule-parse.js';
+import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { foreignWorktreeBranches, gitDirAt, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
@@ -349,7 +349,7 @@ async function submodulesOf(dir: string, submoduleIds: Set<string>): Promise<Rep
 	const nodes: RepoNode[] = [];
 	try {
 		const source = await readFile(join(dir, '.gitmodules'), 'utf8');
-		for (const relativePath of parseSubmodulePaths(source)) {
+		for (const relativePath of submodulePathsWithin(dir, parseSubmodulePaths(source))) {
 			const path = resolve(dir, relativePath);
 			submoduleIds.add(nodeId(path));
 			nodes.push({

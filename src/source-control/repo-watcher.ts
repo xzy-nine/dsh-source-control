@@ -18,7 +18,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { parseSubmodulePaths } from './submodule-parse.js';
+import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
@@ -117,7 +117,7 @@ export function onRepositoryTreeChange(listener: (repo: string) => void): () => 
  */
 async function declaredSubmodules(repo: string): Promise<string[] | null> {
 	try {
-		return parseSubmodulePaths(await readFile(join(repo, '.gitmodules'), 'utf8'))
+		return submodulePathsWithin(repo, parseSubmodulePaths(await readFile(join(repo, '.gitmodules'), 'utf8')))
 			.map((relative) => resolve(repo, relative));
 	} catch {
 		return null;

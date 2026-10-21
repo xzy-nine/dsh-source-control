@@ -36,7 +36,8 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     仓库结构监视（repo-watcher.ts：两层——按 git 公共目录去重监视 worktrees / modules
                     与 .gitmodules；按工作区根递归监视仓库集合的增删。变化后作废发现缓存并经事件流推
                     repository-tree）、子模块声明解析
-                    （submodule-parse.ts，发现层与监视共用）、git 钩子探测
+                    （submodule-parse.ts，发现层与监视共用；声明的路径按仓库根核对，越界的写法
+                    一律拒绝）、git 钩子探测
                     （hooks.ts：按 core.hooksPath 或公共目录的 hooks 判定 pre-commit / pre-push，
                     纯文件系统判定）、插件状态
                     持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/，
@@ -407,7 +408,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
 | `status-snapshot.test.mjs` | 工作区快照解析：v2 记录与空列、重命名、未合并、分支与上游、截断 |
 | `branch-sync.test.mjs` | 分支同步：`BRANCH_SYNC_FORMAT` 形状、`parseBranchSync` 的各 track 文本与 upstream 为 null 的情形；ahead/behind 与 `rev-list` 独立推导对照 |
-| `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler |
+| `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler；子模块声明的越界路径被拒绝 |
 | `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照；冲突合并后不作废缓存即读到合并状态 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
 | `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
