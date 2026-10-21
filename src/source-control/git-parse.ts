@@ -126,6 +126,45 @@ export interface StatusFiles {
 	readonly untracked: string[];
 }
 
+/** 索引条目：`git ls-files -s` 的一条记录。 */
+export interface IndexEntry {
+	/** 文件模式；子模块为 `160000`。 */
+	readonly mode: string;
+	/** 索引记录的提交或 blob 哈希。 */
+	readonly sha: string;
+	/** 冲突阶段；正常条目为 0。 */
+	readonly stage: number;
+	/** 路径，相对仓库根，`/` 分隔。 */
+	readonly path: string;
+}
+
+/** 子模块在索引里的文件模式。 */
+export const GITLINK_MODE = '160000';
+
+/**
+ * 解析 `git ls-files -s -z` 的输出。
+ *
+ * 每条记录形如 `<mode> <sha> <stage>\t<path>`：路径在第一个制表符之后，因此路径本身可以含
+ * 空格与制表符。字段不足或阶段非数字的记录丢弃。
+ *
+ * @param stdout - git 的标准输出。
+ * @returns 索引条目，保持输出顺序。
+ */
+export function parseIndexEntries(stdout: string): IndexEntry[] {
+	const entries: IndexEntry[] = [];
+	for (const record of stdout.split(FIELD)) {
+		if (record === '') continue;
+		const tab = record.indexOf('\t');
+		if (tab === -1) continue;
+		const header = record.slice(0, tab).split(' ');
+		const path = record.slice(tab + 1);
+		const stage = Number.parseInt(header[2], 10);
+		if (path === '' || header.length < 3 || !Number.isFinite(stage)) continue;
+		entries.push({ mode: header[0], sha: header[1], stage, path });
+	}
+	return entries;
+}
+
 /**
  * 按固定字段数把 `-z` 输出切成记录。
  *

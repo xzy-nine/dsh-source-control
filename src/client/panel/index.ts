@@ -35,6 +35,7 @@ import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
+import { discardNoticeOf } from './discard-notice.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
@@ -546,6 +547,24 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		showToast(message);
 		return Promise.resolve();
 	}, []);
+
+	/**
+	 * 丢弃路径上的改动，并把未能完全丢弃的情形告知用户。
+	 *
+	 * 子模块条目只移动其指向的提交，不清理子模块内部的未提交改动；这类结局必须提示，
+	 * 否则用户会以为改动已被丢弃。返回结局供变更区只移除真正丢弃的条目。
+	 *
+	 * @param cwd - 目标仓库路径。
+	 * @param paths - 要丢弃的路径。
+	 * @param untracked - 这些路径是否都是未跟踪文件。
+	 * @returns 丢弃结局。
+	 */
+	const handleDiscardPaths = React.useCallback(async (cwd: string, paths: readonly string[], untracked: boolean) => {
+		const report = await discardPaths(cwd, paths, untracked);
+		const notice = discardNoticeOf(report);
+		if (notice !== '') await notify(notice);
+		return report;
+	}, [notify]);
 
 	/** 中止进行中的合并，把工作区恢复到合并前。已解决的冲突改动会一并丢弃，因此先确认。 */
 	const handleAbortMerge = React.useCallback(() => {
@@ -1588,7 +1607,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			showPublishButton, onPublish: handlePublish,
 			canSubmit, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-			stagePaths, unstagePaths, discardPaths, openDiff,
+			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
 			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
 			merging: state.merging, onAbortMerge: handleAbortMerge,

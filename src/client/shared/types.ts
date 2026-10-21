@@ -174,13 +174,38 @@ export type RunOperation = (
 	options?: { readonly historyChanged?: boolean },
 ) => Promise<void>;
 
+/** 一个子模块条目的丢弃结局。 */
+export type SubmoduleDiscardStatus = 'moved' | 'unchanged' | 'blocked' | 'uninitialized';
+
+/** 一个子模块条目的处置结果。 */
+export interface SubmoduleDiscardReport {
+	/** 子模块路径，相对仓库根。 */
+	readonly path: string;
+	/** 结局：已移动 / 本来就一致 / 被拒绝 / 未初始化。 */
+	readonly status: SubmoduleDiscardStatus;
+	/** 被拒绝时的 git 原文；其余为 null。 */
+	readonly reason: string | null;
+	/** 处置后子模块工作区是否仍有未提交改动。 */
+	readonly dirty: boolean;
+}
+
+/** 一次丢弃的结局。 */
+export interface DiscardReport {
+	/** 丢弃后应从变更列表消失的路径。 */
+	readonly discarded: readonly string[];
+	/** 涉及的子模块条目。 */
+	readonly submodules: readonly SubmoduleDiscardReport[];
+	/** 未跟踪但未被删除的路径：其内是独立仓库。 */
+	readonly skippedRepositories: readonly string[];
+}
+
 /** 变更区与提交框共用的仓库操作入口。 */
 export interface ChangeActions {
 	/** 一次仓库操作的执行入口。 */
 	readonly run: RunOperation;
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
-	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<unknown>;
+	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<DiscardReport>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
 	/** 把路径加入 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;

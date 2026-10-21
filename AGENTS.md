@@ -99,6 +99,11 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 宿主据此清空快照、提交图与仓库信息缓存、作废发现缓存并广播 `repository-write`。
 `commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
 用于结束索引与 HEAD 无差异的待合并状态。
+`discardPaths` 区分子模块条目与普通路径：索引模式 `160000` 的条目（由 `git ls-files -s` 判定，
+解析在 `git-parse.ts` 的 `parseIndexEntries`）不交给 `git restore`，而是显式把子模块 HEAD 移到索引
+记录的提交（`checkout --detach`），**不还原也不清理子模块内部的未提交改动**；目录型 pathspec 命中
+的子模块同样按此处置。未初始化、移动被拒绝与内部仍有改动这三种情形随返回值回报，客户端据此提示并
+保留条目。未跟踪路径用 `git clean -f`（不加 `-ff`/`-d`），清理后仍存在的独立仓库按未删除回报。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
@@ -422,6 +427,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；工作区里新建与删除仓库报告该工作区；普通 git 操作与普通文件改动都不产生结构事件 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `submit-state.test.mjs` | 提交框判据：主按钮在合并中与修补期间固定为提交、同步与发布的切换条件、提交可用性、空信息在合并中不禁用提交 |
+| `discard-notice.test.mjs` | 丢弃结局提示：哪些子模块结局需要告知、提示是否点明未清理的部分、未删除的嵌套仓库一并列出 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |

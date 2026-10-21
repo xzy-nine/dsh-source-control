@@ -1,7 +1,7 @@
 /**
  * 工作区变更、暂存提交、工作树移除、贮藏与清理操作。
  */
-import type { WorkingTreeEntry } from '../shared/types.ts';
+import type { DiscardReport, SubmoduleDiscardReport, SubmoduleDiscardStatus, WorkingTreeEntry } from '../shared/types.ts';
 import { callApi, callApiRaw, commandError } from './http.ts';
 
 /**
@@ -38,16 +38,56 @@ export async function unstagePaths(cwd: string, paths: readonly string[]): Promi
 	await callApi(cwd, { command: 'unstagePaths', paths });
 }
 
+/** 子模块结局的取值集合。 */
+const SUBMODULE_STATUSES: ReadonlySet<string> = new Set(['moved', 'unchanged', 'blocked', 'uninitialized']);
+
+/**
+ * 从命令载荷读取丢弃结局。
+ *
+ * @param payload - 命令响应。
+ * @param paths - 本次请求的路径，作为缺失字段的兜底。
+ * @returns 丢弃结局。
+ */
+function readDiscardReport(payload: Record<string, unknown>, paths: readonly string[]): DiscardReport {
+	const discarded = Array.isArray(payload.discarded)
+		? (payload.discarded as unknown[]).filter((path): path is string => typeof path === 'string')
+		: [...paths];
+	const submodules: SubmoduleDiscardReport[] = [];
+	if (Array.isArray(payload.submodules)) {
+		for (const item of payload.submodules as unknown[]) {
+			if (item === null || typeof item !== 'object') continue;
+			const record = item as Record<string, unknown>;
+			if (typeof record.path !== 'string') continue;
+			const status = typeof record.status === 'string' && SUBMODULE_STATUSES.has(record.status)
+				? record.status as SubmoduleDiscardStatus
+				: 'unchanged';
+			submodules.push({
+				path: record.path,
+				status,
+				reason: typeof record.reason === 'string' ? record.reason : null,
+				dirty: record.dirty === true,
+			});
+		}
+	}
+	const skippedRepositories = Array.isArray(payload.skippedRepositories)
+		? (payload.skippedRepositories as unknown[]).filter((path): path is string => typeof path === 'string')
+		: [];
+	return { discarded, submodules, skippedRepositories };
+}
+
 /**
  * 丢弃路径上的改动。
+ *
+ * 子模块条目只移动其 HEAD，不清理子模块内部的未提交改动，结局由返回值回报。
  *
  * @param cwd - 会话工作区路径。
  * @param paths - 要丢弃的路径。
  * @param untracked - 这些路径是否都是未跟踪文件。
- * @returns 无。
+ * @returns 丢弃结局。
  */
-export async function discardPaths(cwd: string, paths: readonly string[], untracked: boolean): Promise<void> {
-	await callApi(cwd, { command: 'discardPaths', paths, untracked });
+export async function discardPaths(cwd: string, paths: readonly string[], untracked: boolean): Promise<DiscardReport> {
+	const payload = await callApi(cwd, { command: 'discardPaths', paths, untracked });
+	return readDiscardReport(payload, paths);
 }
 
 /**

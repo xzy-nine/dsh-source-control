@@ -244,7 +244,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('unstagePaths', async () => { await unstagePaths(repo, arr<string>('paths')); return { repo }; });
 			break;
 		case 'discardPaths':
-			await respondResult('discardPaths', async () => { await discardPaths(repo, arr<string>('paths'), bool('untracked')); return { repo }; });
+			await respondResult('discardPaths', async () => {
+				const outcome = await discardPaths(repo, arr<string>('paths'), bool('untracked'));
+				return { repo, ...outcome };
+			});
 			break;
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend'), bool('skipHooks')) }));
