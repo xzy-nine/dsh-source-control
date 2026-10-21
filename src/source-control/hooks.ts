@@ -9,7 +9,7 @@
  */
 import { access, constants, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import { resolveGitCommonDir, resolveGitDir } from './worktree-branches.js';
+import { gitCommonDirOf, resolveGitDir, workTreeBaseOf } from './worktree-branches.js';
 
 /** 提交时会运行的钩子名；任一存在即可视为「提交钩子处于激活状态」。 */
 const COMMIT_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'] as const;
@@ -50,24 +50,27 @@ async function isExecutableFile(path: string): Promise<boolean> {
 /**
  * 解析钩子目录。
  *
- * `core.hooksPath` 非空时以它为准：绝对路径直接用，相对路径按仓库根解析（git 的相对路径
- * 相对于启动它的工作目录，这里按仓库根处理）。未配置时用 `<git 目录>/hooks`。
+ * `core.hooksPath` 非空时以它为准：绝对路径直接用，相对路径按工作树根解析（普通工作树按其工作树
+ * 根，裸仓库按其 git 目录）。未配置时用 **git 公共目录**下的 `hooks`，因此链接工作树与子模块
+ * 共用主仓库的钩子目录。
  *
  * @param repo - 仓库路径。
  * @param hooksPath - `core.hooksPath` 的取值；未配置为空串。
  * @returns 钩子目录的绝对路径；无法定位 git 目录时为 null。
  */
 export async function resolveHooksDirectory(repo: string, hooksPath: string): Promise<string | null> {
-	const configured = hooksPath.trim();
-	if (configured !== '') return isAbsolute(configured) ? resolve(configured) : resolve(repo, configured);
 	const gitDir = await resolveGitDir(repo);
 	if (gitDir === null) return null;
+	const configured = hooksPath.trim();
+	if (configured !== '') {
+		if (isAbsolute(configured)) return resolve(configured);
+		return resolve(await workTreeBaseOf(gitDir), configured);
+	}
 	/*
 	 * 钩子目录在**公共目录**下：链接工作树与子模块的 git 目录是 `worktrees/<name>` 或
 	 * `modules/<name>`，实际的 hooks 目录由公共目录提供。
 	 */
-	const commonDir = await resolveGitCommonDir(repo);
-	return join(commonDir ?? gitDir, 'hooks');
+	return join(await gitCommonDirOf(gitDir), 'hooks');
 }
 
 /**

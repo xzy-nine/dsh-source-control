@@ -298,6 +298,24 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 }
 
 /**
+ * 由 git 目录解析其公共目录。
+ *
+ * `commondir` 文件给出公共目录相对于该 git 目录的路径；链接工作树与子模块据此回到公共目录。
+ * 读不到该文件时公共目录即 git 目录本身。
+ *
+ * @param gitDir - git 目录的绝对路径。
+ * @returns 公共目录的绝对路径。
+ */
+export async function gitCommonDirOf(gitDir: string): Promise<string> {
+	try {
+		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
+		return common === '' ? gitDir : resolve(gitDir, common);
+	} catch {
+		return gitDir;
+	}
+}
+
+/**
  * 解析一个仓库的 git 公共目录（common dir）。
  *
  * 判定全部走文件系统，不调用 git：先由 {@link resolveGitDir} 得到 git 目录；该目录内存在
@@ -309,11 +327,30 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 export async function resolveGitCommonDir(repo: string): Promise<string | null> {
 	const gitDir = await resolveGitDir(repo);
 	if (gitDir === null) return null;
+	return gitCommonDirOf(gitDir);
+}
 
-	try {
-		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
-		return common === '' ? gitDir : resolve(gitDir, common);
-	} catch {
-		return gitDir;
+/**
+ * 取一个 git 目录的相对路径解析基准目录。
+ *
+ * 链接工作树的 git 目录在公共目录的 `worktrees` 下，其中的 `gitdir` 文件指向工作树的
+ * `.git` 文件，据此还原工作树根；子模块的 git 目录在 `modules` 下，工作区根由
+ * `core.worktree` 给出；裸仓库没有工作区，基准即 git 目录本身。
+ *
+ * @param gitDir - git 目录的绝对路径。
+ * @returns 基准目录的绝对路径。
+ */
+export async function workTreeBaseOf(gitDir: string): Promise<string> {
+	const pointer = await readTextFile(join(gitDir, 'gitdir'));
+	if (pointer !== null) {
+		const target = pointer.trim();
+		if (target !== '') {
+			const root = worktreeRootOf(resolve(gitDir, target));
+			if (root !== null) return root;
+		}
 	}
+	const config = parseCoreConfig((await readTextFile(join(gitDir, 'config'))) ?? '');
+	if (config.worktree !== null) return resolve(gitDir, config.worktree);
+	if (config.bare) return gitDir;
+	return dirname(gitDir);
 }

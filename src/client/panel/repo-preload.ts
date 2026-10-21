@@ -66,12 +66,12 @@ interface WorkspaceEntry {
 	/** 最近一次取数完成或开始的时刻；用于重取冷却。 */
 	refreshedAt: number;
 	/**
-	 * 冷却期内到达的结构重取请求。
+	 * 取数进行期间到达的结构重取请求。
 	 *
-	 * 冷却只合并连续请求，不丢弃：丢弃会让「创建后立刻移除」这类紧随其后的结构变化永久
+	 * 合并连续请求，不丢弃：丢弃会让「创建后立刻移除」这类紧随其后的结构变化永久
 	 * 不反映，节点留在指向已不存在目录的状态。
 	 */
-	pendingRefresh: ReturnType<typeof setTimeout> | null;
+	pendingRefresh: boolean;
 }
 
 /** 工作区归一化键 -> 预加载状态。 */
@@ -186,7 +186,7 @@ function createEntry(root: string): WorkspaceEntry {
 		controller: null,
 		generation: 0,
 		refreshedAt: 0,
-		pendingRefresh: null,
+		pendingRefresh: false,
 	};
 }
 
@@ -379,9 +379,9 @@ function start(entry: WorkspaceEntry): void {
 		entry.controller = null;
 		/*
 		 * 取数期间登记的结构变更：它发生在本次发现之后，本次结果必然不含它，因此立即再取一次，
-		 * 不按冷却等待。`pendingRefresh` 清掉后只重取一次，不会因同一批事件反复重取。
+		 * 不按冷却等待。挂起标志清掉后只重取一次，不会因同一批事件反复重取。
 		 */
-		if (entry.pendingRefresh !== null) {
+		if (entry.pendingRefresh) {
 			clearPendingRefresh(entry);
 			enrichAgain(entry);
 		}
@@ -448,9 +448,7 @@ export function dropWorkspace(root: string): void {
  * @returns 无。
  */
 function clearPendingRefresh(entry: WorkspaceEntry): void {
-	if (entry.pendingRefresh === null) return;
-	clearTimeout(entry.pendingRefresh);
-	entry.pendingRefresh = null;
+	entry.pendingRefresh = false;
 }
 
 /**
@@ -478,10 +476,8 @@ export function refreshWorkspace(root: string): void {
 		return;
 	}
 	if (entry.running !== null) {
-		entry.pendingRefresh ??= setTimeout(() => {
-			entry.pendingRefresh = null;
-			refreshWorkspace(entry.root);
-		}, 0);
+		// 取数进行中：登记挂起请求，由本轮取数结束后统一触发一次后续重取。
+		entry.pendingRefresh = true;
 		return;
 	}
 	enrichAgain(entry);

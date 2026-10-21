@@ -1220,7 +1220,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			const url = trimmedTextOf(form.url);
 			if (url === '') return;
 			const shallow = form.shallow === true;
-			const depth = shallow ? (Number.parseInt(textOf(form.depth), 10) || 1) : 0;
+			// 深度按正整数处理：0 与非数值都表示不做浅克隆，由 shallowCloneArgs 生成参数。
+			const parsedDepth = Number.parseInt(textOf(form.depth), 10);
+			const depth = shallow && Number.isInteger(parsedDepth) && parsedDepth > 0 ? parsedDepth : 0;
 			if (pickDirectory === undefined) {
 				await notify('当前界面没有装载目录选择器，无法选择存放位置。');
 				return;
@@ -1365,7 +1367,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		const items: ContextMenuItem[] = [
 			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path); } },
 			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path); } },
-			{ title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '', onClick: () => { selectNodeAndReset(node); void run('network', () => pushCurrentBranch(node.path, hooksState.push && !runHooks), node.path); } },
+			{
+				title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '',
+				onClick: () => {
+					selectNodeAndReset(node);
+					void run('network', async () => {
+						await pushCurrentBranch(node.path, hooksState.push && !runHooks);
+					}, node.path).finally(() => { setRunHooks(true); });
+				},
+			},
 			{ type: 'divider' },
 			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
 		];
@@ -1427,7 +1437,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onClose: () => target.classList.remove(MENU_TARGET_CLASS),
 			items,
 		});
-	}, [selectNodeAndReset, run, refresh, rescan, setState, state.busy, settings, workingTreePath, setSelectedId]);
+	}, [selectNodeAndReset, run, refresh, rescan, setState, state.busy, settings, workingTreePath, setSelectedId, hooksState.push, runHooks, pushCurrentBranch]);
 
 	/** 仓库行分支名点击：弹出分支切换菜单。 */
 	const handleBranchClick = React.useCallback((node, event) => {
