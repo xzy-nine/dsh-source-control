@@ -7,13 +7,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
+
+/**
+ * 写入一个可执行的 git 钩子文件。
+ *
+ * 钩子必须带执行位才会被 git 运行；umask 会影响创建时的权限，写入后再显式补一次。
+ *
+ * @param {string} directory - 钩子目录。
+ * @param {string} name - 钩子文件名。
+ * @param {string} content - 文件内容。
+ */
+function writeHook(directory, name, content) {
+	const path = join(directory, name);
+	writeFileSync(path, content, { mode: 0o755 });
+	chmodSync(path, 0o755);
+}
 
 /** 建一个含分支、标签、贮藏、重命名与未跟踪文件的仓库，并返回其路径与 git 辅助函数。 */
 function makeRepo() {
@@ -190,8 +205,8 @@ test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活�
 		// 放两个真实钩子文件：提交与推送各一个。
 		const hooksDir = none.directory;
 		mkdirSync(hooksDir, { recursive: true });
-		writeFileSync(join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 0\n');
-		writeFileSync(join(hooksDir, 'pre-push'), '#!/bin/sh\nexit 0\n');
+		writeHook(hooksDir, 'pre-commit', '#!/bin/sh\nexit 0\n');
+		writeHook(hooksDir, 'pre-push', '#!/bin/sh\nexit 0\n');
 		const both = await call({ command: 'hooksState' });
 		assert.equal(both.commit, true, 'pre-commit 视为提交钩子');
 		assert.equal(both.push, true, 'pre-push 视为推送钩子');
@@ -216,7 +231,7 @@ test('提交与推送：skipHooks 传 --no-verify，未传时照常运行钩子'
 		const call = await makeCaller(repo);
 		// 在钩子目录里放一个拒绝所有提交的 pre-commit：以此判定 --no-verify 是否生效。
 		mkdirSync(hooksDir, { recursive: true });
-		writeFileSync(join(hooksDir, 'pre-commit'), '#!/bin/sh\necho blocked-by-hook >&2\nexit 1\n');
+		writeHook(hooksDir, 'pre-commit', '#!/bin/sh\necho blocked-by-hook >&2\nexit 1\n');
 
 		writeFileSync(join(repo, 'hooked.txt'), 'content');
 		git('add', '-A');
@@ -236,7 +251,7 @@ test('提交与推送：skipHooks 传 --no-verify，未传时照常运行钩子'
 			execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
 			git('remote', 'add', 'origin', remote);
 			git('push', '-q', '--set-upstream', 'origin', 'main');
-			writeFileSync(join(hooksDir, 'pre-push'), '#!/bin/sh\necho blocked-push >&2\nexit 1\n');
+			writeHook(hooksDir, 'pre-push', '#!/bin/sh\necho blocked-push >&2\nexit 1\n');
 
 			const pushBlocked = await call({ command: 'pushUpstream' });
 			assert.match(String(pushBlocked.error), /blocked-push/, '推送钩子拒绝时推送失败');
@@ -639,6 +654,121 @@ test('初始化未检出的子模块：路径可给相对仓库根，也可给�
 		assert.ok(existsSync(join(parent, 'lib', 'dep', 'dep.txt')), '绝对路径初始化出工作区');
 	} finally {
 		for (const dir of [parent, source, bare]) rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('丢弃子模块条目：只移动其指向的提交，不清理内部改动', async () => {
+	const source = mkdtempSync(join(tmpdir(), 'gg-api-subdiscard-src-'));
+	const parent = mkdtempSync(join(tmpdir(), 'gg-api-subdiscard-'));
+	const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+	const read = (path) => readFileSync(path, 'utf8');
+	try {
+		gitIn(source, 'init', '-q', '-b', 'main');
+		gitIn(source, 'config', 'user.email', 'sub@example.com');
+		gitIn(source, 'config', 'user.name', 'Sub');
+		writeFileSync(join(source, 'dep.txt'), 'one');
+		writeFileSync(join(source, 'other.txt'), 'stable');
+		gitIn(source, 'add', '-A');
+		gitIn(source, 'commit', '-q', '-m', 'first');
+		const older = gitIn(source, 'rev-parse', 'HEAD').trim();
+		writeFileSync(join(source, 'dep.txt'), 'two');
+		gitIn(source, 'add', '-A');
+		gitIn(source, 'commit', '-q', '-m', 'second');
+		const recorded = gitIn(source, 'rev-parse', 'HEAD').trim();
+
+		gitIn(parent, 'init', '-q', '-b', 'main');
+		gitIn(parent, 'config', 'user.email', 'api@example.com');
+		gitIn(parent, 'config', 'user.name', 'Api');
+		writeFileSync(join(parent, 'a.txt'), 'a');
+		gitIn(parent, 'add', '-A');
+		gitIn(parent, 'commit', '-q', '-m', 'first');
+		gitIn(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'lib/dep');
+		gitIn(parent, 'commit', '-q', '-m', 'add submodule');
+
+		const sub = join(parent, 'lib', 'dep');
+		const subHead = () => gitIn(sub, 'rev-parse', 'HEAD').trim();
+		const call = await makeCaller(parent);
+		const discard = (paths) => call({ command: 'discardPaths', paths, untracked: false });
+
+		// 1. 子模块 HEAD 被移动到别的提交：丢弃后应回到索引记录的提交。
+		gitIn(sub, 'checkout', '-q', older);
+		assert.notEqual(subHead(), recorded, '前置条件：子模块 HEAD 已偏离');
+		const moved = await discard(['lib/dep']);
+		assert.equal(moved.error, null);
+		assert.equal(subHead(), recorded, '子模块 HEAD 应回到索引记录的提交');
+		assert.deepEqual(moved.discarded, ['lib/dep'], '该条目应随后消失');
+		assert.equal(moved.submodules[0].status, 'moved');
+		assert.equal(moved.submodules[0].dirty, false);
+		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, [], '工作区应干净');
+
+		// 2. 只有内部未提交改动（HEAD 未动）：不清理，条目保留。
+		writeFileSync(join(sub, 'other.txt'), 'local edit');
+		const unchanged = await discard(['lib/dep']);
+		assert.equal(read(join(sub, 'other.txt')), 'local edit', '子模块内部的改动不得被清理');
+		assert.equal(unchanged.submodules[0].status, 'unchanged');
+		assert.equal(unchanged.submodules[0].dirty, true);
+		assert.deepEqual(unchanged.discarded, [], '条目应留在列表里');
+		assert.equal((await call({ command: 'loadWorkingTree' })).entries.length, 1, '子模块条目仍在变更列表');
+
+		// 3. HEAD 需要移动且内部改动不冲突：移动成功，改动保留。
+		gitIn(sub, 'checkout', '-q', older);
+		writeFileSync(join(sub, 'other.txt'), 'kept');
+		const kept = await discard(['lib/dep']);
+		assert.equal(subHead(), recorded, '不冲突时仍应移动 HEAD');
+		assert.equal(read(join(sub, 'other.txt')), 'kept', '内部改动应原样保留');
+		assert.equal(kept.submodules[0].status, 'moved');
+		assert.equal(kept.submodules[0].dirty, true);
+		assert.deepEqual(kept.discarded, [], '仍有内部改动时条目保留');
+
+		// 4. 内部改动会被覆盖：git 拒绝移动，按 blocked 回报原文。
+		writeFileSync(join(sub, 'dep.txt'), 'conflict');
+		const blocked = await discard(['lib/dep']);
+		assert.equal(subHead(), recorded, '前置条件：HEAD 已与索引一致');
+		assert.equal(blocked.submodules[0].status, 'unchanged');
+		assert.equal(blocked.submodules[0].dirty, true);
+		// 先清掉本地改动再退到旧提交，随后在旧提交上制造会被覆盖的改动。
+		gitIn(sub, 'checkout', '-q', '--', '.');
+		gitIn(sub, 'checkout', '-q', older);
+		writeFileSync(join(sub, 'dep.txt'), 'conflict');
+		const conflict = await discard(['lib/dep']);
+		assert.equal(subHead(), older, '被拒绝时 HEAD 不得移动');
+		assert.equal(conflict.submodules[0].status, 'blocked');
+		assert.match(conflict.submodules[0].reason, /would be overwritten|local changes/i, '应回报 git 原文');
+		assert.deepEqual(conflict.discarded, []);
+
+		// 5. 文件夹路径：同目录普通文件照常还原，子模块 HEAD 一并移动。
+		gitIn(sub, 'checkout', '-q', '--', '.');
+		gitIn(sub, 'checkout', '-q', older);
+		writeFileSync(join(parent, 'a.txt'), 'changed');
+		const folder = await discard(['a.txt', 'lib/dep']);
+		assert.equal(read(join(parent, 'a.txt')), 'a', '普通文件应还原');
+		assert.equal(subHead(), recorded, '文件夹丢弃同样移动子模块 HEAD');
+		assert.deepEqual(folder.discarded.sort(), ['a.txt', 'lib/dep']);
+
+		// 5b. 目录型 pathspec：命中的子模块同样处置，不留静默残留。
+		gitIn(sub, 'checkout', '-q', older);
+		const directory = await discard(['lib']);
+		assert.equal(subHead(), recorded, '目录型 pathspec 命中的子模块也要移动 HEAD');
+		assert.deepEqual(directory.discarded, ['lib/dep']);
+
+		// 6. 未初始化（工作区目录不存在）：不动，也不隐式初始化。
+		rmSync(sub, { recursive: true, force: true });
+		const uninitialized = await discard(['lib/dep']);
+		assert.equal(uninitialized.submodules[0].status, 'uninitialized');
+		assert.equal(existsSync(sub), false, '未初始化的子模块不得被隐式检出');
+		assert.deepEqual(uninitialized.discarded, []);
+
+		// 7. 未跟踪的嵌套仓库：git clean 会跳过，回报为未删除。
+		const nested = mkdtempSync(join(parent, 'nested-repo-'));
+		gitIn(nested, 'init', '-q', '-b', 'main');
+		writeFileSync(join(nested, 'inner.txt'), 'inner');
+		const nestedName = nested.slice(parent.length + 1);
+		const untracked = await call({ command: 'discardPaths', paths: [nestedName], untracked: true });
+		assert.ok(untracked.skippedRepositories.includes(nestedName), '嵌套仓库应回报为未删除');
+		assert.ok(existsSync(nested), '嵌套仓库不得被删除');
+		assert.deepEqual(untracked.discarded, []);
+	} finally {
+		for (const dir of [parent, source]) rmSync(dir, { recursive: true, force: true });
 	}
 });
 

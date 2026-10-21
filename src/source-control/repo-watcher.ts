@@ -67,6 +67,9 @@ const handles = new Map<string, Map<string, FSWatcher>>();
 /** git 公共目录（规范化） -> 该套句柄对应的仓库路径。 */
 const repoOfCommon = new Map<string, string>();
 
+/** git 公共目录（规范化） -> 该公共目录的真实路径。 */
+const commonDirOf = new Map<string, string>();
+
 /** git 公共目录（规范化） -> 合并定时器。 */
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -215,6 +218,7 @@ function closeHandles(key: string): void {
 	const existing = handles.get(key);
 	handles.delete(key);
 	repoOfCommon.delete(key);
+	commonDirOf.delete(key);
 	lastState.delete(key);
 	if (existing === undefined) return;
 	for (const handle of existing.values()) {
@@ -284,7 +288,8 @@ async function confirmStructure(key: string): Promise<boolean> {
 	if (repo === undefined) return false;
 	confirming.add(key);
 	try {
-		const state = await structureState(structureWatchTargets(repo, key, await declaredSubmodules(repo)));
+		const commonDir = commonDirOf.get(key) ?? key;
+		const state = await structureState(structureWatchTargets(repo, commonDir, await declaredSubmodules(repo)));
 		const previous = lastState.get(key);
 		lastState.set(key, state);
 		return previous === undefined || previous !== state;
@@ -309,7 +314,8 @@ function sync(key: string): void {
 	void (async () => {
 		try {
 			const submodules = await declaredSubmodules(repo);
-			const targets = structureWatchTargets(repo, key, submodules);
+			const commonDir = commonDirOf.get(key) ?? key;
+			const targets = structureWatchTargets(repo, commonDir, submodules);
 			// 挂句柄之前先记下结构状态：此后名字缺失的事件才有基线可比。
 			lastState.set(key, await structureState(targets));
 			const wanted = new Set(targets.map((target) => target.directory));
@@ -348,10 +354,17 @@ function arm(repo: string): void {
 	void (async () => {
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return;
-		const key = commonDir.toLowerCase();
+		// 比较键按规范化的公共目录生成，真实路径另存映射：区分大小写的文件系统上，键值路径可能不存在。
+		const key = pathKey(commonDir);
+		/*
+		 * 只有磁盘上确实存在 git 目录的路径才登记为已知仓库：目录已删除的路径留在集合里，
+		 * 会让此后每一条名字缺失的事件都判定为仓库集合变化。
+		 */
+		if (await gitDirAt(repo) !== null) knownRepos.add(pathKey(repo));
 		if (handles.has(key)) return;
 		handles.set(key, new Map());
 		repoOfCommon.set(key, repo);
+		commonDirOf.set(key, commonDir);
 		sync(key);
 	})();
 }
@@ -395,7 +408,6 @@ function schedule(key: string): void {
 export function watchRepositories(repos: readonly string[]): void {
 	for (const repo of repos) {
 		if (repo === '') continue;
-		knownRepos.add(pathKey(repo));
 		arm(repo);
 	}
 	while (handles.size > MAX_WATCHED_REPOS) {
@@ -430,10 +442,18 @@ export async function isRepositorySetChange(
 ): Promise<boolean> {
 	const known = new Set([...repos].map((repo) => pathKey(repo)));
 	if (target === null) {
-		for (const repo of known) {
-			if (await gitDirAt(repo) === null) return true;
+		/*
+		 * 已知仓库不再有 git 目录时把它移出已知集合：仓库已消失，留在集合里会让此后每一条
+		 * 名字缺失的事件都判定为变化，反复触发重新枚举。
+		 */
+		let changed = false;
+		for (const repo of [...known]) {
+			if (await gitDirAt(repo) !== null) continue;
+			known.delete(repo);
+			knownRepos.delete(repo);
+			changed = true;
 		}
-		return false;
+		return changed;
 	}
 	const parts = resolve(target).split(/[\\/]/);
 	const gitIndex = parts.indexOf('.git');

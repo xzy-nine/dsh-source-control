@@ -99,14 +99,20 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 宿主据此清空快照、提交图与仓库信息缓存、作废发现缓存并广播 `repository-write`。
 `commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
 用于结束索引与 HEAD 无差异的待合并状态。
+`discardPaths` 区分子模块条目与普通路径：索引模式 `160000` 的条目（由 `git ls-files -s` 判定，
+解析在 `git-parse.ts` 的 `parseIndexEntries`）不交给 `git restore`，而是显式把子模块 HEAD 移到索引
+记录的提交（`checkout --detach`），**不还原也不清理子模块内部的未提交改动**；目录型 pathspec 命中
+的子模块同样按此处置。未初始化、移动被拒绝与内部仍有改动这三种情形随返回值回报，客户端据此提示并
+保留条目。未跟踪路径用 `git clean -f`（不加 `-ff`/`-d`），清理后仍存在的独立仓库按未删除回报。
 `ignore.ts` 写入忽略规则（最近的 `.gitignore` 与本地排除文件），规则写法与去重是纯函数，放在
 `ignore-rules.ts`；本地排除文件在 `.git` 目录内，客户端以宿主返回的绝对路径按普通文件打开。
 克隆不由插件执行：客户端构造 `git -C <父目录> clone` 命令（`git/clone-command.ts`，纯函数），由
 `git/terminal-run.ts` 打开 DSH 终端页并在其中执行。浅克隆的 `--depth` / `--single-branch` /
 `--no-tags` 由 `shallowCloneArgs` 生成，深度按正整数处理、超上限收拢。
 
-git 钩子由 `hooks.ts` 探测（纯文件系统，不调 git）：配置了 `core.hooksPath` 时用它（相对路径按仓库根
-解析），否则用 **git 公共目录**下的 `hooks`，因此链接工作树与子模块共用主仓库的钩子目录。存在可执行的
+git 钩子由 `hooks.ts` 探测（纯文件系统，不调 git）：配置了 `core.hooksPath` 时用它（相对路径按工作树根
+解析：普通工作树按其工作树根，裸仓库按其 git 目录），否则用 **git 公共目录**下的 `hooks`，因此链接
+工作树与子模块共用主仓库的钩子目录。存在可执行的
 `pre-commit` / `prepare-commit-msg` / `commit-msg` 即视为提交钩子激活，`pre-push` 视为推送钩子激活；
 Windows 无执行位概念，文件存在即算可执行。客户端 `index.ts` 在换仓库时探测一次，取消勾选即给
 `commitStaged` / `pushUpstream` / `pushBranch` 传 `skipHooks`（宿主追加 `--no-verify`）。勾选状态**不持久化**：
@@ -172,7 +178,8 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 未知才算变化（已知仓库内部的 `.git` 写操作由仓库级监视负责，否则会形成「事件 → 重新发现 → 读
 `.git` → 事件」的死循环）；名字是普通路径且事件为 `rename` 时，该路径自身或下探两层内出现或消失
 了仓库，或该路径是已知仓库及其祖先；名字缺失时核对已知仓库是否仍存在 —— Windows 的递归句柄删除
-目录树时只报不带名字的 `change`，这是仓库被整个删除的唯一信号。
+目录树时只报不带名字的 `change`，这是仓库被整个删除的唯一信号。已知仓库消失时即从集合中移除，
+因此同一路径只触发一次变化。
 
 仓库级监视的目标**不含** `.git` 与 `worktrees`/`modules` 目录自身，原因见下表。名字缺失的仓库级
 事件不直接当作结构变化：Windows 上普通 `git status` 也会在公共目录产生一条，直接重扫会让面板反复
@@ -187,8 +194,9 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
   结构变化已由公共目录上的 `worktrees` / `modules` 名字事件覆盖，`.gitmodules` 在普通 git 操作中
   不产生事件。
 
-结构事件的重取走 `repo-preload.ts` 的 `refreshWorkspace`（保留 `baseNodes`，只作废补齐记录，受 30 秒
-冷却与在途复用约束），不走 `dropWorkspace`：后者会发布空树，连续事件会让仓库区反复闪回占位。
+结构事件的重取走 `repo-preload.ts` 的 `refreshWorkspace`（保留 `baseNodes`，只作废补齐记录；不受 30 秒
+重取冷却约束，取数进行期间的连续请求合并为一次后续重取），不走 `dropWorkspace`：后者会发布空树，
+连续事件会让仓库区反复闪回占位。
 
 一次重载向宿主发两次请求，两路并行：`loadCommits`（提交图窗口；仅首次进入时同时带回仓库信息、引用集合
 与贮藏）与 `loadWorkingTreeSnapshot`（工作区条目 + 分支 / 上游 / 领先落后）。宿主侧一次提交图请求内部
@@ -422,6 +430,7 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `repo-watcher-live.test.mjs` | 仓库结构监视实机契约：真实仓库上新建与移除链接工作树、新增 `.gitmodules` 都会报告该仓库；工作区里新建与删除仓库报告该工作区；普通 git 操作与普通文件改动都不产生结构事件 |
 | `panel-busy.test.mjs` | 忙碌分级：按仓库与影响面记录、互不阻塞、逐份移除 |
 | `submit-state.test.mjs` | 提交框判据：主按钮在合并中与修补期间固定为提交、同步与发布的切换条件、提交可用性、空信息在合并中不禁用提交 |
+| `discard-notice.test.mjs` | 丢弃结局提示：哪些子模块结局需要告知、提示是否点明未清理的部分、未删除的嵌套仓库一并列出 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
 | `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |

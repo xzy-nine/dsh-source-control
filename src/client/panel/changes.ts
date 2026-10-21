@@ -317,21 +317,21 @@ export function ChangeGroup({
 	/**
 	 * 丢弃一批路径的改动；未跟踪与已跟踪分两条命令下发。
 	 *
+	 * 只有真正丢弃的路径才从条目里移除：子模块条目可能因为内部有改动或尚未初始化而未能移动，
+	 * 它必须留在列表里。
+	 *
 	 * @param tracked - 已跟踪的路径。
 	 * @param untrackedPaths - 未跟踪的路径。
-	 * @param optimistic - 对条目的推算；省略时不推算。
 	 * @returns 无。
 	 */
-	const discardBoth = async (
-		tracked: readonly string[],
-		untrackedPaths: readonly string[],
-		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	): Promise<void> => {
+	const discardBoth = async (tracked: readonly string[], untrackedPaths: readonly string[]): Promise<void> => {
+		/** 本次真正丢弃的路径；由操作体写入，乐观更新据此移除条目。 */
+		const discarded: string[] = [];
 		// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 		await run('commit', async () => {
-			if (tracked.length > 0) await discardPaths(workingTreePath, tracked, false);
-			if (untrackedPaths.length > 0) await discardPaths(workingTreePath, untrackedPaths, true);
-		}, undefined, optimistic, { historyChanged: false });
+			if (tracked.length > 0) discarded.push(...(await discardPaths(workingTreePath, tracked, false)).discarded);
+			if (untrackedPaths.length > 0) discarded.push(...(await discardPaths(workingTreePath, untrackedPaths, true)).discarded);
+		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
 	};
 	/**
 	 * 丢弃某个文件夹下的全部改动。
@@ -367,8 +367,12 @@ export function ChangeGroup({
 				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
 			});
 			if (!ok) return;
+			/** 本次真正丢弃的路径；未能丢弃的条目必须留在列表里。 */
+			const discarded: string[] = [];
 			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
-			await run('commit', async () => { await discardPaths(workingTreePath, paths, untracked); }, undefined, (entries) => discardEntries(entries, paths), { historyChanged: false });
+			await run('commit', async () => {
+				discarded.push(...(await discardPaths(workingTreePath, paths, untracked)).discarded);
+			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
 		})();
 	};
 	/**
@@ -385,7 +389,7 @@ export function ChangeGroup({
 				confirmLabel: '丢弃', danger: true,
 			});
 			if (!ok) return;
-			await discardBoth(tracked, untrackedPaths, (entries) => discardEntries(entries, [...tracked, ...untrackedPaths]));
+			await discardBoth(tracked, untrackedPaths);
 		})();
 	};
 	const onOpen = (item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); };

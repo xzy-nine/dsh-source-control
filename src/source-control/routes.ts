@@ -68,16 +68,19 @@ const MAX_EVENT_STREAMS = 16;
 const eventStreams = new Set<http.ServerResponse>();
 
 /**
- * 取节点树里全部节点路径。
+ * 取节点树里全部可用节点的路径。
+ *
+ * 只有磁盘上确实存在的节点才纳入：目录已删除的工作树与子模块留在监视集合里，会让此后每一条
+ * 名字缺失的事件都判定为仓库集合变化。
  *
  * @param nodes - 仓库节点列表。
- * @returns 全部路径，含工作树与子模块。
+ * @returns 全部可用路径，含工作树与子模块。
  */
 function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
 	const paths: string[] = [];
 	const walk = (list: readonly RepoNode[]): void => {
 		for (const node of list) {
-			paths.push(node.path);
+			if (node.available) paths.push(node.path);
 			walk(node.children);
 		}
 	};
@@ -244,7 +247,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('unstagePaths', async () => { await unstagePaths(repo, arr<string>('paths')); return { repo }; });
 			break;
 		case 'discardPaths':
-			await respondResult('discardPaths', async () => { await discardPaths(repo, arr<string>('paths'), bool('untracked')); return { repo }; });
+			await respondResult('discardPaths', async () => {
+				const outcome = await discardPaths(repo, arr<string>('paths'), bool('untracked'));
+				return { repo, ...outcome };
+			});
 			break;
 		case 'commitStaged':
 			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend'), bool('skipHooks')) }));

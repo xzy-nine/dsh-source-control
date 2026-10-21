@@ -12,8 +12,8 @@ import { importHostModule } from './lib-import.mjs';
 
 const mod = await importHostModule('source-control/git-parse.js');
 const {
-	DETAILS_FORMAT, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
-	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog,
+	DETAILS_FORMAT, GITLINK_MODE, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
+	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseIndexEntries, parseLog,
 	parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
 	splitRecords, UNCOMMITTED,
 } = mod;
@@ -39,6 +39,21 @@ test('splitRecords 按固定字段数切分并丢弃末尾空字段', () => {
 	assert.deepEqual(splitRecords('a\0b\0c\0d\0e\0f\0', 3), [['a', 'b', 'c'], ['d', 'e', 'f']]);
 	// 尾部残片不足一组时丢弃，不产生半条记录。
 	assert.deepEqual(splitRecords('a\0b\0c\0d\0', 3), [['a', 'b', 'c']]);
+});
+
+test('parseIndexEntries 取模式、哈希、阶段与含空格的路径', () => {
+	const sha = 'a'.repeat(40);
+	assert.deepEqual(parseIndexEntries(`${GITLINK_MODE} ${sha} 0\tsub dir\0`), [
+		{ mode: GITLINK_MODE, sha, stage: 0, path: 'sub dir' },
+	]);
+	// 路径在第一个制表符之后，因此可以含空格与制表符。
+	assert.deepEqual(parseIndexEntries(`100644 ${sha} 0\ta\tb\0`), [
+		{ mode: '100644', sha, stage: 0, path: 'a\tb' },
+	]);
+	// 字段不足、无制表符与阶段非数字的记录丢弃。
+	assert.deepEqual(parseIndexEntries(`100644 ${sha}\0`), []);
+	assert.deepEqual(parseIndexEntries(`${sha} 0\tplain\0`), []);
+	assert.deepEqual(parseIndexEntries(''), []);
 });
 
 test('提交信息含换行与 NUL 相邻字符时仍可解析', () => {
