@@ -311,12 +311,21 @@ const resultCache = new Map<string, { result: GitResult; expiresAt: number }>();
 const MAX_CACHE_ENTRIES = 64;
 
 /**
- * 只读查询结果缓存时长。
+ * 只读子命令的结果缓存时长。
  *
  * 面板在编辑期间会按节拍反复读同一份不变的数据；一次 git 约 70–90ms，若调用间隔大于
  * 执行时间，在途复用命不中，缓存按节拍命中即可避免整轮重复起进程。
  */
 const CACHE_TTL_MS = 200;
+
+/**
+ * 输出取决于工作区或索引当前内容的只读子命令：它们不进结果缓存。
+ *
+ * 缓存的失效只覆盖插件自己执行的写命令，插件之外的写（编辑器、外部命令）无从感知，
+ * 缓存期内读到的因此可能是旧值。子模块的内部改动更会改变父仓库 `status` 的结果，
+ * 失效范围再宽也覆盖不到。因此这类命令一律现读现用。
+ */
+const WORKTREE_DEPENDENT_SUBCOMMANDS: ReadonlySet<string> = new Set(['status', 'diff', 'ls-files']);
 
 /**
  * 写入一条只读结果，并维持缓存上限。
@@ -405,15 +414,34 @@ function isReadOnly(args: readonly string[]): boolean {
 }
 
 /**
+ * 判断一条只读命令的输出是否随工作区或索引的当前内容变化。
+ *
+ * @param args - 完整参数数组。
+ * @returns 依赖当前内容时为 true。
+ */
+function dependsOnWorktree(args: readonly string[]): boolean {
+	return WORKTREE_DEPENDENT_SUBCOMMANDS.has(args[subcommandIndex(args)] ?? '');
+}
+
+/**
  * 清掉某个仓库的只读缓存。
+ *
+ * 失效范围含该路径的所有祖先：子模块的写会改变父仓库 `status` 的结果（父仓库把子模块的
+ * 内部改动记成自身的一条条目），因此子模块目录下的写必须让父仓库的缓存一并失效。
+ * 链接工作树与主仓库共用 git 公共目录，两者的状态互为镜像，同样由前缀关系覆盖。
  *
  * @param repo - 规范化后的仓库路径。
  * @returns 无。
  */
 function invalidateRepo(repo: string): void {
-	const prefix = repo + '\u0000';
 	for (const key of resultCache.keys()) {
-		if (key.startsWith(prefix)) resultCache.delete(key);
+		// 键形如 `<仓库>\0<参数>`：取仓库部分与各祖先前缀比对。
+		const separator = key.indexOf('\u0000');
+		if (separator === -1) continue;
+		const cached = key.slice(0, separator);
+		if (cached === repo || repo.startsWith(`${cached}/`) || cached.startsWith(`${repo}/`)) {
+			resultCache.delete(key);
+		}
 	}
 }
 
@@ -477,8 +505,10 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	const repo = normalizeRepo(cwd);
 	// 参数用 JSON 序列化：join(' ') 会让 ['a b'] 与 ['a','b'] 撞成同一个键。
 	const key = `${repo}\u0000${JSON.stringify(args)}`;
+	// 输出随工作区或索引当前内容变化的只读命令不进缓存。
+	const cacheable = readOnly && !dependsOnWorktree(args) && options.noCache !== true;
 
-	if (readOnly && options.noCache !== true) {
+	if (cacheable) {
 		const cached = resultCache.get(key);
 		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
 		const pendingCached = inFlightGit.get(key);
@@ -505,7 +535,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
 		// 跳过缓存的调用不写入，也不取用：它读的是当前值，入缓存会把该值再固化 200ms。
-		if (readOnly && result.code === 0 && options.noCache !== true) setCachedResult(key, result);
+		if (cacheable && result.code === 0) setCachedResult(key, result);
 		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
 		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
 		if (!readOnly && result.code >= 0) notifyWrite(cwd);
