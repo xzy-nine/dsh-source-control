@@ -14,8 +14,9 @@ import React from 'react';
 import { invalidateHostCache, loadGraph, loadWorkingTreeSnapshot, type WorkingTreeSnapshot } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
-import { FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
+import { fallbackPollMs, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
 import { isRepoBusy } from './busy.ts';
+import { beginBackground, endBackground } from './refresh-status.ts';
 import {
 	branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual,
 	uncommittedParentOf, withUncommittedCount,
@@ -214,6 +215,7 @@ export function useGraphData({
 		return remembered ?? {
 			phase: 'loading', error: null, commits: [], head: null, more: false, nextSkip: 0,
 			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
+			background: [], lastRefreshAt: 0,
 		};
 	});
 	const generationRef = React.useRef(0);
@@ -264,20 +266,30 @@ export function useGraphData({
 		// 换仓库后旧 HEAD 不再适用；同仓库沿用旧值，直到本轮快照返回后写入。
 		if (repoChanged) loadedHeadRef.current = null;
 		loadedRepoRef.current = workingTreePath;
+		/*
+		 * 后台刷新登记：reconcile 模式的两路都在进行中时给出界面指示，结束后移除。
+		 * full 模式沿用 phase：用户主动刷新要看占位，不需要额外指示。
+		 */
+		const background = mode === 'reconcile';
+		if (background) setState((previous) => beginBackground(beginBackground(previous, 'graph'), 'entries'));
 		if (mode === 'full') {
 			setState((previous) => ({
 				...previous, phase: 'loading', error: null, commits: [], entries: [], detail: null, selectedHash: null,
 			}));
 		} else if (repoChanged) {
 			/*
-			 * 换到另一个仓库：先呈现该仓库上一次的结果（没有则占位）。重新挂载时 `repoChanged`
-			 * 为 false、初始状态已是上次结果，因此不进这里。
+			 * 换到另一个仓库：先清空旧仓库的数据，只保留不随条目变化的部分。重新挂载时
+			 * `repoChanged` 为 false、初始状态已是上次结果，因此不进这里。
+			 *
+			 * 条目与提交列表必须清空：保留会让更改区与图形区在取数返回前一直显示上一个仓库的
+			 * 内容，用户会把它当成新仓库的数据。引用集合可以保留：它与条目无关，先画出能让
+			 * 引用筛选立即反映新仓库的状态。
 			 */
-			const remembered = rememberedPanelState(workingTreePath);
 			setState((previous) => ({
 				...previous,
-				...(remembered ?? { phase: 'loading' as const, commits: [], entries: [], head: null, more: false, nextSkip: 0 }),
-				error: null,
+				phase: 'loading', error: null,
+				commits: [], entries: [], head: null, more: false, nextSkip: 0,
+				detail: null, selectedHash: null,
 			}));
 		} else {
 			setState((previous) => ({ ...previous, error: null }));
@@ -345,18 +357,22 @@ export function useGraphData({
 				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
 				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
 				const foreignSame = keep && branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
+				const settled = background
+					? endBackground(endBackground(previous, 'graph'), 'entries')
+					: previous;
 				return {
-					...previous, phase: 'ready', error: null, merging: snapshot.merging,
-					commits: commitsSame ? previous.commits : commits,
+					...settled, phase: 'ready', error: null, merging: snapshot.merging,
+					commits: commitsSame ? settled.commits : commits,
 					head: graph.head, more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
-					remotes: remotesSame ? previous.remotes : graph.remotes,
-					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? previous.entries : snapshot.entries,
-					detail: mode === 'full' ? null : previous.detail,
+					remotes: remotesSame ? settled.remotes : graph.remotes,
+					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
+					entries: entriesSame ? settled.entries : snapshot.entries,
+					detail: mode === 'full' ? null : settled.detail,
 				};
 			});
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
+			if (background) setState((previous) => endBackground(endBackground(previous, 'graph'), 'entries'));
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId, setSyncById]);
@@ -385,14 +401,16 @@ export function useGraphData({
 		const controller = new AbortController();
 		entriesControllerRef.current = controller;
 		const repo = workingTreePath;
+		setState((previous) => beginBackground(previous, 'entries'));
 		try {
 			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal);
 			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
-			setState((previous) => mergeSnapshot(previous, snapshot));
+			setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
 			writeSync(setSyncById, selectedId, snapshot);
 		} catch (error) {
 			if (controller.signal.aborted) return;
+			setState((previous) => endBackground(previous, 'entries'));
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
 	}, [workingTreePath, selectedId, setSyncById]);
@@ -500,6 +518,8 @@ export function useGraphData({
 		const poll = (): void => {
 			if (cancelled.current || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
 			polling = true;
+			// 轮询读的也是工作区快照：与其它后台刷新同一套指示，取数期间给出反馈。
+			setState((previous) => beginBackground(previous, 'entries'));
 			void (async () => {
 				try {
 					const snapshot = await loadWorkingTreeSnapshot(workingTreePath);
@@ -529,8 +549,9 @@ export function useGraphData({
 						void refresh();
 						return;
 					}
-					setState((previous) => mergeSnapshot(previous, snapshot));
+					setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
 				} catch { /* 忽略兜底轮询失败 */ } finally {
+					setState((previous) => endBackground(previous, 'entries'));
 					polling = false;
 				}
 			})();
@@ -538,7 +559,8 @@ export function useGraphData({
 
 		/** 按页签可见性取轮询间隔，间隔未变时保留原定时器。 */
 		const schedule = (): void => {
-			const next = document.visibilityState === 'visible' ? FALLBACK_POLL_ACTIVE_MS : FALLBACK_POLL_INTERVAL_MS;
+			const active = document.visibilityState === 'visible';
+			const next = fallbackPollMs(active ? settings.pollActiveSeconds : settings.pollIdleSeconds, active);
 			if (timerId !== undefined && next === timerInterval) return;
 			if (timerId !== undefined) window.clearInterval(timerId);
 			timerInterval = next;
@@ -553,7 +575,7 @@ export function useGraphData({
 			document.removeEventListener('visibilitychange', onVisibilityChange);
 			if (timerId !== undefined) window.clearInterval(timerId);
 		};
-	}, [workingTreePath, refresh, settings.autoRefresh]);
+	}, [workingTreePath, refresh, settings.autoRefresh, settings.pollActiveSeconds, settings.pollIdleSeconds]);
 
 	return { state, setState, refresh, refreshEntries, loadMore, busyRef };
 

@@ -18,6 +18,8 @@ export interface UseCommitStatsOptions {
 	readonly translateReady: boolean;
 	/** 翻译失败时的提示出口。 */
 	readonly onTranslateError: (message: string) => void;
+	/** 缓存的清理周期（秒）。 */
+	readonly cleanupSeconds: number;
 }
 
 /** 一条待翻译的提交：哈希与文本。 */
@@ -87,7 +89,7 @@ export interface UseCommitStatsResult {
  * @param options - 见 {@link UseCommitStatsOptions}。
  * @returns 三份缓存、批量翻译状态、悬停回调与翻译回调。
  */
-export function useCommitStats({ workingTreePath, translateReady, onTranslateError }: UseCommitStatsOptions): UseCommitStatsResult {
+export function useCommitStats({ workingTreePath, translateReady, onTranslateError, cleanupSeconds }: UseCommitStatsOptions): UseCommitStatsResult {
 	// 悬停卡片的改动统计与完整信息：按提交哈希缓存，悬停时按需拉取。
 	const [statsByHash, setStatsByHash] = React.useState<Map<string, CommitStats>>(() => new Map());
 	const [messageByHash, setMessageByHash] = React.useState<Map<string, string>>(() => new Map());
@@ -151,10 +153,12 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	useCacheCleanup({
 		stamps: statsStamps,
 		drop: (hashes) => { setStatsByHash((previous) => dropHashes(previous, hashes)); },
+		periodSeconds: cleanupSeconds,
 	});
 	useCacheCleanup({
 		stamps: messageStamps,
 		drop: (hashes) => { setMessageByHash((previous) => dropHashes(previous, hashes)); },
+		periodSeconds: cleanupSeconds,
 	});
 	useCacheCleanup({
 		stamps: translationStamps,
@@ -162,6 +166,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 			setTranslatedByHash((previous) => dropHashes(previous, hashes));
 			setTranslatedFromByHash((previous) => dropHashes(previous, hashes));
 		},
+		periodSeconds: cleanupSeconds,
 	});
 
 	// 卸载时取消未完成的请求与悬停计时。

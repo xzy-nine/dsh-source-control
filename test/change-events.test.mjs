@@ -5,9 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	AUTO_REFRESH_COOLDOWN_MS, CLEANUP_INTERVAL_MS, FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS,
-	FALLBACK_STABLE_OBSERVATIONS,
-	autoFetchPeriodMs, hasRepositoryChange, isAutoRefreshDue, isCacheExpired, repositoryRelativePath, settledFileChanges,
-	shouldFallbackRefresh, stableObservationsRequired,
+	FALLBACK_POLL_SECONDS_MAX, FALLBACK_POLL_SECONDS_MIN, FALLBACK_STABLE_OBSERVATIONS,
+	autoFetchPeriodMs, clampSeconds, fallbackPollMs, hasRepositoryChange, isAutoRefreshDue, isCacheExpired,
+	repositoryRelativePath, settledFileChanges, shouldFallbackRefresh, stableObservationsRequired,
 } from '../src/client/panel/change-events.ts';
 
 /** 一次工具调用事件。 */
@@ -89,6 +89,27 @@ test('抓取间隔收拢到区间内，非有限数用默认值', () => {
 test('缓存未到清理周期时保留，到达后过期', () => {
 	assert.equal(isCacheExpired(0, CLEANUP_INTERVAL_MS - 1), false);
 	assert.equal(isCacheExpired(0, CLEANUP_INTERVAL_MS), true);
+});
+
+test('秒数收敛：越界收拢、非有限数取默认值', () => {
+	assert.equal(clampSeconds(30, 5, 600, 10), 30);
+	assert.equal(clampSeconds(1, 5, 600, 10), 5);
+	assert.equal(clampSeconds(9999, 5, 600, 10), 600);
+	assert.equal(clampSeconds(Number.NaN, 5, 600, 10), 10);
+	assert.equal(clampSeconds(12.6, 5, 600, 10), 13);
+});
+
+test('兜底轮询间隔按档位收敛，且都高于下限', () => {
+	for (const active of [true, false]) {
+		const ms = fallbackPollMs(1, active);
+		assert.equal(ms, FALLBACK_POLL_SECONDS_MIN * 1000, '低于下限时收拢到下限');
+		assert.ok(ms >= AUTO_REFRESH_COOLDOWN_MS, '轮询间隔不应低于事件刷新的冷却时间');
+	}
+	assert.equal(fallbackPollMs(30, true), 30_000);
+	assert.equal(fallbackPollMs(9999, false), FALLBACK_POLL_SECONDS_MAX * 1000);
+	// 非有限数按该档位的默认值收拢。
+	assert.equal(fallbackPollMs(Number.NaN, true), FALLBACK_POLL_ACTIVE_MS);
+	assert.equal(fallbackPollMs(Number.NaN, false), FALLBACK_POLL_INTERVAL_MS);
 });
 
 test('兜底轮询间隔明显低于事件响应节拍', () => {

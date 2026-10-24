@@ -10,7 +10,11 @@ import {
 	IconEditOutlineRegular, IconCloseOutlineRegular, IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown } from '../ui/dropdown.ts';
-import { AUTO_FETCH_PERIOD_SECONDS_DEFAULT, AUTO_FETCH_PERIOD_SECONDS_MAX, AUTO_FETCH_PERIOD_SECONDS_MIN } from './change-events.ts';
+import {
+	AUTO_FETCH_PERIOD_SECONDS_DEFAULT, AUTO_FETCH_PERIOD_SECONDS_MAX, AUTO_FETCH_PERIOD_SECONDS_MIN,
+	CLEANUP_PERIOD_SECONDS_DEFAULT, FALLBACK_POLL_ACTIVE_SECONDS_DEFAULT, FALLBACK_POLL_INTERVAL_SECONDS_DEFAULT,
+	FALLBACK_POLL_SECONDS_MAX, FALLBACK_POLL_SECONDS_MIN, CLEANUP_PERIOD_SECONDS_MAX, CLEANUP_PERIOD_SECONDS_MIN,
+} from './change-events.ts';
 import { fetchAiModels } from '../api/index.ts';
 import { loadValue, saveValue } from './storage.ts';
 import { showConfirmation, showMessage } from '../ui/dialog.ts';
@@ -67,6 +71,9 @@ export function defaultSettings(): Settings {
 		autoRefresh: true,
 		autoFetch: true,
 		autoFetchPeriod: AUTO_FETCH_PERIOD_SECONDS_DEFAULT,
+		pollActiveSeconds: FALLBACK_POLL_ACTIVE_SECONDS_DEFAULT,
+		pollIdleSeconds: FALLBACK_POLL_INTERVAL_SECONDS_DEFAULT,
+		cleanupSeconds: CLEANUP_PERIOD_SECONDS_DEFAULT,
 		onRepoLoadScrollToHead: false,
 		showAvatars: true,
 		graphColours: null,
@@ -474,6 +481,27 @@ export function SettingsPanel({
 				min: AUTO_FETCH_PERIOD_SECONDS_MIN,
 				max: AUTO_FETCH_PERIOD_SECONDS_MAX,
 				onChange: (autoFetchPeriod) => { patch({ autoFetchPeriod }); },
+			}),
+			React.createElement(NumberRow, {
+				label: '校对间隔·页签可见（秒）',
+				value: settings.pollActiveSeconds,
+				min: FALLBACK_POLL_SECONDS_MIN,
+				max: FALLBACK_POLL_SECONDS_MAX,
+				onChange: (pollActiveSeconds) => { patch({ pollActiveSeconds }); },
+			}),
+			React.createElement(NumberRow, {
+				label: '校对间隔·页签不可见（秒）',
+				value: settings.pollIdleSeconds,
+				min: FALLBACK_POLL_SECONDS_MIN,
+				max: FALLBACK_POLL_SECONDS_MAX,
+				onChange: (pollIdleSeconds) => { patch({ pollIdleSeconds }); },
+			}),
+			React.createElement(NumberRow, {
+				label: '提交信息缓存清理（秒）',
+				value: settings.cleanupSeconds,
+				min: CLEANUP_PERIOD_SECONDS_MIN,
+				max: CLEANUP_PERIOD_SECONDS_MAX,
+				onChange: (cleanupSeconds) => { patch({ cleanupSeconds }); },
 			}),
 			React.createElement(ToggleRow, {
 				label: '加载仓库后滚动到 HEAD',

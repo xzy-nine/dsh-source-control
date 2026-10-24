@@ -8,7 +8,7 @@ import {
 	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
 	IconCloseOutlineRegular,
 	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
-	IconSettingsOutlineRegular, IconSparkleRegular,
+	IconSettingsOutlineRegular, IconSparkleRegular, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph/index.ts';
 import { PublishIcon, RepoIcon, TranslateIcon } from '../ui/ref-icons.ts';
@@ -33,13 +33,24 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 /**
  * 分区标题栏的刷新按钮。
  *
+ * 刷新进行中时图标带 `data-refreshing` 属性，由样式给出呼吸效果；此时仍可点击——并发刷新
+ * 由调用方的代数判据收敛，禁用反而会让用户以为界面卡住。
+ *
  * @param disabled - 是否禁用。
+ * @param refreshing - 是否正在后台刷新。
+ * @param lastRefresh - 「上次刷新」文案；为空时不给。
  * @param onRefresh - 点击回调。
  * @returns 按钮元素。
  */
-function refreshButton(disabled: boolean, onRefresh: () => void): React.ReactElement {
+function refreshButton(disabled: boolean, refreshing: boolean, lastRefresh: string, onRefresh: () => void): React.ReactElement {
+	const title = lastRefresh === '' ? '刷新' : `刷新（上次刷新：${lastRefresh}）`;
 	return React.createElement('button', {
-		type: 'button', className: css.iconBtn, title: '刷新', disabled,
+		type: 'button',
+		className: css.iconBtn,
+		title,
+		'aria-label': '刷新',
+		'data-refreshing': refreshing ? '1' : undefined,
+		disabled,
 		onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
 	}, React.createElement(IconRefreshOutlineRegular, { size: 14 }));
 }
@@ -181,6 +192,10 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly merging: boolean;
 	/** 中止当前合并。 */
 	readonly onAbortMerge: () => void;
+	/** 工作区快照是否正在后台刷新；标题栏据此给出进行中指示。 */
+	readonly refreshing: boolean;
+	/** 「上次刷新」文案；为空串时不显示。 */
+	readonly lastRefresh: string;
 }
 
 /**
@@ -198,7 +213,7 @@ export function ChangesSection({
 	canSubmit, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff,
 	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
-	merging, onAbortMerge,
+	merging, onAbortMerge, refreshing, lastRefresh,
 }: ChangesSectionProps): React.ReactElement {
 	/*
 	 * 右侧动作组：贮藏固定在最右端，其余按出现顺序追加，不占固定位置。
@@ -245,8 +260,10 @@ export function ChangesSection({
 			{ className: css.secHead },
 			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'更改',
+			React.createElement(StateDot, { state: refreshing ? 'ongoing' : 'idle', size: 8, className: css.headDot }),
+			lastRefresh !== '' && React.createElement('span', { className: css.headRefreshNote }, lastRefresh),
 			React.createElement('span', { className: css.headActions },
-				refreshButton(busy.read, onRefresh),
+				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
 			),
 		),
 		React.createElement(
@@ -329,6 +346,12 @@ export function ChangesSection({
 			React.createElement(
 				'div',
 				{ className: css.changesScroll },
+				/*
+				 * 加载占位：切换仓库时条目已清空，快照返回前显示占位，避免空白一片。
+				 * 有条目时不显示——刷新期间保留旧数据正是 reconcile 模式的目的。
+				 */
+				phase === 'loading' && entries.length === 0
+					&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
 				ChangeGroup({
 					staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => { toggleGroup('staged'); },
@@ -409,6 +432,10 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	readonly formatDate: (seconds: number) => string;
 	readonly formatDetail: (seconds: number) => string;
 	readonly issueLinking: unknown;
+	/** 提交图是否正在后台刷新；标题栏据此给出进行中指示。 */
+	readonly refreshing: boolean;
+	/** 「上次刷新」文案；为空串时不显示。 */
+	readonly lastRefresh: string;
 }
 
 /**
@@ -424,6 +451,7 @@ export function GraphSection({
 	translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
 	graphTranslated, graphTranslating, onTranslateVisible, onCancelTranslate,
 	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
+	refreshing, lastRefresh,
 }: GraphSectionProps): React.ReactElement {
 	// 当前可见窗口内的提交；由提交图上报，标题栏的批量翻译据此下发。
 	const [visible, setVisible] = React.useState<readonly { hash: string; text: string }[]>([]);
@@ -450,6 +478,8 @@ export function GraphSection({
 		},
 			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
 			'图形',
+			React.createElement(StateDot, { state: refreshing ? 'ongoing' : 'idle', size: 8, className: css.headDot }),
+			lastRefresh !== '' && React.createElement('span', { className: css.headRefreshNote }, lastRefresh),
 			// 翻译当前可见窗口内的提交标题，紧随标题文本；已翻译时图标反色，再点即取消。
 			showGraphTranslate && React.createElement('button', {
 				type: 'button',
@@ -484,7 +514,7 @@ export function GraphSection({
 					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy.network,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
 				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
-				refreshButton(busy.read, onRefresh),
+				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
 			),
 		),
 		open && (

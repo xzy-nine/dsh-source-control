@@ -138,6 +138,12 @@ export interface Settings {
 	autoFetch: boolean;
 	/** 定时抓取的间隔（秒）。 */
 	autoFetchPeriod: number;
+	/** 兜底轮询的间隔（秒）：页签可见时的快档。 */
+	pollActiveSeconds: number;
+	/** 兜底轮询的间隔（秒）：页签不可见时的慢档。 */
+	pollIdleSeconds: number;
+	/** 提交统计与完整提交信息的清理周期（秒）。 */
+	cleanupSeconds: number;
 	onRepoLoadScrollToHead: boolean;
 	showAvatars: boolean;
 	graphColours: readonly string[] | null;
@@ -254,6 +260,25 @@ export interface BusyFlags {
 	readonly network: boolean;
 }
 
+/**
+ * 后台刷新的作用面：提交图与工作区快照各自一路。
+ *
+ * 与 `BusyScope` 分开：忙碌是用户发起且会禁用控件，后台刷新是面板自行取数，不禁用任何控件。
+ */
+export type BackgroundScope = 'graph' | 'entries';
+
+/** 一次后台刷新的登记：作用面与开始时刻。 */
+export interface BackgroundRefresh {
+	readonly scope: BackgroundScope;
+	readonly at: number;
+}
+
+/** 后台刷新在各作用面上的进行中标志。 */
+export interface BackgroundFlags {
+	readonly graph: boolean;
+	readonly entries: boolean;
+}
+
 /** 面板状态。 */
 export interface PanelState {
 	phase: PanelPhase;
@@ -285,6 +310,10 @@ export interface PanelState {
 	foreignBranches: readonly string[];
 	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
 	merging: boolean;
+	/** 后台刷新登记；事件驱动、宿主写事件、兜底轮询与定时抓取都走这里。 */
+	background: readonly BackgroundRefresh[];
+	/** 最近一次后台刷新完成的时刻；从未刷新时为 0。 */
+	lastRefreshAt: number;
 }
 
 /** AI 生成提交信息的用量统计。 */

@@ -36,6 +36,7 @@ import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
 import { discardNoticeOf } from './discard-notice.ts';
+import { backgroundFlagsOf, lastRefreshText as relativeRefreshText, refreshNoticeOf } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
@@ -147,6 +148,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	// 存储库区高度（像素）；跨会话持久化，默认 200。
 	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
 	/*
+	 * 「上次刷新」文案的时钟：按固定间隔推进，让相对时间从「刚刚」变成「n 分钟前」。
+	 * 只在面板可见时跑——不可见时无人看，推进只会触发无意义的重渲染。
+	 */
+	const [refreshClock, setRefreshClock] = React.useState<number>(() => Date.now());
+	React.useEffect(() => {
+		const timer = window.setInterval(() => { setRefreshClock(Date.now()); }, 30_000);
+		return () => { window.clearInterval(timer); };
+	}, []);
+	/*
 	 * 宿主状态预取。
 	 *
 	 * 预取是异步的，而上面这些 useState 的初始值在挂载时同步取过；那时缓存还空着，拿到的是回退值，
@@ -250,7 +260,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
 		graphTranslated, graphTranslating,
 		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
-	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast });
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast, cleanupSeconds: settings.cleanupSeconds });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -843,6 +853,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [translateBusy, workingTreePath, message, notify]);
 
 	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);
+	/*
+	 * 后台刷新指示：两个分区各自按作用面取进行中标志，「上次刷新」文案每 30 秒重算一次，
+	 * 避免每次渲染都生成新字符串、也让时间不会一直停在「刚刚」。
+	 */
+	const backgroundFlags = React.useMemo(() => backgroundFlagsOf(state.background), [state.background]);
+	const lastRefreshText = React.useMemo(() => {
+		if (state.lastRefreshAt <= 0) return '';
+		return relativeRefreshText(state.lastRefreshAt, refreshClock);
+	}, [state.lastRefreshAt, refreshClock]);
 	const syncMarkers = React.useMemo(
 		() => computeSyncMarkers(state.commits, state.head, currentSync?.upstream ?? null),
 		[state.commits, state.head, currentSync],
@@ -863,6 +882,31 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const showPublishButton = primaryAction === 'publish';
 	/** 提交按钮可用：有暂存改动、勾选修补，或处于未完成的合并。 */
 	const canSubmit = canSubmitOf({ stagedCount: stagedPaths.length, amend, merging: state.merging });
+
+	/*
+	 * 后台刷新完成后的轻量告知：只在条目数或提交数变化时给一次，不打断操作。
+	 *
+	 * 判据是 `lastRefreshAt` 推进——它只由后台刷新写入，用户主动刷新（`full`）不经过
+	 * 后台登记，因此不会被告知「结果就在眼前的那一次刷新」。计数在上一次告知时记下，
+	 * 变化量据此计算。
+	 */
+	const noticedAtRef = React.useRef({ at: 0, entries: 0, commits: 0 });
+	React.useEffect(() => {
+		if (state.lastRefreshAt <= 0 || state.lastRefreshAt === noticedAtRef.current.at) return;
+		const previous = noticedAtRef.current;
+		noticedAtRef.current = {
+			at: state.lastRefreshAt,
+			entries: state.entries.length,
+			commits: state.commits.length,
+		};
+		// 首次记录只建立基线：进入面板时的已有数据不算「更新」。
+		if (previous.at === 0) return;
+		const notice = refreshNoticeOf(
+			{ entries: previous.entries, commits: previous.commits },
+			{ entries: state.entries.length, commits: state.commits.length },
+		);
+		if (notice !== '') showToast(notice);
+	}, [state.lastRefreshAt, state.entries.length, state.commits.length]);
 
 	/**
 	 * 是否显示提交信息框的翻译入口。
@@ -1621,6 +1665,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
 			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
 			merging: state.merging, onAbortMerge: handleAbortMerge,
+			refreshing: backgroundFlags.entries, lastRefresh: lastRefreshText,
 		}),
 
 		// ── 图形 ────────────────────────────────────────────────
@@ -1654,6 +1699,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onResizeStart: startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
 			issueLinking: issueLinking(),
+			refreshing: backgroundFlags.graph, lastRefresh: lastRefreshText,
 		}),
 	);
 }
