@@ -233,8 +233,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			/*
 			 * 快照键含 HEAD：外部进程的提交不产生写事件，缓存无从主动作废；带上 HEAD 后
 			 * 那次提交不会命中提交前的条目。HEAD 由文件与分支引用解析，不起子进程。
+			 *
+			 * `noCache` 用于兜底轮询：它靠「读到当前值」发现插件之外的改动，命中缓存会让条目
+			 * 签名永远不变，外部保存再也检测不到。写操作已失效缓存，写后重读不受本开关影响。
 			 */
-			const cachedSnapshot = readSnapshot(repo, await readHeadHash(repo));
+			const cachedSnapshot = bool('noCache') ? undefined : readSnapshot(repo, await readHeadHash(repo));
 			if (cachedSnapshot !== undefined) {
 				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
 				break;

@@ -665,7 +665,8 @@ export function useGraphData({
 			setState((previous) => beginBackground(previous, 'entries'));
 			void (async () => {
 				try {
-					const snapshot = await loadWorkingTreeSnapshot(workingTreePath);
+					// 轮询必须读当前值：命中宿主快照缓存会让签名永远不变，外部改动再也发现不了。
+				const snapshot = await loadWorkingTreeSnapshot(workingTreePath, undefined, true);
 					if (cancelled.current) return;
 					const signature = entriesSignature(snapshot.entries);
 					const previous = lastSeen;

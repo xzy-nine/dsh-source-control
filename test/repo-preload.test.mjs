@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	activeWorkspaceOf, chunkPaths, dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace,
+	retryDelayMs, setRetryDelay,
 } from '../src/client/panel/repo-preload.ts';
 
 /** 一个仓库节点。 */
@@ -295,15 +296,55 @@ test('预加载：补齐空结果按路径重试，连续失败到上限后停�
 		},
 		loadReposSync: (body) => ({ command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) }),
 	});
+	const originalDelay = setRetryDelay(async () => {});
 	try {
 		preloadWorkspace(root);
 		await waitFor(() => enrichCalls > 1);
 	} finally {
 		stubbed.restore();
+		setRetryDelay(originalDelay);
 		dropWorkspace(root);
 	}
 	assert.ok(enrichCalls > 1, '空结果驱动重试');
 	assert.ok(enrichCalls <= 6, '连续失败到上限后停止下发');
+});
+
+test('预加载：节点未变时不重复取领先/落后', async () => {
+	const root = '/work/preload-sync';
+	const repo = `${root}/only`;
+	let syncCalls = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: (body) => ({ command: 'enrichRepositories', nodes: body.repos.map((path) => repoNode(path, [])) }),
+		loadReposSync: (body) => {
+			syncCalls += 1;
+			return { command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) };
+		},
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => syncCalls >= 1);
+		assert.equal(syncCalls, 1, '首轮取一次');
+		// 结构事件后的重取：节点集合没变，已取过的领先/落后沿用，不再下发。
+		refreshWorkspace(root);
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) > 0 && getWorkspaceSnapshot(root)?.status === 'ready');
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+	assert.equal(syncCalls, 1, '节点集合未变时不再重取领先/落后');
+});
+
+test('重试退避：按轮次递增且封顶', () => {
+	assert.equal(retryDelayMs(0), 200, '首轮几乎立即重试');
+	assert.equal(retryDelayMs(1), 400);
+	assert.equal(retryDelayMs(2), 800);
+	assert.ok(retryDelayMs(10) <= 5000, '退避必须封顶');
+	// 非法输入不得产生 NaN：NaN 会让等待永不结束，补齐永久停摆。
+	assert.ok(Number.isFinite(retryDelayMs(-1)), '负轮次应收敛');
+	assert.ok(Number.isFinite(retryDelayMs(Number.NaN)), '非数应收敛');
 });
 
 test('refreshWorkspace：不清空已发布的树', async () => {

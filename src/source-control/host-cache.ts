@@ -66,6 +66,14 @@ const GRAPH_LIMIT = 64;
 const REPO_INFO_LIMIT = 32;
 const SNAPSHOT_LIMIT = 32;
 
+/**
+ * 超出容量后回落到的比例。
+ *
+ * 一次淘汰一批而不是每写一条就删一条：批量摊平了淘汰成本，也避免容量边界上反复触发
+ * 单条淘汰。
+ */
+const TRIM_RATIO = 0.75;
+
 /** 提交图窗口缓存：键含仓库与全部取数参数。 */
 const graphs = new Map<string, Entry<CachedGraph>>();
 /** 仓库信息缓存：键为仓库与取数参数。 */
@@ -141,7 +149,10 @@ function repoInfoKey(repo: string, params: RepoInfoParams): string {
 function put<T>(store: Map<string, Entry<T>>, limit: number, key: string, value: T, ttlMs: number): void {
 	store.delete(key);
 	store.set(key, { value, expiresAt: Date.now() + ttlMs });
-	while (store.size > limit) {
+	if (store.size <= limit) return;
+	// 回落到 limit * ratio：一次淘汰一批，不在容量边界上逐条删。
+	const target = Math.max(1, Math.floor(limit * TRIM_RATIO));
+	while (store.size > target) {
 		const oldest = store.keys().next();
 		if (oldest.done === true) break;
 		store.delete(oldest.value);

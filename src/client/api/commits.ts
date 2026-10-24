@@ -12,6 +12,23 @@ export interface CommitFileEntry {
 }
 
 /**
+ * 从提交详情载荷里取改动文件并换算成本插件的形状。
+ *
+ * @param details - 宿主回投的 `commitDetails`。
+ * @returns 改动文件列表。
+ */
+function fileEntriesOf(details: unknown): CommitFileEntry[] {
+	const source = details !== null && typeof details === 'object' ? details as Record<string, unknown> : {};
+	const changes = Array.isArray(source.fileChanges) ? source.fileChanges as Array<Record<string, unknown>> : [];
+	return changes.map((change) => ({
+		path: String(change.newFilePath),
+		type: String(change.type),
+		additions: typeof change.additions === 'number' ? change.additions : null,
+		deletions: typeof change.deletions === 'number' ? change.deletions : null,
+	}));
+}
+
+/**
  * 读取某个提交的改动文件。
  *
  * @param cwd - 会话工作区路径。
@@ -21,14 +38,37 @@ export interface CommitFileEntry {
  */
 export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFileEntry[]> {
 	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
-	const details = payload.commitDetails as { fileChanges?: Array<Record<string, unknown>> } | null | undefined;
-	const changes = details !== null && typeof details === 'object' && Array.isArray(details.fileChanges) ? details.fileChanges : [];
-	return changes.map((change) => ({
-		path: String(change.newFilePath),
-		type: String(change.type),
-		additions: typeof change.additions === 'number' ? change.additions : null,
-		deletions: typeof change.deletions === 'number' ? change.deletions : null,
-	}));
+	return fileEntriesOf(payload.commitDetails);
+}
+
+/**
+ * 一次提交详情里本插件用到的两部分：改动文件与完整提交信息。
+ */
+export interface CommitStatsAndMessage {
+	/** 改动文件。 */
+	readonly files: CommitFileEntry[];
+	/** 完整提交信息；取不到时为 null。 */
+	readonly message: string | null;
+}
+
+/**
+ * 读取某个提交的改动文件与完整提交信息。
+ *
+ * 两者都由宿主的 `commitDetails` 一并给出，因此一次悬停只发一趟往返。分开取会把同一份
+ * 提交详情读两次。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+ * @param signal - 取消信号。
+ * @returns 改动文件与完整提交信息。
+ */
+export async function loadCommitStatsAndMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitStatsAndMessage> {
+	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
+	const body = (payload.commitDetails as { body?: unknown } | null | undefined)?.body;
+	return {
+		files: fileEntriesOf(payload.commitDetails),
+		message: typeof body === 'string' ? body : null,
+	};
 }
 
 /**

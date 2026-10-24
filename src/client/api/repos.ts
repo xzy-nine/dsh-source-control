@@ -126,10 +126,12 @@ export interface WorkingTreeSnapshot {
  *
  * @param cwd - 仓库路径。
  * @param signal - 取消信号。
+ * @param noCache - 跳过宿主快照缓存，强制读当前值；兜底轮询用它，否则命中缓存会让签名
+ *   永远不变，外部改动再也发现不了。
  * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
-export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal): Promise<WorkingTreeSnapshot> {
-	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot' }, signal);
+export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false): Promise<WorkingTreeSnapshot> {
+	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot', noCache }, signal);
 	return {
 		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
 		head: typeof payload.head === 'string' ? payload.head : null,

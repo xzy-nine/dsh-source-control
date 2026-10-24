@@ -347,10 +347,13 @@ test('浮窗显示完整提交信息', () => {
 	assert.match(graphSource, /const original = typeof message === 'string'/, '卡片优先使用完整提交信息');
 	const apiSource = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(apiSource, /export async function loadCommitMessage/, '应有取完整信息的函数');
-	assert.match(apiSource, /details\.body/, '应取 commitDetails 的 body');
+	assert.match(apiSource, /export async function loadCommitStatsAndMessage/, '统计与完整信息应一次取回');
+	assert.match(apiSource, /body/, '应取 commitDetails 的 body');
 	const hookSource = readFileSync(join(panelDir, 'use-commit-stats.ts'), 'utf8');
 	assert.match(hookSource, /messageByHash/, 'hook 应缓存完整信息');
-	assert.match(hookSource, /requestCommitMessage\(hash\)/, '悬停时应拉取完整信息');
+	// 悬停时拉取完整信息：与改动统计同属一次 commitDetails，由同一个请求函数带出。
+	assert.match(hookSource, /requestCommitDetails\(hash\)/, '悬停时应拉取完整信息');
+	assert.match(hookSource, /loadCommitStatsAndMessage\(/, '统计与完整信息应共用一趟往返');
 });
 
 test('卡片正文更紧凑且不留空行', () => {
