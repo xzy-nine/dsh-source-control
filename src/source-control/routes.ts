@@ -27,11 +27,12 @@ import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } fr
 import { detectHooks } from './hooks.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from './ignore.js';
 import {
-	clearHostCache, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
+	invalidateRepo, readGraph, readRepoInfo, readSnapshot, writeGraph, writeRepoInfo, writeSnapshot,
 } from './host-cache.js';
 import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
+import { readHeadHash } from './worktree-branches.js';
 import type { StashEntry } from './git-types.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
@@ -229,7 +230,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			await whenGitIdle(repo);
-			const cachedSnapshot = readSnapshot(repo);
+			/*
+			 * 快照键含 HEAD：外部进程的提交不产生写事件，缓存无从主动作废；带上 HEAD 后
+			 * 那次提交不会命中提交前的条目。HEAD 由文件与分支引用解析，不起子进程。
+			 */
+			const cachedSnapshot = readSnapshot(repo, await readHeadHash(repo));
 			if (cachedSnapshot !== undefined) {
 				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
 				break;
@@ -429,9 +434,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					.filter((name): name is string => typeof name === 'string' && name !== '');
 				/*
 				 * 缓存键含全部会改变 `getCommits` 结果的参数：除排序、分页与引用筛选外，贮藏标识与
-				 * 远程名也参与组装提交行，参数不同必须落到不同的窗口。
+				 * 远程名也参与组装提交行，参数不同必须落到不同的窗口。HEAD 同样参与：提交集的
+				 * 起点含 HEAD，外部进程的提交不产生写事件，只有键随 HEAD 变化才能自然失配。
+				 *
+				 * HEAD 由 `HEAD` 文件与分支引用解析，不起子进程。
 				 */
+				const headForCache = await readHeadHash(repo);
 				const graphParams = {
+					head: headForCache,
 					maxCommits: limit, skip,
 					ordering: (typeof msg.commitOrdering === 'string' ? msg.commitOrdering : 'topo'),
 					showTags: bool('showTags', true),
@@ -949,9 +959,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		 *
 		 * 写操作已由执行层自动作废该仓库的缓存；这个命令覆盖「外部进程改了仓库、但没有经过本插件」
 		 * 的情形——那种改动不产生写事件，宿主无从得知。
+		 *
+		 * 只作废目标仓库及其祖先与后代：别的仓库的缓存与本次改动无关，全量清空会让它们
+		 * 各自重取一次提交图与工作区。
 		 */
 		case 'invalidateCache':
-			clearHostCache();
+			invalidateRepo(repo);
 			respond({ command: 'invalidateCache', repo, error: null });
 			break;
 

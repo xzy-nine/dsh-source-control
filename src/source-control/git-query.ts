@@ -8,7 +8,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
-import { resolveGitCommonDir, readHeadRef } from './worktree-branches.js';
+import { resolveGitCommonDir, resolveGitDir, readHeadRef } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
@@ -379,12 +379,20 @@ export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
  * `MERGE_HEAD` 只在合并进行中且尚未提交时存在，因此它同时覆盖「有冲突待解决」与
  * 「无冲突但用了 `--no-commit`」两种情形；`git status` 的 unmerged 记录只覆盖前者。
  *
+ * 判定读 git 目录下的 `MERGE_HEAD` 文件，不起子进程：该文件的位置由
+ * {@link resolveGitDir} 定位，链接工作树与子模块各自的 git 目录因此同样正确。
+ *
  * @param repo - 仓库路径。
  * @returns 合并进行中时为 true。
  */
 async function mergeInProgress(repo: string): Promise<boolean> {
-	const result = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
-	return result.code === 0;
+	const gitDir = await resolveGitDir(repo);
+	if (gitDir === null) return false;
+	try {
+		return (await stat(join(gitDir, 'MERGE_HEAD'))).isFile();
+	} catch {
+		return false;
+	}
 }
 
 /**

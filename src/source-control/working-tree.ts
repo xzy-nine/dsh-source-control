@@ -50,10 +50,18 @@ export interface GitOptions {
  * `GIT_TERMINAL_PROMPT=0` 让缺凭据的远程操作直接失败，而不是挂在等待输入上；
  * `GIT_PAGER` 兜住 git 误判为交互终端的场合。
  *
+ * `LANGUAGE` / `LC_ALL` / `LANG` 固定为英文：git 的提示文本参与失败归类（`git-messages.ts`
+ * 按英文措辞匹配）与部分解析，随系统语言变化会让这两处行为不一致。父进程已显式给出这些
+ * 键时保留用户取值。
+ *
+ * `GIT_OPTIONAL_LOCKS=0` 只加在只读命令上：它让 git 跳过「刷新索引」这类可选加锁，
+ * 读操作因此不必等待写锁、也不会在仓库里留下锁文件。写命令不能设它，否则索引可能不落盘。
+ *
+ * @param readOnly - 本次命令是否只读。
  * @returns 传给子进程的环境变量。
  */
-export function gitEnvironment(): NodeJS.ProcessEnv {
-	return {
+export function gitEnvironment(readOnly = false): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		GIT_TERMINAL_PROMPT: '0',
 		GIT_PAGER: 'cat',
@@ -64,6 +72,11 @@ export function gitEnvironment(): NodeJS.ProcessEnv {
 		GIT_ASKPASS: '',
 		SSH_ASKPASS: '',
 	};
+	if (env.LANGUAGE === undefined) env.LANGUAGE = 'en';
+	if (env.LC_ALL === undefined) env.LC_ALL = 'en_US.UTF-8';
+	if (env.LANG === undefined) env.LANG = 'en_US.UTF-8';
+	if (readOnly) env.GIT_OPTIONAL_LOCKS = '0';
+	return env;
 }
 
 /** 一条工作区变更：索引与工作区各自的状态码。 */
@@ -550,7 +563,7 @@ function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
 		command: 'git',
 		args,
 		cwd,
-		env: gitEnvironment(),
+		env: gitEnvironment(isReadOnly(args)),
 		onChild: (child) => { liveChildren.add(child); },
 		onSettled: (child) => { liveChildren.delete(child); },
 	});

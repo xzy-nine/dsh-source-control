@@ -154,8 +154,35 @@ export function clearDiscoveryCache(): void {
 	discoveryCache.clear();
 }
 
-/* 仓库写命令会改变目录与仓库位置，命令结束后立即作废发现缓存。 */
-onRepositoryWrite(() => { clearDiscoveryCache(); });
+/**
+ * 作废受某个仓库影响的发现结果缓存。
+ *
+ * 缓存键以工作区根开头，因此「工作区根是目标路径的祖先」或「目标路径是工作区根的祖先」时
+ * 该项才受影响：前者是该仓库所在的工作区，后者表示工作区根本身位于该仓库内。别的目录下的
+ * 工作区与本次改动无关，全量清空会让它们下次各自重新扫描。
+ *
+ * @param repo - 发生写操作的仓库或工作树路径。
+ * @returns 无。
+ */
+export function invalidateDiscoveryCacheFor(repo: string): void {
+	const target = nodeId(repo);
+	if (target === '') return;
+	for (const key of [...discoveryCache.keys()]) {
+		const separator = key.indexOf('\0');
+		const root = separator === -1 ? key : key.slice(0, separator);
+		/*
+		 * 键里的工作区根是调用方传入的原样写法，与目标路径的写法未必一致（尾分隔符、盘符大小写、
+		 * 分隔符方向），比较前按同一规则归一。
+		 */
+		const normalized = nodeId(root);
+		if (normalized === target || normalized.startsWith(`${target}/`) || target.startsWith(`${normalized}/`)) {
+			discoveryCache.delete(key);
+		}
+	}
+}
+
+/* 仓库写命令会改变目录与仓库位置，命令结束后作废受影响的发现缓存。 */
+onRepositoryWrite((repo) => { invalidateDiscoveryCacheFor(repo); });
 
 /**
  * 把路径规范化为节点标识。

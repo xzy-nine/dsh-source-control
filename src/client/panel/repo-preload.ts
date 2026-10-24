@@ -46,6 +46,14 @@ export interface PreloadOptions {
  */
 const REFRESH_COOLDOWN_MS = 30_000;
 
+/**
+ * 两次完整目录扫描之间的最短间隔（毫秒）。
+ *
+ * 持久化位置命中时只需核对已知路径，但位置本身可能过期（仓库被移动、删除或新增）。
+ * 按此间隔跟一次完整扫描即可纠正，不必每次重取都扫。
+ */
+const FULL_SCAN_INTERVAL_MS = 10 * 60_000;
+
 /** 一个工作区的预加载状态。 */
 interface WorkspaceEntry {
 	readonly root: string;
@@ -65,6 +73,8 @@ interface WorkspaceEntry {
 	generation: number;
 	/** 最近一次取数完成或开始的时刻；用于重取冷却。 */
 	refreshedAt: number;
+	/** 最近一次完整目录扫描的时刻；用于完整扫描的节流。 */
+	lastFullScanAt: number;
 	/**
 	 * 取数进行期间到达的结构重取请求。
 	 *
@@ -186,6 +196,7 @@ function createEntry(root: string): WorkspaceEntry {
 		controller: null,
 		generation: 0,
 		refreshedAt: 0,
+		lastFullScanAt: 0,
 		pendingRefresh: false,
 	};
 }
@@ -266,10 +277,35 @@ function applyEnriched(entry: WorkspaceEntry, batch: readonly string[], enriched
 }
 
 /**
+ * 一次补齐请求携带的仓库数上限。
+ *
+ * 补齐对每个仓库读工作树登记与 `.gitmodules`，仓库多时一次下发会让宿主同时做大量文件读取，
+ * 并把结果挤在同一批响应里。分批后每批完成即发布一次快照，树因此逐步长出工作树与子模块节点。
+ */
+const ENRICH_BATCH_SIZE = 8;
+
+/**
+ * 把一组路径切成每批不超过给定大小的批次。
+ *
+ * @param paths - 全部路径。
+ * @param size - 每批上限；小于 1 时按 1 处理。
+ * @returns 批次列表。
+ */
+export function chunkPaths(paths: readonly string[], size: number): string[][] {
+	// NaN 经 Math.max 仍是 NaN，循环步长因此为 NaN、一批都切不出来；先收敛到有限整数。
+	const limit = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : 1;
+	const batches: string[][] = [];
+	for (let index = 0; index < paths.length; index += limit) {
+		batches.push(paths.slice(index, index + limit));
+	}
+	return batches;
+}
+
+/**
  * 补齐全部顶层仓库的工作树与子模块。
  *
- * 一次下发全部尚未补齐的仓库，不按批切分。空结果与失败按路径累计次数重试，到上限后按
- * 「没有工作树与子模块」处理。
+ * 按 {@link ENRICH_BATCH_SIZE} 分批下发，每批完成即发布一次快照。空结果与失败按路径累计
+ * 次数重试，到上限后按「没有工作树与子模块」处理。
  *
  * @param entry - 预加载状态。
  * @param controller - 本轮取消控制器。
@@ -284,13 +320,16 @@ async function enrichAll(entry: WorkspaceEntry, controller: AbortController): Pr
 		if (pending.length === 0) return;
 		/** 本批是否有需要重试的路径；由 runEnrichBatch 的回调写入。 */
 		const state = { retry: false };
-		await runEnrichBatch(pending, {
-			claims: entry.claims,
-			isCancelled: cancelled,
-			fetchEnriched: (batch) => enrichRepositories(entry.root, batch, controller.signal),
-			requestRetry: () => { state.retry = true; },
-			write: (batch, enriched) => { applyEnriched(entry, batch, enriched); },
-		});
+		for (const batch of chunkPaths(pending, ENRICH_BATCH_SIZE)) {
+			if (cancelled()) return;
+			await runEnrichBatch(batch, {
+				claims: entry.claims,
+				isCancelled: cancelled,
+				fetchEnriched: (paths) => enrichRepositories(entry.root, paths, controller.signal),
+				requestRetry: () => { state.retry = true; },
+				write: (paths, enriched) => { applyEnriched(entry, paths, enriched); },
+			});
+		}
 		if (!state.retry || cancelled()) return;
 	}
 }
@@ -354,10 +393,19 @@ function start(entry: WorkspaceEntry): void {
 			const result = await discoverRepositories(entry.root, { shallow: true }, controller.signal);
 			if (cancelled()) return;
 			applyDiscovery(entry, result);
-			if (result.usedCache) {
-				// 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
+			/*
+			 * 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
+			 *
+			 * 不每次都扫：持久化位置命中时本可以只核对已知路径，每次都跟一次全目录扫描会让
+			 * 「命中缓存」反而更慢。改为按 {@link FULL_SCAN_INTERVAL_MS} 节流，另外在快路径
+			 * 结果为空时立即重扫——那说明缓存整体失效，只能靠完整扫描找回。
+			 */
+			const now = Date.now();
+			const stale = now - entry.lastFullScanAt >= FULL_SCAN_INTERVAL_MS;
+			if (result.usedCache && (result.nodes.length === 0 || stale)) {
 				const corrected = await discoverRepositories(entry.root, { shallow: true, fullScan: true }, controller.signal);
 				if (cancelled()) return;
+				entry.lastFullScanAt = Date.now();
 				applyDiscovery(entry, corrected);
 			}
 			await enrichAll(entry, controller);

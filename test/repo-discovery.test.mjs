@@ -264,6 +264,38 @@ test('discoverRepositories：TTL 缓存返回同一对象，clearDiscoveryCache 
 	assert.notEqual(scoped, first, '不同 maxDepth 不共用缓存');
 });
 
+test('invalidateDiscoveryCacheFor：只作废受影响的工作区，别的目录保留', async () => {
+	const { discoverRepositories, clearDiscoveryCache, invalidateDiscoveryCacheFor } = await import(pathToFileURL(discoveryPath).href);
+	clearDiscoveryCache();
+	const inside = makeTree();
+	const other = makeTree();
+
+	const insideFirst = await discoverRepositories(inside.root);
+	const otherFirst = await discoverRepositories(other.root);
+
+	// 目标位于第一个工作区之内：该工作区受影响，另一个不受影响。
+	const repoInside = insideFirst.nodes.find((node) => node.kind === 'repo');
+	assert.notEqual(repoInside, undefined);
+	invalidateDiscoveryCacheFor(repoInside.path);
+
+	const insideAgain = await discoverRepositories(inside.root);
+	const otherAgain = await discoverRepositories(other.root);
+	assert.notEqual(insideAgain, insideFirst, '受影响的工作区应重新扫描');
+	assert.equal(otherAgain, otherFirst, '别的工作区继续命中缓存');
+});
+
+test('invalidateDiscoveryCacheFor：工作区根位于目标仓库之内时同样作废', async () => {
+	const { discoverRepositories, clearDiscoveryCache, invalidateDiscoveryCacheFor } = await import(pathToFileURL(discoveryPath).href);
+	clearDiscoveryCache();
+	const tree = makeTree();
+	const first = await discoverRepositories(tree.root);
+
+	// 目标取工作区根的祖先：工作区根落在该目标之内。
+	invalidateDiscoveryCacheFor(dirname(tree.root));
+	const again = await discoverRepositories(tree.root);
+	assert.notEqual(again, first, '祖先路径的写应作废该工作区的缓存');
+});
+
 test('discoverRepositories：knownRepos 快路径与全部失效时回退完整扫描', async () => {
 	const { discoverRepositories, clearDiscoveryCache } = await import(pathToFileURL(discoveryPath).href);
 	clearDiscoveryCache();

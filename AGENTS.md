@@ -54,7 +54,7 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
-  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、cache.ts 提交图窗口缓存
+  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、auto-load.ts 触底续取判据
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
@@ -91,7 +91,8 @@ JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），�
 其 `parseStatusSnapshot` 解析 `status --porcelain=v2 --branch`（条目与分支上游来自同一次调用，
 v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，
 无 git 调用，可被测试直接导入，分支同步解析见其 `BRANCH_SYNC_FORMAT` 与 `parseBranchSync`；
-`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现）；
+`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现，其合并判定读 git 目录下的
+`MERGE_HEAD` 文件，不起子进程）；
 `git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `runGit` **不设超时**：等待由 git 自身承担（远端不可达、凭据缺失它自己会结束），提交与推送还要
 串行跑仓库自己的钩子（如 Gradle 的 `ktlintFormat`），其耗时不由插件限制。执行层只登记在跑的子进程，
@@ -103,6 +104,9 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 与索引变化，而缓存失效只覆盖插件自己执行的写命令 —— 插件之外的写（编辑器、外部命令）无从感知，
 子模块的内部改动更会改变**父仓库** `status` 的结果（父仓库把子模块的内部改动记成自身的一条条目），
 因此这三类命令一律现读现用，不进结果缓存。
+子进程环境由 `gitEnvironment(readOnly)` 生成：`LANGUAGE` / `LC_ALL` / `LANG` 固定为英文（失败归类与
+部分解析依赖英文措辞，父进程已显式给出时保留用户取值）；`GIT_OPTIONAL_LOCKS=0` 只加在只读命令上，
+写命令不设，否则索引可能不落盘。
 `commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
 用于结束索引与 HEAD 无差异的待合并状态。
 `discardPaths` 区分子模块条目与普通路径：索引模式 `160000` 的条目（由 `git ls-files -s` 判定，
@@ -209,9 +213,9 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 也是并行的：仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，
 不重复读；首屏下引用集合与分支列表由**同一次** `for-each-ref` 产出（`REF_BRANCH_FORMAT` 与
 `parseRefsAndBranches`，同时取 `%(HEAD)`、`%(refname:short)`、`%(symref)` 与引用字段），因此不为此多起
-子进程。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
-只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
-用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
+子进程。提交图窗口缓存只在宿主（`source-control/host-cache.ts`），客户端不自建一份：键为「仓库 + HEAD +
+全部取数参数」，命中即最近使用，按容量淘汰最久未用的一项，写操作与 `invalidateCache` 按仓库（含祖先与
+后代）作废。客户端只保留渲染态（`lastPanelState` / `lastMaxCommits`）供重新挂载时首帧呈现。
 
 ## 刷新耗时
 
@@ -240,12 +244,13 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 仓库树的取数不在面板重载的两路请求里：客户端插件激活后按**主视图当前会话**的工作区后台预加载
 （`panel/repo-preload.ts` 的 `activeWorkspaceOf`，判据是会话行的 `retainedBy.mainView`），只取这一个
 工作区，不遍历会话列表里的其它工作区。一个工作区依次做浅层发现、位置纠正、补齐工作树与子模块、
-读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。各步都一次下发全部仓库，
-不按批切分、不设并发上限。领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
+读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。补齐按
+`ENRICH_BATCH_SIZE`（8）分批下发，每批完成即发布一次快照；领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
 `git for-each-ref --format=… refs/heads`（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，`%(HEAD)` 标出
 当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、上游为空、
 领先/落后为 0。单个仓库失败以空值兜底，`path` 原样回显入参。仓库发现逐层并行，结果进 60 秒 TTL
-的内存缓存（容量 16，超出按插入序淘汰），任何仓库写命令结束后作废该缓存；宿主 `apply()` 注册路由
+的内存缓存（容量 16，超出按插入序淘汰），仓库写命令结束后按仓库（含祖先与后代）作废受影响的条目
+（`invalidateDiscoveryCacheFor`）；宿主 `apply()` 注册路由
 后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
 失败静默。
 
@@ -411,7 +416,8 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler；子模块声明的越界路径被拒绝 |
 | `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照；冲突合并后不作废缓存即读到合并状态 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
-| `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
+| `host-cache.test.mjs` | 宿主缓存：提交图键含 HEAD、命中即最近使用、按仓库（含祖先与后代）失效、快照的 HEAD 守卫 |
+| `git-environment.test.mjs` | 子进程环境：只读命令加 `GIT_OPTIONAL_LOCKS=0`、写命令不加、输出语言固定且保留父进程取值 |
 | `draft-storage.test.mjs` | 会话级存储：读写往返、非法值与缺失回退、按仓库根的草稿键 |
 | `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
