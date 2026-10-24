@@ -237,7 +237,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 			return output.length - 1;
 		};
 		const forkLanes: Array<{ lane: number; colour: string }> = [];
-		for (let w = inbound ? 1 : 0; w < parentIds.length; w++) {
+		for (let w = 1; w < parentIds.length; w++) {
 			const parent = parentIds[w];
 			const lane = placeLane(parent, parentColour(parent));
 			const colour = (output[lane] as Lane).colour;
