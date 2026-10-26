@@ -22,6 +22,8 @@ function makeReact() {
 		useMemo: (fn) => fn(),
 		useCallback: (fn) => fn,
 		useRef: (init) => ({ current: init ?? null }),
+		// 真实 React 的 memo 返回组件；冒烟只关心调用形态，原样返回。
+		memo: (component) => component,
 		Fragment: Symbol('Fragment'),
 	};
 	return React;

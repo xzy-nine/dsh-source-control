@@ -14,7 +14,7 @@ import { CommitGraph } from '../graph/index.ts';
 import { PublishIcon, RepoIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { ChangeGroup, CommitDetail } from './changes.ts';
-import { interfaceLanguage, needsTranslation } from './language.ts';
+import { interfaceLanguage, needsTranslationMemo } from './language.ts';
 import { RepoRow } from './repo-row.ts';
 import { anyBusy } from './busy.ts';
 import { commitButtonDisabledOf } from './submit-state.ts';
@@ -86,7 +86,7 @@ export interface RepoSectionProps {
  * @param props - 见 {@link RepoSectionProps}。
  * @returns 分区元素。
  */
-export function RepoSection({
+function RepoSectionView({
 	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
 	onToggleSection, onOpenSettings, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
@@ -138,6 +138,8 @@ export function RepoSection({
 		}),
 	);
 }
+
+export const RepoSection = React.memo(RepoSectionView);
 
 /** 更改分区。 */
 export interface ChangesSectionProps extends ChangeActions {
@@ -198,23 +200,26 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly lastRefresh: string;
 }
 
+/** 提交框的属性：更改分区属性中与提交信息、AI 与主按钮有关的部分。 */
+export type CommitBoxProps = Pick<ChangesSectionProps,
+	| 'entries' | 'busy' | 'phase' | 'head' | 'message' | 'onMessageChange' | 'amend' | 'onToggleAmend'
+	| 'hooksActive' | 'runHooks' | 'onToggleRunHooks' | 'onStash' | 'onAbortMerge'
+	| 'showTranslate' | 'translateBusy' | 'onTranslate' | 'aiBusy' | 'aiWarning' | 'aiStats' | 'onAiCommit'
+	| 'showSyncButton' | 'syncBehind' | 'syncAhead' | 'onSync' | 'showPublishButton' | 'onPublish'
+	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging'>;
+
 /**
- * 更改分区：标题栏 + 提交框 + 两个变更分组。
+ * 提交框：提交信息、AI 入口与主按钮；只随这些属性重渲染。
  *
- * @param props - 见 {@link ChangesSectionProps}。
- * @returns 分区元素。
+ * @param props - 见 {@link CommitBoxProps}。
+ * @returns 提交框元素。
  */
-export function ChangesSection({
-	entries, busy, phase, workingTreePath, head, message, onMessageChange, amend, onToggleAmend, onStash,
-	hooksActive, runHooks, onToggleRunHooks,
-	showTranslate, translateBusy, onTranslate,
-	aiBusy, aiWarning, aiStats, onAiCommit, showSyncButton, syncBehind, syncAhead, onSync,
-	showPublishButton, onPublish,
-	canSubmit, onSubmit, onRefresh, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-	stagePaths, unstagePaths, discardPaths, openDiff,
-	onAddToGitignore, onAddToLocalExclude, hasLocalExclude, onShowLocalExclude,
-	merging, onAbortMerge, refreshing, lastRefresh,
-}: ChangesSectionProps): React.ReactElement {
+function CommitBoxView({
+	entries, busy, phase, head, message, onMessageChange, amend, onToggleAmend, hooksActive, runHooks, onToggleRunHooks,
+	onStash, onAbortMerge, showTranslate, translateBusy, onTranslate, aiBusy, aiWarning, aiStats, onAiCommit,
+	showSyncButton, syncBehind, syncAhead, onSync, showPublishButton, onPublish, canSubmit, onSubmit,
+	hasLocalExclude, onShowLocalExclude, merging,
+}: CommitBoxProps): React.ReactElement {
 	/*
 	 * 右侧动作组：贮藏固定在最右端，其余按出现顺序追加，不占固定位置。
 	 *
@@ -254,6 +259,96 @@ export function ChangesSection({
 	}, React.createElement(IconArchiveOutlineRegular, { size: 14 }), '贮藏'));
 	return React.createElement(
 		'div',
+		{ className: css.commitBox },
+		(aiBusy || anyBusy(busy) || phase === 'loading') && React.createElement('div', { className: css.aiLoadingBar }),
+		React.createElement('div', { className: css.commitInputWrap },
+			React.createElement('textarea', {
+				className: css.commitInput,
+				placeholder: aiBusy ? 'AI 正在生成…' : '提交变更内容(Ctrl+Enter 在 ' + (head ?? 'master') + '提交)',
+				value: message,
+				disabled: aiBusy,
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { onMessageChange(event.currentTarget.value); },
+				onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+					if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+						event.preventDefault();
+						onSubmit();
+					}
+				},
+			}),
+			React.createElement('div', { className: css.commitInputActions },
+				React.createElement('button', {
+					type: 'button', className: cx(css.commitInputBtn, aiBusy && css.isBusy), title: 'AI 辅助提交',
+					disabled: aiBusy || busy.commit,
+					onClick: onAiCommit,
+				}, React.createElement(IconSparkleRegular, { size: 14 })),
+				React.createElement('button', {
+					type: 'button', className: css.commitInputBtn, title: '选择提交方式',
+				}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+			),
+		),
+		aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
+		merging && React.createElement('div', { className: css.mergeHint }, '合并中：提交即结束合并，提交信息留空时沿用 git 生成的合并信息。'),
+		aiStats !== null && React.createElement('div', { className: css.commitAiStats },
+			String(aiStats.tps) + ' tok/s',
+			' · 输入 ' + String(aiStats.inputTokens),
+			' · 输出 ' + String(aiStats.outputTokens),
+			' · 缓存读 ' + String(aiStats.cacheReadTokens),
+			' · 缓存写 ' + String(aiStats.cacheWriteTokens),
+			' · ' + aiStats.elapsed + '+' + aiStats.ttft,
+		),
+		React.createElement('div', { className: css.commitActionsRow },
+			React.createElement('span', { className: css.commitActionsLeft },
+				React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
+				// 一个勾选项同时管提交与推送：主按钮无论落在提交、同步还是发布上，它都在同一处。
+				hooksActive && React.createElement('span', { className: css.githookSlot },
+					React.createElement(Checkbox, {
+						checked: runHooks, onChange: onToggleRunHooks,
+						label: 'githook', title: '取消后本次提交与推送跳过 pre-commit / pre-push 等钩子（--no-verify），下次恢复',
+					}),
+				),
+			),
+			React.createElement('span', { className: css.commitActionsRight }, ...rightActions),
+		),
+		showSyncButton
+			? React.createElement(Button, {
+				variant: 'primary', size: 'sm', disabled: busy.network || busy.history,
+				onClick: onSync,
+			}, '同步更改',
+				syncBehind > 0 && React.createElement('span', null, ' ↓' + String(syncBehind)),
+				syncAhead > 0 && React.createElement('span', null, ' ↑' + String(syncAhead)),
+			)
+			: showPublishButton
+				? React.createElement(Button, {
+					variant: 'primary', size: 'sm', disabled: busy.network,
+					title: '把当前分支推送到远程并建立跟踪',
+					onClick: onPublish,
+				}, React.createElement(PublishIcon), '发布')
+				: React.createElement(Button, {
+					variant: 'primary', size: 'sm',
+					disabled: commitButtonDisabledOf({ busy: busy.commit, canSubmit, messageEmpty: message.trim() === '', merging }),
+					onClick: onSubmit,
+				}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
+	);
+}
+
+const CommitBox = React.memo(CommitBoxView);
+
+/**
+ * 更改分区：标题栏 + 提交框 + 变更列表。
+ *
+ * 提交框与变更列表是两个独立子树：输入提交信息只重渲染提交框，条目与折叠状态变化只重渲染列表。
+ *
+ * @param props - 见 {@link ChangesSectionProps}。
+ * @returns 分区元素。
+ */
+export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
+	const {
+		entries, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
+		collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+		stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+	} = props;
+	return React.createElement(
+		'div',
 		{ className: cx(css.sec, css.workspace) },
 		React.createElement(
 			'div',
@@ -269,79 +364,20 @@ export function ChangesSection({
 		React.createElement(
 			'div',
 			{ className: css.workspaceBody },
-			// ── 提交框 ────────────────────────────────────────
-			React.createElement(
-				'div',
-				{ className: css.commitBox },
-				(aiBusy || anyBusy(busy) || phase === 'loading') && React.createElement('div', { className: css.aiLoadingBar }),
-				React.createElement('div', { className: css.commitInputWrap },
-					React.createElement('textarea', {
-						className: css.commitInput,
-						placeholder: aiBusy ? 'AI 正在生成…' : `提交变更内容(Ctrl+Enter 在 '${head ?? 'master'}'提交)`,
-						value: message,
-						disabled: aiBusy,
-						onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { onMessageChange(event.currentTarget.value); },
-						onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-							if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-								event.preventDefault();
-								onSubmit();
-							}
-						},
-					}),
-					React.createElement('div', { className: css.commitInputActions },
-						React.createElement('button', {
-							type: 'button', className: cx(css.commitInputBtn, aiBusy && css.isBusy), title: 'AI 辅助提交',
-							disabled: aiBusy || busy.commit,
-							onClick: onAiCommit,
-						}, React.createElement(IconSparkleRegular, { size: 14 })),
-						React.createElement('button', {
-							type: 'button', className: css.commitInputBtn, title: '选择提交方式',
-						}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
-					),
-				),
-				aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
-				merging && React.createElement('div', { className: css.mergeHint }, '合并中：提交即结束合并，提交信息留空时沿用 git 生成的合并信息。'),
-				aiStats !== null && React.createElement('div', { className: css.commitAiStats },
-					`${aiStats.tps} tok/s`,
-					` · 输入 ${aiStats.inputTokens}`,
-					` · 输出 ${aiStats.outputTokens}`,
-					` · 缓存读 ${aiStats.cacheReadTokens}`,
-					` · 缓存写 ${aiStats.cacheWriteTokens}`,
-					` · ${aiStats.elapsed}+${aiStats.ttft}`,
-				),
-				React.createElement('div', { className: css.commitActionsRow },
-					React.createElement('span', { className: css.commitActionsLeft },
-						React.createElement(Checkbox, { checked: amend, onChange: onToggleAmend, label: '修补上一次提交' }),
-						// 一个勾选项同时管提交与推送：主按钮无论落在提交、同步还是发布上，它都在同一处。
-						hooksActive && React.createElement('span', { className: css.githookSlot },
-							React.createElement(Checkbox, {
-								checked: runHooks, onChange: onToggleRunHooks,
-								label: 'githook', title: '取消后本次提交与推送跳过 pre-commit / pre-push 等钩子（--no-verify），下次恢复',
-							}),
-						),
-					),
-					React.createElement('span', { className: css.commitActionsRight }, ...rightActions),
-				),
-				showSyncButton
-					? React.createElement(Button, {
-						variant: 'primary', size: 'sm', disabled: busy.network || busy.history,
-						onClick: onSync,
-					}, '同步更改',
-						syncBehind > 0 && React.createElement('span', null, ` ↓${syncBehind}`),
-						syncAhead > 0 && React.createElement('span', null, ` ↑${syncAhead}`),
-					)
-					: showPublishButton
-						? React.createElement(Button, {
-							variant: 'primary', size: 'sm', disabled: busy.network,
-							title: '把当前分支推送到远程并建立跟踪',
-							onClick: onPublish,
-						}, React.createElement(PublishIcon), '发布')
-						: React.createElement(Button, {
-							variant: 'primary', size: 'sm',
-							disabled: commitButtonDisabledOf({ busy: busy.commit, canSubmit, messageEmpty: message.trim() === '', merging }),
-							onClick: onSubmit,
-						}, React.createElement(IconCheckOutlineRegular, { size: 15 }), '提交 Ctrl+Enter'),
-			),
+			React.createElement(CommitBox, {
+				entries, busy, phase,
+				head: props.head, message: props.message, onMessageChange: props.onMessageChange,
+				amend: props.amend, onToggleAmend: props.onToggleAmend,
+				hooksActive: props.hooksActive, runHooks: props.runHooks, onToggleRunHooks: props.onToggleRunHooks,
+				onStash: props.onStash, onAbortMerge: props.onAbortMerge,
+				showTranslate: props.showTranslate, translateBusy: props.translateBusy, onTranslate: props.onTranslate,
+				aiBusy: props.aiBusy, aiWarning: props.aiWarning, aiStats: props.aiStats, onAiCommit: props.onAiCommit,
+				showSyncButton: props.showSyncButton, syncBehind: props.syncBehind, syncAhead: props.syncAhead, onSync: props.onSync,
+				showPublishButton: props.showPublishButton, onPublish: props.onPublish,
+				canSubmit: props.canSubmit, onSubmit: props.onSubmit,
+				hasLocalExclude: props.hasLocalExclude, onShowLocalExclude: props.onShowLocalExclude,
+				merging: props.merging,
+			}),
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(
 				'div',
@@ -352,23 +388,60 @@ export function ChangesSection({
 				 */
 				phase === 'loading' && entries.length === 0
 					&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
-				ChangeGroup({
-					staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange, open: groupExpanded.staged, onToggleGroup: () => { toggleGroup('staged'); },
-					run, stagePaths, unstagePaths, discardPaths, openDiff,
-					onAddToGitignore, onAddToLocalExclude,
-				}),
-				ChangeGroup({
-					staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
-					groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange, open: groupExpanded.unstaged, onToggleGroup: () => { toggleGroup('unstaged'); },
-					run, stagePaths, unstagePaths, discardPaths, openDiff,
-					onAddToGitignore, onAddToLocalExclude,
-					forceShow: entries.some((e) => e.index !== ' ' && e.index !== '?'),
+				React.createElement(ChangeLists, {
+					entries, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+					stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
 				}),
 			),
 		),
 	);
 }
+
+/** 变更分组列表的属性：更改分区属性中与变更列表有关的部分。 */
+export type ChangeListsProps = Pick<ChangesSectionProps,
+	| 'entries' | 'busy' | 'workingTreePath' | 'collapsedByGroup' | 'groupExpanded'
+	| 'toggleChange' | 'toggleGroup' | 'run' | 'stagePaths' | 'unstagePaths' | 'discardPaths'
+	| 'openDiff' | 'onAddToGitignore' | 'onAddToLocalExclude'>;
+
+/**
+ * 变更分组列表：两个分组的折叠状态与条目。
+ *
+ * @param props - 见 {@link ChangeListsProps}。
+ * @returns 两个分组元素。
+ */
+function ChangeListsView({
+	entries, busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+}: ChangeListsProps): React.ReactElement {
+	// 已暂存一侧有条目时，未暂存分组即使为空也显示：折叠标题上的分组菜单仍需可达。
+	const forceShow = React.useMemo(
+		() => entries.some((entry) => entry.index !== ' ' && entry.index !== '?'),
+		[entries],
+	);
+	const toggleStaged = React.useCallback(() => { toggleGroup('staged'); }, [toggleGroup]);
+	const toggleUnstaged = React.useCallback(() => { toggleGroup('unstaged'); }, [toggleGroup]);
+	return React.createElement(
+		React.Fragment,
+		null,
+		React.createElement(ChangeGroup, {
+			staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
+			groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange,
+			open: groupExpanded.staged, onToggleGroup: toggleStaged,
+			run, stagePaths, unstagePaths, discardPaths, openDiff,
+			onAddToGitignore, onAddToLocalExclude,
+		}),
+		React.createElement(ChangeGroup, {
+			staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
+			groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange,
+			open: groupExpanded.unstaged, onToggleGroup: toggleUnstaged,
+			run, stagePaths, unstagePaths, discardPaths, openDiff,
+			onAddToGitignore, onAddToLocalExclude,
+			forceShow,
+		}),
+	);
+}
+
+const ChangeLists = React.memo(ChangeListsView);
 
 /** 图形分区。 */
 export interface GraphSectionProps extends CommitCacheMaps {
@@ -444,7 +517,7 @@ export interface GraphSectionProps extends CommitCacheMaps {
  * @param props - 见 {@link GraphSectionProps}。
  * @returns 分区元素。
  */
-export function GraphSection({
+function GraphSectionView({
 	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
 	localTip, remoteTip, baseTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
@@ -460,9 +533,49 @@ export function GraphSection({
 	 *
 	 * 已翻译或正在翻译时一律保留：进行中隐藏会让按钮在点击后消失，进度与取消都无处可点。
 	 */
-	const visibleTranslatable = visible.some((item) => needsTranslation(item.text, interfaceLanguage()));
+	const locale = interfaceLanguage();
+	const visibleTranslatable = React.useMemo(
+		() => visible.some((item) => needsTranslationMemo(item.text, locale)),
+		[visible, locale],
+	);
 	const showGraphTranslate = translateReady && (graphTranslated || graphTranslating !== null || visibleTranslatable);
 	const translating = graphTranslating !== null;
+	/** 选中提交行：传给提交图，属性不变时已有的行不重渲染。 */
+	const handleSelect = React.useCallback((hash: string, additive?: boolean) => {
+		onToggleCommit(hash, additive);
+	}, [onToggleCommit]);
+	/** 展开块内的文件夹折叠。 */
+	const handleDetailToggle = React.useCallback((path: string) => {
+		onToggleChange('detail', path);
+	}, [onToggleChange]);
+	/** 展开块内的文件打开。 */
+	const handleDetailOpen = React.useCallback((path: string, isNew: boolean) => {
+		if (detail === null) return;
+		// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
+		void onOpenDiff(detail.commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash);
+	}, [detail, onOpenDiff]);
+	/** 展开块内容：只随选中提交与详情数据变化。 */
+	const renderDetail = React.useCallback(({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
+		? React.createElement(
+			React.Fragment,
+			null,
+			// 对比模式在文件列表前标出方向：旧 → 新。
+			detail.compareWith !== null
+				? React.createElement('div', { className: css.detailCompare },
+					'对比 ' + detail.compareWith.hash.slice(0, 7) + ' → ' + commit.hash.slice(0, 7))
+				// 未进入对比时提示入口：按住修饰键点击另一提交即可对比。
+				: React.createElement('div', { className: css.detailCompareHint },
+					'按住 ' + COMPARE_MODIFIER + ' 点击另一个提交可对比两者'),
+			React.createElement(CommitDetail, {
+				files: detail.files,
+				busy: busy.read,
+				loading: detail.loading,
+				collapsed: detailCollapsed,
+				onToggle: handleDetailToggle,
+				onOpen: handleDetailOpen,
+			}),
+		)
+		: null), [detail, detailCollapsed, busy.read, handleDetailOpen, handleDetailToggle]);
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.graphSec) },
@@ -531,7 +644,7 @@ export function GraphSection({
 					remoteTip,
 					baseTip,
 					upstream,
-					onSelect: (hash: string, additive?: boolean) => { onToggleCommit(hash, additive); },
+					onSelect: handleSelect,
 					onLoadMore,
 					moreCommitsAvailable,
 					onContextMenu,
@@ -552,29 +665,10 @@ export function GraphSection({
 					onCancelTranslateCommit,
 					onVisibleCommits: setVisible,
 					onHoverCommit,
-					renderDetail: ({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash
-						? React.createElement(
-							React.Fragment,
-							null,
-							// 对比模式在文件列表前标出方向：旧 → 新。
-							detail.compareWith !== null
-								? React.createElement('div', { className: css.detailCompare },
-									`对比 ${detail.compareWith.hash.slice(0, 7)} → ${commit.hash.slice(0, 7)}`)
-								// 未进入对比时提示入口：按住修饰键点击另一提交即可对比。
-								: React.createElement('div', { className: css.detailCompareHint },
-									`按住 ${COMPARE_MODIFIER} 点击另一个提交可对比两者`),
-							React.createElement(CommitDetail, {
-								files: detail.files,
-								busy: busy.read,
-								loading: detail.loading,
-								collapsed: detailCollapsed,
-								onToggle: (path: string) => { onToggleChange('detail', path); },
-								// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
-								onOpen: (path: string, isNew: boolean) => { void onOpenDiff(commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash); },
-							}),
-						)
-						: null),
+					renderDetail,
 				}))
 		),
 	);
 }
+
+export const GraphSection = React.memo(GraphSectionView);

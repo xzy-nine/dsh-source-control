@@ -6,9 +6,22 @@
  */
 import React from 'react';
 import { loadCommitStatsAndMessage, translateText } from '../api/index.ts';
+import { trimOldest } from '../shared/cache.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
 import { interfaceLanguage, translateCommitMessage } from './language.ts';
 import type { CommitStats } from '../shared/types.ts';
+
+/** 改动统计缓存的条目上限。 */
+const STATS_CACHE_LIMIT = 1200;
+
+/** 完整提交信息缓存的条目上限。 */
+const MESSAGE_CACHE_LIMIT = 1200;
+
+/** 译文缓存的条目上限。 */
+const TRANSLATION_CACHE_LIMIT = 1200;
+
+/** 译文原文缓存的条目上限；与译文缓存同步写入，各自按插入序淘汰。 */
+const TRANSLATION_SOURCE_CACHE_LIMIT = 1200;
 
 /** 提交改动统计 hook 的入参。 */
 export interface UseCommitStatsOptions {
@@ -200,12 +213,15 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 				deletions += typeof file.deletions === 'number' ? file.deletions : 0;
 			}
 			const now = Date.now();
-			statsStamps.current = new Map(statsStamps.current).set(hash, now);
-			setStatsByHash((previous) => new Map(previous).set(hash, { files: files.length, additions, deletions }));
+			statsStamps.current = trimOldest(new Map(statsStamps.current).set(hash, now), STATS_CACHE_LIMIT);
+			setStatsByHash((previous) => trimOldest(
+				new Map(previous).set(hash, { files: files.length, additions, deletions }),
+				STATS_CACHE_LIMIT,
+			));
 			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
 			if (message !== null) {
-				messageStamps.current = new Map(messageStamps.current).set(hash, now);
-				setMessageByHash((previous) => new Map(previous).set(hash, message));
+				messageStamps.current = trimOldest(new Map(messageStamps.current).set(hash, now), MESSAGE_CACHE_LIMIT);
+				setMessageByHash((previous) => trimOldest(new Map(previous).set(hash, message), MESSAGE_CACHE_LIMIT));
 			}
 		}).catch(() => {
 			// 统计失败只影响卡片上的那一行，不再提示。
@@ -240,9 +256,18 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	 * @returns 无。
 	 */
 	const storeTranslation = React.useCallback((hash: string, source: string, translated: string) => {
-		translationStamps.current = new Map(translationStamps.current).set(hash, Date.now());
-		setTranslatedByHash((previous) => new Map(previous).set(hash, translated));
-		setTranslatedFromByHash((previous) => new Map(previous).set(hash, source));
+		translationStamps.current = trimOldest(
+			new Map(translationStamps.current).set(hash, Date.now()),
+			TRANSLATION_CACHE_LIMIT,
+		);
+		setTranslatedByHash((previous) => trimOldest(
+			new Map(previous).set(hash, translated),
+			TRANSLATION_CACHE_LIMIT,
+		));
+		setTranslatedFromByHash((previous) => trimOldest(
+			new Map(previous).set(hash, source),
+			TRANSLATION_SOURCE_CACHE_LIMIT,
+		));
 	}, []);
 
 	/**

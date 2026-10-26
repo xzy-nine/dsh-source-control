@@ -53,21 +53,23 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
-  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、auto-load.ts 触底续取判据
+  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、row-model.ts 行文本与引用标记、
+                    window-range.ts 窗口区间、auto-load.ts 触底续取判据
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
                     terminal-run.ts 终端执行
   src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
-  src/client/shared/ 共享契约与声明：types.ts、assets.d.ts、md5.d.ts
+  src/client/shared/ 共享契约与声明：types.ts、cache.ts（有界缓存与派生值缓存）、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
 Docs/               中文文档：功能说明.md、功能缺口.md、实现计划与数据层方案
 scripts/            客户端打包脚本（build-client.mjs）与耗时度量（bench-first-paint.mjs 首屏 /
-                    bench-refresh.mjs 刷新 / bench-discovery.mjs 仓库发现 / bench-enrich.mjs 补齐 /
-                    bench-layout.mjs 泳道布局 / bench-verify.mjs 命令往返；均需先 build:host）
+                    bench-refresh.mjs 刷新 / bench-ui.mjs 显示到界面 / bench-discovery.mjs 仓库发现 /
+                    bench-enrich.mjs 补齐 / bench-layout.mjs 泳道布局 / bench-verify.mjs 命令往返；
+                    均需先 build:host）
 assets/icons/       引用标记用的 SVG
 ```
 
@@ -237,7 +239,8 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 提交行（`withUncommittedCount`，含条目数由零变正时补出该行），文案与客户端同格式。
 
 度量：`scripts/bench-refresh.mjs`（刷新路径，含 `withRepoInfo` 两种模式对照）、`bench-first-paint.mjs`
-（首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
+（首屏）、`bench-ui.mjs`（显示到界面：变更树、提交合并复用率、行文本与标记的冷态与命中态）、
+`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
 `bench-verify.mjs`。`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
 
 仓库树的取数不在面板重载的两路请求里：客户端插件激活后按**主视图当前会话**的工作区后台预加载
@@ -252,6 +255,27 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 （`invalidateDiscoveryCacheFor`）；宿主 `apply()` 注册路由
 后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
 失败静默。
+
+## 显示到界面
+
+「数据已到手 → 界面呈现」这一段只做必要工作：状态按帧步进、派生值按引用记忆化、缓存有容量上限。
+
+| 机制 | 落点 | 约束 |
+|---|---|---|
+| 窗口状态按起始行步进 | `graph/index.ts` 的 `topIndex` 与 `graph/window-range.ts` | 滚动事件经 `requestAnimationFrame` 合并（缺失时退回 `setTimeout(0)`），起始行未变不写状态；行偏移或可视高度变化后按当前滚动位置重算 |
+| 行级 `memo` | `graph/index.ts` 的 `LaneCell`/`RefChip`/`IndicatorRow`/`DetailGutter`/`CommitRow`/`CommitGraph`、`changes.ts` 的 `ChangeNodeRow`/`CommitDetail`/`ChangeGroup`、`sections.ts` 的三个分区与 `CommitBox`/`ChangeLists`、`repo-row.ts` 的 `RepoRow` | 传进去的回调必须是 `useCallback` 或模块级稳定值；行组件按「哈希 + 文本」这类稳定参数自建闭包 |
+| 提交框与变更列表分拆 | `sections.ts` 的 `CommitBox` 与 `ChangeLists` | 输入提交信息只重渲染提交框；同文件内 `css.commitBox` 须排在 `css.changesScroll` 之前，两个分组的 `staged: true`/`staged: false` 须排在其后（`primitives.test.mjs` 按文本顺序断言） |
+| 派生值按身份缓存 | `graph/row-model.ts` 的 `titleOf`/`labelsOf`、`panel/changes.ts` 的 `guidesOf` | `labelsOf` 的缓存键含 HEAD，检出后自动重算 |
+| 派生值按键缓存 | `graph/row-model.ts` 的 `avatarUrlsOf`、`panel/language.ts` 的 `needsTranslationMemo` | 上限各 1024，键含语言或边长 |
+| 悬停缓存容量 | `panel/use-commit-stats.ts` 的 `statsByHash`/`messageByHash`/`translatedByHash`/`translatedFromByHash` | 各自独立上限 1200，写入后按插入序淘汰；与既有 TTL 清理正交 |
+| 对象身份复用 | `panel/commit-diff.ts` 的 `mergeCommits`/`mergeEntries` | 判据复用 `commitsEqual`/`entriesEqual`（提交只比影响图形的字段）；顺序取新列表，**总是返回新数组**，`full` 刷新不短路 |
+| 时钟门控 | `panel/index.ts` 的 `refreshClock` | 只按 `document.visibilityState === 'visible'` 推进；`visibilitychange` 时启停并立即推进一次 |
+
+`src/client/shared/cache.ts` 是这些缓存的基元（`LruMap`/`forObject`/`forKey`/`mapsEqual`/`trimOldest`），
+纯模块无 React 依赖。新增缓存先在此取基元，不另写淘汰逻辑。
+
+列表替换后未变化的元素保持对象身份（`mergeCommits`/`mergeEntries`），下游按 `commits`/`entries` 引用记忆化的
+泳道布局与变更树因此不重算。
 
 ## 首屏空白
 
@@ -423,10 +447,13 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
 | `repo-preload.test.mjs` | 仓库树预加载：只取主视图当前会话的工作区、四步取数顺序与逐阶段发布、在途去重与 `force`、失败置 error、`dropWorkspace` 后重取、补齐空结果重试到上限 |
 | `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
-| `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出 |
+| `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出；`mergeCommits`/`mergeEntries` 的未变项复用、变项替换、顺序取新列表且总返回新数组 |
+| `cache.test.mjs` | 有界缓存基元：`LruMap` 的 `peek` 不改次序、`get` 置新与超限按比例淘汰，`forObject` 按对象隔离且同一对象同一引用，`forKey` 淘汰后重算，`mapsEqual`，`trimOldest` |
+| `window-range.test.mjs` | 窗口区间：空列表、顶部与底部越界、视口高度为 0、展开详情的非均匀行高、overscan 边界 |
+| `row-model.test.mjs` | 行模型：引用标记种类与 HEAD 变化后的重算、缓存引用稳定、未提交行与贮藏行文案、头像候选地址 |
 | `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
-| `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
+| `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序；文件夹计数与改造前一致（含多层与空目录） |
 | `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |
 | `worktree-branches.test.mjs` | 工作树登记：`core` 段解析、`gitdir` 还原工作树根、与 `git worktree list` 逐条对照、子模块与裸仓库的主工作树推导、登记项残留；占用分支判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
 | `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |

@@ -149,12 +149,36 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
 	/*
 	 * 「上次刷新」文案的时钟：按固定间隔推进，让相对时间从「刚刚」变成「n 分钟前」。
-	 * 只在面板可见时跑——不可见时无人看，推进只会触发无意义的重渲染。
+	 *
+	 * 只在面板可见时跑——不可见时无人看，推进只会触发无意义的重渲染。页签重新可见时立即推进
+	 * 一次，切回时文案不必等到下一个周期才更新。
 	 */
 	const [refreshClock, setRefreshClock] = React.useState<number>(() => Date.now());
 	React.useEffect(() => {
-		const timer = window.setInterval(() => { setRefreshClock(Date.now()); }, 30_000);
-		return () => { window.clearInterval(timer); };
+		let timer: number | undefined;
+		/** 开始推进；已在推进时保持原定时器。 */
+		const start = (): void => {
+			if (timer !== undefined) return;
+			timer = window.setInterval(() => { setRefreshClock(Date.now()); }, 30_000);
+		};
+		/** 停止推进。 */
+		const stop = (): void => {
+			if (timer === undefined) return;
+			window.clearInterval(timer);
+			timer = undefined;
+		};
+		/** 按当前可见性启停。 */
+		const sync = (): void => {
+			if (document.visibilityState !== 'visible') { stop(); return; }
+			setRefreshClock(Date.now());
+			start();
+		};
+		sync();
+		document.addEventListener('visibilitychange', sync);
+		return () => {
+			document.removeEventListener('visibilitychange', sync);
+			stop();
+		};
 	}, []);
 	/*
 	 * 宿主状态预取。
@@ -757,7 +781,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
-	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
+	const stagedPaths = React.useMemo(
+		() => state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path),
+		[state.entries],
+	);
 
 	/**
 	 * 勾选「修补上一次提交」时填入上一提交的完整消息；取消勾选时清空。
@@ -1549,7 +1576,27 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso }),
 		[settings.dateFormat.iso],
 	);
-	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);
+	// Issue 链接配置按设置记忆化：每次渲染新建对象会击穿提交图的属性比较。
+	const issueLinking = React.useMemo(() => issueLinkingConfigOf(settings), [settings]);
+
+	/** 刷新选中仓库；更改区与图形区的标题栏共用。 */
+	const refreshAll = React.useCallback(() => {
+		void run('read', () => refresh('full'));
+	}, [run, refresh]);
+	/** 追加一个提交窗口。 */
+	const loadMoreCommits = React.useCallback(() => {
+		void loadMore();
+	}, [loadMore]);
+	/** 从所有远程抓取。 */
+	const fetchAll = React.useCallback(() => {
+		void run('network', async () => {
+			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
+		});
+	}, [run, workingTreePath, settings.fetchAndPrune, settings.fetchAndPruneTags]);
+	/** 打开设置面板。 */
+	const openSettingsPanel = React.useCallback(() => { setSettingsOpen(true); }, []);
+	/** 打开引用筛选弹窗。 */
+	const openFilterDialog = React.useCallback(() => { setFilterOpen(true); }, []);
 
 	if (state.phase === 'no-workspace') {
 		return React.createElement('div', { className: shared.empty }, '该会话没有工作区目录');
@@ -1636,7 +1683,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			open: repoSecOpen, height: repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
-			onOpenSettings: () => { setSettingsOpen(true); },
+			onOpenSettings: openSettingsPanel,
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
@@ -1659,7 +1706,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			canSubmit, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
+			canSubmit, onSubmit: submit, onRefresh: refreshAll,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
@@ -1676,7 +1723,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
-					moreCommitsAvailable: state.more, statsByHash, messageByHash,
+			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
 			onCancelTranslateCommit: cancelTranslateCommit,
 			graphTranslated, graphTranslating,
@@ -1687,18 +1734,18 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onOpenDiff: openDiff,
 			onToggleCommit: toggleCommit,
 			// 触底追加一个窗口：宿主按 offset 返回下一段，客户端不持有完整历史。
-	onLoadMore: () => { void loadMore(); },
+	onLoadMore: loadMoreCommits,
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
-			onOpenFilter: () => { setFilterOpen(true); },
+			onOpenFilter: openFilterDialog,
 			filterSummary,
 			filterActive: filterState.mode !== 'all',
 			onGoToHead: goToHead,
-			onFetch: () => { void run('network', async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
-			onRefresh: () => { void run('read', () => refresh('full')); },
+			onFetch: fetchAll,
+			onRefresh: refreshAll,
 			onResizeStart: startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
-			issueLinking: issueLinking(),
+			issueLinking,
 			refreshing: backgroundFlags.graph, lastRefresh: lastRefreshText,
 		}),
 	);

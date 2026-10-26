@@ -18,7 +18,7 @@ import { fallbackPollMs, shouldFallbackRefresh, stableObservationsRequired } fro
 import { isRepoBusy } from './busy.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
 import {
-	branchNamesEqual, commitsListEqual, entriesEqual, remotesListEqual,
+	branchNamesEqual, commitsListEqual, entriesEqual, mergeCommits, mergeEntries, remotesListEqual,
 	uncommittedParentOf, withUncommittedCount,
 } from './commit-diff.ts';
 
@@ -243,10 +243,10 @@ function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapshot): Pan
 	const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
 	const commits = entriesSame
 		? previous.commits
-		: withUncommittedCount(previous.commits, snapshot.entries.length, parent);
+		: mergeCommits(previous.commits, withUncommittedCount(previous.commits, snapshot.entries.length, parent));
 	return {
 		...previous, error: null, merging: snapshot.merging,
-		entries: entriesSame ? previous.entries : snapshot.entries,
+		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
 		commits,
 	};
 }
@@ -428,7 +428,7 @@ export function useGraphData({
 					...previous, error: null,
 					entries: mode === 'reconcile' && entriesEqual(previous.entries, snapshot.entries)
 						? previous.entries
-						: snapshot.entries,
+						: mergeEntries(previous.entries, snapshot.entries),
 				}));
 				writeSync(setSyncById, selectedId, snapshot);
 				return snapshot;
@@ -464,11 +464,11 @@ export function useGraphData({
 					: previous;
 				return {
 					...settled, phase: 'ready', error: null, merging: snapshot.merging,
-					commits: commitsSame ? settled.commits : commits,
+					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
 					head: graph.head, more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? settled.remotes : graph.remotes,
 					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? settled.entries : snapshot.entries,
+					entries: entriesSame ? settled.entries : mergeEntries(settled.entries, snapshot.entries),
 					detail: mode === 'full' ? null : settled.detail,
 				};
 			});
@@ -551,11 +551,11 @@ export function useGraphData({
 				return {
 					...endBackground(endBackground(previous, 'graph'), 'entries'),
 					phase: 'ready', error: null, merging: snapshot.merging,
-					commits: commitsSame ? previous.commits : commits,
+					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
 					head: graph.head, more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? previous.entries : snapshot.entries,
+					entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
 				};
 			});
 			rememberFromGraph(repo, known, graph);
@@ -605,7 +605,7 @@ export function useGraphData({
 				}
 				return {
 					...current,
-					commits: [...current.commits, ...fresh],
+					commits: mergeCommits(current.commits, [...current.commits, ...fresh]),
 					more: graph.moreCommitsAvailable,
 					nextSkip: graph.nextSkip,
 					// 翻页同样带回当前工作树的占用分支：新增提交上可能挂着这些分支。

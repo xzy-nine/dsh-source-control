@@ -312,9 +312,18 @@ test('宿主 hunk 形状与视图一致', () => {
 
 test('未提交行的文本经翻译函数', () => {
 	// 数据层给出的 message 是英文占位，界面须经 displayMessage 转换；具体文案不在测试内钉住。
-	const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
+	const source = readFileSync(join(clientDir, 'graph', 'row-model.ts'), 'utf8');
 	assert.match(source, /UNCOMMITTED_MESSAGE/, '应有未提交文本的匹配规则');
-	assert.match(source, /displayMessage\(commit\)/, '行文本应经翻译函数');
+	assert.match(source, /export function displayMessage/, '行文本应由行模型给出');
+});
+
+test('图形行的文本与引用标记取自 row-model', () => {
+	// 图形区只做元素拼装：行文本、引用标记与头像地址都由纯模块给出，缓存与单测都在那一侧。
+	const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
+	assert.match(source, /from '\.\/row-model\.ts'/, '图形区应引用行模型');
+	assert.match(source, /titleOf\(commit\)/, '行文本应取自行模型');
+	assert.match(source, /labelsOf\(commit, head\)/, '引用标记应取自行模型');
+	assert.ok(!/function displayMessage\(/.test(source), '不应在图形区重复实现行文本');
 });
 
 test('未提交行不触发浮窗与右键', () => {

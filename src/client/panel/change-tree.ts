@@ -35,6 +35,8 @@ export function absolutePathOf(repoRoot: string, path: string): string {
 export interface ChangeTreeNode<Entry extends TreeEntry> {
 	readonly folders: Map<string, ChangeTreeNode<Entry>>;
 	readonly files: Entry[];
+	/** 子树（含自身节点）的文件总数；建树时累加，拍平时直接读。 */
+	count: number;
 }
 
 /** 变更树的一行：文件夹行或文件行。 */
@@ -44,7 +46,7 @@ export type ChangeRow<Entry extends TreeEntry = WorkingTreeEntry> =
 
 /** 空树节点：文件夹挂在 folders，文件挂在 files。 */
 function emptyTree<Entry extends TreeEntry>(): ChangeTreeNode<Entry> {
-	return { folders: new Map(), files: [] };
+	return { folders: new Map(), files: [], count: 0 };
 }
 
 /** 把变更条目按「目录/文件」拆成可折叠的文件夹树。 */
@@ -53,21 +55,17 @@ function buildChangeTree<Entry extends TreeEntry>(entries: readonly Entry[]): Ch
 	for (const entry of entries) {
 		const parts = entry.path.split('/');
 		let node = root;
+		// 沿路径逐级累加：每个祖先节点的 count 都含该条目。
+		node.count += 1;
 		for (let i = 0; i < parts.length - 1; i++) {
 			const part = parts[i];
 			if (!node.folders.has(part)) node.folders.set(part, emptyTree<Entry>());
 			node = node.folders.get(part) as ChangeTreeNode<Entry>;
+			node.count += 1;
 		}
 		node.files.push(entry);
 	}
 	return root;
-}
-
-/** 统计一个子树（含子文件夹）下的文件总数。 */
-function countLeaves<Entry extends TreeEntry>(node: ChangeTreeNode<Entry>): number {
-	let total = node.files.length;
-	for (const child of node.folders.values()) total += countLeaves(child);
-	return total;
 }
 
 /** 把文件夹树拍平成可见行；出现在 collapsed 里的文件夹不展开其子节点。 */
@@ -90,7 +88,7 @@ function flattenChangeTree<Entry extends TreeEntry>(
 			child = onlyChild;
 		}
 		const open = !collapsed.has(path);
-		out.push({ kind: 'folder', name: label, path, depth, open, count: countLeaves(child) });
+		out.push({ kind: 'folder', name: label, path, depth, open, count: child.count });
 		if (open) flattenChangeTree(child, path, depth + 1, collapsed, out);
 	}
 	const files = node.files.slice().sort((a, b) => a.path.localeCompare(b.path));
