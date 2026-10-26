@@ -905,7 +905,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			{ entries: previous.entries, commits: previous.commits },
 			{ entries: state.entries.length, commits: state.commits.length },
 		);
-		if (notice !== '') showToast(notice);
+		if (notice !== '') showToast(notice, { tone: 'info' });
 	}, [state.lastRefreshAt, state.entries.length, state.commits.length]);
 
 	/**

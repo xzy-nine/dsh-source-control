@@ -66,11 +66,11 @@ test('相对时间文案：分档给出，从未刷新为空串', () => {
 test('告知判据：只在计数变化时给出文案', () => {
 	const same = { entries: 3, commits: 10 };
 	assert.equal(refreshNoticeOf(same, same), '');
-	assert.equal(refreshNoticeOf(same, { entries: 5, commits: 10 }), '已更新：工作区 5 个改动');
+	assert.equal(refreshNoticeOf(same, { entries: 5, commits: 10 }), '已更新：工作区 +2 个改动');
 	assert.equal(refreshNoticeOf(same, { entries: 3, commits: 15 }), '已更新：提交图 +5 个提交');
 	assert.equal(refreshNoticeOf(same, { entries: 3, commits: 7 }), '已更新：提交图 -3 个提交');
 	assert.equal(
 		refreshNoticeOf(same, { entries: 1, commits: 20 }),
-		'已更新：工作区 1 个改动，提交图 +10 个提交',
+		'已更新：工作区 -2 个改动，提交图 +10 个提交',
 	);
 });

@@ -6,15 +6,20 @@
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { IconWarningOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconInfoOutlineRegular, IconWarningOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /** 当前显示的提示；新提示到来时先卸载它。 */
 let current: { root: ReturnType<typeof createRoot>; container: HTMLElement } | null = null;
+
+/** 提示类别：错误类用告警图标，信息类用普通图标。 */
+export type ToastTone = 'error' | 'info';
 
 /** 提示选项。 */
 export interface ToastOptions {
 	/** 完全显示后开始淡出前的停留毫秒数；省略时按文本长度推算。 */
 	readonly holdMs?: number;
+	/** 提示类别，省略为 `error`。 */
+	readonly tone?: ToastTone;
 }
 
 /**
@@ -54,9 +59,10 @@ export function showToast(text: string, options: ToastOptions = {}): void {
 		root.unmount();
 		container.remove();
 	};
+	const icon = (options.tone ?? 'error') === 'info' ? IconInfoOutlineRegular : IconWarningOutlineRegular;
 	root.render(React.createElement(Toast, {
 		text,
-		icon: React.createElement(IconWarningOutlineRegular),
+		icon: React.createElement(icon),
 		holdMs: options.holdMs ?? holdFor(text),
 		onDone: done,
 	}));

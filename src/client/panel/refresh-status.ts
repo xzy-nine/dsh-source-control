@@ -82,10 +82,22 @@ export interface RefreshCounts {
 }
 
 /**
+ * 生成「某个计数变化」的文案。
+ *
+ * @param label - 计数所属区域。
+ * @param unit - 计数单位。
+ * @param delta - 变化量；正数带 `+`。
+ * @returns 文案。
+ */
+function deltaText(label: string, unit: string, delta: number): string {
+	return `${label} ${delta > 0 ? '+' : ''}${delta} ${unit}`;
+}
+
+/**
  * 生成刷新结果的轻量告知文案。
  *
  * 只在计数发生变化时给出文案：后台刷新频繁，无变化的刷新不该打扰用户。
- * 用户主动刷新不调用本函数——结果就在眼前。
+ * 用户主动刷新不调用本函数——结果就在眼前。两个计数都按变化量给出，不报总数。
  *
  * @param before - 刷新前的计数。
  * @param after - 刷新后的计数。
@@ -94,11 +106,10 @@ export interface RefreshCounts {
 export function refreshNoticeOf(before: RefreshCounts, after: RefreshCounts): string {
 	const parts: string[] = [];
 	if (after.entries !== before.entries) {
-		parts.push(`工作区 ${after.entries} 个改动`);
+		parts.push(deltaText('工作区', '个改动', after.entries - before.entries));
 	}
 	if (after.commits !== before.commits) {
-		const delta = after.commits - before.commits;
-		parts.push(delta > 0 ? `提交图 +${delta} 个提交` : `提交图 ${delta} 个提交`);
+		parts.push(deltaText('提交图', '个提交', after.commits - before.commits));
 	}
 	if (parts.length === 0) return '';
 	return `已更新：${parts.join('，')}`;
