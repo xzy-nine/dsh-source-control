@@ -9,8 +9,7 @@
   不叙述改动过程、不解释「为什么当初这么做」、不保留评审历史。
 - **回复与面向用户的文本用中文**；代码、命令、路径、标识符与逐字引用的外部文本保持原样。
 - **文档分层**：[README.md](README.md) / [README.en.md](README.en.md) 只概述插件的整体能力与几个特色功能，
-  不列细节；每一项功能的完整行为写在 `doc/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
-  `doc/` 下的迁移差异与实现计划、数据层方案为本地文档，由 `.git/info/exclude` 排除，不提交。
+  不列细节；每一项功能的完整行为写在 `Docs/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
 - **测试不测界面文案**：断言代码标识符、结构或行为，不断言菜单项文字、按钮文字等展示字符串。
 - **不写一次性改动的一次性测试**：局部、机械、只影响单个界面的改动不补测试。
 - **能复用 DSH 已导出的能力就直接用，不自行重造**。
@@ -65,7 +64,7 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
-doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
+Docs/               中文文档：功能说明.md、功能缺口.md、实现计划与数据层方案
 scripts/            客户端打包脚本（build-client.mjs）与耗时度量（bench-first-paint.mjs 首屏 /
                     bench-refresh.mjs 刷新 / bench-discovery.mjs 仓库发现 / bench-enrich.mjs 补齐 /
                     bench-layout.mjs 泳道布局 / bench-verify.mjs 命令往返；均需先 build:host）
