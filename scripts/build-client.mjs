@@ -27,17 +27,14 @@ const bundled = await build({
 	format: 'cjs',
 	platform: 'browser',
 	target: ['chrome100'],
-	// 复制的 FileDiff 用自动 JSX 运行时（不显式导入 React）。
 	jsx: 'automatic',
-	// charset 'utf8' 保留中文字面量原样，默认的 'ascii' 会转义成 \\uXXXX。
 	charset: 'utf8',
-	// assets/ 下的图标以文本形式内联，客户端不额外请求资源。
-	// CSS 模块由 esbuild 转成类名映射；其样式文本单独产出，下面内联进包。
 	loader: { '.svg': 'text', '.css': 'local-css' },
 	external: CLIENT_EXTERNALS,
-	// CSS 模块需要输出路径才能解析；写到 lib 后随即读回并内联，不留下独立样式文件。
 	outdir: join(root, 'lib'),
 	write: false,
+	minifyWhitespace: true,
+	minifySyntax: true,
 	legalComments: 'none',
 });
 
@@ -55,11 +52,15 @@ const bundle = `/**
  */
 ${css === '' ? '' : `(function () {
   if (typeof document === 'undefined') return;
-  if (document.getElementById('dsh-source-control-module-style') !== null) return;
+  var id = 'dsh-source-control-module-style';
   var style = document.createElement('style');
-  style.id = 'dsh-source-control-module-style';
+  style.id = id;
   style.textContent = ${JSON.stringify(css)};
-  document.head.appendChild(style);
+  // 不加 data-plugin：模块系统在就地替换时先执行新脚本、再移除 style[data-plugin=包名]，
+  // 标记归属会让刚注入的这份样式被一并删掉。每次求值整份替换，样式表因此既不残留旧内容也不丢失。
+  var previous = document.getElementById(id);
+  if (previous !== null) previous.replaceWith(style);
+  else document.head.appendChild(style);
 })();
 `}window.__ModuleLoader__.load({
   id: ${JSON.stringify(pkg.name)},
