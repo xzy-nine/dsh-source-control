@@ -21,6 +21,8 @@ export interface CachedGraph {
 	readonly commits: readonly CommitNode[];
 	/** HEAD 指向的提交哈希。 */
 	readonly head: string | null;
+	/** 当前分支名；分离头指针时为 null。 */
+	readonly branch: string | null;
 	/** 出现过的标签名。 */
 	readonly tags: readonly string[];
 	/** 是否还有更多提交。 */
@@ -37,7 +39,7 @@ export interface CachedSnapshot extends WorkingTreeSnapshot {
 }
 
 /** 一条带过期时刻的缓存项。 */
-interface Entry<T> {
+export interface CacheEntry<T> {
 	readonly value: T;
 	readonly expiresAt: number;
 }
@@ -65,6 +67,7 @@ const SNAPSHOT_TTL_MS = 500;
 const GRAPH_LIMIT = 64;
 const REPO_INFO_LIMIT = 32;
 const SNAPSHOT_LIMIT = 32;
+const HOOKS_PATH_LIMIT = 32;
 
 /**
  * 超出容量后回落到的比例。
@@ -74,12 +77,21 @@ const SNAPSHOT_LIMIT = 32;
  */
 const TRIM_RATIO = 0.75;
 
+/**
+ * `core.hooksPath` 的存活毫秒数。
+ *
+ * 该取值只在仓库配置变化时改变，而配置变化不产生写事件；有效期因此按分钟计。
+ */
+const HOOKS_PATH_TTL_MS = 60_000;
+
 /** 提交图窗口缓存：键含仓库与全部取数参数。 */
-const graphs = new Map<string, Entry<CachedGraph>>();
+const graphs = new Map<string, CacheEntry<CachedGraph>>();
 /** 仓库信息缓存：键为仓库与取数参数。 */
-const repoInfos = new Map<string, Entry<RepoInfo>>();
+const repoInfos = new Map<string, CacheEntry<RepoInfo>>();
 /** 工作区快照缓存：键为仓库。 */
-const snapshots = new Map<string, Entry<CachedSnapshot>>();
+const snapshots = new Map<string, CacheEntry<CachedSnapshot>>();
+/** 钩子路径缓存：键为仓库。 */
+const hooksPaths = new Map<string, CacheEntry<string>>();
 
 /**
  * 影响仓库信息的取数参数。
@@ -139,14 +151,16 @@ function repoInfoKey(repo: string, params: RepoInfoParams): string {
 /**
  * 写入一条缓存项并按容量淘汰最旧。
  *
+ * 仓库事实层（`repo-facts.ts`）复用本函数与其配对的 {@link getCached}，不另写淘汰逻辑。
+ *
  * @param store - 目标缓存。
  * @param limit - 容量上限。
  * @param key - 缓存键。
  * @param value - 值。
- * @param ttlMs - 存活毫秒数。
+ * @param ttlMs - 存活毫秒数；取 `Number.POSITIVE_INFINITY` 表示由其它守卫失效。
  * @returns 无。
  */
-function put<T>(store: Map<string, Entry<T>>, limit: number, key: string, value: T, ttlMs: number): void {
+export function putCached<T>(store: Map<string, CacheEntry<T>>, limit: number, key: string, value: T, ttlMs: number): void {
 	store.delete(key);
 	store.set(key, { value, expiresAt: Date.now() + ttlMs });
 	if (store.size <= limit) return;
@@ -169,7 +183,7 @@ function put<T>(store: Map<string, Entry<T>>, limit: number, key: string, value:
  * @param key - 缓存键。
  * @returns 值；未命中或已过期时为 undefined。
  */
-function get<T>(store: Map<string, Entry<T>>, key: string): T | undefined {
+export function getCached<T>(store: Map<string, CacheEntry<T>>, key: string): T | undefined {
 	const entry = store.get(key);
 	if (entry === undefined) return undefined;
 	if (Date.now() >= entry.expiresAt) {
@@ -225,7 +239,7 @@ export function graphKey(repo: string, params: {
  * @returns 缓存的窗口；未命中时为 undefined。
  */
 export function readGraph(repo: string, params: Parameters<typeof graphKey>[1]): CachedGraph | undefined {
-	return get(graphs, graphKey(repo, params));
+	return getCached(graphs, graphKey(repo, params));
 }
 
 /**
@@ -237,7 +251,7 @@ export function readGraph(repo: string, params: Parameters<typeof graphKey>[1]):
  * @returns 无。
  */
 export function writeGraph(repo: string, params: Parameters<typeof graphKey>[1], value: CachedGraph): void {
-	put(graphs, GRAPH_LIMIT, graphKey(repo, params), value, GRAPH_TTL_MS);
+	putCached(graphs, GRAPH_LIMIT, graphKey(repo, params), value, GRAPH_TTL_MS);
 }
 
 /**
@@ -248,7 +262,7 @@ export function writeGraph(repo: string, params: Parameters<typeof graphKey>[1],
  * @returns 仓库信息；未命中时为 undefined。
  */
 export function readRepoInfo(repo: string, params: RepoInfoParams): RepoInfo | undefined {
-	return get(repoInfos, repoInfoKey(repo, params));
+	return getCached(repoInfos, repoInfoKey(repo, params));
 }
 
 /**
@@ -260,7 +274,7 @@ export function readRepoInfo(repo: string, params: RepoInfoParams): RepoInfo | u
  * @returns 无。
  */
 export function writeRepoInfo(repo: string, params: RepoInfoParams, value: RepoInfo): void {
-	put(repoInfos, REPO_INFO_LIMIT, repoInfoKey(repo, params), value, REPO_INFO_TTL_MS);
+	putCached(repoInfos, REPO_INFO_LIMIT, repoInfoKey(repo, params), value, REPO_INFO_TTL_MS);
 }
 
 /**
@@ -286,7 +300,7 @@ function snapshotKey(repo: string, head: string | null): string {
  * @returns 快照；未命中或 HEAD 已变时为 undefined。
  */
 export function readSnapshot(repo: string, head: string | null = null): CachedSnapshot | undefined {
-	return get(snapshots, snapshotKey(repo, head));
+	return getCached(snapshots, snapshotKey(repo, head));
 }
 
 /**
@@ -297,7 +311,28 @@ export function readSnapshot(repo: string, head: string | null = null): CachedSn
  * @returns 无。
  */
 export function writeSnapshot(repo: string, value: CachedSnapshot): void {
-	put(snapshots, SNAPSHOT_LIMIT, snapshotKey(repo, value.head), value, SNAPSHOT_TTL_MS);
+	putCached(snapshots, SNAPSHOT_LIMIT, snapshotKey(repo, value.head), value, SNAPSHOT_TTL_MS);
+}
+
+/**
+ * 读仓库的 `core.hooksPath`。
+ *
+ * @param repo - 仓库路径。
+ * @returns 缓存的取值；未命中时为 undefined。
+ */
+export function readHooksPath(repo: string): string | undefined {
+	return getCached(hooksPaths, keyOf(repo));
+}
+
+/**
+ * 写入仓库的 `core.hooksPath`。
+ *
+ * @param repo - 仓库路径。
+ * @param value - 取值；未配置时为空串。
+ * @returns 无。
+ */
+export function writeHooksPath(repo: string, value: string): void {
+	putCached(hooksPaths, HOOKS_PATH_LIMIT, keyOf(repo), value, HOOKS_PATH_TTL_MS);
 }
 
 /**
@@ -342,6 +377,9 @@ export function invalidateRepo(repo: string): void {
 		const cached = separator === -1 ? graphKeyName : graphKeyName.slice(0, separator);
 		if (affectedBy(cached, key)) graphs.delete(graphKeyName);
 	}
+	for (const hooksKey of hooksPaths.keys()) {
+		if (affectedBy(hooksKey, key)) hooksPaths.delete(hooksKey);
+	}
 }
 
 /**
@@ -353,6 +391,7 @@ export function clearHostCache(): void {
 	graphs.clear();
 	repoInfos.clear();
 	snapshots.clear();
+	hooksPaths.clear();
 }
 
 /*

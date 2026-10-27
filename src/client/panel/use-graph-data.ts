@@ -222,10 +222,19 @@ function writeSync(
 	snapshot: WorkingTreeSnapshot,
 ): void {
 	if (selectedId === null) return;
-	setSyncById((previous) => new Map(previous).set(selectedId, {
-		branch: snapshot.branch, upstream: snapshot.upstream,
-		ahead: snapshot.ahead, behind: snapshot.behind,
-	}));
+	setSyncById((previous) => {
+		const current = previous.get(selectedId);
+		/* 四项都未变时返回原 Map：仓库行按该引用记忆化，每轮换新 Map 会让它跟着重渲染。 */
+		if (current !== undefined
+			&& current.branch === snapshot.branch && current.upstream === snapshot.upstream
+			&& current.ahead === snapshot.ahead && current.behind === snapshot.behind) {
+			return previous;
+		}
+		return new Map(previous).set(selectedId, {
+			branch: snapshot.branch, upstream: snapshot.upstream,
+			ahead: snapshot.ahead, behind: snapshot.behind,
+		});
+	});
 }
 
 /**
@@ -288,8 +297,8 @@ function graphRequest(
 /**
  * 记下本轮取回的远程与贮藏。
  *
- * 只在取到内容时记：两者皆空既可能是「确实都没有」，也可能是本轮读取失败，记下会把失败
- * 当成事实固化到下一次写操作为止。
+ * 判据是响应确实带回了仓库信息且读取成功（`infoKnown`），不看内容是否为空：空远程与空贮藏
+ * 同样是事实，记下它们才不会让下一次刷新再取一次仓库信息。
  *
  * @param repo - 仓库路径。
  * @param known - 本轮取数前是否已有已知值；已有则无需重记。
@@ -298,7 +307,7 @@ function graphRequest(
  */
 function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph: GraphData): void {
 	if (known !== undefined) return;
-	if (graph.remotes.length === 0 && graph.stashes.length === 0) return;
+	if (!graph.infoKnown) return;
 	rememberRepoInfo(repo, { remotes: graph.remotes, stashes: graph.stashes });
 }
 
@@ -328,6 +337,15 @@ export function useGraphData({
 	/** 当前状态的引用：loadMore 在回调里读取已加载条数，避免把它列入依赖。 */
 	const stateRef = React.useRef(state);
 	stateRef.current = state;
+
+	/**
+	 * 选中节点的引用。
+	 *
+	 * `refresh` 只把领先/落后写回选中节点，同仓库内改变选中不改变取数结果；把 `selectedId`
+	 * 放进依赖会让每次改选都触发一次整页取数。
+	 */
+	const selectedIdRef = React.useRef<string | null>(selectedId);
+	selectedIdRef.current = selectedId;
 
 	/**
 	 * 上一次取图的仓库；与当前不同时渲染态与请求参数一并重置。
@@ -430,7 +448,7 @@ export function useGraphData({
 						? previous.entries
 						: mergeEntries(previous.entries, snapshot.entries),
 				}));
-				writeSync(setSyncById, selectedId, snapshot);
+				writeSync(setSyncById, selectedIdRef.current, snapshot);
 				return snapshot;
 			});
 			const [graph, snapshot] = await Promise.all([graphSource, snapshotSource]);
@@ -477,7 +495,7 @@ export function useGraphData({
 			if (background) setState((previous) => endBackground(endBackground(previous, 'graph'), 'entries'));
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, maxCommits, settings, hasWorkspace, selectedId, setSyncById]);
+	}, [workingTreePath, maxCommits, settings, hasWorkspace, setSyncById]);
 
 	/**
 	 * 只重取工作区快照并写入条目。

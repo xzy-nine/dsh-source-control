@@ -37,7 +37,7 @@ test('宿主在读取路径上命中缓存', () => {
 	// 快照键含 HEAD：外部提交不产生写事件，不带 HEAD 会回投提交前的条目。
 	assert.match(
 		routes,
-		/readSnapshot\(repo, await readHeadHash\(repo\)\)/,
+		/readSnapshot\(repo, await repoHeadHash\(repo\)\)/,
 		'loadWorkingTreeSnapshot 应先查缓存，且键含当前 HEAD',
 	);
 	// 兜底轮询要读当前值：命中缓存会让条目签名永远不变，外部改动再也发现不了。

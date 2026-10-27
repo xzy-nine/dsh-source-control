@@ -133,3 +133,23 @@ test('仓库信息：命中后可按仓库失效', () => {
 	cache.invalidateRepo('/repo/a');
 	assert.equal(cache.readRepoInfo('/repo/a', params), undefined);
 });
+
+test('钩子路径：未命中为 undefined，写入后按归一化路径命中', () => {
+	cache.clearHostCache();
+	assert.equal(cache.readHooksPath('/repo/a'), undefined);
+	cache.writeHooksPath('/repo/a', '.githooks');
+	assert.equal(cache.readHooksPath('/Repo/A/'), '.githooks', '尾分隔符与大小写不影响命中');
+	assert.equal(cache.readHooksPath('/repo/b'), undefined, '只按仓库区分');
+});
+
+test('钩子路径：按仓库失效，祖先与后代一并覆盖', () => {
+	cache.clearHostCache();
+	cache.writeHooksPath('/repo/parent', '');
+	cache.writeHooksPath('/repo/parent/sub', '.hooks');
+	cache.invalidateRepo('/repo/parent/sub');
+	assert.equal(cache.readHooksPath('/repo/parent'), undefined, '父仓库受影响');
+	assert.equal(cache.readHooksPath('/repo/parent/sub'), undefined);
+	cache.writeHooksPath('/repo/parent', '');
+	cache.clearHostCache();
+	assert.equal(cache.readHooksPath('/repo/parent'), undefined, '清空后不再命中');
+});

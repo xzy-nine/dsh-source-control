@@ -162,7 +162,7 @@ export interface GraphStash {
 /** 提交图读取结果。 */
 export interface GraphData {
 	readonly commits: Commit[];
-	/** 当前分支名；未取仓库信息且调用方未给出分支名时为 null。 */
+	/** 当前分支名；取自仓库信息、响应自带的 `branch` 或调用方给出的兜底值，都缺失时为 null。 */
 	readonly head: string | null;
 	readonly remotes: Remote[];
 	/** 本批使用的贮藏列表；未取仓库信息时为调用方给出的那份。 */
@@ -173,6 +173,12 @@ export interface GraphData {
 	readonly nextSkip: number;
 	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
 	readonly foreignBranches: string[];
+	/**
+	 * 本次响应是否确实带回了仓库信息且读取成功。
+	 *
+	 * 仅在为真时才把远程与贮藏记为已知值：读取失败时记下会把失败当事实固化到下一次写操作。
+	 */
+	readonly infoKnown: boolean;
 }
 
 /** 提交图读取选项。 */
@@ -255,8 +261,13 @@ export async function loadGraph(cwd: string, {
 		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [] }, signal));
 	const remotes = (repoInfo === null ? givenRemotes : repoInfo.remotes) as Remote[] | undefined;
 	const stashes = (repoInfo === null ? givenStashes : repoInfo.stashes) as GraphStash[] | undefined;
+	/*
+	 * 当前分支名：未取仓库信息时用响应自带的 `branch`（宿主随提交图一次读出），调用方给出的
+	 * `branch` 只作兜底。刷新路径（`withRepoInfo` 为 false）因此同样能标出当前分支。
+	 */
+	const batchBranch = typeof commitsPayload.branch === 'string' && commitsPayload.branch !== '' ? commitsPayload.branch : null;
 	const head = repoInfo === null
-		? (typeof branch === 'string' && branch !== '' ? branch : null)
+		? (batchBranch ?? (typeof branch === 'string' && branch !== '' ? branch : null))
 		: (typeof repoInfo.head === 'string' && repoInfo.head !== 'HEAD' ? repoInfo.head : null);
 	return {
 		commits: (Array.isArray(commitsPayload.commits) ? commitsPayload.commits : []) as Commit[],
@@ -269,5 +280,6 @@ export async function loadGraph(cwd: string, {
 		foreignBranches: Array.isArray(commitsPayload.foreignBranches)
 			? (commitsPayload.foreignBranches as unknown[]).filter((name): name is string => typeof name === 'string')
 			: [],
+		infoKnown: fetched !== null && fetched.error === null,
 	};
 }

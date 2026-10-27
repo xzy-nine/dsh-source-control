@@ -10,6 +10,7 @@ import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
+import { createLimiter } from './child-process.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { foreignWorktreeBranches, gitDirAt, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 
@@ -81,6 +82,16 @@ const DEFAULT_MAX_DEPTH = 3;
 
 /** 默认最多访问的目录数。 */
 const DEFAULT_MAX_DIRECTORIES = 5000;
+
+/** 仓库树批量领先/落后取数的并发上限。 */
+const SYNC_CONCURRENCY = 5;
+
+/**
+ * 仓库树批量取数的限流器。
+ *
+ * 作用域仅限 {@link loadReposSync}：面板的单仓库命令不入队，宿主不串行化命令。
+ */
+const syncLimiter = createLimiter(SYNC_CONCURRENCY);
 
 /** 发现结果缓存的存活毫秒数。 */
 const DISCOVERY_CACHE_TTL_MS = 60_000;
@@ -746,14 +757,14 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 		seen.add(repo);
 		unique.push(repo);
 	}
-	return Promise.all(unique.map(async (path) => {
+	return Promise.all(unique.map((path) => syncLimiter(async () => {
 		try {
 			const sync = await loadRepoSync(path);
 			return { path, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 		} catch {
 			return { path, branch: null, upstream: null, ahead: 0, behind: 0 };
 		}
-	}));
+	})));
 }
 
 /**

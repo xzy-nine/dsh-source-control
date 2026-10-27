@@ -231,54 +231,23 @@ export async function readHeadRef(repo: string): Promise<HeadRef | null> {
 }
 
 /**
- * 读取一个引用文件里的提交哈希。
+ * 读取一个松散引用文件里的提交哈希。
  *
- * 松散引用位于 git 公共目录的 `refs` 下；打包引用在 `packed-refs` 里，每行形如
- * `<哈希> <引用名>`，首字符为 `#` 的行是注释、`^` 开头的行为附注标签的剥离目标，一并跳过。
+ * 松散引用位于 git 公共目录的 `refs` 下；仓库事实层（`repo-facts.ts`）也用它，因此导出。
  *
  * @param commonDir - git 公共目录。
  * @param refName - 完整引用名，如 `refs/heads/main`。
- * @returns 提交哈希；引用不存在时返回 null。
+ * @returns 提交哈希；文件不存在或为空时返回 null。
  */
-async function readRefHash(commonDir: string, refName: string): Promise<string | null> {
+export async function readLooseRef(commonDir: string, refName: string): Promise<string | null> {
 	try {
 		const loose = (await readFile(resolve(commonDir, refName), 'utf8')).trim();
-		if (loose !== '') return loose;
+		return loose === '' ? null : loose;
 	} catch {
-		/* 松散引用不存在，回退打包引用 */
+		return null;
 	}
-	try {
-		const packed = await readFile(resolve(commonDir, 'packed-refs'), 'utf8');
-		for (const line of packed.split('\n')) {
-			if (line === '' || line.startsWith('#') || line.startsWith('^')) continue;
-			const space = line.indexOf(' ');
-			if (space === -1) continue;
-			if (line.slice(space + 1).trim() === refName) return line.slice(0, space);
-		}
-	} catch {
-		/* 没有打包引用 */
-	}
-	return null;
 }
 
-/**
- * 读取仓库当前 HEAD 指向的提交哈希。
- *
- * 判定走文件系统，不起子进程：这是缓存键需要的高频取值。`HEAD` 指向分支时按分支引用解析，
- * 分离头指针时 `HEAD` 文件本身即哈希。
- *
- * @param repo - 仓库根或工作树根路径。
- * @returns 提交哈希；读不到时返回 null。
- */
-export async function readHeadHash(repo: string): Promise<string | null> {
-	const head = await readHeadRef(repo);
-	if (head === null) return null;
-	if (head.hash !== null) return head.hash;
-	if (head.branch === null) return null;
-	const commonDir = await resolveGitCommonDir(repo);
-	if (commonDir === null) return null;
-	return await readRefHash(commonDir, `refs/heads/${head.branch}`);
-}
 
 /**
  * 取一个目录自身的 git 目录，不向上查找。

@@ -17,14 +17,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
 /**
- * 提交图取数参数：与面板首屏一致。
+ * 提交图取数参数：调用方未给出远程与贮藏，由宿主自行读取。
  *
- * 不带 `stashes`：首屏由宿主自行枚举贮藏，客户端不再先取一次仓库信息。
+ * 不带 `stashes` 与 `remotes`：首屏由宿主自行枚举，客户端不再先取一次仓库信息。给出空列表与
+ * 「未提供」语义不同 —— 空列表表示仓库确实没有远程或贮藏，宿主据此不再读取。
  */
 const COMMITS_MESSAGE = {
 	command: 'loadCommits', branches: null, limit: 200, skip: 0, showTags: true, showRemoteBranches: true,
 	includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
-	remotes: [], hideRemotes: [],
+	hideRemotes: [],
 };
 
 /**

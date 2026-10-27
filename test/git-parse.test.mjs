@@ -13,9 +13,9 @@ import { importHostModule } from './lib-import.mjs';
 const mod = await importHostModule('source-control/git-parse.js');
 const {
 	DETAILS_FORMAT, GITLINK_MODE, LOG_FORMAT, REF_BRANCH_FORMAT, REF_FORMAT, STASH_FORMAT,
-	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseIndexEntries, parseLog,
-	parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches, parseStashReflog,
-	splitRecords, UNCOMMITTED,
+	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseDecorations,
+	parseIndexEntries, parseLog, parseNameStatus, parseNumStat, parseRefs, parseRefsAndBranches,
+	parseStashReflog, refsFromDecorations, splitRecords, UNCOMMITTED,
 } = mod;
 
 /**
@@ -439,4 +439,64 @@ test('nextSkip 在有更多时按实际消费的记录数推进', () => {
 	assert.equal(graph.moreCommitsAvailable, true);
 	assert.equal(graph.commits.length, 2);
 	assert.equal(graph.nextSkip, 2, '哨兵不计入偏移');
+});
+test('装饰解析出分支、标签与远程分支', () => {
+	const empty = { heads: [], tags: [], remotes: [] };
+	assert.deepEqual(parseDecorations(''), empty);
+	assert.deepEqual(parseDecorations('HEAD'), empty, '分离头指针的裸 HEAD 不指向具体引用');
+	assert.deepEqual(parseDecorations('HEAD -> refs/heads/main'), { heads: ['main'], tags: [], remotes: [] });
+	const all = parseDecorations('HEAD -> refs/heads/main, refs/remotes/upstream/dev, refs/remotes/origin/main, tag: refs/tags/v1, refs/stash');
+	assert.deepEqual(all.heads, ['main']);
+	assert.deepEqual(all.tags, ['v1']);
+// 同一类引用按名字升序，与引用枚举的顺序一致。
+	assert.deepEqual(all.remotes, ['origin/main', 'upstream/dev']);
+	assert.deepEqual(parseDecorations('refs/remotes/origin/HEAD'), empty, '远程 HEAD 符号引用不参与');
+});
+
+test('装饰组装与 for-each-ref 组装逐条一致', () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		git('tag', '-a', 'ann', '-m', 'annotated');
+		git('tag', 'light');
+		git('branch', 'feature');
+		const base = git('rev-parse', 'HEAD').trim();
+		git('update-ref', 'refs/remotes/origin/main', base);
+		git('update-ref', 'refs/remotes/upstream/dev', base);
+		write('a.txt', 'two');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'next');
+		const head = git('rev-parse', 'HEAD').trim();
+		const args = [
+			'-c', 'log.showSignature=false', 'log', '-z', '--decorate=full', `--format=${LOG_FORMAT}`, '--topo-order',
+			'--branches', '--tags', '--remotes', 'HEAD', '--',
+		];
+		const records = parseLog(git(...args));
+		const remoteNames = ['origin', 'upstream'];
+		const decorated = assembleCommits(
+			records, { ...refsFromDecorations(records), head }, [], remoteNames, true, 200,
+		);
+		const enumerated = assembleCommits(
+			records,
+			{ ...parseRefsAndBranches(git('for-each-ref', `--format=${REF_BRANCH_FORMAT}`, 'refs/heads', 'refs/tags', 'refs/remotes')).refs, head },
+			[], remoteNames, true, 200,
+		);
+		/* 装饰无法区分附注标签，标签只比名字。 */
+		const strip = (commits) => commits.map((commit) => ({
+			hash: commit.hash, heads: commit.heads, remotes: commit.remotes,
+			tags: commit.tags.map((tag) => tag.name),
+		}));
+		assert.deepEqual(strip(decorated.commits), strip(enumerated.commits));
+		assert.deepEqual([...decorated.tags].sort(), [...enumerated.tags].sort());
+		assert.equal(decorated.head, head);
+		/* 关闭远程分支时，装饰里的远程引用同样不进入提交图。 */
+		const noRemotes = assembleCommits(
+			records, { ...refsFromDecorations(records, [], false), head }, [], remoteNames, true, 200,
+		);
+		assert.ok(noRemotes.commits.every((commit) => commit.remotes.length === 0));
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
 });
