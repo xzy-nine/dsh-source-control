@@ -11,7 +11,7 @@ import {
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
 	abortMerge, localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, resetToCommit, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -41,7 +41,7 @@ import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries } from './optimistic.ts';
-import { canSubmitOf, commitButtonDisabledOf, primaryActionOf } from './submit-state.ts';
+import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { useResizeHandler } from './use-resize.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
@@ -907,6 +907,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const primaryAction = primaryActionOf({ workAreaEmpty, hasRemoteDiff, isUnpublishedBranch, amend, merging: state.merging });
 	const showSyncButton = primaryAction === 'sync';
 	const showPublishButton = primaryAction === 'publish';
+	/*
+	 * 双向分叉：本地与上游各有对方没有的提交时，同步按钮的右键给出两种整体覆盖。
+	 * 普通同步只会把两侧合并，整体覆盖只能在同步入口上单独给出。
+	 */
+	const overwriteChoicesAvailable = showSyncButton && divergedOf({
+		ahead: currentSync?.ahead ?? 0, behind: currentSync?.behind ?? 0,
+	});
 	/** 提交按钮可用：有暂存改动、勾选修补，或处于未完成的合并。 */
 	const canSubmit = canSubmitOf({ stagedCount: stagedPaths.length, amend, merging: state.merging });
 
@@ -1163,6 +1170,92 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			}
 		}).finally(() => { setRunHooks(true); });
 	};
+
+	/**
+	 * 把上游名拆成远程名与分支名。
+	 *
+	 * 上游记作 `<远程>/<分支>`（如 `origin/main`），远程名可能含斜杠以外字符；
+	 * 没有斜杠时无法判定远程，返回 null。
+	 *
+	 * @param upstream - 上游引用名。
+	 * @returns 远程名与该远程上的分支名。
+	 */
+	const upstreamPartsOf = (upstream: string | null): { remote: string; branch: string } | null => {
+		if (upstream === null) return null;
+		const at = upstream.indexOf('/');
+		if (at <= 0 || at === upstream.length - 1) return null;
+		return { remote: upstream.slice(0, at), branch: upstream.slice(at + 1) };
+	};
+
+	/** 用本地分支覆盖远程分支：远程独有的提交会被丢弃。 */
+	const overwriteRemoteWithLocal = React.useCallback(() => {
+		const sync = currentSync;
+		const path = workingTreePath;
+		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
+		const branch = sync.branch;
+		const skipHooks = hooksState.push && !runHooks;
+		void (async () => {
+			const ok = await showCheckbox({
+				title: '用本地覆盖远程',
+				message: `把本地 ${branch} 强制推送到 ${parts.remote}/${parts.branch}：远程分支上独有的 ${String(sync.behind)} 个提交会被丢弃，推送后无法恢复。`,
+				checkboxLabel: '我确认用本地分支覆盖远程分支',
+				confirmLabel: '覆盖远程', danger: true,
+			});
+			if (!ok) return;
+			await run('network', async () => {
+				const errors = await pushBranch(path, branch, [parts.remote], skipHooks, 'force');
+				if (errors.length > 0) throw new Error(errors.join('\n'));
+			});
+		})();
+	}, [currentSync, workingTreePath, hooksState.push, runHooks, run]);
+
+	/** 用远程分支覆盖本地分支：本地独有的提交与已跟踪改动会被丢弃。 */
+	const overwriteLocalWithRemote = React.useCallback(() => {
+		const sync = currentSync;
+		const path = workingTreePath;
+		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
+		const upstream = sync.upstream as string;
+		const branch = sync.branch;
+		void (async () => {
+			const ok = await showCheckbox({
+				title: '用远程覆盖本地',
+				message: `把本地 ${branch} 重置到 ${upstream}：本地独有的 ${String(sync.ahead)} 个提交与已跟踪文件的未提交改动都会被丢弃（未跟踪文件保留），重置后无法恢复。`,
+				checkboxLabel: '我确认用远程分支覆盖本地分支',
+				confirmLabel: '覆盖本地', danger: true,
+			});
+			if (!ok) return;
+			await run('history', async () => {
+				await fetchRepo(path, parts.remote, settings.fetchAndPrune, settings.fetchAndPruneTags);
+				const error = await resetToCommit(path, upstream, 'hard');
+				if (error !== null) throw new Error(error);
+			});
+		})();
+	}, [currentSync, workingTreePath, run, settings.fetchAndPrune, settings.fetchAndPruneTags]);
+
+	/** 同步按钮的右键菜单：双向分叉时给出两种整体覆盖。 */
+	const handleSyncContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const { clientX, clientY } = event;
+		const upstream = currentSync?.upstream ?? '';
+		showContextMenu({
+			x: clientX, y: clientY,
+			items: [
+				{
+					title: '用本地覆盖远程（强制推送）', danger: true,
+					hint: upstream === '' ? undefined : `把本地分支强推到 ${upstream}`,
+					onClick: () => { overwriteRemoteWithLocal(); },
+				},
+				{
+					title: '用远程覆盖本地（硬重置）', danger: true,
+					hint: upstream === '' ? undefined : `把本地分支重置到 ${upstream}`,
+					onClick: () => { overwriteLocalWithRemote(); },
+				},
+			],
+		});
+	}, [currentSync, overwriteRemoteWithLocal, overwriteLocalWithRemote]);
 
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
 	const changeSettings = React.useCallback((next: Settings) => {
@@ -1707,6 +1800,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
 			canSubmit, onSubmit: submit, onRefresh: refreshAll,
+			onSyncContextMenu: overwriteChoicesAvailable ? handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,

@@ -182,6 +182,8 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly canSubmit: boolean;
 	readonly onSubmit: () => void;
 	readonly onRefresh: () => void;
+	/** 同步按钮的右键菜单；双向分叉时给出覆盖入口，其余情形为 undefined。 */
+	readonly onSyncContextMenu?: ((event: React.MouseEvent<HTMLElement>) => void) | undefined;
 	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string> };
 	readonly groupExpanded: { staged: boolean; unstaged: boolean };
 	readonly toggleChange: (key: string, path: string) => void;
@@ -206,7 +208,7 @@ export type CommitBoxProps = Pick<ChangesSectionProps,
 	| 'hooksActive' | 'runHooks' | 'onToggleRunHooks' | 'onStash' | 'onAbortMerge'
 	| 'showTranslate' | 'translateBusy' | 'onTranslate' | 'aiBusy' | 'aiWarning' | 'aiStats' | 'onAiCommit'
 	| 'showSyncButton' | 'syncBehind' | 'syncAhead' | 'onSync' | 'showPublishButton' | 'onPublish'
-	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging'>;
+	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging' | 'onSyncContextMenu'>;
 
 /**
  * 提交框：提交信息、AI 入口与主按钮；只随这些属性重渲染。
@@ -218,7 +220,7 @@ function CommitBoxView({
 	entries, busy, phase, head, message, onMessageChange, amend, onToggleAmend, hooksActive, runHooks, onToggleRunHooks,
 	onStash, onAbortMerge, showTranslate, translateBusy, onTranslate, aiBusy, aiWarning, aiStats, onAiCommit,
 	showSyncButton, syncBehind, syncAhead, onSync, showPublishButton, onPublish, canSubmit, onSubmit,
-	hasLocalExclude, onShowLocalExclude, merging,
+	hasLocalExclude, onShowLocalExclude, merging, onSyncContextMenu,
 }: CommitBoxProps): React.ReactElement {
 	/*
 	 * 右侧动作组：贮藏固定在最右端，其余按出现顺序追加，不占固定位置。
@@ -312,7 +314,7 @@ function CommitBoxView({
 		showSyncButton
 			? React.createElement(Button, {
 				variant: 'primary', size: 'sm', disabled: busy.network || busy.history,
-				onClick: onSync,
+				onClick: onSync, onContextMenu: onSyncContextMenu,
 			}, '同步更改',
 				syncBehind > 0 && React.createElement('span', null, ' ↓' + String(syncBehind)),
 				syncAhead > 0 && React.createElement('span', null, ' ↑' + String(syncAhead)),
@@ -376,7 +378,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 				showPublishButton: props.showPublishButton, onPublish: props.onPublish,
 				canSubmit: props.canSubmit, onSubmit: props.onSubmit,
 				hasLocalExclude: props.hasLocalExclude, onShowLocalExclude: props.onShowLocalExclude,
-				merging: props.merging,
+				merging: props.merging, onSyncContextMenu: props.onSyncContextMenu,
 			}),
 			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 			React.createElement(
