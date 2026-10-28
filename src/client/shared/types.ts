@@ -221,6 +221,9 @@ export interface ChangeActions {
 
 /** 引用列表项。 */
 export interface RefItem {
+	/** 完整引用名，如 `refs/heads/main`；手选筛选按它持久化。 */
+	readonly id: string;
+	/** 显示用短名，如 `main`、`origin/main`。 */
 	readonly name: string;
 	readonly hash: string;
 	readonly type: 'branch' | 'remote' | 'tag';
@@ -284,7 +287,12 @@ export interface PanelState {
 	phase: PanelPhase;
 	error: string | null;
 	commits: Commit[];
+	/** 当前分支名；分离头指针时为 null。 */
 	head: string | null;
+	/** 当前 HEAD 指向的提交哈希；尚无提交时为 null。 */
+	headHash: string | null;
+	/** 上游远程跟踪分支名；无上游时为 null。 */
+	upstream: string | null;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
 	/**

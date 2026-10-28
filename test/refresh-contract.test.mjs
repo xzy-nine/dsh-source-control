@@ -34,13 +34,13 @@ const noop = () => {};
 const COMMITS_PAYLOAD = {
 	command: 'loadCommits', error: null, onlyFollowFirstParent: false,
 	commits: [{ hash: 'c1', parents: [], heads: ['main'], tags: [], remotes: [], stash: null, message: 'c1', author: 'a', email: 'a@b.c', date: 1700000000 }],
-	head: 'c1', tags: [], moreCommitsAvailable: false, nextCursor: null, repoInfo: null,
+	head: 'c1', branch: 'main', tags: [], moreCommitsAvailable: false, nextCursor: null, repoInfo: null,
 };
 /** 工作区快照响应体。 */
 const SNAPSHOT_PAYLOAD = {
 	command: 'loadWorkingTreeSnapshot', error: null,
 	entries: [{ path: 'a.txt', origPath: null, index: ' ', worktree: 'M' }],
-	head: 'c1', branch: 'main', upstream: null, ahead: 0, behind: 0,
+	head: 'c1', branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0,
 };
 
 /**
@@ -50,7 +50,7 @@ const SNAPSHOT_PAYLOAD = {
  *   之前设置才能制造「首屏在途」的时序。
  * @returns 状态读取器、刷新函数与请求记录。
  */
-async function mount(initialDelays = {}) {
+async function mount(initialDelays = {}, overrides = {}) {
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
 		url: 'http://localhost/', pretendToBeVisual: true,
 	});
@@ -67,19 +67,23 @@ async function mount(initialDelays = {}) {
 
 	/** 请求记录与按命令配置的延迟。 */
 	const calls = [];
+	/** 完整请求体记录：断言筛选等入参用。 */
+	const bodies = [];
 	const delays = new Map(Object.entries(initialDelays));
 	/** 当前快照条目；测试可改写以制造条目变化。 */
 	const snapshot = { entries: SNAPSHOT_PAYLOAD.entries };
 	globalThis.fetch = async (url, init) => {
 		const body = JSON.parse(init.body);
 		calls.push(body.command);
+		bodies.push(body);
 		const wait = delays.get(body.command) ?? 0;
 		if (wait > 0) await new Promise((done) => setTimeout(done, wait));
 		// 与真实 fetch 一致：请求被中止时调用方看到 AbortError，而不是拿到正常响应。
 		if (init.signal?.aborted === true) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
 		const payload = body.command === 'loadCommits' ? COMMITS_PAYLOAD
 			: body.command === 'loadWorkingTreeSnapshot' ? { ...SNAPSHOT_PAYLOAD, entries: snapshot.entries }
-				: { command: body.command, error: null };
+				: body.command === 'loadRepoInfo' ? { command: body.command, error: null, branches: ['main'], head: 'main', remotes: [], stashes: [] }
+					: { command: body.command, error: null };
 		return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
 	};
 
@@ -88,10 +92,14 @@ async function mount(initialDelays = {}) {
 	const latest = { state: null, refresh: null, refreshEntries: null };
 	/** 当前仓库路径；测试可改写以制造换仓库。 */
 	const target = { path: '/repo' };
+	/** hook 的可变入参：本用例的筛选与分叉来源等。 */
+	const options = { filter: undefined, branchBase: null, headHint: null, upstreamHint: null, ...overrides };
 	function Probe() {
 		const result = useGraphData({
 			workingTreePath: target.path, hasWorkspace: true, maxCommits: 200,
 			settings: SETTINGS, selectedId: null, setSyncById: noop,
+			filter: options.filter, branchBase: options.branchBase,
+			headHint: options.headHint, upstreamHint: options.upstreamHint,
 		});
 		latest.state = result.state;
 		latest.refresh = result.refresh;
@@ -100,10 +108,15 @@ async function mount(initialDelays = {}) {
 	}
 	await act(async () => { reactRoot.render(React.createElement(Probe)); });
 	return {
-		calls, delays, snapshot, latest, act, reactRoot,
+		calls, bodies, delays, snapshot, latest, act, reactRoot,
 		/** 换到另一个仓库并重渲染。 */
 		setPath: (path) => {
 			target.path = path;
+			return act(async () => { reactRoot.render(React.createElement(Probe)); });
+		},
+		/** 改写 hook 入参（筛选、分叉来源等）并重渲染。 */
+		setOptions: (next) => {
+			Object.assign(options, next);
 			return act(async () => { reactRoot.render(React.createElement(Probe)); });
 		},
 	};
@@ -128,6 +141,8 @@ test('提交图在途时触发只取快照的刷新：phase 仍收敛到 ready',
 		assert.equal(harness.latest.state.phase, 'loading', '触发时提交图应在途');
 		await harness.latest.refreshEntries();
 	});
+	// 在途窗口已构造完毕：后续重取不再人为延迟，只验证 phase 能收敛。
+	harness.delays.clear();
 	await settle(harness, 1500);
 	assert.equal(harness.latest.state.phase, 'ready', 'phase 必须收敛到 ready');
 	assert.ok(harness.latest.state.commits.length > 0, '提交列表不应为空');
@@ -227,5 +242,45 @@ test('换仓库：取数返回前条目与提交列表已清空', { skip }, asyn
 	assert.deepEqual(harness.latest.state.commits, [], '取数返回前必须清空旧仓库的提交列表');
 	await settle(harness, 900);
 	assert.equal(harness.latest.state.entries.length, 1, '取数返回后应写入新仓库的条目');
+	await harness.act(async () => { harness.reactRoot.unmount(); });
+});
+/**
+ * 取最近一次提交图请求的引用起点。
+ *
+ * @param harness - 挂载句柄。
+ * @returns `branches` 入参；最近一次请求不是提交图时为 undefined。
+ */
+function lastBranches(harness) {
+	const last = [...harness.bodies].reverse().find((body) => body.command === 'loadCommits');
+	return last === undefined ? undefined : last.branches;
+}
+
+test('取数起点：手选筛选把选中引用交给宿主', { skip }, async () => {
+	const harness = await mount({}, { filter: { mode: 'manual', ids: ['refs/heads/dev'] } });
+	await settle(harness, 400);
+	assert.deepEqual(lastBranches(harness), ['dev'], '手选引用按短名传给 git log');
+	assert.deepEqual(harness.latest.state.commits.map((commit) => commit.hash).filter((hash) => hash !== '*'), ['c1']);
+	await harness.act(async () => { harness.reactRoot.unmount(); });
+});
+
+test('取数起点：自动筛选取当前分支、上游与分叉来源', { skip }, async () => {
+	const harness = await mount({}, {
+		headHint: 'main', upstreamHint: 'origin/main',
+		branchBase: { branch: 'main', base: 'origin/dev' },
+	});
+	await settle(harness, 400);
+	assert.deepEqual(lastBranches(harness), ['main', 'origin/main', 'origin/dev']);
+	await harness.act(async () => { harness.reactRoot.unmount(); });
+});
+
+test('切换筛选会按新起点重取提交图', { skip }, async () => {
+	const harness = await mount();
+	await settle(harness, 400);
+	assert.deepEqual(lastBranches(harness), ['main', 'origin/main'], '分支与上游从响应取到后自动模式收窄');
+	const before = harness.bodies.filter((body) => body.command === 'loadCommits').length;
+	await harness.setOptions({ filter: { mode: 'manual', ids: ['refs/heads/dev'] } });
+	await settle(harness, 400);
+	assert.ok(harness.bodies.filter((body) => body.command === 'loadCommits').length > before, '换筛选应重取');
+	assert.deepEqual(lastBranches(harness), ['dev']);
 	await harness.act(async () => { harness.reactRoot.unmount(); });
 });

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
 import type { WorkingTreeSnapshot } from './working-tree.js';
 import { readHeadRef } from './worktree-branches.js';
-import { repoLayout } from './repo-facts.js';
+import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
 import {
 	assembleCommits, generateFileChanges, parseCommitDetails, parseConfigList, parseLog, parseNameStatus,
@@ -18,8 +18,8 @@ import {
 } from './git-parse.js';
 import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, RefsAndBranches, StatusFiles } from './git-parse.js';
 import type {
-	CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
-	RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
+	BranchBase, CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
+	RefSummary, RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
 } from './git-types.js';
 
 /** 提交详情中除改动列表以外的字段。 */
@@ -665,4 +665,159 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
 	return separator === -1 ? '' : stdout.slice(separator + 1);
 }
 
+/** 分叉来源解析用的引用格式：全名、短名、上游短名、上游跟踪状态。 */
+const BASE_REF_FORMAT = ['%(refname)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
 
+/**
+ * 读取仓库的全部引用，供引用筛选列表与手选校验使用。
+ *
+ * 与提交图取数分离：只有打开筛选弹窗或需要校验手选引用时才读，刷新路径不起这次 `for-each-ref`。
+ *
+ * @param repo - 仓库路径。
+ * @param showRemoteBranches - 是否包含远程分支。
+ * @returns 分支、远程分支与标签；读取失败时抛错，由路由回投错误文本。
+ */
+export async function getRefSummaries(repo: string, showRemoteBranches: boolean): Promise<RefSummary[]> {
+	const parsed = await getRefsAndBranches(repo, showRemoteBranches, []);
+	const refs: RefSummary[] = [];
+	for (const head of parsed.refs.heads) refs.push({ id: `refs/heads/${head.name}`, name: head.name, hash: head.hash, type: 'branch' });
+	for (const tag of parsed.refs.tags) refs.push({ id: `refs/tags/${tag.name}`, name: tag.name, hash: tag.hash, type: 'tag' });
+	for (const remote of parsed.refs.remotes) refs.push({ id: `refs/remotes/${remote.name}`, name: remote.name, hash: remote.hash, type: 'remote' });
+	return refs;
+}
+
+/**
+ * 转义正则元字符，供 `--grep-reflog` 拼接分支名。
+ *
+ * @param value - 原文。
+ * @returns 转义后的文本。
+ */
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 读某个 reflog 里匹配条件条目的主题。
+ *
+ * @param repo - 仓库路径。
+ * @param ref - reflog 的引用名，如 `refs/heads/main` 或 `HEAD`。
+ * @param pattern - `--grep-reflog` 的正则。
+ * @returns 匹配条目的主题，按 reflog 顺序；读取失败时为空数组。
+ */
+async function reflogSubjects(repo: string, ref: string, pattern: string): Promise<string[]> {
+	const result = await runGit(['reflog', ref, '--format=%gs', `--grep-reflog=${pattern}`], repo);
+	if (result.code !== 0) return [];
+	return result.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+}
+
+/**
+ * 从 reflog 推断分支的创建来源。
+ *
+ * 分支 reflog 记录 `branch: Created from <来源>`；来源为 `HEAD` 时再查 `HEAD` 的 reflog，
+ * 取检出到该分支前所在的分支。与 VS Code 的 `getBranchBaseFromReflog` 同一判据。
+ *
+ * @param repo - 仓库路径。
+ * @param branch - 当前分支短名。
+ * @returns 来源引用短名；无法确定时为 null。
+ */
+async function reflogCreatedFrom(repo: string, branch: string): Promise<string | null> {
+	const created = await reflogSubjects(repo, `refs/heads/${branch}`, 'branch: Created from *.')
+		.then((subjects) => subjects, () => []);
+	if (created.length !== 1) return null;
+	const from = /^branch: Created from (.*)$/.exec(created[0])?.[1]?.trim() ?? '';
+	if (from === '') return null;
+	if (from !== 'HEAD') return from;
+	const moved = await reflogSubjects(repo, 'HEAD', `checkout: moving from .* to ${escapeRegExp(branch)}`);
+	const last = moved.at(-1);
+	if (last === undefined) return null;
+	return /^checkout: moving from (\S+) /.exec(last)?.[1] ?? null;
+}
+
+/**
+ * 把一个候选引用名解析成可用于 `git log` 起点的短名。
+ *
+ * 候选既可以是 `refs/heads/x`、`refs/remotes/origin/x` 这样的全名，也可以是 `main`、
+ * `origin/main` 这样的短名。远程分支优先；本地分支取它的上游（上游已消失时退回本地分支名）。
+ *
+ * @param repo - 仓库路径。
+ * @param candidate - 候选引用名。
+ * @returns 引用短名；候选解析不到时为 null。
+ */
+async function resolveRefName(repo: string, candidate: string): Promise<string | null> {
+	const name = candidate.trim();
+	if (name === '') return null;
+	const patterns = name.startsWith('refs/') ? [name] : [`refs/heads/${name}`, `refs/remotes/${name}`];
+	const result = await runGit(['for-each-ref', `--format=${BASE_REF_FORMAT}`, ...patterns], repo);
+	if (result.code !== 0) return null;
+	let local: string | null = null;
+	let upstream = '';
+	let track = '';
+	let remote: string | null = null;
+	for (const line of result.stdout.split('\n')) {
+		if (line === '') continue;
+		const [refname, short, upstreamName, upstreamTrack] = line.split('\0');
+		if (refname.startsWith('refs/heads/')) {
+			local = short;
+			upstream = upstreamName;
+			track = upstreamTrack;
+		} else if (refname.startsWith('refs/remotes/') && !short.endsWith('/HEAD')) {
+			remote = short;
+		}
+	}
+	if (remote !== null) return remote;
+	if (local === null) return null;
+	if (upstream !== '' && track !== 'gone') return upstream;
+	return local;
+}
+
+/**
+ * 读默认远程的默认分支。
+ *
+ * 取第一个远程，按 `refs/remotes/<远程>/HEAD` 解析；该符号引用多数仓库未建立，读不到即可。
+ *
+ * @param repo - 仓库路径。
+ * @returns 引用短名；无法确定时为 null。
+ */
+async function defaultRemoteBranch(repo: string): Promise<string | null> {
+	let remotes: string[];
+	try {
+		remotes = await getRemoteNames(repo);
+	} catch {
+		return null;
+	}
+	if (remotes.length === 0) return null;
+	const result = await runGit(['symbolic-ref', '--short', `refs/remotes/${remotes[0]}/HEAD`], repo);
+	if (result.code !== 0) return null;
+	const name = result.stdout.trim();
+	return name === '' ? null : await resolveRefName(repo, name);
+}
+
+/**
+ * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
+ *
+ * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
+ * 只读，不把推断结果写回仓库配置。
+ *
+ * @param repo - 仓库路径。
+ * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
+ */
+export async function getBranchBase(repo: string): Promise<BranchBase> {
+	const head = await repoHead(repo);
+	const branch = head?.branch ?? null;
+	if (branch === null) return { branch: null, base: null };
+
+	const configured = await runGit(['config', '--get', `branch.${branch}.vscode-merge-base`], repo);
+	const configuredName = configured.code === 0 ? configured.stdout.trim() : '';
+	if (configuredName !== '') {
+		const resolved = await resolveRefName(repo, configuredName);
+		if (resolved !== null) return { branch, base: resolved };
+	}
+
+	const fromReflog = await reflogCreatedFrom(repo, branch);
+	if (fromReflog !== null) {
+		const resolved = await resolveRefName(repo, fromReflog);
+		if (resolved !== null) return { branch, base: resolved };
+	}
+
+	return { branch, base: await defaultRemoteBranch(repo) };
+}

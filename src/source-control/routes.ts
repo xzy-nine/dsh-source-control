@@ -8,7 +8,7 @@ import type http from 'node:http';
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import {
-	getCommitComparison, getCommitDetails, getCommits, getConfig, getRepoInfo, getStashDetails,
+	getBranchBase, getCommitComparison, getCommitDetails, getCommits, getConfig, getRefSummaries, getRepoInfo, getStashDetails,
 	getRemoteNames, getStashes, getUncommittedDetails, getWorkingTreeSnapshot, repoRoot,
 } from './git-query.js';
 import {
@@ -606,6 +606,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					repoInfo: batch?.info ?? null,
 				});
 			}
+			break;
+		case 'loadRefs':
+			// 引用筛选弹窗与手选校验用：只在需要时读，刷新路径不调用。
+			await respondResult('loadRefs', async () => ({ repo, refs: await getRefSummaries(repo, bool('showRemoteBranches', true)) }));
+			break;
+		case 'loadBranchBase':
+			// 当前分支的分叉来源：自动筛选把它并入取数起点。
+			await respondResult('loadBranchBase', async () => ({ repo, ...(await getBranchBase(repo)) }));
 			break;
 		case 'loadConfig':
 			respond({ command: 'loadConfig', repo, ...(await getConfig(repo, arr('remotes'))) });

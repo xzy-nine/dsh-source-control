@@ -1,7 +1,7 @@
 /**
  * 仓库发现、仓库同步状态与提交图查询。
  */
-import type { Commit, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
+import type { Commit, RefItem, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
 import { callApi } from './http.ts';
 
 /** 仓库发现结果。 */
@@ -205,6 +205,12 @@ export interface LoadGraphOptions {
 	readonly stashes?: readonly GraphStash[];
 	/** 已知当前分支名；未取仓库信息时用它填充 `head`。 */
 	readonly branch?: string | null;
+	/**
+	 * 取数起点：引用名列表；null 表示全部引用（宿主按 `--branches` 等枚举）。
+	 *
+	 * 引用筛选在这里落地：`git log` 只遍历这些引用的历史，分页与窗口因此随筛选变化。
+	 */
+	readonly branches?: readonly string[] | null;
 	readonly signal?: AbortSignal;
 }
 
@@ -238,12 +244,12 @@ export async function loadGraph(cwd: string, {
 	maxCommits = 200, skip = 0, commitOrdering = 'topo',
 	showStashes = true, showTags = true, showRemoteBranches = true,
 	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false,
-	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, signal,
+	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, branches = null, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
 		// 偏移分页：skip 是已加载条数，正反向都用它。
-		command: 'loadCommits', branches: null, skip, limit: maxCommits, showTags, showRemoteBranches,
+		command: 'loadCommits', branches, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, showStashes,
 		withRepoInfo,
 		// 调用方未给出时按宿主默认（空列表）处理，由宿主自行读取。
@@ -281,5 +287,49 @@ export async function loadGraph(cwd: string, {
 			? (commitsPayload.foreignBranches as unknown[]).filter((name): name is string => typeof name === 'string')
 			: [],
 		infoKnown: fetched !== null && fetched.error === null,
+	};
+}
+/** 引用类型到展示词。 */
+const REF_KIND: Record<'branch' | 'remote' | 'tag', string> = { branch: '分支', remote: '远程', tag: '标记' };
+
+/**
+ * 读取仓库的全部引用，供引用筛选弹窗与手选校验使用。
+ *
+ * 与提交图取数分开：只在打开弹窗或需要校验手选引用时请求，刷新路径不起这次 `for-each-ref`。
+ *
+ * @param cwd - 仓库路径。
+ * @param showRemoteBranches - 是否包含远程分支。
+ * @param signal - 取消信号。
+ * @returns 分支、远程分支与标签。
+ */
+export async function loadRefs(cwd: string, showRemoteBranches = true, signal?: AbortSignal): Promise<RefItem[]> {
+	const payload = await callApi(cwd, { command: 'loadRefs', showRemoteBranches }, signal);
+	const list = Array.isArray(payload.refs) ? payload.refs : [];
+	const refs: RefItem[] = [];
+	for (const item of list) {
+		if (item === null || typeof item !== 'object') continue;
+		const record = item as Record<string, unknown>;
+		if (typeof record.id !== 'string' || typeof record.name !== 'string' || typeof record.hash !== 'string') continue;
+		const type = record.type === 'branch' || record.type === 'remote' || record.type === 'tag' ? record.type : null;
+		if (type === null) continue;
+		refs.push({ id: record.id, name: record.name, hash: record.hash, type, kind: REF_KIND[type] });
+	}
+	return refs;
+}
+
+/**
+ * 读取当前分支的分叉来源分支。
+ *
+ * 与 VS Code 图形视图的 base 引用同一判据：配置、分支 reflog 的创建来源、默认远程的默认分支。
+ *
+ * @param cwd - 仓库路径。
+ * @param signal - 取消信号。
+ * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
+ */
+export async function loadBranchBase(cwd: string, signal?: AbortSignal): Promise<{ branch: string | null; base: string | null }> {
+	const payload = await callApi(cwd, { command: 'loadBranchBase' }, signal);
+	return {
+		branch: typeof payload.branch === 'string' ? payload.branch : null,
+		base: typeof payload.base === 'string' ? payload.base : null,
 	};
 }

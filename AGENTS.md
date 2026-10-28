@@ -33,7 +33,9 @@ src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
                     （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫；批量领先/
                     落后取数经 child-process.ts 的 createLimiter 限流）、仓库事实层
-                    （repo-facts.ts：git 目录布局与打包引用的进程级缓存）、
+                    （repo-facts.ts：git 目录布局与打包引用的进程级缓存）、引用筛选取数
+                    （git-query.ts 的 getRefSummaries / getBranchBase，对应路由命令 loadRefs /
+                    loadBranchBase：弹窗用的全部引用与当前分支的分叉来源）、
                     仓库结构监视（repo-watcher.ts：两层——按 git 公共目录去重监视 worktrees / modules
                     与 .gitmodules；按工作区根递归监视仓库集合的增删。变化后作废发现缓存并经事件流推
                     repository-tree）、子模块声明解析
@@ -62,7 +64,8 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
                     terminal-run.ts 终端执行
   src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
-  src/client/shared/ 共享契约与声明：types.ts、cache.ts（有界缓存与派生值缓存）、assets.d.ts、md5.d.ts
+  src/client/shared/ 共享契约与声明：types.ts、cache.ts（有界缓存与派生值缓存）、path-key.ts
+                    （路径键归一化：仓库节点 id 与按仓库持久化的键共用）、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
@@ -281,6 +284,12 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 `createLimiter(SYNC_CONCURRENCY)`（`child-process.ts`，上限 5），一次下发全部路径时同时在跑的 git
 不超过 5 个；面板的单仓库命令不入队，与「宿主不串行化命令」一致。
 
+引用筛选在取数端生效：`loadCommits` 的 `branches` 由筛选状态决定，「全部」传 null（宿主按
+`--branches` 等枚举）、「自动」传当前分支 + 上游 + 分叉来源、「手选」传所选引用短名；窗口缓存键
+本就含 `branches`，切换筛选即换一个窗口。自动模式的分叉来源由 `loadBranchBase` 取（配置 → 分支
+reflog 创建来源 → 默认远程分支，取值顺序同 VS Code 图形视图的 base 引用），只在换仓库或换分支时读；
+弹窗的引用列表由 `loadRefs` 取，只在打开弹窗或手选校验时读，刷新路径不为它起子进程。
+
 客户端只记「已知远程与贮藏」是否可信：`GraphData.infoKnown` 为真才记为已知值 —— 空远程与空贮藏
 同样是事实，记下它们才不会让下一次刷新再取一次仓库信息；读取失败不回记，避免把失败固化。
 `loadCommits` 响应另带 `branch`（当前分支名，取自同一次 `HEAD` 读取），刷新路径因此仍能标出当前
@@ -382,7 +391,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`runHooks`（本次提交与推送是否运行 git 钩子，不持久化，提交/推送完成与换仓库时复位）、`maxCommits`、分页与请求中标志 |
 | 会话级 | 浏览器 `sessionStorage`（客户端经 `panel/storage.ts` 的 `loadSessionValue` / `saveSessionValue` 读写） | 本次会话，关标签页即清 | 与具体仓库绑定、重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<仓库根绝对路径>`） |
-| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、工作区仓库位置缓存 |
+| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选（单键 `dsh-source-control-ref-filter` 内按规范化仓库路径分列：`'all'` 或引用 id 数组；默认「自动」不落盘，与 VS Code 图形视图一致）、工作区仓库位置缓存 |
 
 客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 是唯一出口，宿主侧在首屏预取一次到内存镜像，
 读走镜像（同步，供 `useState` 初始化），写更新镜像并异步落盘。仓库位置缓存在 `state.json` 的 `repos` 
@@ -488,10 +497,11 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `cache.test.mjs` | 有界缓存基元：`LruMap` 的 `peek` 不改次序、`get` 置新与超限按比例淘汰，`forObject` 按对象隔离且同一对象同一引用，`forKey` 淘汰后重算，`mapsEqual`，`trimOldest` |
 | `window-range.test.mjs` | 窗口区间：空列表、顶部与底部越界、视口高度为 0、展开详情的非均匀行高、overscan 边界 |
 | `row-model.test.mjs` | 行模型：引用标记种类与 HEAD 变化后的重算、缓存引用稳定、未提交行与贮藏行文案、头像候选地址 |
-| `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |
+| `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行；取数起点（手选传引用短名、自动传分支 + 上游 + 分叉来源、切换筛选按新起点重取） |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
 | `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序；文件夹计数与改造前一致（含多层与空目录） |
-| `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |
+| `refs.test.mjs` | 引用筛选状态：按仓库键读写与路径归一、自动模式不落盘、切回自动删项、非法值回退、引用 id 与短名换算、取数起点组装、手选失效回退自动、勾选态与摘要文案 |
+| `ref-filter-source.test.mjs` | 引用筛选的宿主取数：全部引用摘要（分支/远程/标签、完整引用名、关闭远程分支）、分叉来源的四级取值（配置、reflog 创建来源、本地来源分支、分离头指针无来源）、经路由读引用与分叉来源、筛选在取数端生效（未选中的分支尖端被排除） |
 | `worktree-branches.test.mjs` | 工作树登记：`core` 段解析、`gitdir` 还原工作树根、与 `git worktree list` 逐条对照、子模块与裸仓库的主工作树推导、登记项残留；占用分支判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
 | `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
 | `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |
