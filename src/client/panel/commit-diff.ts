@@ -168,6 +168,18 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 }
 
 /**
+ * 统计提交列表里的日志记录数。
+ *
+ * 未提交伪提交行随工作区条目在客户端补出，不是日志记录，计数时不计入。
+ *
+ * @param commits - 提交列表。
+ * @returns 日志记录数。
+ */
+export function logCommitCountOf(commits: readonly Commit[]): number {
+	return commits.length > 0 && commits[0].hash === UNCOMMITTED_HASH ? commits.length - 1 : commits.length;
+}
+
+/**
  * 取未提交伪提交行可以挂载的父提交哈希。
  *
  * 该行的父提交必须出现在提交列表里，否则泳道图在该处断线：提交列表与工作区快照可能读自不同的

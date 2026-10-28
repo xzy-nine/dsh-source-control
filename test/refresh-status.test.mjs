@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	backgroundFlagsOf, beginBackground, endBackground, lastRefreshText, refreshNoticeOf,
+	backgroundFlagsOf, beginBackground, endBackground, lastRefreshText, refreshNoticeOf, refreshNoticeSince,
 } from '../src/client/panel/refresh-status.ts';
 
 /** 构造一个只含本模块所需字段的面板状态。 */
@@ -63,6 +63,11 @@ test('相对时间文案：分档给出，从未刷新为空串', () => {
 	assert.equal(lastRefreshText(200_000, 100_000), '刚刚');
 });
 
+/** 构造一轮后台刷新的基线。 */
+const baselineOf = (overrides = {}) => ({
+	at: 1000, scope: 'repo|main|200', ready: true, entries: 3, commits: 10, ...overrides,
+});
+
 test('告知判据：只在计数变化时给出文案', () => {
 	const same = { entries: 3, commits: 10 };
 	assert.equal(refreshNoticeOf(same, same), '');
@@ -73,4 +78,21 @@ test('告知判据：只在计数变化时给出文案', () => {
 		refreshNoticeOf(same, { entries: 1, commits: 20 }),
 		'已更新：工作区 -2 个改动，提交图 +10 个提交',
 	);
+});
+
+test('告知基线：同范围的相邻两轮按变化量给出文案', () => {
+	assert.equal(refreshNoticeSince(baselineOf(), baselineOf({ at: 2000, entries: 4 })), '已更新：工作区 +1 个改动');
+	assert.equal(refreshNoticeSince(baselineOf(), baselineOf({ at: 2000 })), '');
+});
+
+test('告知基线：换仓库、换引用起点、换窗口与未就绪的轮次不比较', () => {
+	// 首次进入没有上一轮基线。
+	assert.equal(refreshNoticeSince(null, baselineOf()), '');
+	// 换仓库或换引用起点：两份提交列表不是同一批数据。
+	assert.equal(refreshNoticeSince(baselineOf(), baselineOf({ scope: 'other|main|200' })), '');
+	// 加载更多后窗口不同：提交数差值来自翻页，不是新提交。
+	assert.equal(refreshNoticeSince(baselineOf(), baselineOf({ scope: 'repo|main|400', commits: 410 })), '');
+	// 任一轮仍在加载：计数是中间态。
+	assert.equal(refreshNoticeSince(baselineOf({ ready: false }), baselineOf({ commits: 12 })), '');
+	assert.equal(refreshNoticeSince(baselineOf(), baselineOf({ ready: false, commits: 12 })), '');
 });

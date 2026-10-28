@@ -98,6 +98,7 @@ function deltaText(label: string, unit: string, delta: number): string {
  *
  * 只在计数发生变化时给出文案：后台刷新频繁，无变化的刷新不该打扰用户。
  * 用户主动刷新不调用本函数——结果就在眼前。两个计数都按变化量给出，不报总数。
+ * 调用方经 {@link refreshNoticeSince} 先判两轮是否可比，本函数只负责文案。
  *
  * @param before - 刷新前的计数。
  * @param after - 刷新后的计数。
@@ -113,4 +114,29 @@ export function refreshNoticeOf(before: RefreshCounts, after: RefreshCounts): st
 	}
 	if (parts.length === 0) return '';
 	return `已更新：${parts.join('，')}`;
+}
+
+/** 一次后台刷新完成时的基线。 */
+export interface RefreshBaseline extends RefreshCounts {
+	/** 完成时刻，与 `lastRefreshAt` 同源。 */
+	readonly at: number;
+	/** 取数范围：仓库、引用起点、提交窗口与影响提交行的设置项。 */
+	readonly scope: string;
+	/** 该轮数据是否已就绪；加载中的计数不参与比较。 */
+	readonly ready: boolean;
+}
+
+/**
+ * 生成两轮后台刷新之间的告知文案。
+ *
+ * 范围不同或任一轮未就绪时不给文案：那类差值来自换仓库、换引用起点、加载更多或仍在加载，
+ * 不是「这一轮取回了新变化」。
+ *
+ * @param previous - 上一轮基线；首次进入为 null。
+ * @param current - 本轮基线。
+ * @returns 告知文案；不可比较或无变化时为空串。
+ */
+export function refreshNoticeSince(previous: RefreshBaseline | null, current: RefreshBaseline): string {
+	if (previous === null || !previous.ready || !current.ready || previous.scope !== current.scope) return '';
+	return refreshNoticeOf(previous, current);
 }

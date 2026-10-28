@@ -6,8 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	commitsEqual, commitsListEqual, entriesEqual, mergeCommits, mergeEntries, remotesListEqual,
-	uncommittedParentOf, withUncommittedCount,
+	commitsEqual, commitsListEqual, entriesEqual, logCommitCountOf, mergeCommits, mergeEntries,
+	remotesListEqual, uncommittedParentOf, withUncommittedCount,
 } from '../src/client/panel/commit-diff.ts';
 
 /** 构造一条带全部比对字段的提交。 */
@@ -20,6 +20,13 @@ const commit = (overrides = {}) => ({
 
 /** 构造一个工作区条目。 */
 const entry = (overrides = {}) => ({ path: 'a.txt', origPath: null, index: ' ', worktree: 'M', ...overrides });
+
+test('日志记录计数：未提交伪提交行不计入', () => {
+	assert.equal(logCommitCountOf([]), 0);
+	assert.equal(logCommitCountOf([commit()]), 1);
+	// 未提交伪提交行总在最前，计数时跳过。
+	assert.equal(logCommitCountOf([commit({ hash: '*' }), commit(), commit({ hash: 'b2' })]), 2);
+});
 
 test('完全相同的两条提交判等', () => {
 	assert.equal(commitsEqual(commit(), commit()), true);
