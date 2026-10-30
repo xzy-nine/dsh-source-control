@@ -34,6 +34,17 @@
 
 .changeOpenable{cursor:pointer}
 
+/* 文件行以按钮承载时清掉按钮默认外观，外观全部来自 .change。 */
+.rowButton{width:100%;border:none;background:transparent;font:inherit;text-align:left}
+
+/* 只读行列表（日志文件树）：不带变更区的分组内边距，行高也收紧。 */
+.logTree{display:flex;flex-direction:column;gap:1px;max-height:160px;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:2px 4px}
+
+.logTree .change{padding:1px 4px}
+
+/* 只读行列表的行尾文本（日志体积等）：按内容宽、不换行，与变更区的定宽状态列不同。 */
+.fileTail{flex:none;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+
 /* direction:rtl 让过长文件名从左侧截断、保住扩展名；文字本身另包一层
  * .changeText 并隔离双向文本，否则文件名开头的「.」是中性字符，会被排到行尾，
  * .gitignore 显示成 gitignore.。 */

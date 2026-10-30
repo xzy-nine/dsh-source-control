@@ -12,8 +12,7 @@ import React from 'react';
 import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
-import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './diff/better-sidebar-diff.ts';
-import { fileDiffContent, type FileDiffContent } from './api/index.ts';
+import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
@@ -65,6 +64,15 @@ function GitGraphTab(props) {
 			{ sidebarRight: props.sidebarRightService, terminals: props.terminals }, targetSessionId, command,
 		);
 	}, [props.terminals, props.sidebarRightService]);
+	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
+	const revealPath = React.useCallback((path: string): void => {
+		if (typeof props.revealPath !== 'function') return;
+		try {
+			void Promise.resolve(props.revealPath(path)).catch(() => { /* 定位失败不影响面板 */ });
+		} catch {
+			/* 同上报错忽略 */
+		}
+	}, [props.revealPath]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
@@ -82,11 +90,6 @@ function GitGraphTab(props) {
 			}
 			return;
 		}
-		// 打开这一刻才探测：设置页的启用开关要等设置 RPC 返回，提前判定会把「暂不可用」记成可用，
-		// 而该插件对已关闭的类型是静默 no-op，届时点击会毫无反应。
-		const betterSidebar = resolveBetterSidebarDiff(props.getBetterSidebar?.());
-		// 换算不出的差异（两提交区间对比、缺哈希）同样返回 false，一并回退。
-		if (openDiffInBetterSidebar(betterSidebar, diff, { sessionId, ...(typeof cwd === 'string' ? { cwd } : {}) })) return;
 		const hash = diff.kind === 'worktree' ? '*' : (diff.hashFull ?? diff.hash ?? '*');
 		const address = gitDiffAddress(sessionId, hash, path);
 		const staged = diff.kind === 'worktree' && diff.staged === true;
@@ -98,11 +101,12 @@ function GitGraphTab(props) {
 		} catch (error) {
 			void error;
 		}
-	}, [tabActions, sessionId, cwd, props.getBetterSidebar]);
+	}, [tabActions, sessionId, cwd]);
 	return React.createElement(GitGraphPanel, {
 		sessionId,
 		cwd: typeof cwd === 'string' ? cwd : null,
 		onOpenDiff,
+		onRevealPath: revealPath,
 		pickDirectory,
 		runInTerminal,
 		getSessions: props.getSessions,
@@ -171,7 +175,11 @@ function GitDiffTab(props) {
 		setDiffData(null);
 		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged, baseHash)
 			.then((data) => { setDiffData(data); setLoading(false); })
-			.catch(() => { setDiffData(null); setLoading(false); });
+			.catch((error: unknown) => {
+				setDiffData(null);
+				setLoading(false);
+				logClient('E', 'diff', `打开差异页失败，文件 ${parsed.path}（${staged ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+			});
 	}, [parsed, gitCwd, staged, baseHash]);
 	React.useEffect(() => {
 		load();
@@ -269,6 +277,9 @@ function startWorkspacePreload(ctx) {
  * @returns 无。
  */
 export function apply(ctx) {
+	// 浏览器半边的日志走宿主：装上失败转报钩子，并把装载记进日志。
+	installClientLog();
+	logClient('I', 'panel', `源代码管理面板已装载，命令地址 ${API_PATH}`);
 	// ── 后台预加载仓库树 ───────────────────────────────────────
 	// 与页签是否打开无关：页签打开时直接呈现已取回的树。
 	if (typeof ctx.effect === 'function') ctx.effect(() => startWorkspacePreload(ctx));
@@ -307,15 +318,30 @@ export function apply(ctx) {
 
 	// 目录选择器来自 ui-workspace、终端来自 ui-sidebar-terminal；都可能未装载，
 	// 因此在渲染期按需读取，缺失时由面板提示。
+	/** 在系统文件管理器中定位一个路径；宿主不具备桌面能力时返回 false。 */
+	const revealPath = async (path: string): Promise<boolean> => {
+		try {
+			const remote = ctx.get?.('remote') as { session?: { openWorkspacePath?: (request: { path: string; action?: string }) => Promise<{ ok?: boolean }> } } | undefined;
+			const session = remote?.session;
+			if (session === undefined || typeof session.openWorkspacePath !== 'function') {
+				logClient('W', 'open-in-app', `宿主未提供文件管理器能力，无法定位路径 ${path}`);
+				return false;
+			}
+			const result = await session.openWorkspacePath({ path, action: 'reveal' });
+			if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝在文件管理器中打开路径 ${path}`);
+			return result.ok === true;
+		} catch (error) {
+			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+	};
 	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
 		...props,
 		getSessions: () => ctx.get?.('sessions'),
+		revealPath,
 		uiWorkspace: ctx.get?.('uiWorkspace'),
 		terminals: ctx.get?.('webTerminals'),
 		sidebarRightService: ctx.get?.('sidebarRight'),
-		// better-sidebar 未装载时为 undefined，面板据此回退到本插件自己的差异页。
-		// 传取值函数而不是取值：该插件的客户端半边可能晚于本插件激活，且服务本身要等设置就绪。
-		getBetterSidebar: () => ctx.get?.('betterSidebar'),
 	});
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: TAB_ID },
@@ -358,4 +384,9 @@ export function apply(ctx) {
 	}
 }
 
-export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs'];
+/*
+ * `remote` 与 `remote.session` 是宿主 Remote 命名空间，"在文件管理器中打开"走它。
+ * 两项都要：Cordis 会按 inject 列表校验嵌套属性访问（`ctx.get('remote').session`），
+ * 缺一项会抛 `cannot get property "remote.session" without inject`。
+ */
+export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];

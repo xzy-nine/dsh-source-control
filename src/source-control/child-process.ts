@@ -30,6 +30,8 @@ export interface CollectProcessOptions {
 	readonly timeoutMs?: number;
 	/** 超时时的错误文本；省略时用通用文案。 */
 	readonly timeoutMessage?: string;
+	/** 送进标准输入的内容；省略时立即关闭标准输入。 */
+	readonly input?: string;
 	/**
 	 * 子进程启动后的登记回调；收尾时按 `onSettled` 撤销登记。
 	 *
@@ -86,7 +88,7 @@ export function createLimiter(max: number): Limiter {
  * @returns 退出码与输出。
  */
 export function collectProcess({
-	command, args, cwd, env, timeoutMs, timeoutMessage, onChild, onSettled,
+	command, args, cwd, env, timeoutMs, timeoutMessage, input, onChild, onSettled,
 }: CollectProcessOptions): Promise<ChildResult> {
 	return new Promise((resolve) => {
 		const child = spawn(command, [...args], { cwd, windowsHide: true, env });
@@ -117,6 +119,8 @@ export function collectProcess({
 		child.on('close', (code) => {
 			finish({ code: code === null ? -1 : code, stdout, stderr });
 		});
+		child.stdin.on('error', () => { /* 子进程提前关闭标准输入：忽略写入错误 */ });
+		child.stdin.end(input ?? '');
 		onChild?.(child, finish, () => ({ stdout, stderr }));
 	});
 }

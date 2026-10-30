@@ -44,12 +44,17 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     （hooks.ts：按 core.hooksPath 或公共目录的 hooks 判定 pre-commit / pre-push，
                     纯文件系统判定）、插件状态
                     持久化（state-store.ts，落 $DSH_HOME/dsh-source-control/，
-                    listRepoLocationsWorkspaces 列出已持久化的工作区根）
+                    listRepoLocationsWorkspaces 列出已持久化的工作区根）、
+                    文本日志（logger.ts 写入与清理、log-format.ts 的 logcat 格式、
+                    log-retention.ts 的命名与淘汰判据）与反馈
+                    （feedback.ts 提交、feedback-text.ts 正文拼装、
+                    log-archive.ts 打包、log-redact.ts 脱敏）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
                     stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
                     state.ts 是状态读写与旧数据迁移入口
-  src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板、
+  src/client/panel/ 面板：index.ts 主体、三个分区组件、变更树、引用计算、忙碌分级、设置面板
+                    （feedback.ts 是其中的「反馈」页签）、
                     仓库树（repo-preload.ts 按主视图当前会话的工作区后台取数并发布快照、use-repos.ts 订阅快照
                     并维护选中与展开；repo-tree.ts 树结构与选中、
                     enrich-claims.ts 补齐占用登记、enrich-run.ts 一批补齐的结局处理）、
@@ -59,13 +64,13 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
   src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、row-model.ts 行文本与引用标记、
                     window-range.ts 窗口区间、auto-load.ts 触底续取判据
-  src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
-                    better-sidebar-diff.ts 接入层
+  src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
                     terminal-run.ts 终端执行
   src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
   src/client/shared/ 共享契约与声明：types.ts、cache.ts（有界缓存与派生值缓存）、path-key.ts
-                    （路径键归一化：仓库节点 id 与按仓库持久化的键共用）、assets.d.ts、md5.d.ts
+                    （路径键归一化：仓库节点 id 与按仓库持久化的键共用）、version.ts 与
+                    globals.d.ts（构建期注入的插件版本）、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
@@ -144,19 +149,35 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 前端据此降级（隐藏入口或提示补授权）。GitHub 对无权访问的资源回 404，因此建仓库场景的
 404 归入无权限。
 
-`diff/better-sidebar-diff.ts` 是 dsh-better-sidebar 差异页的接入层（可选依赖）：`resolveBetterSidebarDiff`
-要求服务已装载、`diff` 类型已注册且未被设置页关闭（该插件的 `openTab` 对未注册或已关闭的类型是静默
-no-op，无法事后察觉，因此只能事前探测）；`toSidebarDiffRef` 把本插件的差异描述换算成它的两种引用
-（工作区单文件 / 整提交补丁），两提交区间对比没有等价引用而返回 null；换算失败或未安装即回退到本插件
-自己的差异页。探测发生在每次打开差异的时刻，服务经传给面板的取值函数读取 `ctx.get('betterSidebar')`：
-该插件的客户端半边可能晚于本插件激活，且启用开关要等设置 RPC 返回，提前缓存会把「暂不可用」记成可用。
-服务不写进 `dsh.client.inject`——缺它只让差异页回退，不会把插件拖成 pending。
+## 文本日志与反馈
 
-普通文件打开不经过该模块：一律 `tabActions.openResource(dsh-resource://file/…)` 交宿主按注册表认领。
-better-sidebar 的 `editor` 以 `extension` 档注册 `dsh-resource://file/**`，压过宿主 `text` 预览的
-`fallback` 档，因此装了它就用它的编辑器；未安装或该类型被关闭时该注册不存在，排名自然落到宿主预览。
-回退由宿主的认领排名承担，插件不自行判断。该编辑器对宿主自带渲染器的格式（表格 / PDF / 图片 /
-Office）主动不认领，那些仍走宿主预览。
+日志模块三件：`log-format.ts` 只做格式（logcat threadtime：`MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message`，
+含换行的消息逐行写出、续行沿用同一时间戳）；`log-retention.ts` 只做命名与淘汰判据（纯函数，可直接单测）；
+`logger.ts` 负责落盘与清理。目录为 `<root>/<YYYY-MM-DD>/logcat-YYYYMMDD-HHmmssSSS-<pid>.log`，
+root 与 `state-store.ts` 同序解析（`DSH_SOURCE_CONTROL_HOME` → `DSH_HOME` → `~/.dsh`）。
+文件名含启动时刻，因此同一日文件夹内按文件名升序即启动先后。
+
+写入策略：行先入缓冲，`FLUSH_DELAY_MS`（250ms）合并为一次追加写，缓冲到 512 行立即落盘，
+`process.on('exit')` 同步收尾。定时器 `unref()`，不阻止进程退出；写盘失败静默，不影响插件功能。
+
+清理：`initLog()` 调 `cleanLogs()` 各判一次。保留期按日文件夹名比字符串（`planExpiredDayFolders`，
+当天算第一天，早于「今天 − 14 天」的整体删除）；体积按 `planDayEvictions` 从最新文件向前累计到
+`DAY_FOLDER_LIMIT_BYTES`（15 MB），超出部分进入淘汰名单；**正在写入的那一份由 `keep` 排除**，
+既不参与累计也不会被删。
+
+反馈：`feedback.ts` 是提交编排（取日志 → 脱敏 → 打包 → `gh issue create --body-file` → 回投 issue 地址），
+`feedback-text.ts` 拼正文（纯函数），`log-archive.ts` 用系统 `tar -a -cf` 打包（tar 不可用时退回未压缩副本），
+`log-redact.ts` 脱敏（纯函数）。脱敏只在提交反馈时生效，磁盘上的原始日志保持原样；本地路径**不处理**，
+只替换 URL 账号口令、令牌串与独立出现的系统用户名，占位符分别是 `<url-credential>` / `<token>` / `<user>`。
+正文改走 `--body-file`：长描述与日志说明会让命令行参数超出系统上限。
+
+日志不交给 `gh issue create --attach` 上传：该接口的 user-attachments 端点只接受图片与视频的
+content type，文本与压缩包一律被 `content_type` 校验拒绝（实测 `.log`/`.txt`/`.zip`/`.pdf` 均失败）。
+因此流程是「本地打包 → 建 issue → 打开 issue 提示用户把压缩包拖进评论框」。
+
+差异一律由本插件自己的 git-diff 页渲染，不转发给其它侧栏插件。
+
+普通文件打开一律 `tabActions.openResource(dsh-resource://file/…)` 交宿主按注册表认领，插件不指定渲染方。
 
 分层：`src/client/panel/index.ts` 持有状态，分区组件只接收已算好的数据与回调；纯计算抽成无 React 依赖的模块
 以便直接单测。客户端不得反向依赖 `index.ts`（会成环），共享的图标等放在独立模块。
@@ -533,7 +554,11 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `submit-state.test.mjs` | 提交框判据：主按钮在合并中与修补期间固定为提交、同步与发布的切换条件、提交可用性、空信息在合并中不禁用提交 |
 | `discard-notice.test.mjs` | 丢弃结局提示：哪些子模块结局需要告知、提示是否点明未清理的部分、未删除的嵌套仓库一并列出 |
 | `data-sources.test.mjs` | JSON 数据源形状：两份菜单的 id/标题/目标/占位符与各目标必备操作、提示词四段齐全 |
-| `better-sidebar-diff.test.mjs` | better-sidebar 差异接入：能力探测、种子换算与回退判据 |
+| `log-format.test.mjs` | logcat 格式：时间戳形状、单行拼装、多行消息逐行带时间戳 |
+| `log-retention.test.mjs` | 日志目录判据：日文件夹命名、文件名排序即启动先后、体积淘汰顺序、当前文件不被淘汰、15 天保留 |
+| `logger.test.mjs` | 日志落盘实机契约：按日文件夹写入、每次启动新文件、内容符合 logcat、过期日文件夹与超限文件被清理 |
+| `log-redact.test.mjs` | 脱敏：URL 凭据与令牌替换、用户名替换但路径保留、豁免原样保留、摘要与幂等 |
+| `feedback.test.mjs` | 反馈：标题前缀、正文四段与上传步骤、目标仓库、字节换算、日志打包与 tar 不可用时的退回 |
 | `client-bundle.test.mjs` | 产物包络、外部模块请求、席位注册 |
 | `api-commands.test.mjs` | 经真实路由 handler 的宿主命令集回归（从 `lib/` 产物导入）；含钩子探测（默认目录 / `core.hooksPath`）与 `skipHooks` 的 `--no-verify` 语义 |
 | `connectivity.test.mjs` | 真实历史的泳道图无断线（非 git 仓库时跳过） |

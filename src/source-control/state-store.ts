@@ -9,6 +9,7 @@
  * → `DSH_HOME` → `~/.dsh`。
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { logWarn } from './logger.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -98,8 +99,9 @@ function save(next: StateDocument): void {
 		const tmp = path + '.tmp';
 		writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
 		renameSync(tmp, path);
-	} catch {
-		/* 写盘失败时保留内存态，不打断面板 */
+	} catch (error) {
+		// 写盘失败时保留内存态，不打断面板；但设置与布局改动会因此丢失，需要留下记录。
+		logWarn('state', `插件状态写盘失败，本次改动只留在内存里：${path}：${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 

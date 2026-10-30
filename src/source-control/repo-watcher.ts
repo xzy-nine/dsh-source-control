@@ -20,6 +20,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
+import { logDebug, logWarn } from './logger.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
 const COALESCE_MS = 250;
@@ -256,7 +257,8 @@ function watchTarget(key: string, target: WatchTarget): FSWatcher | null {
 				schedule(key);
 			});
 		});
-		handle.on('error', () => {
+		handle.on('error', (error: Error) => {
+			logWarn('watcher', `监视句柄报错，${String(REARM_MS)} ms 后重挂：${target.directory}：${error.message}`);
 			try {
 				handle.close();
 			} catch {
@@ -267,8 +269,9 @@ function watchTarget(key: string, target: WatchTarget): FSWatcher | null {
 			if (typeof timer.unref === 'function') timer.unref();
 		});
 		return handle;
-	} catch {
+	} catch (error) {
 		// 目录尚不存在：由上级目录的事件触发补挂。
+		logDebug('watcher', `暂时无法监视，等待上级目录事件后再挂：${target.directory}：${error instanceof Error ? error.message : String(error)}`);
 		return null;
 	}
 }

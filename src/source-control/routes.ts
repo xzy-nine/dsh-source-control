@@ -34,7 +34,27 @@ import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 import { repoHead, repoHeadHash } from './repo-facts.js';
+import { currentLogFile, flushSync, log, logDebug, logError, logInfo, logRoot, logWarn, recentLogFiles, type LogLevel } from './logger.js';
+import { submitFeedback } from './feedback.js';
+import { formatBytes } from './feedback-text.js';
 import type { StashEntry } from './git-types.js';
+
+/** 不要求会话仓库的命令：日志位置、反馈与客户端日志与仓库无关。 */
+const REPO_FREE_COMMANDS: ReadonlySet<string> = new Set(['feedbackInfo', 'submitFeedback', 'logEvent']);
+
+/** 一次客户端日志上报接受的条数上限。 */
+const MAX_CLIENT_LOG_ENTRIES = 200;
+
+/**
+ * 客户端给的级别归一化：只有调试、警告、错误三档与信息档，其余一律按信息处理。
+ *
+ * @param value - 客户端给出的级别字符。
+ * @returns logcat 级别。
+ */
+function clientLogLevel(value: unknown): LogLevel {
+	const level = typeof value === 'string' ? value.toUpperCase() : '';
+	return level === 'D' || level === 'W' || level === 'E' ? level : 'I';
+}
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -42,6 +62,7 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 }
 
 function sendBadRequest(res: http.ServerResponse, message: string): void {
+	logWarn('api', `请求被拒绝（400）：${message}`);
 	sendJson(res, 400, { error: message });
 }
 
@@ -120,6 +141,11 @@ function broadcastRepositoryTree(repo: string): void {
  * @returns 无。
  */
 function broadcastEvent(event: string, repo: string): void {
+	// 事件本身即状态变化：写操作与结构变化的唯一记录点，同时记下发给了几个面板。
+	const receivers = eventStreams.size;
+	const suffix = receivers === 0 ? '（当前没有面板在监听，事件已丢弃）' : `（推送给 ${String(receivers)} 个面板）`;
+	if (event === 'repository-tree') logInfo('watcher', `仓库结构已变化，通知面板重扫仓库树：${repo}${suffix}`);
+	else logInfo('repo', `仓库已被写入，通知面板刷新工作区与提交图：${repo}${suffix}`);
 	const frame = `event: ${event}\ndata: ${JSON.stringify({ repo })}\n\n`;
 	for (const stream of eventStreams) {
 		try {
@@ -142,6 +168,7 @@ function broadcastEvent(event: string, repo: string): void {
  */
 function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void {
 	if (eventStreams.size >= MAX_EVENT_STREAMS) {
+		logWarn('api', `事件流连接数已达上限 ${String(MAX_EVENT_STREAMS)} 条，拒绝新连接`);
 		sendJson(res, 503, { error: '事件流连接数已达上限' });
 		return;
 	}
@@ -152,6 +179,7 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	});
 	res.write(': connected\n\n');
 	eventStreams.add(res);
+	logDebug('api', `面板已连接事件流，当前共 ${String(eventStreams.size)} 条连接`);
 	const heartbeat = setInterval(() => {
 		try {
 			res.write(': ping\n\n');
@@ -164,6 +192,7 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	const close = (): void => {
 		clearInterval(heartbeat);
 		eventStreams.delete(res);
+		logDebug('api', `面板已断开事件流，当前还剩 ${String(eventStreams.size)} 条连接`);
 	};
 	req.on('close', close);
 	res.on('close', close);
@@ -185,7 +214,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
-	if (!repo) {
+	const command = typeof msg.command === 'string' ? msg.command : '';
+	// 单条命令只在失败时记日志；成功路径的耗时按「一次刷新」汇总（见 refreshCost）。
+	const started = Date.now();
+	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
+	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
 		return;
 	}
@@ -197,7 +230,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
+		// 所有命令级失败都经这里回投，因此错误日志只需挂在这一处。
+		const error = payload.error;
+		const failed = typeof payload.command === 'string' ? payload.command : command;
+		if (typeof error === 'string' && error !== '') logError('api', `命令 ${failed} 执行失败：${error}`);
 		sendJson(res, 200, payload);
+	};
+	/** 同步回投一条命令结果（无需等待异步操作）。 */
+	const respondResultSync = (cmd: string, payload: Record<string, unknown>): void => {
+		respond({ command: cmd, ...payload, error: null });
 	};
 	const respondError = async (cmd: string, fn: () => Promise<unknown>): Promise<void> => {
 		respond({ command: cmd, error: await fn() });
@@ -883,7 +924,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-source-control] ' + (typeof msg.message === 'string' ? msg.message : ''));
+			logError('panel', `面板报告前端错误：${str('message')}`);
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -991,9 +1032,146 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: 'invalidateCache', repo, error: null });
 			break;
 
+		/* --- 反馈与日志 --- */
+		case 'feedbackInfo':
+			// 日志目录与最近文件供反馈页展示：失败时用户据此手动提交。
+			respondResultSync('feedbackInfo', {
+				logDir: logRoot(),
+				currentFile: currentLogFile(),
+				// 体积文本由宿主给出：客户端不再自带一份格式化实现。
+				files: recentLogFiles(5).map((file) => ({ ...file, sizeText: formatBytes(file.size) })),
+			});
+			break;
+		case 'submitFeedback': {
+			const type = str('type');
+			if (type !== 'bug' && type !== 'suggestion' && type !== 'other') { sendBadRequest(res, '未知反馈类型'); break; }
+			if (str('title').trim() === '') { sendBadRequest(res, '缺少标题'); break; }
+			if (str('description').trim() === '') { sendBadRequest(res, '缺少描述'); break; }
+			const result = await submitFeedback({
+				type,
+				title: str('title'),
+				description: str('description'),
+				attachLogs: bool('attachLogs'),
+				logFile: strOrNull('logFile') ?? undefined,
+				disableRedaction: bool('disableRedaction'),
+				exemptions: arr<string>('exemptions'),
+				pluginVersion: str('pluginVersion'),
+				cwd: repo,
+			});
+			if (result.error !== null) logError('feedback', `反馈提交失败，原因分类 ${result.kind}：${result.error}`);
+			else logInfo('feedback', `反馈已提交，issue 地址：${result.url}${result.archive === null ? '（未附带日志）' : `，日志压缩包：${result.archive}`}`);
+			respond({ command: 'submitFeedback', ...result });
+			break;
+		}
+		case 'logEvent': {
+			// 浏览器半边没有文件系统，日志经这条命令转写到宿主日志。
+			const entries = arr<Record<string, unknown>>('entries').slice(0, MAX_CLIENT_LOG_ENTRIES);
+			for (const entry of entries) {
+				const tag = typeof entry.tag === 'string' && entry.tag !== '' ? entry.tag : 'panel';
+				const message = typeof entry.message === 'string' ? entry.message : '';
+				if (message === '') continue;
+				log(clientLogLevel(entry.level), `client/${tag}`, message);
+			}
+			respondResultSync('logEvent', { accepted: entries.length });
+			// 客户端上报是插件唯一看不到落盘结果的一环：收几条就记一条，便于确认上报通路是否通。
+			if (entries.length > 0) logDebug('api', `已接收 ${String(entries.length)} 条客户端日志`);
+			break;
+		}
+
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));
 	}
+
+	recordCommandCost(command, Date.now() - started);
+}
+
+/*
+ * 刷新耗时汇总：单条命令不记日志，按「一次刷新」把耗时与子进程数汇总成一行。
+ *
+ * 这是「显示到界面」之外唯一需要的性能观测点：一次刷新会打十几次命令，逐条记既淹没日志，
+ * 又看不出那一次刷新到底花了多少。
+ */
+
+/** 一次刷新的耗时汇总窗口：同一窗口内的命令计入同一轮。 */
+const COST_WINDOW_MS = 3000;
+
+/** 退出时冲刷当前轮次的一次性登记。 */
+let exitFlushRegistered = false;
+
+/** 一轮刷新内的累计。 */
+interface CostBucket {
+	/** 窗口起点（毫秒）。 */
+	startedAt: number;
+	/** 各命令的执行次数。 */
+	readonly counts: Map<string, number>;
+	/** 各命令累计耗时（毫秒）。 */
+	readonly msByCommand: Map<string, number>;
+	/** 最慢的一条命令与其耗时。 */
+	slowest: { command: string; ms: number } | null;
+	/** 本轮累计耗时（毫秒）。 */
+	totalMs: number;
+}
+
+/** 当前轮次；无在跑的命令时为 null。 */
+let bucket: CostBucket | null = null;
+
+/** 汇总定时器。 */
+let bucketTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * 记一条命令的耗时；窗口结束时输出一行汇总。
+ *
+ * @param command - 命令名。
+ * @param ms - 本次耗时（毫秒）。
+ */
+function recordCommandCost(command: string, ms: number): void {
+	if (command === '' || command === 'logEvent') return;
+	if (!exitFlushRegistered) {
+		exitFlushRegistered = true;
+		/*
+		 * 定时器 unref 过：进程退出时靠这里把最后一轮写出去。
+		 *
+		 * 退出钩子按注册顺序执行，而日志模块自己的收尾钩子在插件装载时就已注册、会先跑；
+		 * 因此这里写完必须自己再 flush 一次，否则刚写进缓冲的行赶不上落盘。
+		 */
+		process.once('exit', () => {
+			flushCommandCost();
+			flushSync();
+		});
+	}
+	if (bucket === null) {
+		bucket = { startedAt: Date.now(), counts: new Map(), msByCommand: new Map(), slowest: null, totalMs: 0 };
+	}
+	bucket.counts.set(command, (bucket.counts.get(command) ?? 0) + 1);
+	bucket.msByCommand.set(command, (bucket.msByCommand.get(command) ?? 0) + ms);
+	bucket.totalMs += ms;
+	if (bucket.slowest === null || ms > bucket.slowest.ms) bucket.slowest = { command, ms };
+	if (bucketTimer !== undefined) return;
+	bucketTimer = setTimeout(() => {
+		bucketTimer = undefined;
+		flushCommandCost();
+	}, COST_WINDOW_MS);
+	if (typeof bucketTimer.unref === 'function') bucketTimer.unref();
+}
+
+/**
+ * 输出当前轮次的汇总并复位。
+ */
+function flushCommandCost(): void {
+	if (bucket === null) return;
+	const current = bucket;
+	bucket = null;
+	const breakdown = [...current.counts.entries()]
+		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+		.map(([name, count]) => `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms`)
+		.join('、');
+	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
+	/*
+	 * 命令是并行发出的，各条耗时之和会大于用户实际等待的时长（一次 fetch 期间几个读命令
+	 * 同时在等，和能到墙钟的好几倍）。因此两个数都给：墙钟是用户感知，命令之和是工作量。
+	 */
+	const wall = Date.now() - current.startedAt;
+	logInfo('perf', `一轮刷新墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
 }
 
 export interface GgRouteContext {
@@ -1169,6 +1347,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 		);
 	};
 
+	logInfo('source-control', '开始登记仓库监视：写事件、结构变化与事件流');
+
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
 	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
 
@@ -1179,6 +1359,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 		broadcastRepositoryTree(repo);
 	}));
 	disposers.push(closeRepositoryWatchers);
+	logInfo('source-control', '仓库监视已登记，正在注册事件流与命令路由');
 
 	// 事件流（GET）：面板据此即时反映别处的写操作。
 	registerMethodRoute('/dsh-source-control/gg/events', 'GET', (req, res) => { handleEvents(req, res); });
@@ -1186,14 +1367,21 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
 	registerMethodRoute('/dsh-source-control/gg/api', 'POST', (req, res) => {
 		void handleApi(req, res, aiDeps).catch((e: unknown) => {
-			sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+			// 兜底：处理函数自身抛错时响应还没写，这里的错误以前只回给前端。
+			const message = e instanceof Error ? e.message : String(e);
+			logError('api', `处理请求时抛出未捕获的错误：${message}`);
+			sendJson(res, 500, { error: message });
 		});
 	});
 
 	// AI 模型目录（GET）：供应商列表 + 每供应商的模型 id。
 	registerMethodRoute('/dsh-source-control/gg/ai-models', 'GET', (req, res) => {
 		const llm = aiDeps?.getLlm?.() as { listProviders?: () => unknown[]; listModels?: (p: string) => Promise<unknown[]> } | undefined;
-		if (!llm || typeof llm.listProviders !== 'function') { sendJson(res, 200, { providers: [], modelsByProvider: {} }); return; }
+		if (!llm || typeof llm.listProviders !== 'function') {
+			logWarn('ai', 'LLM 服务不可用，无法提供模型目录');
+			sendJson(res, 200, { providers: [], modelsByProvider: {} });
+			return;
+		}
 		const providers: Array<{ id: string; name: string }> = [];
 		try {
 			const raw = llm.listProviders();
@@ -1315,7 +1503,9 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				});
 				sse('done', '');
 			} catch (e) {
-				sse('error', e instanceof Error ? e.message : String(e));
+				const message = e instanceof Error ? e.message : String(e);
+				logError('ai', `生成提交信息失败（${provider}/${model}）：${message}`);
+				sse('error', message);
 			}
 			res.end();
 		})().catch((e: unknown) => {
@@ -1323,11 +1513,13 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			 * 响应头发出前的失败（读请求体、取 diff、解析模型）按 JSON 回 500；此时没有
 			 * 可用的 SSE 通道，不能走 `sse()`。响应头已发出时只结束响应。
 			 */
+			const message = e instanceof Error ? e.message : String(e);
+			logError('ai', `AI 提交信息请求失败：${message}`);
 			if (res.headersSent) {
 				res.end();
 				return;
 			}
-			sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+			sendJson(res, 500, { error: message });
 		});
 	});
 

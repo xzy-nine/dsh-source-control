@@ -104,7 +104,7 @@ test('产物包络注册为包名并只请求外部平台模块', () => {
 test('apply 注册右侧栏页类型与 header 入口', () => {
 	const { client } = loadBundle();
 	assert.equal(typeof client.apply, 'function', '入口应导出 apply');
-	assert.deepEqual(client.inject, ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs']);
+	assert.deepEqual(client.inject, ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session']);
 	const registered = [];
 	const effects = [];
 	const slots = {
