@@ -105,6 +105,19 @@ function shortBranchName(name: string): string {
 	return name.replace(/^[^/]+\//, '');
 }
 
+/**
+ * 判定 `git branch -d` 的拒绝原因是否是「分支未合并」。
+ *
+ * git 的措辞随版本与语言环境不同（英文为 `not fully merged`），执行层已固定英文环境；
+ * 其余拒绝原因（被别的工作树检出、分支不存在等）不属于可强制删除的情形，应原样说明。
+ *
+ * @param message - `git branch -d` 失败时的 stderr 文本。
+ * @returns 是未合并导致时为 true。
+ */
+function isUnmergedRefusal(message: string): boolean {
+	return /not fully merged/i.test(message);
+}
+
 /** 分支被别的工作树检出时给出的说明；用于不可用的菜单项。 */
 const FOREIGN_BRANCH_HINT = '该分支正被别的工作树检出，不能在此工作树操作';
 
@@ -363,11 +376,37 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
 					await deps.notify(`分支 ${name} 是当前检出的分支，不能删除。请先切换到其他分支再删除。`);
 					return;
 				}
-				const ok = await showCheckbox({
+				/*
+				 * 两步删除：
+				 * 1. 先问一次是否删除，确认后按非强制删除 —— 已合并的分支到此结束；
+				 * 2. git 以「未合并」拒绝时，再弹一次说明后果并问是否强制删除；
+				 *    其余拒绝原因（被别的工作树检出等）直接给出原因，不提供强删。
+				 *
+				 * 两次删除都走 `run`：忙碌状态、失败提示与删除后的刷新由它负责。拒绝原因在
+				 * 操作体里接收、不抛错，由外层决定下一步。
+				 */
+				const confirmed = await showConfirmation({
 					title: '删除本地分支', message: `确定删除本地分支 ${name}？`,
-					checkboxLabel: '同时强制删除未合并分支', danger: true,
+					confirmLabel: '删除', danger: true,
 				});
-				if (ok) void deps.run('history', async () => { throwIfError(await deleteBranch(ctx.repo, name, true)); });
+				if (!confirmed) return;
+				const first = { refusal: null as string | null };
+				await deps.run('history', async () => {
+					first.refusal = await deleteBranch(ctx.repo, name, false);
+					// 成功时不抛错，让 run 正常走完刷新。
+				});
+				if (first.refusal === null) return;
+				if (!isUnmergedRefusal(first.refusal)) {
+					await deps.notify(`删除分支 ${name} 失败：${first.refusal}`);
+					return;
+				}
+				const force = await showConfirmation({
+					title: '分支尚未合并',
+					message: `分支 ${name} 还有未合并到其他分支的提交，删除后无法通过该分支找回。\n\n确定要强制删除吗？`,
+					confirmLabel: '强制删除', danger: true,
+				});
+				if (!force) return;
+				void deps.run('history', async () => { throwIfError(await deleteBranch(ctx.repo, name, true)); });
 			})();
 		};
 		const removeRemote = (name: string) => (): void => {

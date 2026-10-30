@@ -406,6 +406,15 @@ test('删除分支只列以该提交为尖端的分支', () => {
 	assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
 	// 远程分支名自带远程名前缀，不再另加后缀。
 	assert.ok(!/（远程）/.test(build), '远程分支不另加后缀');
+	/*
+	 * 两步删除：先按非强制删除，仅在 git 以「未合并」拒绝时才问是否强制删除。
+	 * 旧的勾选框把强制与否交给一次勾选，且实现里恒传 true，等于每次都强删。
+	 */
+	assert.match(build, /showConfirmation\(\{[\s\S]{0,120}?title: '删除本地分支'/, '先弹确认框询问是否删除');
+	assert.match(build, /deleteBranch\(ctx\.repo, name, false\)/, '首次删除必须是非强制删除');
+	assert.match(build, /isUnmergedRefusal\(first\.refusal\)/, '只有未合并的拒绝才进入强制删除分支');
+	assert.match(build, /deleteBranch\(ctx\.repo, name, true\)/, '确认后按强制删除');
+	assert.ok(!/checkboxLabel: '同时强制删除未合并分支'/.test(build), '不应再用勾选框预先选择强制删除');
 
 	const api = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
