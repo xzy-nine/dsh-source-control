@@ -580,9 +580,18 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	if (readOnly) inFlightGit.set(key, task);
 	try {
 		const result = await task;
-		// 只读命令按调试、写命令按信息、失败按警告记一条。
-		if (result.code !== 0) {
-			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}\n${result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS)}`);
+		/*
+		 * 只读命令按调试、写命令按信息、失败按警告记一条。
+		 *
+		 * 查询型只读命令的非零退出是正常答案（例如 `config --get` 未配置、`rev-parse --verify`
+		 * 目标不存在），不记警告，否则日志里全是「失败」而看不出真正的错误。
+		 */
+		if (result.code !== 0 && readOnly && isProbeCommand(args)) {
+			logDebug('git', `只读查询无结果（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}`);
+		} else if (result.code !== 0) {
+			// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
+			const detail = result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS);
+			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${detail === '' ? '' : `\n${detail}`}`);
 		} else if (readOnly) {
 			logDebug('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else {
@@ -618,6 +627,26 @@ export function describeGitArgs(args: readonly string[]): string {
 		if (masked && index + 1 < args.length) { index += 1; }
 	}
 	return parts.join(' ');
+}
+
+/**
+ * 查询型只读命令：非零退出表示「没有这个值」，不是错误。
+ *
+ * 覆盖 `config --get`、`rev-parse --verify`、`symbolic-ref`、`show-ref --quiet` 与
+ * `check-ref-format` 这类用法 —— 它们的失败是调用方的正常分支之一。
+ *
+ * @param args - 完整参数数组。
+ * @returns 属于查询型命令时为 true。
+ */
+export function isProbeCommand(args: readonly string[]): boolean {
+	const command = args[0];
+	const flags = args.slice(1);
+	const quiet = flags.includes('--quiet') || flags.includes('-q');
+	if (command === 'config') return flags.includes('--get');
+	if (command === 'rev-parse') return flags.includes('--verify');
+	if (command === 'symbolic-ref' || command === 'check-ref-format') return true;
+	if (command === 'show-ref') return quiet;
+	return false;
 }
 
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {

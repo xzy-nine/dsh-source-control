@@ -10,6 +10,7 @@
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
 import { readStreamText } from './stream.ts';
+import { logClient } from './log.ts';
 
 /** 事件流地址。 */
 const EVENTS_PATH = '/dsh-source-control/gg/events';
@@ -166,7 +167,9 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 	const scheduleReconnect = (): void => {
 		if (disposed.current) return;
 		attempt++;
-		timer = window.setTimeout(() => { timer = null; void connect(); }, reconnectDelayMs(attempt));
+		const delay = reconnectDelayMs(attempt);
+		logClient('W', 'events', `事件流已断开，${String(delay)} ms 后第 ${String(attempt)} 次重连`);
+		timer = window.setTimeout(() => { timer = null; void connect(); }, delay);
 	};
 
 	const connect = async (): Promise<void> => {
@@ -178,8 +181,9 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 				headers: { accept: 'text/event-stream' },
 				signal: controller.signal,
 			});
-			if (!response.ok || response.body === null) throw new Error('事件流不可用');
+			if (!response.ok || response.body === null) throw new Error(`事件流不可用（HTTP ${String(response.status)}）`);
 			attempt = 0;
+			logClient('I', 'events', '事件流已连接');
 			options.onState?.('open');
 			let buffer = '';
 			await readStreamText(response.body, (text) => {
@@ -193,8 +197,9 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 					else options.onWrite({ repo: event.repo });
 				}
 			}, () => disposed.current);
-		} catch {
-			/* 连接失败或中断：走重连 */
+		} catch (error) {
+			// 取消订阅导致的断开不是异常。
+			if (!disposed.current) logClient('W', 'events', `事件流连接失败：${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			options.onState?.('closed');
 		}

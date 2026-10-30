@@ -11,7 +11,7 @@
  * 已知值；写操作后作废，使贮藏这类会变的字段重新读取。
  */
 import React from 'react';
-import { invalidateHostCache, loadGraph, loadWorkingTreeSnapshot, type WorkingTreeSnapshot } from '../api/index.ts';
+import { invalidateHostCache, loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { fallbackPollMs, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
@@ -461,6 +461,7 @@ export function useGraphData({
 		}
 		const generation = generationRef.current + 1;
 		generationRef.current = generation;
+		const startedAt = Date.now();
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
@@ -612,6 +613,7 @@ export function useGraphData({
 					detail: mode === 'full' ? null : settled.detail,
 				};
 			});
+			logClient('I', 'refresh', `${mode === 'full' ? '主动刷新' : '对账刷新'}完成，仓库 ${workingTreePath}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
 			if (background) setState((previous) => endBackground(endBackground(previous, 'graph'), 'entries'));
@@ -643,6 +645,7 @@ export function useGraphData({
 		const controller = new AbortController();
 		entriesControllerRef.current = controller;
 		const repo = workingTreePath;
+		const startedAt = Date.now();
 		setState((previous) => beginBackground(previous, 'entries'));
 		try {
 			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal);
@@ -650,6 +653,7 @@ export function useGraphData({
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
 			setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
 			writeSync(setSyncById, selectedId, snapshot);
+			logClient('D', 'refresh', `只取工作区快照完成，仓库 ${repo}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			setState((previous) => endBackground(previous, 'entries'));

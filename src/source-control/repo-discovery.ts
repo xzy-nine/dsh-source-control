@@ -11,6 +11,7 @@ import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } fro
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { onRepositoryWrite, runGit } from './working-tree.js';
 import { createLimiter } from './child-process.js';
+import { logDebug } from './logger.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { foreignWorktreeBranches, gitDirAt, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 
@@ -300,7 +301,9 @@ async function subdirectories(dir: string): Promise<string[]> {
 		return entries
 			.filter((entry) => entry.isDirectory() && !shouldPruneDirectory(entry.name))
 			.map((entry) => join(dir, entry.name));
-	} catch {
+	} catch (error) {
+		// 权限不足或目录已消失：不影响其它层级的发现，但要知道是哪一层没读到。
+		logDebug('repo', `无法读取目录 ${dir}，跳过其子目录：${error instanceof Error ? error.message : String(error)}`);
 		return [];
 	}
 }
@@ -319,7 +322,8 @@ async function headOf(dir: string): Promise<{ branch: string | null; head: strin
 	if (gitDir === null) return { branch: null, head: null };
 	try {
 		return parseHead(await readFile(join(gitDir, 'HEAD'), 'utf8'));
-	} catch {
+	} catch (error) {
+		logDebug('repo', `读取 HEAD 失败，该仓库按无分支处理：${dir}：${error instanceof Error ? error.message : String(error)}`);
 		return { branch: null, head: null };
 	}
 }

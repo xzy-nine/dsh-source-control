@@ -63,7 +63,9 @@ async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
 		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
 	});
 	if (result.code !== 0) {
-		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}\n${result.stderr.trim().slice(0, MAX_GH_LOG_CHARS)}`);
+		// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
+		const detail = result.stderr.trim().slice(0, MAX_GH_LOG_CHARS);
+		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}${detail === '' ? '' : `\n${detail}`}`);
 	}
 	return result;
 }
