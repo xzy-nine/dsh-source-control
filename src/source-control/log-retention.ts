@@ -34,18 +34,18 @@ export function dayFolderName(time: Date): string {
 }
 
 /**
- * 一次启动对应的日志文件名。
+ * 一次启动对应的日志文件名：`YYYYMMDD-HHmmss.log`。
  *
- * 名称按启动时刻字典序排列，与启动先后一致。
+ * 日期段与时刻段都定宽补零，因此按名称字典序排列即启动先后。
+ * 同一秒内重启会落到同一个文件名，此时两次运行的记录追加进同一份文件。
  *
  * @param startup - 启动时间。
- * @param pid - 进程 id。
  * @returns 文件名。
  */
-export function logFileName(startup: Date, pid: number): string {
+export function logFileName(startup: Date): string {
 	const date = `${startup.getFullYear()}${pad2(startup.getMonth() + 1)}${pad2(startup.getDate())}`;
-	const clock = `${pad2(startup.getHours())}${pad2(startup.getMinutes())}${pad2(startup.getSeconds())}${String(startup.getMilliseconds()).padStart(3, '0')}`;
-	return `logcat-${date}-${clock}-${String(pid)}.log`;
+	const clock = `${pad2(startup.getHours())}${pad2(startup.getMinutes())}${pad2(startup.getSeconds())}`;
+	return `${date}-${clock}.log`;
 }
 
 /**

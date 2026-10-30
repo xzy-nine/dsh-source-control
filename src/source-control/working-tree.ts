@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { collectProcess } from './child-process.js';
+import { logDebug, logInfo, logWarn } from './logger.js';
 import { GITLINK_MODE, parseIndexEntries } from './git-parse.js';
 import { isSubmodulePathWithin, parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { resolveGitCommonDir } from './worktree-branches.js';
@@ -19,6 +20,9 @@ import { resolveGitCommonDir } from './worktree-branches.js';
  * 无法展示这么多条目。取值与 VSCode 的 `git.statusLimit` 一致。
  */
 const STATUS_LIMIT = 10000;
+
+/** 一次失败写进日志的 stderr 字符上限。 */
+const MAX_GIT_LOG_CHARS = 2000;
 
 /** 一次 git 调用的结果。 */
 export interface GitResult {
@@ -331,7 +335,7 @@ function checkCallRate(args: readonly string[]): void {
 	const warnedAt = lastWarnAt.get(caller) ?? 0;
 	if (now - warnedAt < CALL_WARN_COOLDOWN_MS) return;
 	lastWarnAt.set(caller, now);
-	console.warn(`[source-control] git 调用过于频繁（${recent.length} 次/秒）：git ${args.join(' ')} ← ${caller}`);
+	logWarn('git', `git 调用过于频繁（1 秒内 ${String(recent.length)} 次），调用点 ${caller}：git ${describeGitArgs(args)}`);
 }
 
 /** 只读子命令的结果缓存：键为仓库与参数，值为结果与过期时间。 */
@@ -576,6 +580,14 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	if (readOnly) inFlightGit.set(key, task);
 	try {
 		const result = await task;
+		// 只读命令按调试、写命令按信息、失败按警告记一条。
+		if (result.code !== 0) {
+			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}\n${result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS)}`);
+		} else if (readOnly) {
+			logDebug('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
+		} else {
+			logInfo('git', `执行写操作 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
+		}
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
 		// 跳过缓存的调用不写入，也不取用：它读的是当前值，入缓存会把该值再固化 200ms。
 		if (cacheable && result.code === 0) setCachedResult(key, result);
@@ -586,6 +598,26 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	} finally {
 		if (readOnly) inFlightGit.delete(key);
 	}
+}
+
+/** 值属于自由文本的参数名：日志里屏蔽其取值，避免把提交信息等写进日志。 */
+const MASKED_VALUE_ARGS: ReadonlySet<string> = new Set(['-m', '--message', '--body', '-b', '--author', '--committer', '--grep', '-S', '-G']);
+
+/**
+ * git 参数的可读描述，屏蔽自由文本取值。
+ *
+ * @param args - 参数数组。
+ * @returns 描述文本。
+ */
+export function describeGitArgs(args: readonly string[]): string {
+	const parts: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		const masked = MASKED_VALUE_ARGS.has(arg);
+		parts.push(masked || MASKED_VALUE_ARGS.has(arg.split('=')[0]) ? `${arg.split('=')[0]}=<已屏蔽>` : arg);
+		if (masked && index + 1 < args.length) { index += 1; }
+	}
+	return parts.join(' ');
 }
 
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {

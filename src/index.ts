@@ -13,7 +13,7 @@ import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 import { registerGgRoutes } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
-import { initLog, logInfo } from './source-control/logger.js';
+import { initLog, logError, logInfo, logRoot } from './source-control/logger.js';
 
 export const name = 'source-control';
 export const inject = ['webServer'];
@@ -33,9 +33,10 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 	// 文本日志：每次启动一个文件，目录与清理判据见 source-control/logger.ts。
 	try {
 		initLog();
-		logInfo('source-control', `插件已装载：${name}`);
+		logInfo('source-control', `源代码管理插件已装载（${name}），日志目录：${logRoot()}`);
 	} catch (error) {
-		void error;
+		// 日志不可用时插件照常工作，只在控制台留一条。
+		logError('source-control', `文本日志初始化失败，本次运行不会记录日志：${error instanceof Error ? error.message : String(error)}`);
 	}
 
 	ctx.inject(['webServer'], (host) => {
@@ -46,10 +47,13 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		const getTranslator = () => (ctx as unknown as { get(name: string): unknown }).get('translator');
 		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel, getTranslator });
 		// 预扫不 await：不阻塞 apply 返回，失败也不影响路由。
-		void primeCachedWorkspaces().catch(() => { /* 预扫失败不影响路由 */ });
+		void primeCachedWorkspaces().catch((error: unknown) => {
+			logInfo('repo', `启动预扫仓库树失败，不影响路由与面板取数：${error instanceof Error ? error.message : String(error)}`);
+		});
+		logInfo('source-control', `已注册 ${String(disposers.length)} 条 web 路由，面板命令可用`);
 
 		(ctx.on as (event: string, cb: () => void) => void)('dispose', () => {
-			logInfo('source-control', '插件已卸载');
+			logInfo('source-control', '源代码管理插件正在卸载，关闭已注册的路由与事件流');
 			for (const d of disposers) d();
 		});
 	});

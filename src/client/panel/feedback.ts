@@ -8,11 +8,14 @@
  */
 import React from 'react';
 import { Button, Checkbox, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
-import { loadFeedbackInfo, submitFeedback } from '../api/index.ts';
+import { loadFeedbackInfo, logClient, submitFeedback } from '../api/index.ts';
 import type { FeedbackInfo, FeedbackType, SubmitFeedbackOutcome } from '../api/index.ts';
 import { showMessage } from '../ui/dialog.ts';
 import { openExternal } from '../ui/context-menu.ts';
+import { changeRowsOf, type ChangeRow } from './change-tree.ts';
+import { FileRow, FolderRow } from './tree-rows.tsx';
 import css from '../css/settings.module.css';
+import changesCss from '../css/changes.module.css';
 
 /** 类型选项。 */
 const TYPE_OPTIONS = [
@@ -33,6 +36,13 @@ export interface FeedbackTabProps {
 	readonly onOpenFile?: ((path: string) => void) | undefined;
 	/** 在系统文件管理器中定位一个路径；缺省不做任何事。 */
 	readonly onRevealPath?: ((path: string) => void) | undefined;
+}
+
+/** 日志文件的树条目：路径是 `日期/文件名`，真实路径另存。 */
+interface LogTreeEntry {
+	readonly path: string;
+	readonly fullPath: string;
+	readonly sizeText: string;
 }
 
 /** 失败分类到处理建议。 */
@@ -61,6 +71,8 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 	const [info, setInfo] = React.useState<FeedbackInfo | null | undefined>(undefined);
 	const [busy, setBusy] = React.useState(false);
 	const [result, setResult] = React.useState<SubmitFeedbackOutcome | null>(null);
+	// 折叠的日志目录：按路径记，默认全部展开。
+	const [collapsedLogs, setCollapsedLogs] = React.useState<ReadonlySet<string>>(() => new Set());
 
 	// 日志位置与所选仓库无关：不依赖 cwd，挂载即取一次。
 	React.useEffect(() => {
@@ -71,9 +83,21 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		return () => { cancelled = true; };
 	}, []);
 
+	// 日志文件按「日期/文件名」组成文件树：复用变更区的建行逻辑，日期即为顶层文件夹。
+	const logRows = React.useMemo<ChangeRow<LogTreeEntry>[]>(() => {
+		if (info === null || info === undefined) return [];
+		const entries: LogTreeEntry[] = info.files.map((file) => ({
+			path: `${file.day}/${file.name}`,
+			fullPath: file.path,
+			sizeText: file.sizeText,
+		}));
+		// 日志文件按启动先后倒序：最新的一次启动排在最上面。
+		return changeRowsOf(entries, collapsedLogs, true);
+	}, [info, collapsedLogs]);
+
 	/** 提交：成功时打开 issue 页并提示上传压缩包，失败说明原因并给出日志目录。 */
 	const submit = (): void => {
-		if (cwd === null || busy) return;
+		if (busy) return;
 		if (title.trim() === '' || description.trim() === '') {
 			void showMessage({ title: '信息不完整', message: '标题与描述都需要填写。' });
 			return;
@@ -89,6 +113,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				});
 				setResult(outcome);
 				if (outcome.error !== null) {
+					logClient('E', 'feedback', `反馈提交失败，原因分类 ${outcome.kind}：${outcome.error}`);
 					const hint = FAILURE_HINT[outcome.kind] ?? '可手动在上游仓库创建 issue。';
 					await showMessage({
 						title: '反馈未提交',
@@ -96,6 +121,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					});
 					return;
 				}
+				logClient('I', 'feedback', `反馈已提交，issue 地址：${outcome.url}${outcome.archive === null ? '（未附带日志）' : `，日志压缩包：${outcome.archive}`}`);
 				// 新开页打开 issue：用户在其中把压缩包拖进评论框上传。
 				if (outcome.url !== '') onOpenExternal(outcome.url);
 				setTitle('');
@@ -116,6 +142,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					].join('\n'),
 				});
 			} catch (error) {
+				logClient('E', 'feedback', `反馈提交过程出错：${error instanceof Error ? error.message : String(error)}`);
 				await showMessage({ title: '反馈未提交', message: error instanceof Error ? error.message : String(error) });
 			} finally {
 				setBusy(false);
@@ -180,19 +207,31 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				title: info !== null && info !== undefined && info.logDir !== '' ? `在文件管理器中打开：${info.logDir}` : undefined,
 				onClick: () => { if (info !== null && info !== undefined && info.logDir !== '') onRevealPath?.(info.logDir); },
 			}, info === undefined ? '（读取中）' : info === null ? '（读取失败）' : info.logDir === '' ? '（不可用）' : info.logDir),
-			info !== null && info !== undefined && info.files.length > 0 && React.createElement('div', { className: css.fbFiles },
-				...info.files.map((file) => React.createElement('button', {
-					key: file.path, type: 'button', className: css.fbFile,
-					title: file.path,
-					onClick: () => { onOpenFile?.(file.path); },
-				},
-					React.createElement('span', null, `${file.day}/${file.name}`),
-					React.createElement('span', { className: css.fbFileSize }, file.sizeText),
-				)),
+			logRows.length > 0 && React.createElement('div', { className: changesCss.logTree },
+				...logRows.map((row) => {
+					if (row.kind === 'folder') {
+						return React.createElement(FolderRow, {
+							key: `f:${row.path}`, path: row.path, name: row.name, depth: row.depth, open: row.open, count: row.count,
+							onToggle: () => { setCollapsedLogs((previous) => {
+								const next = new Set(previous);
+								if (next.has(row.path)) next.delete(row.path);
+								else next.add(row.path);
+								return next;
+							}); },
+						});
+					}
+					const entry = row.entry;
+					return React.createElement(FileRow, {
+						key: `e:${entry.path}`, fileName: entry.path, title: entry.fullPath, depth: row.depth,
+						tail: entry.sizeText,
+						onOpen: () => { onOpenFile?.(entry.fullPath); },
+					});
+				}),
 			),
+			info !== null && info !== undefined && info.files.length === 0 && React.createElement('div', { className: css.fbNote }, '该目录下还没有日志文件'),
 		),
 		React.createElement('div', { className: css.fbActions },
-			React.createElement(Button, { variant: 'primary', size: 'sm', disabled: busy || cwd === null, onClick: submit },
+			React.createElement(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: submit },
 				busy ? '提交中…' : '提交反馈'),
 			result !== null && result.error === null && result.url !== '' && React.createElement('span', { className: css.fbResult },
 				React.createElement('a', {

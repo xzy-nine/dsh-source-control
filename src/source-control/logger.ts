@@ -11,6 +11,8 @@ import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:f
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { formatLogLines, type LogLevel } from './log-format.js';
+
+export type { LogLevel };
 import {
 	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES,
 } from './log-retention.js';
@@ -80,7 +82,7 @@ function openFile(now: Date): void {
 	const dir = join(logRoot(), dayFolderName(now));
 	mkdirSync(dir, { recursive: true });
 	dayDir = dir;
-	filePath = join(dir, logFileName(now, process.pid));
+	filePath = join(dir, logFileName(now));
 	if (!exitHookInstalled) {
 		exitHookInstalled = true;
 		// 同步收尾：缓冲里剩下的行在进程退出前落盘。
@@ -248,16 +250,20 @@ export function cleanLogs(now: Date = new Date()): void {
 	} catch {
 		return;
 	}
-	for (const name of planExpiredDayFolders(names, now, LOG_RETENTION_DAYS)) {
+	const expired = planExpiredDayFolders(names, now, LOG_RETENTION_DAYS);
+	for (const name of expired) {
 		try { rmSync(join(root, name), { recursive: true, force: true }); } catch { /* 占用中的目录留待下次 */ }
 	}
+	if (expired.length > 0) logInfo('logs', `清理超出保留期（${String(LOG_RETENTION_DAYS)} 天）的日文件夹，共删除 ${String(expired.length)} 个：${expired.join('、')}`);
 	const current = dayDir;
 	if (current === null) return;
 	const currentName = current;
 	const keep = filePath === null ? [] : [filePath.split(/[\\/]/).pop() ?? ''];
-	for (const name of planDayEvictions(listDayFiles(currentName), DAY_FOLDER_LIMIT_BYTES, keep)) {
+	const evicted = planDayEvictions(listDayFiles(currentName), DAY_FOLDER_LIMIT_BYTES, keep);
+	for (const name of evicted) {
 		try { rmSync(join(currentName, name), { force: true }); } catch { /* 单个文件删不掉时跳过 */ }
 	}
+	if (evicted.length > 0) logInfo('logs', `当日日志体积超出 ${String(DAY_FOLDER_LIMIT_BYTES / (1024 * 1024))} MB 上限，按启动先后淘汰 ${String(evicted.length)} 个较旧的文件：${evicted.join('、')}`);
 }
 
 /**
@@ -269,7 +275,6 @@ export function initLog(): string {
 	const now = new Date();
 	if (filePath === null) openFile(now);
 	cleanLogs(now);
-	logInfo('source-control', `日志已开始：${filePath ?? '(不可写)'}`);
 	return filePath ?? '';
 }
 

@@ -13,7 +13,7 @@ import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
-import { forKey } from '../shared/cache.ts';
+import { guidesOf } from './tree-rows.tsx';
 import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
@@ -48,13 +48,6 @@ export function splitPath(path: string): { dir: string; name: string } {
 	const at = path.lastIndexOf('/');
 	return at === -1 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) };
 }
-
-/** 按 depth 生成的竖线层级占位；元素数组按 depth 缓存，同一深度复用同一份元素。 */
-const guidesOf = forKey((depth: number): React.ReactElement[] => {
-	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
-	return guides;
-}, { limit: 64 });
 
 /**
  * 在指针位置弹出某个目标的右键菜单，并在关闭时撤下高亮类。

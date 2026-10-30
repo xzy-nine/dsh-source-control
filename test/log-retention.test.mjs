@@ -18,20 +18,24 @@ test('日文件夹按本地日期命名', () => {
 });
 
 test('文件名按启动时刻排序即启动先后', () => {
-	const early = logFileName(new Date(2026, 0, 2, 9, 0, 0, 0), 100);
-	const later = logFileName(new Date(2026, 0, 2, 9, 0, 0, 1), 200);
-	assert.equal(early, 'logcat-20260102-090000000-100.log');
-	assert.equal(later, 'logcat-20260102-090000001-200.log');
-	assert.ok(early < later);
-	const ordered = orderLogFiles([{ name: later }, { name: early }]).map((file) => file.name);
-	assert.deepEqual(ordered, [early, later]);
+	const early = logFileName(new Date(2026, 0, 2, 9, 0, 0, 0));
+	const later = logFileName(new Date(2026, 0, 2, 9, 0, 0, 1));
+	assert.equal(early, '20260102-090000.log');
+	// 同一秒内再次启动会落到同一个文件名：写入是追加的，两次运行的记录进同一份文件。
+	assert.equal(later, '20260102-090000.log');
+	// 跨秒才是两次启动的分界。
+	const next = logFileName(new Date(2026, 0, 2, 9, 0, 1, 0));
+	assert.equal(next, '20260102-090001.log');
+	assert.ok(early < next);
+	const ordered = orderLogFiles([{ name: next }, { name: early }]).map((file) => file.name);
+	assert.deepEqual(ordered, [early, next]);
 });
 
 test('日文件夹超限时按启动先后淘汰最旧的', () => {
 	const files = [
-		{ name: 'logcat-20260102-090000000-1.log', size: 6 },
-		{ name: 'logcat-20260102-100000000-2.log', size: 6 },
-		{ name: 'logcat-20260102-110000000-3.log', size: 6 },
+		{ name: '20260102-090000.log', size: 6 },
+		{ name: '20260102-100000.log', size: 6 },
+		{ name: '20260102-110000.log', size: 6 },
 	];
 	// 上限 12：最新的两份留下，最旧的一份淘汰。
 	assert.deepEqual(planDayEvictions(files, 12, []), [files[0].name]);
@@ -40,10 +44,10 @@ test('日文件夹超限时按启动先后淘汰最旧的', () => {
 });
 
 test('正在写入的文件不参与累计也不被淘汰', () => {
-	const current = 'logcat-20260102-090000000-1.log';
+	const current = '20260102-090000.log';
 	const files = [
 		{ name: current, size: 100 },
-		{ name: 'logcat-20260102-100000000-2.log', size: 6 },
+		{ name: '20260102-100000.log', size: 6 },
 	];
 	// 当前文件 100 字节超过上限，但它正在写：只按另一份计算。
 	assert.deepEqual(planDayEvictions(files, 12, [current]), []);

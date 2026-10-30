@@ -34,10 +34,27 @@ import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 import { repoHead, repoHeadHash } from './repo-facts.js';
-import { currentLogFile, logError, logInfo, logRoot, recentLogFiles } from './logger.js';
+import { currentLogFile, log, logDebug, logError, logInfo, logRoot, logWarn, recentLogFiles, type LogLevel } from './logger.js';
 import { submitFeedback } from './feedback.js';
 import { formatBytes } from './feedback-text.js';
 import type { StashEntry } from './git-types.js';
+
+/** 不要求会话仓库的命令：日志位置、反馈与客户端日志与仓库无关。 */
+const REPO_FREE_COMMANDS: ReadonlySet<string> = new Set(['feedbackInfo', 'submitFeedback', 'logEvent']);
+
+/** 一次客户端日志上报接受的条数上限。 */
+const MAX_CLIENT_LOG_ENTRIES = 200;
+
+/**
+ * 客户端给的级别归一化：只有调试、警告、错误三档与信息档，其余一律按信息处理。
+ *
+ * @param value - 客户端给出的级别字符。
+ * @returns logcat 级别。
+ */
+function clientLogLevel(value: unknown): LogLevel {
+	const level = typeof value === 'string' ? value.toUpperCase() : '';
+	return level === 'D' || level === 'W' || level === 'E' ? level : 'I';
+}
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -45,6 +62,7 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 }
 
 function sendBadRequest(res: http.ServerResponse, message: string): void {
+	logWarn('api', `请求被拒绝（400）：${message}`);
 	sendJson(res, 400, { error: message });
 }
 
@@ -123,6 +141,9 @@ function broadcastRepositoryTree(repo: string): void {
  * @returns 无。
  */
 function broadcastEvent(event: string, repo: string): void {
+	// 事件本身即状态变化：写操作与结构变化的唯一记录点。
+	if (event === 'repository-tree') logInfo('watcher', `仓库结构已变化，通知面板重扫仓库树：${repo}`);
+	else logInfo('repo', `仓库已被写入，通知面板刷新工作区与提交图：${repo}`);
 	const frame = `event: ${event}\ndata: ${JSON.stringify({ repo })}\n\n`;
 	for (const stream of eventStreams) {
 		try {
@@ -145,6 +166,7 @@ function broadcastEvent(event: string, repo: string): void {
  */
 function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void {
 	if (eventStreams.size >= MAX_EVENT_STREAMS) {
+		logWarn('api', `事件流连接数已达上限 ${String(MAX_EVENT_STREAMS)} 条，拒绝新连接`);
 		sendJson(res, 503, { error: '事件流连接数已达上限' });
 		return;
 	}
@@ -155,6 +177,7 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	});
 	res.write(': connected\n\n');
 	eventStreams.add(res);
+	logDebug('api', `面板已连接事件流，当前共 ${String(eventStreams.size)} 条连接`);
 	const heartbeat = setInterval(() => {
 		try {
 			res.write(': ping\n\n');
@@ -167,6 +190,7 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	const close = (): void => {
 		clearInterval(heartbeat);
 		eventStreams.delete(res);
+		logDebug('api', `面板已断开事件流，当前还剩 ${String(eventStreams.size)} 条连接`);
 	};
 	req.on('close', close);
 	res.on('close', close);
@@ -188,8 +212,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
-	// 日志信息与仓库无关：面板未选中仓库时也要能取到日志目录。
-	if (!repo && msg.command !== 'feedbackInfo') {
+	const command = typeof msg.command === 'string' ? msg.command : '';
+	const started = Date.now();
+	logDebug('api', `收到命令 ${command}${repo === '' ? '（未指定仓库）' : `，仓库 ${repo}`}`);
+	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
+	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
 		return;
 	}
@@ -201,6 +228,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	const respond = (payload: Record<string, unknown>): void => {
+		// 所有命令级失败都经这里回投，因此错误日志只需挂在这一处。
+		const error = payload.error;
+		const failed = typeof payload.command === 'string' ? payload.command : command;
+		if (typeof error === 'string' && error !== '') logError('api', `命令 ${failed} 执行失败：${error}`);
 		sendJson(res, 200, payload);
 	};
 	/** 同步回投一条命令结果（无需等待异步操作）。 */
@@ -891,7 +922,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: msg.command, error: null });
 			break;
 		case 'showErrorMessage':
-			console.error('[dsh-source-control] ' + (typeof msg.message === 'string' ? msg.message : ''));
+			logError('panel', `面板报告前端错误：${str('message')}`);
 			respond({ command: 'showErrorMessage' });
 			break;
 		case 'exportRepoConfig': {
@@ -1025,15 +1056,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				pluginVersion: str('pluginVersion'),
 				cwd: repo,
 			});
-			if (result.error !== null) logError('feedback', `提交失败（${result.kind}）：${result.error}`);
-			else logInfo('feedback', `已创建 issue：${result.url}`);
+			if (result.error !== null) logError('feedback', `反馈提交失败，原因分类 ${result.kind}：${result.error}`);
+			else logInfo('feedback', `反馈已提交，issue 地址：${result.url}${result.archive === null ? '（未附带日志）' : `，日志压缩包：${result.archive}`}`);
 			respond({ command: 'submitFeedback', ...result });
+			break;
+		}
+		case 'logEvent': {
+			// 浏览器半边没有文件系统，日志经这条命令转写到宿主日志。
+			const entries = arr<Record<string, unknown>>('entries').slice(0, MAX_CLIENT_LOG_ENTRIES);
+			for (const entry of entries) {
+				const tag = typeof entry.tag === 'string' && entry.tag !== '' ? entry.tag : 'panel';
+				const message = typeof entry.message === 'string' ? entry.message : '';
+				if (message === '') continue;
+				log(clientLogLevel(entry.level), `client/${tag}`, message);
+			}
+			respondResultSync('logEvent', { accepted: entries.length });
 			break;
 		}
 
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));
 	}
+
+	logDebug('api', `命令 ${command} 已完成，耗时 ${String(Date.now() - started)} ms`);
 }
 
 export interface GgRouteContext {

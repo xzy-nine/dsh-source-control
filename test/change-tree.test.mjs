@@ -119,3 +119,15 @@ test('只有文件时不产生目录行', () => {
 	const rows = changeRowsOf([entry('a.ts')], new Set());
 	assert.deepEqual(rows.map((row) => row.kind), ['file']);
 });
+
+test('倒序时同层文件夹与文件都按路径倒排', () => {
+	// 日志树用倒序：最新的启动排在最前，文件夹同样从新到旧。
+	const rows = changeRowsOf([
+		entry('2026-10-30/logcat-a.log'), entry('2026-10-31/logcat-b.log'),
+	], new Set(), true);
+	assert.deepEqual(shape(rows), ['▸2026-10-31', '2026-10-31/logcat-b.log', '▸2026-10-30', '2026-10-30/logcat-a.log']);
+	const files = changeRowsOf([entry('d/b.log'), entry('d/a.log')], new Set(), true);
+	assert.deepEqual(shape(files), ['▸d', 'd/b.log', 'd/a.log']);
+	// 默认仍是升序，更改区不受影响。
+	assert.deepEqual(shape(changeRowsOf([entry('d/b.log'), entry('d/a.log')], new Set())), ['▸d', 'd/a.log', 'd/b.log']);
+});

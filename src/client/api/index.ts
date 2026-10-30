@@ -18,3 +18,4 @@ export * from './github.ts';
 export * from './ai.ts';
 export * from './repo-events.ts';
 export * from './feedback.ts';
+export * from './log.ts';

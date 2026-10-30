@@ -15,7 +15,7 @@ import { archiveFileName, archiveLog } from '../lib/src/source-control/log-archi
 const facts = {
 	type: 'bug', description: '点开差异页就空白', pluginVersion: '0.8.0',
 	platform: 'win32 10.0 x64', node: 'v24.0.0',
-	logFile: 'logcat-20260102-090000000-1-redacted.zip', logSize: 320 * 1024,
+	logFile: '20260102-090000-redacted.zip', logSize: 320 * 1024,
 	redaction: '令牌 ×1', exemptionCount: 0,
 };
 
@@ -29,7 +29,7 @@ test('正文含描述、环境、日志与脱敏四段', () => {
 	assert.ok(body.includes('点开差异页就空白'));
 	assert.ok(body.includes('0.8.0'));
 	assert.ok(body.includes('win32 10.0 x64'));
-	assert.ok(body.includes('logcat-20260102-090000000-1-redacted.zip'));
+	assert.ok(body.includes('20260102-090000-redacted.zip'));
 	assert.ok(body.includes('320.0 KB'));
 	assert.ok(body.includes('令牌 ×1'));
 });
@@ -61,7 +61,7 @@ test('日志打包：tar 可用时给出 zip，文件名可读', async () => {
 	process.env.DSH_SOURCE_CONTROL_HOME = home;
 	const { resetLogStateForTests } = await import('../lib/src/source-control/logger.js');
 	resetLogStateForTests();
-	const packed = await archiveLog('logcat-20260102-090000000-1.log', '10-30 09:00:00.000  1  0 I t: hi\n');
+	const packed = await archiveLog('20260102-090000.log', '10-30 09:00:00.000  1  0 I t: hi\n');
 	assert.ok(existsSync(packed.path), '压缩包应已写出');
 	assert.match(archiveFileName(packed.path), /\.(zip|log)$/);
 	if (packed.compressed) {

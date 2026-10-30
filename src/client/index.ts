@@ -12,7 +12,7 @@ import React from 'react';
 import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
-import { fileDiffContent, type FileDiffContent } from './api/index.ts';
+import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
@@ -175,7 +175,11 @@ function GitDiffTab(props) {
 		setDiffData(null);
 		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged, baseHash)
 			.then((data) => { setDiffData(data); setLoading(false); })
-			.catch(() => { setDiffData(null); setLoading(false); });
+			.catch((error: unknown) => {
+				setDiffData(null);
+				setLoading(false);
+				logClient('E', 'diff', `打开差异页失败，文件 ${parsed.path}（${staged ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+			});
 	}, [parsed, gitCwd, staged, baseHash]);
 	React.useEffect(() => {
 		load();
@@ -273,6 +277,9 @@ function startWorkspacePreload(ctx) {
  * @returns 无。
  */
 export function apply(ctx) {
+	// 浏览器半边的日志走宿主：装上失败转报钩子，并把装载记进日志。
+	installClientLog();
+	logClient('I', 'panel', `源代码管理面板已装载，命令地址 ${API_PATH}`);
 	// ── 后台预加载仓库树 ───────────────────────────────────────
 	// 与页签是否打开无关：页签打开时直接呈现已取回的树。
 	if (typeof ctx.effect === 'function') ctx.effect(() => startWorkspacePreload(ctx));
@@ -316,10 +323,15 @@ export function apply(ctx) {
 		try {
 			const remote = ctx.get?.('remote') as { session?: { openWorkspacePath?: (request: { path: string; action?: string }) => Promise<{ ok?: boolean }> } } | undefined;
 			const session = remote?.session;
-			if (session === undefined || typeof session.openWorkspacePath !== 'function') return false;
+			if (session === undefined || typeof session.openWorkspacePath !== 'function') {
+				logClient('W', 'open-in-app', `宿主未提供文件管理器能力，无法定位路径 ${path}`);
+				return false;
+			}
 			const result = await session.openWorkspacePath({ path, action: 'reveal' });
+			if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝在文件管理器中打开路径 ${path}`);
 			return result.ok === true;
-		} catch {
+		} catch (error) {
+			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
 			return false;
 		}
 	};

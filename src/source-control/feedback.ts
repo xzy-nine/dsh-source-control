@@ -184,7 +184,8 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 	writeFileSync(bodyPath, buildIssueBody(facts), 'utf8');
 	const result = await runGh(
 		['issue', 'create', '--repo', FEEDBACK_REPO, '--title', feedbackIssueTitle(options.type, options.title), '--body-file', bodyPath],
-		options.cwd,
+		// 提交与仓库无关：面板未选中仓库时用宿主进程的工作目录。
+		options.cwd === '' ? process.cwd() : options.cwd,
 	);
 	if (result.code === 0) {
 		const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';

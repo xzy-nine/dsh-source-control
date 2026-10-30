@@ -53,7 +53,7 @@ export interface SubmitFeedbackOutcome {
  * @returns 日志目录、当前文件与最近文件。
  */
 export async function loadFeedbackInfo(cwd: string | null): Promise<FeedbackInfo> {
-	const payload = await callApi(cwd, { command: 'feedbackInfo' });
+	const payload = await callApi(cwd ?? '', { command: 'feedbackInfo' });
 	const files = Array.isArray(payload.files) ? payload.files : [];
 	return {
 		logDir: textOf(payload.logDir),
@@ -73,11 +73,11 @@ export async function loadFeedbackInfo(cwd: string | null): Promise<FeedbackInfo
 /**
  * 提交一条反馈。
  *
- * @param cwd - 会话工作区路径。
+ * @param cwd - 会话工作区路径；未知时传 null（提交与仓库无关）。
  * @param options - 反馈内容与附带选项。
  * @returns 提交结果。
  */
-export async function submitFeedback(cwd: string, options: {
+export async function submitFeedback(cwd: string | null, options: {
 	readonly type: FeedbackType;
 	readonly title: string;
 	readonly description: string;
@@ -86,7 +86,7 @@ export async function submitFeedback(cwd: string, options: {
 	readonly exemptions: readonly string[];
 	readonly pluginVersion: string;
 }): Promise<SubmitFeedbackOutcome> {
-	const payload = await callApi(cwd, { command: 'submitFeedback', ...options });
+	const payload = await callApi(cwd ?? '', { command: 'submitFeedback', ...options });
 	const error = commandError(payload);
 	return {
 		url: textOf(payload.url),

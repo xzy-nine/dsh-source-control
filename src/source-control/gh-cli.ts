@@ -5,6 +5,10 @@
  * 需要凭据的操作在没有 `gh` 或未登录时返回可读错误，由前端提示。
  */
 import { collectProcess } from './child-process.js';
+import { logDebug, logWarn } from './logger.js';
+
+/** 一次失败写进日志的 stderr 字符上限。 */
+const MAX_GH_LOG_CHARS = 2000;
 
 /** 一次 `gh` 调用的结果。 */
 export interface GhResult {
@@ -49,14 +53,43 @@ export interface GhOwner {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 退出码与输出。
  */
-function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
-	return collectProcess({
+async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
+	logDebug('gh', `调用 GitHub CLI：gh ${describeGhArgs(args)}`);
+	const result = await collectProcess({
 		command: 'gh',
 		args,
 		cwd,
 		// 非交互：任何需要用户输入的提示都直接失败，避免子进程挂起等待。
 		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
 	});
+	if (result.code !== 0) {
+		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}\n${result.stderr.trim().slice(0, MAX_GH_LOG_CHARS)}`);
+	}
+	return result;
+}
+
+/** 值属于自由文本的 `gh` 参数：日志里屏蔽其取值。 */
+const GH_MASKED_ARGS: ReadonlySet<string> = new Set(['--body', '-b', '--body-file', '-F', '--input', '--notes']);
+
+/**
+ * `gh` 参数的可读描述，屏蔽正文类取值。
+ *
+ * @param args - 参数数组。
+ * @returns 描述文本。
+ */
+export function describeGhArgs(args: readonly string[]): string {
+	const parts: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		const masked = GH_MASKED_ARGS.has(arg);
+		parts.push(masked ? `${arg}=<已屏蔽>` : arg);
+		// --body-file 的取值是本地路径，保留可读（排查时需要知道读了哪个文件）。
+		if (masked && index + 1 < args.length) {
+			parts.push(arg === '--body-file' || arg === '-F' || arg === '--input' ? args[index + 1] : '<已屏蔽>');
+			index += 1;
+		}
+	}
+	return parts.join(' ');
 }
 
 /**

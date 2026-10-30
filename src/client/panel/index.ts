@@ -37,7 +37,7 @@ import {
 	draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue,
 	storageReady as storagePrimed,
 } from './storage.ts';
-import { clearPersistedDraft, migrateLegacyState, loadHooksState, takePersistedDraft } from '../api/index.ts';
+import { clearPersistedDraft, logClient, migrateLegacyState, loadHooksState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
@@ -1799,10 +1799,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return () => { cancelled.current = true; };
 	}, [workingTreePath, state.head, refFilter.mode, filterOpen]);
 
-	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条。
+	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条；同时记一条错误日志。
 	React.useEffect(() => {
-		if (state.error !== null) showToast(state.error);
-	}, [state.error]);
+		if (state.error === null) return;
+		showToast(state.error);
+		logClient('E', 'panel', `面板操作失败${workingTreePath === null ? '' : `，仓库 ${workingTreePath}`}：${state.error}`);
+	}, [state.error, workingTreePath]);
 
 	/*
 	 * 取数已按筛选在宿主侧完成（引用起点交给 `git log`），这里只整理弹窗要用的引用与勾选态。
