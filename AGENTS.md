@@ -434,6 +434,8 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
   `src/` 里不出现生成文件。
 - 客户端外部化模块固定为 `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
   `@deepseek-ai/dsh-client-ui-primitives`；浏览器半边不得引入其他裸模块。
+- `dsh.client.inject` 只列客户端**模块包名**（宿主按此先装载对应模块工厂），不列 cordis 服务名；
+  服务依赖由入口导出的 `inject` 声明。
 - `jsx: 'automatic'`（复制的 FileDiff 不显式导入 React）；`charset: 'utf8'`（保留中文字面量）。
 - CSS 模块用 esbuild 的 `local-css` loader，**必须配 `outdir`**，否则报
   `Cannot import ... without an output path configured`。`local-css` 只产类名映射，样式文本需脚本单独
@@ -444,6 +446,12 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
   `css/state-classes.ts`，样式与组件共用同一份。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
+
+版本声明：DSH 兼容性只看顶层 `engines.dsh`（DSH 用 `includePrerelease` 求值，上界写到当前
+已发布的最高版本，如 `<=0.2.2-alpha.2`）；声明了 `engines.dsh` 时 DSH 忽略 `peerDependencies` 里的
+`@deepseek-ai/dsh-*` 范围，因此不逐版本维护列举式列表。`peerDependencies` 只声明宿主提供的模块
+（其**名字**供 profile 解析按宿主实例共享），区间与 `engines.dsh` 对齐；cordis 与客户端组件库的
+`devDependencies` 固定为构建与测试所针对的精确版本。
 
 ## 静态检查与提交钩子
 
