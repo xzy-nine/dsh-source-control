@@ -168,6 +168,18 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 }
 
 /**
+ * 统计提交列表里的日志记录数。
+ *
+ * 未提交伪提交行随工作区条目在客户端补出，不是日志记录，计数时不计入。
+ *
+ * @param commits - 提交列表。
+ * @returns 日志记录数。
+ */
+export function logCommitCountOf(commits: readonly Commit[]): number {
+	return commits.length > 0 && commits[0].hash === UNCOMMITTED_HASH ? commits.length - 1 : commits.length;
+}
+
+/**
  * 取未提交伪提交行可以挂载的父提交哈希。
  *
  * 该行的父提交必须出现在提交列表里，否则泳道图在该处断线：提交列表与工作区快照可能读自不同的
@@ -196,18 +208,73 @@ export function remotesListEqual(left: readonly Remote[], right: readonly Remote
 }
 
 /**
+ * 逐条比对两个工作区条目。
+ *
+ * @param left - 左侧条目。
+ * @param right - 右侧条目。
+ * @returns 四字段（路径、原路径、索引状态、工作区状态）全等时为 true。
+ */
+function entryEqual(left: WorkingTreeEntry, right: WorkingTreeEntry): boolean {
+	return left.path === right.path && (left.origPath ?? null) === (right.origPath ?? null)
+		&& left.index === right.index && left.worktree === right.worktree;
+}
+
+/**
  * 逐条比对两个工作区条目列表。
  *
  * 顺序敏感：快照已按路径排序，顺序变化本身说明条目集合变了。
  *
  * @param left - 左侧列表。
  * @param right - 右侧列表。
- * @returns 长度相同且逐条四字段全等时为 true。
+ * @returns 长度相同且逐条全等时为 true。
  */
 export function entriesEqual(left: readonly WorkingTreeEntry[], right: readonly WorkingTreeEntry[]): boolean {
-	return listEqual(left, right, (a, b) =>
-		a.path === b.path && (a.origPath ?? null) === (b.origPath ?? null)
-		&& a.index === b.index && a.worktree === b.worktree);
+	return listEqual(left, right, entryEqual);
+}
+
+/**
+ * 按哈希合并两份提交列表，未变化的提交复用上一份的对象。
+ *
+ * 顺序取新列表，总是返回新数组：调用方据此仍能察觉「取回了新数据」。
+ *
+ * @param previous - 上一份列表。
+ * @param next - 新取回的列表。
+ * @returns 新数组；逐项相等的提交是上一份里的同一个对象。
+ */
+export function mergeCommits(previous: readonly Commit[], next: readonly Commit[]): Commit[] {
+	if (previous.length === 0) return next.slice();
+	const byHash = new Map<string, Commit>();
+	for (const commit of previous) byHash.set(commit.hash, commit);
+	const merged: Commit[] = [];
+	for (const commit of next) {
+		const old = byHash.get(commit.hash);
+		merged.push(old !== undefined && commitsEqual(old, commit) ? old : commit);
+	}
+	return merged;
+}
+
+/**
+ * 按路径合并两份工作区条目列表，未变化的条目复用上一份的对象。
+ *
+ * 顺序取新列表，总是返回新数组。
+ *
+ * @param previous - 上一份列表。
+ * @param next - 新取回的列表。
+ * @returns 新数组；逐项相等的条目是上一份里的同一个对象。
+ */
+export function mergeEntries(
+	previous: readonly WorkingTreeEntry[],
+	next: readonly WorkingTreeEntry[],
+): WorkingTreeEntry[] {
+	if (previous.length === 0) return next.slice();
+	const byKey = new Map<string, WorkingTreeEntry>();
+	for (const entry of previous) byKey.set(entry.path + '\u0000' + (entry.origPath ?? ''), entry);
+	const merged: WorkingTreeEntry[] = [];
+	for (const entry of next) {
+		const old = byKey.get(entry.path + '\u0000' + (entry.origPath ?? ''));
+		merged.push(old !== undefined && entryEqual(old, entry) ? old : entry);
+	}
+	return merged;
 }
 
 /**

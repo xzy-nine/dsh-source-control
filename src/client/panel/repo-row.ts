@@ -33,7 +33,7 @@ export interface RepoRowProps {
  * @param props - 见 {@link RepoRowProps}。
  * @returns 行元素。
  */
-export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, headHash }: RepoRowProps): React.ReactElement {
+function RepoRowView({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, headHash }: RepoRowProps): React.ReactElement {
 	const hasChildren = node.children.length > 0;
 	const isWorktree = node.kind === 'worktree';
 	const isSubmodule = node.kind === 'submodule';
@@ -78,3 +78,5 @@ export function RepoRow({ node, depth, active, expanded, sync, onSelect, onToggl
 		}, React.createElement(IconEllipsisOutlineRegular, { size: 14 })),
 	);
 }
+
+export const RepoRow = React.memo(RepoRowView);

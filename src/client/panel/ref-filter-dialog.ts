@@ -14,10 +14,11 @@ import { cx } from '../css/cx.ts';
 /** 引用筛选弹窗的属性。 */
 export interface RefFilterDialogProps {
 	readonly refs: readonly RefItem[];
+	/** 勾选的引用 id 集合：手动筛选与两种规则模式共用一个展示口径。 */
 	readonly selected: ReadonlySet<string>;
 	readonly search: string;
 	readonly onSearch: (search: string) => void;
-	readonly onToggle: (name: string) => void;
+	readonly onToggle: (id: string) => void;
 	readonly onSelectAll: (checked: boolean) => void;
 	/** 「全部」的勾选态：由筛选模式给出，不按列表反推。 */
 	readonly allChecked: boolean;
@@ -63,7 +64,7 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 				React.createElement('label', { className: css.filterQuickItem },
 					React.createElement(Checkbox, { checked: autoChecked, onChange: onToggleAuto, label: '' }),
 					React.createElement('span', { className: css.filterQuickLabel }, '自动'),
-					React.createElement('span', { className: css.filterQuickHint }, '仅显示当前分支及向其合并的分支'),
+					React.createElement('span', { className: css.filterQuickHint }, '当前分支、上游与分叉来源分支'),
 				),
 			),
 			// 引用列表
@@ -71,11 +72,11 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 				'div',
 				{ className: css.filterList },
 				...filtered.map((ref) => {
-					const isChecked = selected.has(ref.name);
+					const isChecked = selected.has(ref.id);
 					return React.createElement(
 						'label',
-						{ key: `${ref.type}:${ref.name}`, className: cx(css.filterRow, isChecked && css.isChecked) },
-						React.createElement(Checkbox, { checked: isChecked, onChange: () => { onToggle(ref.name); }, label: '' }),
+						{ key: ref.id, className: cx(css.filterRow, isChecked && css.isChecked) },
+						React.createElement(Checkbox, { checked: isChecked, onChange: () => { onToggle(ref.id); }, label: '' }),
 						ref.type === 'branch' && React.createElement(GitGraphIcon, { size: 14, className: css.filterIcon }),
 						ref.type === 'remote' && React.createElement(RemoteRefIcon),
 						ref.type === 'tag' && React.createElement(TagRefIcon),

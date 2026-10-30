@@ -15,7 +15,7 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Remote protocols**: a remote address can be switched between HTTPS and SSH in both directions, checking the local SSH status before switching to SSH.
 - **Safety and feedback**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
 
-The complete description of every feature is in [doc/功能说明.md](doc/功能说明.md) (Chinese only).
+The complete description of every feature is in [Docs/功能说明.md](Docs/功能说明.md) (Chinese only).
 
 ## Entry points
 

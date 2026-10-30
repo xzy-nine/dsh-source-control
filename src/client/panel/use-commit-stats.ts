@@ -5,10 +5,23 @@
  * （只译当前可见窗口内的标题）。两者写入同一份译文缓存，取消批量翻译时只回退该批次。
  */
 import React from 'react';
-import { loadCommitFiles, loadCommitMessage, translateText } from '../api/index.ts';
+import { loadCommitStatsAndMessage, translateText } from '../api/index.ts';
+import { trimOldest } from '../shared/cache.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
 import { interfaceLanguage, translateCommitMessage } from './language.ts';
 import type { CommitStats } from '../shared/types.ts';
+
+/** 改动统计缓存的条目上限。 */
+const STATS_CACHE_LIMIT = 1200;
+
+/** 完整提交信息缓存的条目上限。 */
+const MESSAGE_CACHE_LIMIT = 1200;
+
+/** 译文缓存的条目上限。 */
+const TRANSLATION_CACHE_LIMIT = 1200;
+
+/** 译文原文缓存的条目上限；与译文缓存同步写入，各自按插入序淘汰。 */
+const TRANSLATION_SOURCE_CACHE_LIMIT = 1200;
 
 /** 提交改动统计 hook 的入参。 */
 export interface UseCommitStatsOptions {
@@ -18,6 +31,8 @@ export interface UseCommitStatsOptions {
 	readonly translateReady: boolean;
 	/** 翻译失败时的提示出口。 */
 	readonly onTranslateError: (message: string) => void;
+	/** 缓存的清理周期（秒）。 */
+	readonly cleanupSeconds: number;
 }
 
 /** 一条待翻译的提交：哈希与文本。 */
@@ -87,7 +102,7 @@ export interface UseCommitStatsResult {
  * @param options - 见 {@link UseCommitStatsOptions}。
  * @returns 三份缓存、批量翻译状态、悬停回调与翻译回调。
  */
-export function useCommitStats({ workingTreePath, translateReady, onTranslateError }: UseCommitStatsOptions): UseCommitStatsResult {
+export function useCommitStats({ workingTreePath, translateReady, onTranslateError, cleanupSeconds }: UseCommitStatsOptions): UseCommitStatsResult {
 	// 悬停卡片的改动统计与完整信息：按提交哈希缓存，悬停时按需拉取。
 	const [statsByHash, setStatsByHash] = React.useState<Map<string, CommitStats>>(() => new Map());
 	const [messageByHash, setMessageByHash] = React.useState<Map<string, string>>(() => new Map());
@@ -98,8 +113,8 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	// 图形区批量翻译：是否已生效与进行进度。
 	const [graphTranslated, setGraphTranslated] = React.useState(false);
 	const [graphTranslating, setGraphTranslating] = React.useState<{ done: number; total: number } | null>(null);
+	// 改动统计与完整信息同属一次 `commitDetails`，共用一份在途登记：两者都已在缓存时不必再取。
 	const statsInFlight = React.useRef<Map<string, AbortController>>(new Map());
-	const messageInFlight = React.useRef<Map<string, AbortController>>(new Map());
 	const hoverTimer = React.useRef<number | null>(null);
 	// 批量翻译的哈希与取消信号：取消时据此只回退这一批。
 	const graphBatchRef = React.useRef<string[]>([]);
@@ -151,10 +166,12 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	useCacheCleanup({
 		stamps: statsStamps,
 		drop: (hashes) => { setStatsByHash((previous) => dropHashes(previous, hashes)); },
+		periodSeconds: cleanupSeconds,
 	});
 	useCacheCleanup({
 		stamps: messageStamps,
 		drop: (hashes) => { setMessageByHash((previous) => dropHashes(previous, hashes)); },
+		periodSeconds: cleanupSeconds,
 	});
 	useCacheCleanup({
 		stamps: translationStamps,
@@ -162,28 +179,31 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 			setTranslatedByHash((previous) => dropHashes(previous, hashes));
 			setTranslatedFromByHash((previous) => dropHashes(previous, hashes));
 		},
+		periodSeconds: cleanupSeconds,
 	});
 
 	// 卸载时取消未完成的请求与悬停计时。
 	React.useEffect(() => () => {
 		if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
 		for (const controller of statsInFlight.current.values()) controller.abort();
-		for (const controller of messageInFlight.current.values()) controller.abort();
 		statsInFlight.current.clear();
-		messageInFlight.current.clear();
 	}, []);
 
 	/**
-	 * 拉取某个提交的改动统计并缓存；已在缓存或请求中的跳过。
+	 * 拉取某个提交的改动统计与完整提交信息并缓存；两者都已在缓存或请求中时跳过。
+	 *
+	 * 统计与信息取自同一次 `commitDetails`，一趟往返同时填两份缓存。
 	 *
 	 * @param hash - 提交哈希，`*` 表示工作区未提交变更。
 	 * @returns 无。
 	 */
-	const requestCommitStats = React.useCallback((hash: string) => {
-		if (workingTreePath === null || statsByHash.has(hash) || statsInFlight.current.has(hash)) return;
+	const requestCommitDetails = React.useCallback((hash: string) => {
+		if (workingTreePath === null || statsInFlight.current.has(hash)) return;
+		// 两份缓存都在时不必再取：缓存清理可能只丢掉其中一份，此时仍需补齐。
+		if (statsByHash.has(hash) && messageByHash.has(hash)) return;
 		const controller = new AbortController();
 		statsInFlight.current.set(hash, controller);
-		loadCommitFiles(workingTreePath, hash, controller.signal).then((files) => {
+		loadCommitStatsAndMessage(workingTreePath, hash, controller.signal).then(({ files, message }) => {
 			statsInFlight.current.delete(hash);
 			if (controller.signal.aborted) return;
 			let additions = 0;
@@ -192,34 +212,22 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 				additions += typeof file.additions === 'number' ? file.additions : 0;
 				deletions += typeof file.deletions === 'number' ? file.deletions : 0;
 			}
-			statsStamps.current = new Map(statsStamps.current).set(hash, Date.now());
-			setStatsByHash((previous) => new Map(previous).set(hash, { files: files.length, additions, deletions }));
+			const now = Date.now();
+			statsStamps.current = trimOldest(new Map(statsStamps.current).set(hash, now), STATS_CACHE_LIMIT);
+			setStatsByHash((previous) => trimOldest(
+				new Map(previous).set(hash, { files: files.length, additions, deletions }),
+				STATS_CACHE_LIMIT,
+			));
+			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
+			if (message !== null) {
+				messageStamps.current = trimOldest(new Map(messageStamps.current).set(hash, now), MESSAGE_CACHE_LIMIT);
+				setMessageByHash((previous) => trimOldest(new Map(previous).set(hash, message), MESSAGE_CACHE_LIMIT));
+			}
 		}).catch(() => {
 			// 统计失败只影响卡片上的那一行，不再提示。
 			statsInFlight.current.delete(hash);
 		});
-	}, [workingTreePath, statsByHash]);
-
-	/**
-	 * 拉取某个提交的完整提交信息并缓存；已在缓存或请求中的跳过。
-	 *
-	 * @param hash - 提交哈希，`*` 表示工作区未提交变更。
-	 * @returns 无。
-	 */
-	const requestCommitMessage = React.useCallback((hash: string) => {
-		if (workingTreePath === null || messageByHash.has(hash) || messageInFlight.current.has(hash)) return;
-		const controller = new AbortController();
-		messageInFlight.current.set(hash, controller);
-		loadCommitMessage(workingTreePath, hash, controller.signal).then((message) => {
-			messageInFlight.current.delete(hash);
-			if (controller.signal.aborted || message === null) return;
-			messageStamps.current = new Map(messageStamps.current).set(hash, Date.now());
-			setMessageByHash((previous) => new Map(previous).set(hash, message));
-		}).catch(() => {
-			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
-			messageInFlight.current.delete(hash);
-		});
-	}, [workingTreePath, messageByHash]);
+	}, [workingTreePath, statsByHash, messageByHash]);
 
 	/**
 	 * 悬停提交行：延时预取统计与完整信息，避免指针扫过时连发请求。
@@ -235,10 +243,9 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		if (hash === null) return;
 		hoverTimer.current = window.setTimeout(() => {
 			hoverTimer.current = null;
-			requestCommitStats(hash);
-			requestCommitMessage(hash);
+			requestCommitDetails(hash);
 		}, 220);
-	}, [requestCommitStats, requestCommitMessage]);
+	}, [requestCommitDetails]);
 
 	/**
 	 * 写入一条译文；原文随译文一起记下，供调用方判断译文是否仍适用于当前文本。
@@ -249,9 +256,18 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	 * @returns 无。
 	 */
 	const storeTranslation = React.useCallback((hash: string, source: string, translated: string) => {
-		translationStamps.current = new Map(translationStamps.current).set(hash, Date.now());
-		setTranslatedByHash((previous) => new Map(previous).set(hash, translated));
-		setTranslatedFromByHash((previous) => new Map(previous).set(hash, source));
+		translationStamps.current = trimOldest(
+			new Map(translationStamps.current).set(hash, Date.now()),
+			TRANSLATION_CACHE_LIMIT,
+		);
+		setTranslatedByHash((previous) => trimOldest(
+			new Map(previous).set(hash, translated),
+			TRANSLATION_CACHE_LIMIT,
+		));
+		setTranslatedFromByHash((previous) => trimOldest(
+			new Map(previous).set(hash, source),
+			TRANSLATION_SOURCE_CACHE_LIMIT,
+		));
 	}, []);
 
 	/**

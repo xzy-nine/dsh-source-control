@@ -212,6 +212,26 @@ export interface RepoConfigData {
 	readonly error: ErrorInfo;
 }
 
+/** 引用摘要：提交图筛选列表与手选校验用。 */
+export interface RefSummary {
+	/** 完整引用名，如 `refs/heads/main`。 */
+	readonly id: string;
+	/** 显示用短名，如 `main`、`origin/main`。 */
+	readonly name: string;
+	/** 指向的提交哈希。 */
+	readonly hash: string;
+	/** 引用种类。 */
+	readonly type: 'branch' | 'remote' | 'tag';
+}
+
+/** 当前分支的分叉来源。 */
+export interface BranchBase {
+	/** 当前分支短名；分离头指针时为 null。 */
+	readonly branch: string | null;
+	/** 分叉来源的引用短名；无法确定时为 null。 */
+	readonly base: string | null;
+}
+
 /** 仓库信息。 */
 export interface RepoInfo {
 	/** 分支名列表；当前分支排在首位。 */

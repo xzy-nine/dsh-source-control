@@ -8,6 +8,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** jsdom 的 JSDOM 构造；包无法加载时为 null（仅样式表契约需要它）。 */
+let JSDOM = null;
+try {
+	({ JSDOM } = await import('jsdom'));
+} catch {
+	JSDOM = null;
+}
+const skipJsdom = JSDOM === null ? '未安装 jsdom，跳过产物样式表契约' : false;
+
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const bundlePath = join(root, 'lib', 'client.js');
@@ -22,6 +31,8 @@ function makeReact() {
 		useMemo: (fn) => fn(),
 		useCallback: (fn) => fn,
 		useRef: (init) => ({ current: init ?? null }),
+		// 真实 React 的 memo 返回组件；冒烟只关心调用形态，原样返回。
+		memo: (component) => component,
 		Fragment: Symbol('Fragment'),
 	};
 	return React;
@@ -58,7 +69,12 @@ function loadBundle() {
 	globalThis.window = { __ModuleLoader__: { load } };
 	globalThis.document = {
 		getElementById: () => null,
-		createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} }, appendChild: () => {}, remove: () => {} }),
+		createElement: () => ({
+			style: {}, classList: { add: () => {}, remove: () => {} },
+			// 样式的归属标记经 setAttribute 写入。
+			setAttribute: () => {},
+			appendChild: () => {}, remove: () => {}, replaceWith: () => {},
+		}),
 		head: { appendChild: () => {} },
 		body: { appendChild: () => {}, removeChild: () => {} },
 	};
@@ -109,4 +125,26 @@ test('apply 注册右侧栏页类型与 header 入口', () => {
 	assert.ok(registered.includes('sidebar.right.pane.tab'), '应注册侧栏正文席位');
 	assert.ok(registered.includes('sidebar.right.pane.tab.title'), '应注册侧栏标题席位');
 	assert.ok(registered.includes('conversation.session.header.utilities'), '应注册 header 入口');
+});
+
+test('产物样式表在就地替换后保留，且每次求值写入当前 CSS', { skip: skipJsdom }, () => {
+	// 模块系统的就地替换顺序是「执行新脚本 → 移除 style[data-plugin=包名] → 材料化工厂」；
+	// 产物样式表不标记归属，因此不会被清理带走，且再次求值会整份替换旧表。
+	const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+	const { window } = dom;
+	window.__ModuleLoader__ = { load: () => {} };
+	const source = readFileSync(bundlePath, 'utf8');
+	const run = () => {
+		const module = { exports: {} };
+		new Function('module', 'exports', 'window', 'document', source)(module, module.exports, window, window.document);
+	};
+	run();
+	const first = window.document.getElementById('dsh-source-control-module-style');
+	assert.ok(first !== null, '产物应注入内联样式表');
+	for (const element of [...window.document.querySelectorAll('style[data-plugin]')]) element.remove();
+	assert.equal(window.document.getElementById('dsh-source-control-module-style'), first, '样式表不应被模块系统的清理带走');
+	run();
+	const second = window.document.getElementById('dsh-source-control-module-style');
+	assert.notEqual(second, first, '再次求值应整份替换旧样式表');
+	assert.equal(window.document.querySelectorAll('style').length, 1, '替换后只保留一份样式表');
 });

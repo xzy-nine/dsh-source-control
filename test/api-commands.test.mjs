@@ -214,6 +214,8 @@ test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活�
 		// core.hooksPath 指向别处时以它为准：该目录为空即两个都未激活。
 		const elsewhere = mkdtempSync(join(tmpdir(), 'gg-hooks-'));
 		execFileSync('git', ['config', 'core.hooksPath', elsewhere], { cwd: repo, encoding: 'utf8' });
+		// 该取值由宿主缓存 60s，外部进程改配置不产生写事件；这里显式作废一次以读到新值。
+		assert.equal((await call({ command: 'invalidateCache' })).error, null);
 		const moved = await call({ command: 'hooksState' });
 		assert.equal(moved.commit, false, 'core.hooksPath 决定钩子目录');
 		assert.equal(moved.push, false);

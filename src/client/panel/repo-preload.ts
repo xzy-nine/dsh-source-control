@@ -46,6 +46,14 @@ export interface PreloadOptions {
  */
 const REFRESH_COOLDOWN_MS = 30_000;
 
+/**
+ * 两次完整目录扫描之间的最短间隔（毫秒）。
+ *
+ * 持久化位置命中时只需核对已知路径，但位置本身可能过期（仓库被移动、删除或新增）。
+ * 按此间隔跟一次完整扫描即可纠正，不必每次重取都扫。
+ */
+const FULL_SCAN_INTERVAL_MS = 10 * 60_000;
+
 /** 一个工作区的预加载状态。 */
 interface WorkspaceEntry {
 	readonly root: string;
@@ -65,6 +73,15 @@ interface WorkspaceEntry {
 	generation: number;
 	/** 最近一次取数完成或开始的时刻；用于重取冷却。 */
 	refreshedAt: number;
+	/** 最近一次完整目录扫描的时刻；用于完整扫描的节流。 */
+	lastFullScanAt: number;
+	/**
+	 * 最近一次取过领先/落后的节点 id 集合。
+	 *
+	 * 结构事件后的重取会重跑整棵树的取数，但节点集合通常没变；记下这一集合，使
+	 * `syncAll` 只为新增节点取数，不必对每个仓库再各起一次 `for-each-ref`。
+	 */
+	syncedIds: Set<string>;
 	/**
 	 * 取数进行期间到达的结构重取请求。
 	 *
@@ -186,6 +203,8 @@ function createEntry(root: string): WorkspaceEntry {
 		controller: null,
 		generation: 0,
 		refreshedAt: 0,
+		lastFullScanAt: 0,
+		syncedIds: new Set(),
 		pendingRefresh: false,
 	};
 }
@@ -266,10 +285,65 @@ function applyEnriched(entry: WorkspaceEntry, batch: readonly string[], enriched
 }
 
 /**
+ * 一次补齐请求携带的仓库数上限。
+ *
+ * 补齐对每个仓库读工作树登记与 `.gitmodules`，仓库多时一次下发会让宿主同时做大量文件读取，
+ * 并把结果挤在同一批响应里。分批后每批完成即发布一次快照，树因此逐步长出工作树与子模块节点。
+ */
+const ENRICH_BATCH_SIZE = 8;
+
+/**
+ * 补齐重试的退避基数与上限（毫秒）。
+ *
+ * 首轮失败几乎立即重试（瞬时故障不该拖慢首屏），此后按 2 的幂拉开，封顶避免长尾等待。
+ */
+const RETRY_BACKOFF_BASE_MS = 200;
+const RETRY_BACKOFF_CAP_MS = 5000;
+
+/**
+ * 退避等待的实现。
+ *
+ * 本模块不依赖浏览器全局，浏览器里的 `setTimeout` 由宿主入口注入；测试与宿主外的调用方
+ * 可替换成立即 resolve 的版本。
+ */
+const delayRef: { current: (ms: number) => Promise<void> } = {
+	current: (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+};
+
+/**
+ * 替换退避等待的实现。
+ *
+ * @param delay - 等待函数。
+ * @returns 被替换掉的等待函数，供调用方还原。
+ */
+export function setRetryDelay(delay: (ms: number) => Promise<void>): (ms: number) => Promise<void> {
+	const previous = delayRef.current;
+	delayRef.current = delay;
+	return previous;
+}
+
+/**
+ * 把一组路径切成每批不超过给定大小的批次。
+ *
+ * @param paths - 全部路径。
+ * @param size - 每批上限；小于 1 时按 1 处理。
+ * @returns 批次列表。
+ */
+export function chunkPaths(paths: readonly string[], size: number): string[][] {
+	// NaN 经 Math.max 仍是 NaN，循环步长因此为 NaN、一批都切不出来；先收敛到有限整数。
+	const limit = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : 1;
+	const batches: string[][] = [];
+	for (let index = 0; index < paths.length; index += limit) {
+		batches.push(paths.slice(index, index + limit));
+	}
+	return batches;
+}
+
+/**
  * 补齐全部顶层仓库的工作树与子模块。
  *
- * 一次下发全部尚未补齐的仓库，不按批切分。空结果与失败按路径累计次数重试，到上限后按
- * 「没有工作树与子模块」处理。
+ * 按 {@link ENRICH_BATCH_SIZE} 分批下发，每批完成即发布一次快照。空结果与失败按路径累计
+ * 次数重试，到上限后按「没有工作树与子模块」处理。
  *
  * @param entry - 预加载状态。
  * @param controller - 本轮取消控制器。
@@ -284,42 +358,69 @@ async function enrichAll(entry: WorkspaceEntry, controller: AbortController): Pr
 		if (pending.length === 0) return;
 		/** 本批是否有需要重试的路径；由 runEnrichBatch 的回调写入。 */
 		const state = { retry: false };
-		await runEnrichBatch(pending, {
-			claims: entry.claims,
-			isCancelled: cancelled,
-			fetchEnriched: (batch) => enrichRepositories(entry.root, batch, controller.signal),
-			requestRetry: () => { state.retry = true; },
-			write: (batch, enriched) => { applyEnriched(entry, batch, enriched); },
-		});
+		for (const batch of chunkPaths(pending, ENRICH_BATCH_SIZE)) {
+			if (cancelled()) return;
+			await runEnrichBatch(batch, {
+				claims: entry.claims,
+				isCancelled: cancelled,
+				fetchEnriched: (paths) => enrichRepositories(entry.root, paths, controller.signal),
+				requestRetry: () => { state.retry = true; },
+				write: (paths, enriched) => { applyEnriched(entry, paths, enriched); },
+			});
+		}
 		if (!state.retry || cancelled()) return;
+		/*
+		 * 重试前退避：宿主连续返回空或失败时，紧跟着的下一轮同样会失败，立刻重发只是把
+		 * 同一批请求再打一遍。间隔按已重试的轮次递增，成功即不再进入这里。
+		 */
+		if (cancelled()) return;
+		await delayRef.current(retryDelayMs(attempt));
+		if (cancelled()) return;
 	}
 }
 
 /**
- * 批量读取全部节点的领先/落后并写回快照。
+ * 第几轮重试前的等待毫秒数。
  *
- * 一次请求取回全部节点，不按批切分。
+ * 按轮次递增并封顶：前两轮几乎立即重试（瞬时失败不该拖慢首屏），之后逐步拉开，
+ * 避免宿主持续不可用时把请求打满。纯函数，可直接单测。
+ *
+ * @param attempt - 已完成的重试轮次，从 0 开始。
+ * @returns 等待毫秒数。
+ */
+export function retryDelayMs(attempt: number): number {
+	const step = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0;
+	return Math.min(RETRY_BACKOFF_CAP_MS, RETRY_BACKOFF_BASE_MS * (2 ** step));
+}
+
+/**
+ * 读取节点的领先/落后并写回快照。
+ *
+ * 只为「尚未取过」的节点取数：结构事件后的重取会重跑整棵树，而节点集合通常没变，
+ * 全部重发会对每个仓库各起一次 `for-each-ref`。同一路径上的多个节点（仓库与其工作树
+ * 指向同一目录时）共用一份结果。
  *
  * @param entry - 预加载状态。
  * @param controller - 本轮取消控制器。
  * @returns 无。
  */
 async function syncAll(entry: WorkspaceEntry, controller: AbortController): Promise<void> {
-	const paths: string[] = [];
 	const idsByPath = new Map<string, string[]>();
 	const collect = (nodes: readonly RepoNode[]): void => {
 		for (const node of nodes) {
-			const ids = idsByPath.get(node.path);
-			if (ids === undefined) {
-				idsByPath.set(node.path, [node.id]);
-				paths.push(node.path);
-			} else {
-				ids.push(node.id);
+			// 已取过且值仍在快照里：沿用，不重复请求。
+			if (entry.syncedIds.has(node.id) && entry.snapshot.syncById.has(node.id)) {
+				collect(node.children);
+				continue;
 			}
+			const ids = idsByPath.get(node.path);
+			if (ids === undefined) idsByPath.set(node.path, [node.id]);
+			else ids.push(node.id);
 			collect(node.children);
 		}
 	};
 	collect(entry.snapshot.nodes);
+	const paths = [...idsByPath.keys()];
 	if (paths.length === 0) return;
 	const results = await loadReposSync(entry.root, paths, controller.signal);
 	if (controller.signal.aborted) return;
@@ -328,7 +429,10 @@ async function syncAll(entry: WorkspaceEntry, controller: AbortController): Prom
 		const sync: RepoSync = {
 			branch: result.branch, upstream: result.upstream, ahead: result.ahead, behind: result.behind,
 		};
-		for (const id of idsByPath.get(result.path) ?? []) next.set(id, sync);
+		for (const id of idsByPath.get(result.path) ?? []) {
+			next.set(id, sync);
+			entry.syncedIds.add(id);
+		}
 	}
 	publish(entry, { syncById: next });
 }
@@ -354,10 +458,19 @@ function start(entry: WorkspaceEntry): void {
 			const result = await discoverRepositories(entry.root, { shallow: true }, controller.signal);
 			if (cancelled()) return;
 			applyDiscovery(entry, result);
-			if (result.usedCache) {
-				// 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
+			/*
+			 * 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
+			 *
+			 * 不每次都扫：持久化位置命中时本可以只核对已知路径，每次都跟一次全目录扫描会让
+			 * 「命中缓存」反而更慢。改为按 {@link FULL_SCAN_INTERVAL_MS} 节流，另外在快路径
+			 * 结果为空时立即重扫——那说明缓存整体失效，只能靠完整扫描找回。
+			 */
+			const now = Date.now();
+			const stale = now - entry.lastFullScanAt >= FULL_SCAN_INTERVAL_MS;
+			if (result.usedCache && (result.nodes.length === 0 || stale)) {
 				const corrected = await discoverRepositories(entry.root, { shallow: true, fullScan: true }, controller.signal);
 				if (cancelled()) return;
+				entry.lastFullScanAt = Date.now();
 				applyDiscovery(entry, corrected);
 			}
 			await enrichAll(entry, controller);
@@ -435,6 +548,8 @@ export function dropWorkspace(root: string): void {
 	entry.baseNodes = [];
 	entry.childrenByPath = new Map();
 	entry.claims.clear();
+	// 整棵树作废：此前取过的同步值连同节点一起丢掉，重扫后逐个重新取。
+	entry.syncedIds = new Set();
 	publish(entry, {
 		nodes: [], truncated: false, usedCache: false, status: 'loading', error: null,
 		discoveryRevision: entry.snapshot.discoveryRevision + 1, syncById: new Map(),

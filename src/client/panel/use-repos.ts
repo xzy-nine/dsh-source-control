@@ -12,6 +12,7 @@ import {
 	ancestryOf, claimPendingSelection, findNode, flattenVisible, loadExpanded, loadSelection,
 	planSelection, saveExpanded, saveSelection,
 } from './repo-tree.ts';
+import { mapsEqual } from '../shared/cache.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
@@ -52,6 +53,18 @@ export interface UseReposResult {
 	readonly rescan: () => void;
 	/** 按最新结构重取仓库树，不清空已显示的树；结构事件命中时调用。 */
 	readonly refreshTree: () => void;
+}
+
+/**
+ * 两条领先/落后记录是否相等。
+ *
+ * @param left - 左侧记录。
+ * @param right - 右侧记录。
+ * @returns 分支、上游与领先/落后都相同时为 true。
+ */
+function syncEqual(left: RepoSync, right: RepoSync): boolean {
+	return left.branch === right.branch && left.upstream === right.upstream
+		&& left.ahead === right.ahead && left.behind === right.behind;
 }
 
 /**
@@ -139,7 +152,11 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			setRepoNodes(snapshot.nodes);
 			setTreeStatus(treeStatusOf(snapshot, true));
 			setTreeNote(noteOf(snapshot));
-			setSyncById(new Map(snapshot.syncById));
+			setSyncById((previous) => {
+				const next = new Map(snapshot.syncById);
+				// 内容未变时保持原引用：仓库行按该映射记忆化。
+				return mapsEqual(previous, next, syncEqual) ? previous : next;
+			});
 			if (snapshot.discoveryRevision !== revisionRef.current) {
 				revisionRef.current = snapshot.discoveryRevision;
 				const plan = planSelection(snapshot.nodes, root, loadSelection(sessionId));

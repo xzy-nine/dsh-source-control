@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 `doc/功能说明.md`，
+本文件给在此仓库工作的 agent 使用：约定、代码结构、构建与验证方式。功能说明见 `Docs/功能说明.md`，
 本文件不重复。
 
 ## 工作约定
@@ -9,8 +9,7 @@
   不叙述改动过程、不解释「为什么当初这么做」、不保留评审历史。
 - **回复与面向用户的文本用中文**；代码、命令、路径、标识符与逐字引用的外部文本保持原样。
 - **文档分层**：[README.md](README.md) / [README.en.md](README.en.md) 只概述插件的整体能力与几个特色功能，
-  不列细节；每一项功能的完整行为写在 `doc/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
-  `doc/` 下的迁移差异与实现计划、数据层方案为本地文档，由 `.git/info/exclude` 排除，不提交。
+  不列细节；每一项功能的完整行为写在 `Docs/功能说明.md`（仅中文）；代码结构、构建、测试等实现内容写在本文件。
 - **测试不测界面文案**：断言代码标识符、结构或行为，不断言菜单项文字、按钮文字等展示字符串。
 - **不写一次性改动的一次性测试**：局部、机械、只影响单个界面的改动不补测试。
 - **能复用 DSH 已导出的能力就直接用，不自行重造**。
@@ -32,7 +31,11 @@
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按已持久化的工作区根预扫仓库树
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
-                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫）、
+                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫；批量领先/
+                    落后取数经 child-process.ts 的 createLimiter 限流）、仓库事实层
+                    （repo-facts.ts：git 目录布局与打包引用的进程级缓存）、引用筛选取数
+                    （git-query.ts 的 getRefSummaries / getBranchBase，对应路由命令 loadRefs /
+                    loadBranchBase：弹窗用的全部引用与当前分支的分叉来源）、
                     仓库结构监视（repo-watcher.ts：两层——按 git 公共目录去重监视 worktrees / modules
                     与 .gitmodules；按工作区根递归监视仓库集合的增删。变化后作废发现缓存并经事件流推
                     repository-tree）、子模块声明解析
@@ -54,20 +57,23 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     语言判定、各目标右键菜单与 hooks；menu-actions.json 是右键操作元数据与菜单名称的
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
-  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、cache.ts 提交图窗口缓存
+  src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、row-model.ts 行文本与引用标记、
+                    window-range.ts 窗口区间、auto-load.ts 触底续取判据
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算、
                     better-sidebar-diff.ts 接入层
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
                     terminal-run.ts 终端执行
   src/client/ui/    通用界面件：dropdown.ts、dialog.ts、context-menu.ts、plugin-icon.ts、ref-icons.ts
-  src/client/shared/ 共享契约与声明：types.ts、assets.d.ts、md5.d.ts
+  src/client/shared/ 共享契约与声明：types.ts、cache.ts（有界缓存与派生值缓存）、path-key.ts
+                    （路径键归一化：仓库节点 id 与按仓库持久化的键共用）、assets.d.ts、md5.d.ts
   src/client/css/   样式：按组件拆分的 CSS 模块（graph / changes / sections / settings 等）、
                     shared.module.css（跨组件共享类）、file-diff.module.css（复制的差异视图）、
                     cx.ts（类名拼接）、state-classes.ts（JS 动态切换的全局状态类名）
 test/               单元测试（`node --test test/*.test.mjs`）
-doc/                中文文档：功能说明随仓库提交；迁移差异与实现计划、数据层方案为本地文档，不提交
+Docs/               中文文档：功能说明.md、功能缺口.md、实现计划与数据层方案
 scripts/            客户端打包脚本（build-client.mjs）与耗时度量（bench-first-paint.mjs 首屏 /
-                    bench-refresh.mjs 刷新 / bench-discovery.mjs 仓库发现 / bench-enrich.mjs 补齐 /
+                    bench-refresh.mjs 刷新 / bench-git-info.mjs 取数（子进程数、文件系统次数）/
+                    bench-ui.mjs 显示到界面 / bench-discovery.mjs 仓库发现 / bench-enrich.mjs 补齐 /
                     bench-layout.mjs 泳道布局 / bench-verify.mjs 命令往返；均需先 build:host）
 assets/icons/       引用标记用的 SVG
 ```
@@ -91,7 +97,8 @@ JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），�
 其 `parseStatusSnapshot` 解析 `status --porcelain=v2 --branch`（条目与分支上游来自同一次调用，
 v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，
 无 git 调用，可被测试直接导入，分支同步解析见其 `BRANCH_SYNC_FORMAT` 与 `parseBranchSync`；
-`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现）；
+`git-query.ts` 是只读查询层（`getWorkingTreeSnapshot` 是快照命令的实现，其合并判定读 git 目录下的
+`MERGE_HEAD` 文件，不起子进程）；
 `git-actions.ts` 是操作层，两者都返回 `ErrorInfo`（成功 `null`）。
 `runGit` **不设超时**：等待由 git 自身承担（远端不可达、凭据缺失它自己会结束），提交与推送还要
 串行跑仓库自己的钩子（如 Gradle 的 `ktlintFormat`），其耗时不由插件限制。执行层只登记在跑的子进程，
@@ -103,6 +110,9 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 与索引变化，而缓存失效只覆盖插件自己执行的写命令 —— 插件之外的写（编辑器、外部命令）无从感知，
 子模块的内部改动更会改变**父仓库** `status` 的结果（父仓库把子模块的内部改动记成自身的一条条目），
 因此这三类命令一律现读现用，不进结果缓存。
+子进程环境由 `gitEnvironment(readOnly)` 生成：`LANGUAGE` / `LC_ALL` / `LANG` 固定为英文（失败归类与
+部分解析依赖英文措辞，父进程已显式给出时保留用户取值）；`GIT_OPTIONAL_LOCKS=0` 只加在只读命令上，
+写命令不设，否则索引可能不落盘。
 `commitStaged` 的提交信息为空串时用 `git commit --no-edit`，沿用 git 生成的合并信息（`MERGE_MSG`），
 用于结束索引与 HEAD 无差异的待合并状态。
 `discardPaths` 区分子模块条目与普通路径：索引模式 `160000` 的条目（由 `git ls-files -s` 判定，
@@ -166,6 +176,14 @@ Office）主动不认领，那些仍走宿主预览。
 兜底轮询覆盖事件窗口之外的外部写入（编辑器、终端、其它进程），页签可见时按 10s 的快档跑，
 不可见时退回 120s 的慢档；页签不可见、上一次未结束、面板正忙时跳过。
 
+后台刷新结束时按「工作区条目数 / 已加载提交数」的变化给一条信息类轻量提示（`toast.ts` 的 `info`
+类别），只报变化量、不报总数。基线把取数范围（仓库、引用起点、提交窗口与影响提交行的设置项，
+`use-graph-data.ts` 的 `graphScope`）与「两轮都已就绪」一并记入，范围不同或加载中的轮次只重建基线
+不提示——否则换仓库、换筛选或加载更多会把两份不同批次的提交数误报成「提交图 ±全部提交数」。
+对账与轮询补取按已加载条数请求窗口（`reconcileWindow`），后台刷新不会把触底加载过的分页收回去。
+错误类提示显示期间到来的信息类提示直接丢弃：失败原因（如 git 钩子未通过）只有这一次，不能被后台
+刷新的结果告知盖掉。停留时长按类别与文本长度推算（`HOLD_OF`：错误 8–20 秒，信息 3–8 秒）。
+
 宿主事件流（`GET /dsh-source-control/gg/events`，`text/event-stream`）补上事件窗口之外的另一半：
 执行层在每次非只读写命令结束后推一条 `repository-write`（只带仓库路径，判据是命令跑完，
 含以非零退出但已改动仓库的冲突合并、拣选冲突与变基停下），因此别的会话、别的
@@ -209,18 +227,20 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 也是并行的：仓库信息、引用集合、贮藏、工作树分支与提交日志互不依赖，同批发出；引用集合透传给提交图，
 不重复读；首屏下引用集合与分支列表由**同一次** `for-each-ref` 产出（`REF_BRANCH_FORMAT` 与
 `parseRefsAndBranches`，同时取 `%(HEAD)`、`%(refname:short)`、`%(symref)` 与引用字段），因此不为此多起
-子进程。客户端按「仓库 + 取数参数」缓存最近 32 段提交窗口（`graph/cache.ts`），
-只在**同一仓库**的相邻刷新之间复用：写操作后的对账命中同一段时不再取数，翻页回看已取过的窗口同样命中；
-用户主动刷新、切换仓库、任何写操作以及兜底轮询判定需要重载时，都由 `dropGraphWindows` 作废该仓库的窗口。
+子进程。提交图窗口缓存只在宿主（`source-control/host-cache.ts`），客户端不自建一份：键为「仓库 + HEAD +
+全部取数参数」，命中即最近使用，按容量淘汰最久未用的一项，写操作与 `invalidateCache` 按仓库（含祖先与
+后代）作废。客户端只保留渲染态（`lastPanelState` / `lastMaxCommits`）供重新挂载时首帧呈现。
 
 ## 刷新耗时
 
-一次 git 子进程的固定开销约 80ms，因此刷新路径的耗时几乎只由「起了几个 git 子进程」决定。五处对策：
+一次 git 子进程的固定开销约 80ms，因此刷新路径的耗时几乎只由「起了几个 git 子进程」决定。七处对策：
 
 | 对策 | 说明 |
 |---|---|
 | 图形区不等工作区 | `getCommits` 不读 `git status`：未提交伪提交行需要工作区条目数，宿主为它读一次工作区会让提交图的返回时刻取决于工作区读取（`git status` 是两者中最慢的一条），文件越多越慢。该行改由客户端按**同一轮**的工作区快照补出（`commit-diff.ts` 的 `withUncommittedCount`），`assembleCommits` 因此不接收未提交变更数 |
-| 引用只枚举一次 | 引用集合与分支列表读的是同一批引用：首屏由一次 `for-each-ref` 同时产出（`REF_BRANCH_FORMAT` 与 `parseRefsAndBranches`，`getRefsAndBranches`）；`HEAD` 由 `HEAD` 文件解析（`worktree-branches.ts` 的 `readHeadRef`），不起 `git rev-parse` |
+| 引用只枚举一次 | 引用集合与分支列表读的是同一批引用：首屏由一次 `for-each-ref` 同时产出（`REF_BRANCH_FORMAT` 与 `parseRefsAndBranches`，`getRefsAndBranches`），提交图的引用标记不来自这次枚举（见下一行）；`HEAD` 由 `HEAD` 文件解析（`worktree-branches.ts` 的 `readHeadRef`），不起 `git rev-parse` |
+| 引用标注并入日志 | `LOG_FORMAT` 末位是 `%D`、`getLog` 传 `--decorate=full`；`parseDecorations` 把装饰解析成 heads / tags / remotes，`refsFromDecorations` 组装成 `RefData` 交给 `assembleCommits`。刷新路径因此不再跑 `for-each-ref`（首屏的仓库信息批仍要一次，用于分支列表）。`CommitTag.annotated` 恒为 false —— 装饰无法区分附注标签，客户端只在 `commitsEqual` 里读它 |
+| 仓库事实缓存 | `repo-facts.ts`：`repoLayout` 缓存 git 目录与公共目录（10s、容量 64，写命令按仓库含祖先与后代作废），`readPackedRef` 把 `packed-refs` 解成表（容量 8，按 `mtimeMs + size` 守卫）。`HEAD` 不缓存 —— 它是各缓存键的失效判据 |
 | 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
 | 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存 |
 | 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
@@ -233,21 +253,76 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 `phase` 只由 `refresh` 写入，作废在途的提交图会让图形区永久停在 loading。它按条目数就地修正未提交伪
 提交行（`withUncommittedCount`，含条目数由零变正时补出该行），文案与客户端同格式。
 
-度量：`scripts/bench-refresh.mjs`（刷新路径，含 `withRepoInfo` 两种模式对照）、`bench-first-paint.mjs`
-（首屏）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
+度量：`scripts/bench-git-info.mjs`（取数：每场景的 ms / git 子进程数 / 文件系统次数 / 命令明细，
+末段对照计划第 1 节的判定标准）、`bench-refresh.mjs`（刷新路径，含 `withRepoInfo` 两种模式对照）、
+`bench-first-paint.mjs`（首屏）、`bench-ui.mjs`（显示到界面：变更树、提交合并复用率、行文本与标记的
+冷态与命中态）、`bench-layout.mjs`（泳道布局纯计算）、`bench-discovery.mjs`、`bench-enrich.mjs`、
 `bench-verify.mjs`。`runGit` 对只读命令有 200ms 结果缓存，采样间隔须大于该 TTL，否则读数偏小且不可复现。
 
 仓库树的取数不在面板重载的两路请求里：客户端插件激活后按**主视图当前会话**的工作区后台预加载
 （`panel/repo-preload.ts` 的 `activeWorkspaceOf`，判据是会话行的 `retainedBy.mainView`），只取这一个
 工作区，不遍历会话列表里的其它工作区。一个工作区依次做浅层发现、位置纠正、补齐工作树与子模块、
-读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。各步都一次下发全部仓库，
-不按批切分、不设并发上限。领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
+读取领先/落后，每步完成即发布快照；`use-repos.ts` 只订阅快照并维护选中与展开。补齐按
+`ENRICH_BATCH_SIZE`（8）分批下发，每批完成即发布一次快照；领先/落后由 `loadReposSync` 一次取回，宿主对每个仓库调一次
 `git for-each-ref --format=… refs/heads`（`BRANCH_SYNC_FORMAT` 与 `parseBranchSync`，`%(HEAD)` 标出
 当前分支）；无提交的仓库回退一次 `symbolic-ref --short -q HEAD`，此时只给出分支名、上游为空、
 领先/落后为 0。单个仓库失败以空值兜底，`path` 原样回显入参。仓库发现逐层并行，结果进 60 秒 TTL
-的内存缓存（容量 16，超出按插入序淘汰），任何仓库写命令结束后作废该缓存；宿主 `apply()` 注册路由
+的内存缓存（容量 16，超出按插入序淘汰），仓库写命令结束后按仓库（含祖先与后代）作废受影响的条目
+（`invalidateDiscoveryCacheFor`）；宿主 `apply()` 注册路由
 后按已持久化的工作区根启动一次预扫（`primeCachedWorkspaces`），只走按已知仓库位置取树的快路径，
 失败静默。
+
+## 取数与缓存
+
+「请求 → 数据到手」这一段按四层缓存，有效期与失效判据按各自数据的变化频率定：
+
+| 层 | 落点 | 键 | 有效期 / 容量 | 作废 |
+|---|---|---|---|---|
+| 进程级事实 | `repo-facts.ts` 的 `layouts` / `packedRefs` | 规范化仓库路径（分隔符统一为 `/`）/ 规范化公共目录 | 布局 10s、容量 64；打包引用无 TTL，按 `mtimeMs + size` 守卫、容量 8 | 写命令结束按仓库（含祖先与后代）作废布局；打包引用由守卫自校验 |
+| 子进程结果 | `working-tree.ts` 的 `resultCache` / `inFlightGit` | 仓库 + `JSON.stringify(args)` | 200ms / 64；在途条目收尾即删 | 写命令按仓库（含祖先与后代） |
+| 宿主响应 | `host-cache.ts` 的 `graphs` / `repoInfos` / `snapshots` / `hooksPaths` | 仓库 + 取数参数（图窗口另含 HEAD 与贮藏 / 远程标识）/ 仓库 | 30s / 60s / 500ms / 60s，容量 64 / 32 / 32 / 32 | 任何写命令清空整表；`invalidateCache` 按仓库（含祖先与后代） |
+| 客户端取数参数 | `use-graph-data.ts` 的 `knownRepoInfo` / `lastPanelState` / `lastMaxCommits` | 归一化仓库路径 | 模块级，容量 8 | 写操作与换仓库（`dropGraphWindows`） |
+
+`runGit` 的在途复用只对**确认只读**的命令生效（`isReadOnly` 的形态清单）：`status`、`diff`、`ls-files`
+的输出随工作区与索引当前内容变化，因此不进 200ms 结果缓存，但仍与在途调用共享同一个子进程 —— 客户端
+中止后重发、刷新与只取快照并发时因此只跑一次 git。写命令一律独立执行，并发两次写命令仍起两个进程。
+子进程环境按「只读形态 + 父进程的语言取值」缓存，父进程改语言即重建。
+
+仓库树的批量领先/落后取数是唯一入队的取数：`repo-discovery.ts` 的 `loadReposSync` 走模块级
+`createLimiter(SYNC_CONCURRENCY)`（`child-process.ts`，上限 5），一次下发全部路径时同时在跑的 git
+不超过 5 个；面板的单仓库命令不入队，与「宿主不串行化命令」一致。
+
+引用筛选在取数端生效：`loadCommits` 的 `branches` 由筛选状态决定，「全部」传 null（宿主按
+`--branches` 等枚举）、「自动」传当前分支 + 上游 + 分叉来源、「手选」传所选引用短名；窗口缓存键
+本就含 `branches`，切换筛选即换一个窗口。自动模式的分叉来源由 `loadBranchBase` 取（配置 → 分支
+reflog 创建来源 → 默认远程分支，取值顺序同 VS Code 图形视图的 base 引用），只在换仓库或换分支时读；
+弹窗的引用列表由 `loadRefs` 取，只在打开弹窗或手选校验时读，刷新路径不为它起子进程。
+
+客户端只记「已知远程与贮藏」是否可信：`GraphData.infoKnown` 为真才记为已知值 —— 空远程与空贮藏
+同样是事实，记下它们才不会让下一次刷新再取一次仓库信息；读取失败不回记，避免把失败固化。
+`loadCommits` 响应另带 `branch`（当前分支名，取自同一次 `HEAD` 读取），刷新路径因此仍能标出当前
+分支；`refresh` 的 `selectedId` 走 ref，同仓库内改选不触发取数。
+
+## 显示到界面
+
+「数据已到手 → 界面呈现」这一段只做必要工作：状态按帧步进、派生值按引用记忆化、缓存有容量上限。
+
+| 机制 | 落点 | 约束 |
+|---|---|---|
+| 窗口状态按起始行步进 | `graph/index.ts` 的 `topIndex` 与 `graph/window-range.ts` | 滚动事件经 `requestAnimationFrame` 合并（缺失时退回 `setTimeout(0)`），起始行未变不写状态；行偏移或可视高度变化后按当前滚动位置重算 |
+| 行级 `memo` | `graph/index.ts` 的 `LaneCell`/`RefChip`/`IndicatorRow`/`DetailGutter`/`CommitRow`/`CommitGraph`、`changes.ts` 的 `ChangeNodeRow`/`CommitDetail`/`ChangeGroup`、`sections.ts` 的三个分区与 `CommitBox`/`ChangeLists`、`repo-row.ts` 的 `RepoRow` | 传进去的回调必须是 `useCallback` 或模块级稳定值；行组件按「哈希 + 文本」这类稳定参数自建闭包 |
+| 提交框与变更列表分拆 | `sections.ts` 的 `CommitBox` 与 `ChangeLists` | 输入提交信息只重渲染提交框；同文件内 `css.commitBox` 须排在 `css.changesScroll` 之前，两个分组的 `staged: true`/`staged: false` 须排在其后（`primitives.test.mjs` 按文本顺序断言） |
+| 派生值按身份缓存 | `graph/row-model.ts` 的 `titleOf`/`labelsOf`、`panel/changes.ts` 的 `guidesOf` | `labelsOf` 的缓存键含 HEAD，检出后自动重算 |
+| 派生值按键缓存 | `graph/row-model.ts` 的 `avatarUrlsOf`、`panel/language.ts` 的 `needsTranslationMemo` | 上限各 1024，键含语言或边长 |
+| 悬停缓存容量 | `panel/use-commit-stats.ts` 的 `statsByHash`/`messageByHash`/`translatedByHash`/`translatedFromByHash` | 各自独立上限 1200，写入后按插入序淘汰；与既有 TTL 清理正交 |
+| 对象身份复用 | `panel/commit-diff.ts` 的 `mergeCommits`/`mergeEntries` | 判据复用 `commitsEqual`/`entriesEqual`（提交只比影响图形的字段）；顺序取新列表，**总是返回新数组**，`full` 刷新不短路 |
+| 时钟门控 | `panel/index.ts` 的 `refreshClock` | 只按 `document.visibilityState === 'visible'` 推进；`visibilitychange` 时启停并立即推进一次 |
+
+`src/client/shared/cache.ts` 是这些缓存的基元（`LruMap`/`forObject`/`forKey`/`mapsEqual`/`trimOldest`），
+纯模块无 React 依赖。新增缓存先在此取基元，不另写淘汰逻辑。
+
+列表替换后未变化的元素保持对象身份（`mergeCommits`/`mergeEntries`），下游按 `commits`/`entries` 引用记忆化的
+泳道布局与变更树因此不重算。
 
 ## 首屏空白
 
@@ -273,6 +348,11 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 否则该路径此后既不下发、也不在已完成集合里，工作树永久不出现。空结果与失败还会驱动重试，但按路径
 累计连续失败次数（`ENRICH_FAILURE_LIMIT`，默认 5）——到上限即按「没有工作树与子模块」处理，不再
 重试，避免宿主判据与发现层不一致时形成无休止请求；成功一次即清零计数，`rescan()` 的 `clear()` 亦然。
+
+`core.hooksPath` 由 `host-cache.ts` 的 `readHooksPath` / `writeHooksPath` 缓存 60s（钩子文件是否存在仍
+现读，增删钩子文件立刻可见），`hooksState` 因此在同一仓库反复切换时只起一次 `git config`；该取值由
+外部进程改动不产生写事件，按仓库作废走 `invalidateCache`。仓库树的领先/落后取数受上限 5 的限流约束
+（见「取数与缓存」），仓库数不超过 5 时不受影响。
 
 `enrichRepositories` 对「无链接工作树且无 `.gitmodules`」的仓库零 git 调用（`linkedWorktreePresence`
 + `.gitmodules` 存在性判定，且要求 `.git` 为目录），有来源时才枚举。仓库判据与发现层对齐：`.git` 为
@@ -319,7 +399,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 |---|---|---|---|
 | 窗口级 | 组件 `useState` / `useRef` | 本次挂载 | 瞬时交互与派生数据：分组折叠集合、过滤弹窗的选中与搜索、`amend`、`runHooks`（本次提交与推送是否运行 git 钩子，不持久化，提交/推送完成与换仓库时复位）、`maxCommits`、分页与请求中标志 |
 | 会话级 | 浏览器 `sessionStorage`（客户端经 `panel/storage.ts` 的 `loadSessionValue` / `saveSessionValue` 读写） | 本次会话，关标签页即清 | 与具体仓库绑定、重填成本高的输入：提交信息草稿（键 `ggg-commit-msg:<仓库根绝对路径>`） |
-| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选、工作区仓库位置缓存 |
+| 持久化 | `$DSH_HOME/dsh-source-control/state.json`（宿主侧 `source-control/state-store.ts`，客户端经 `panel/storage.ts` 的内存镜像读写） | 跨浏览器、标签页与重启 | 用户偏好与布局（设置项、分区高度与展开态、仓库树展开与选中）、引用筛选（单键 `dsh-source-control-ref-filter` 内按规范化仓库路径分列：`'all'` 或引用 id 数组；默认「自动」不落盘，与 VS Code 图形视图一致）、工作区仓库位置缓存 |
 
 客户端不直接读写 `localStorage` / `sessionStorage`：`panel/storage.ts` 是唯一出口，宿主侧在首屏预取一次到内存镜像，
 读走镜像（同步，供 `useState` 初始化），写更新镜像并异步落盘。仓库位置缓存在 `state.json` 的 `repos` 
@@ -354,6 +434,8 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
   `src/` 里不出现生成文件。
 - 客户端外部化模块固定为 `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
   `@deepseek-ai/dsh-client-ui-primitives`；浏览器半边不得引入其他裸模块。
+- `dsh.client.inject` 只列客户端**模块包名**（宿主按此先装载对应模块工厂），不列 cordis 服务名；
+  服务依赖由入口导出的 `inject` 声明。
 - `jsx: 'automatic'`（复制的 FileDiff 不显式导入 React）；`charset: 'utf8'`（保留中文字面量）。
 - CSS 模块用 esbuild 的 `local-css` loader，**必须配 `outdir`**，否则报
   `Cannot import ... without an output path configured`。`local-css` 只产类名映射，样式文本需脚本单独
@@ -364,6 +446,12 @@ pnpm test               # pretest 先跑完整 build 与重复门禁，再 node 
   `css/state-classes.ts`，样式与组件共用同一份。
 - `assets/icons/` 的 SVG 以文本内联，运行时不请求额外资源。
 - `lib/` 是构建产物，不提交（`.gitignore`）；发布内容由 `package.json` 的 `files` 白名单决定。
+
+版本声明：DSH 兼容性只看顶层 `engines.dsh`（DSH 用 `includePrerelease` 求值，上界写到当前
+已发布的最高版本，如 `<=0.2.2-alpha.2`）；声明了 `engines.dsh` 时 DSH 忽略 `peerDependencies` 里的
+`@deepseek-ai/dsh-*` 范围，因此不逐版本维护列举式列表。`peerDependencies` 只声明宿主提供的模块
+（其**名字**供 profile 解析按宿主实例共享），区间与 `engines.dsh` 对齐；cordis 与客户端组件库的
+`devDependencies` 固定为构建与测试所针对的精确版本。
 
 ## 静态检查与提交钩子
 
@@ -405,24 +493,31 @@ git 钩子由仓库内的 `.githooks/` 承载，`pnpm install` 的 `prepare` 阶
 | `lanes.test.mjs` | 泳道布局：连线连续性、压实、节点半径、越界重叠、无贝塞尔 |
 | `primitives.test.mjs` | ui-primitives 导入名存在性、面板结构、CSS 模块类名引用 |
 | `diff-hunks.test.mjs` | 统一差异解析 |
-| `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交 |
+| `git-parse.test.mjs` | 宿主纯解析层：NUL 记录切分、重命名、附注标签解引用、贮藏插入、伪提交；装饰解析（`HEAD ->`、`tag:`、远程 HEAD、排序）与「装饰组装 vs `for-each-ref` 组装」逐条一致 |
 | `status-snapshot.test.mjs` | 工作区快照解析：v2 记录与空列、重命名、未合并、分支与上游、截断 |
 | `branch-sync.test.mjs` | 分支同步：`BRANCH_SYNC_FORMAT` 形状、`parseBranchSync` 的各 track 文本与 upstream 为 null 的情形；ahead/behind 与 `rev-list` 独立推导对照 |
 | `repo-discovery.test.mjs` | 仓库发现：节点排序 / depth / children / truncated、TTL 缓存与作废、`knownRepos` 快路径与回退、同层多目录、`loadReposSync` 去重与兜底、`loadReposSync` 命令经真实路由 handler；子模块声明的越界路径被拒绝 |
 | `snapshot.test.mjs` | 工作区快照命令契约：经真实路由 handler，并与 `loadWorkingTree` 逐条对照；冲突合并后不作废缓存即读到合并状态 |
 | `optimistic.test.mjs` | 乐观更新：暂存 / 取消暂存 / 丢弃 / 提交的推算与重命名路径匹配、条目签名 |
-| `graph-cache.test.mjs` | 提交图窗口缓存：容量淘汰、参数区分、路径归一、按仓库丢弃 |
+| `host-cache.test.mjs` | 宿主缓存：提交图键含 HEAD、命中即最近使用、按仓库（含祖先与后代）失效、快照的 HEAD 守卫、钩子路径的命中与失效 |
+| `repo-facts.test.mjs` | 仓库事实层：`repoHeadHash` 与 `git rev-parse` 一致、打包引用守卫（二次调用不整读、重写后重读）、执行层写命令后布局失效、祖先与后代前缀失效、有效期归零即关闭缓存 |
+| `fetch-path.test.mjs` | 取数路径：常规刷新恰 2 个 git 子进程、空信息仓库不再起 `config` / `remote`、并发两次快照只起 1 个 `status`、并发写命令仍各起一个、`hooksState` 命中缓存、响应的 `branch` 与 `symbolic-ref` 一致、仓库树取数并发上限 5 |
+| `git-environment.test.mjs` | 子进程环境：只读命令加 `GIT_OPTIONAL_LOCKS=0`、写命令不加、输出语言固定且保留父进程取值 |
 | `draft-storage.test.mjs` | 会话级存储：读写往返、非法值与缺失回退、按仓库根的草稿键 |
 | `refresh-verify.test.mjs` | 刷新契约：快照与 `loadWorkingTree` 逐条一致、提交集与 `git log` 独立推导一致、草稿不落宿主 |
 | `api-client.test.mjs` | 宿主 API 客户端的错误处理：非 2xx 响应体里的错误文本优先于状态码；`discoverRepositories` 的 `shallow`/`fullScan` 透传与 `usedCache` 读取、`enrichRepositories` 空入参不发请求 |
 | `repo-tree.test.mjs` | 存储库树：补齐结果按仓库路径挂回、浅层纠正后 children 不丢、重扫后 children 变空、持久化选中工作树的待认领与认领、展开链 |
 | `repo-preload.test.mjs` | 仓库树预加载：只取主视图当前会话的工作区、四步取数顺序与逐阶段发布、在途去重与 `force`、失败置 error、`dropWorkspace` 后重取、补齐空结果重试到上限 |
 | `enrich-claims.test.mjs` | 补齐占用与结局：在途/已完成登记、取消与失败释放、空结果与异常驱动重试、连续失败到上限后停止下发、成功清零计数；结局判定直接调用生产的 `runEnrichBatch` |
-| `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出 |
-| `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行 |
+| `commit-diff.test.mjs` | 刷新短路判据：hash/parents/heads/tags/remotes/stash 各自变化判不等、工作区条目四字段与顺序、未提交伪提交行的改写/移除/补出；`mergeCommits`/`mergeEntries` 的未变项复用、变项替换、顺序取新列表且总返回新数组 |
+| `cache.test.mjs` | 有界缓存基元：`LruMap` 的 `peek` 不改次序、`get` 置新与超限按比例淘汰，`forObject` 按对象隔离且同一对象同一引用，`forKey` 淘汰后重算，`mapsEqual`，`trimOldest` |
+| `window-range.test.mjs` | 窗口区间：空列表、顶部与底部越界、视口高度为 0、展开详情的非均匀行高、overscan 边界 |
+| `row-model.test.mjs` | 行模型：引用标记种类与 HEAD 变化后的重算、缓存引用稳定、未提交行与贮藏行文案、头像候选地址 |
+| `refresh-contract.test.mjs` | 刷新路径的图形区状态契约（需本机 jsdom，缺失时整体跳过）：提交图在途时触发只取快照的刷新仍收敛 ready、只取快照不改 phase、条目由零变正时补出未提交行；取数起点（手选传引用短名、自动传分支 + 上游 + 分叉来源、切换筛选按新起点重取） |
 | `gh-cli.test.mjs` | `gh` 失败分类：未安装 / 未登录 / 缺 scope / 无权限 / 参数错误 |
-| `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序 |
-| `refs.test.mjs` | 引用筛选：可达集过滤、工作区伪提交与贮藏提交的保留、引用收集 |
+| `change-tree.test.mjs` | 变更树：单链合并、分叉、折叠、排序；文件夹计数与改造前一致（含多层与空目录） |
+| `refs.test.mjs` | 引用筛选状态：按仓库键读写与路径归一、自动模式不落盘、切回自动删项、非法值回退、引用 id 与短名换算、取数起点组装、手选失效回退自动、勾选态与摘要文案 |
+| `ref-filter-source.test.mjs` | 引用筛选的宿主取数：全部引用摘要（分支/远程/标签、完整引用名、关闭远程分支）、分叉来源的四级取值（配置、reflog 创建来源、本地来源分支、分离头指针无来源）、经路由读引用与分叉来源、筛选在取数端生效（未选中的分支尖端被排除） |
 | `worktree-branches.test.mjs` | 工作树登记：`core` 段解析、`gitdir` 还原工作树根、与 `git worktree list` 逐条对照、子模块与裸仓库的主工作树推导、登记项残留；占用分支判定；`HEAD` 文件解析；git 目录定位（链接工作树与子模块的 `.git` 文件、仓库子目录向上查找、裸仓库、非仓库） |
 | `remote-url.test.mjs` | 远程地址解析与 HTTP(S) / SSH 双向换算、协议档位 |
 | `ssh-status.test.mjs` | SSH 状态检测：版本行、私钥筛选、探测输出归类 |

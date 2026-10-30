@@ -4,6 +4,10 @@
  * 判定基于书写系统而不是逐词识别：CJK 统一表意文字与当前语言一致时算「同语言」，
  * 拉丁字母在中文界面下算「非当前语言」。这足以决定是否需要翻译，且不引入额外依赖。
  */
+import { forKey } from '../shared/cache.ts';
+
+/** 翻译判定缓存的条目上限。 */
+const TRANSLATION_JUDGE_CACHE_LIMIT = 1024;
 
 /** 文本的语言构成。 */
 export interface LanguageMix {
@@ -69,6 +73,25 @@ export function needsTranslation(text: string, locale: string, threshold = 0.5, 
 	const mix = languageMix(text, locale);
 	if (mix.total < minimum) return false;
 	return 1 - mix.same / mix.total > threshold;
+}
+
+/** 翻译判定缓存：键为「语言 + NUL + 文本」。 */
+const translationJudge = forKey((key: string): boolean => {
+	const at = key.indexOf('\u0000');
+	return needsTranslation(key.slice(at + 1), key.slice(0, at));
+}, { limit: TRANSLATION_JUDGE_CACHE_LIMIT });
+
+/**
+ * 判断是否需要翻译（按语言与文本缓存）。
+ *
+ * 图形区标题栏按可见窗口逐条判定，同一行在滚动中会被反复判定，结果按文本缓存。
+ *
+ * @param text - 待判定文本。
+ * @param locale - 当前语言标签。
+ * @returns 需要翻译时为 true。
+ */
+export function needsTranslationMemo(text: string, locale: string): boolean {
+	return translationJudge(locale + '\u0000' + text);
 }
 
 /** 一行提交信息拆分出的前缀与正文。 */

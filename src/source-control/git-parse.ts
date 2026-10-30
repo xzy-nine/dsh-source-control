@@ -12,10 +12,15 @@ import type {
 /** 日志类命令的字段分隔符（即 `--format` 中的 `%x00`）。 */
 const FIELD = '\0';
 
-/** `git log` 每条的字段数：hash、parents、author、email、date、subject。 */
-export const LOG_FIELD_COUNT = 6;
-/** `git log` 的格式串。 */
-export const LOG_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%s'].join('%x00');
+/** `git log` 每条的字段数：hash、parents、author、email、date、subject、装饰。 */
+export const LOG_FIELD_COUNT = 7;
+/**
+ * `git log` 的格式串。
+ *
+ * 末位 `%D` 是引用装饰：配合 `--decorate=full` 时给出完整的引用名，提交图的引用标记因此不必
+ * 另起一次 `for-each-ref`。
+ */
+export const LOG_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%s', '%D'].join('%x00');
 
 /** `git reflog refs/stash` 每条的字段数：hash、parents、selector、author、email、date、subject。 */
 export const STASH_FIELD_COUNT = 7;
@@ -77,6 +82,16 @@ export interface BranchSync {
 /** 未提交伪提交的哈希。 */
 export const UNCOMMITTED = '*';
 
+/** 一条提交上的引用装饰。 */
+export interface Decorations {
+	/** 指向该提交的本地分支名。 */
+	readonly heads: string[];
+	/** 指向该提交的标签名。 */
+	readonly tags: string[];
+	/** 指向该提交的远程分支短名，形如 `<远程>/<分支>`。 */
+	readonly remotes: string[];
+}
+
 /** `git log` 的一条原始记录。 */
 export interface LogRecord {
 	readonly hash: string;
@@ -85,6 +100,8 @@ export interface LogRecord {
 	readonly email: string;
 	readonly date: number;
 	readonly message: string;
+	/** 指向该提交的引用。 */
+	readonly decorations: Decorations;
 }
 
 /** 一条引用。 */
@@ -221,7 +238,89 @@ export function parseLog(stdout: string): LogRecord[] {
 		email: fields[3],
 		date: Number.parseInt(fields[4], 10),
 		message: fields[5],
+		decorations: parseDecorations(fields[6]),
 	}));
+}
+
+/**
+ * 解析一条提交的引用装饰（`--decorate=full` 下的 `%D`）。
+ *
+ * 取值形如 `HEAD -> refs/heads/main, refs/remotes/origin/main, tag: refs/tags/v1`：按「逗号 + 空格」
+ * 切分（引用名不含空格），`HEAD -> ` 前缀剥掉后按本地分支处理，裸 `HEAD` 忽略。非 `heads`、`tags`、
+ * `remotes` 的引用（如 `refs/stash`）不参与提交图的标记。
+ *
+ * 装饰无法区分附注标签，`refsFromDecorations` 因此把所有标签按轻量标签给出。
+ *
+ * @param text - `%D` 的取值。
+ * @returns 该提交上的引用。
+ */
+export function parseDecorations(text: string): Decorations {
+	const decorations: Decorations = { heads: [], tags: [], remotes: [] };
+	for (const raw of text.split(', ')) {
+		const token = stripHeadMarker(raw.trim());
+		if (token === '') continue;
+		if (token.startsWith('tag: ')) {
+			const name = token.slice('tag: '.length).trim();
+			if (name.startsWith('refs/tags/')) decorations.tags.push(name.slice('refs/tags/'.length));
+			continue;
+		}
+		if (token.startsWith('refs/heads/')) {
+			decorations.heads.push(token.slice('refs/heads/'.length));
+			continue;
+		}
+		if (!token.startsWith('refs/remotes/')) continue;
+		const name = token.slice('refs/remotes/'.length);
+		if (!name.endsWith('/HEAD')) decorations.remotes.push(name);
+	}
+	/*
+	 * 装饰的顺序由 git 决定（同一类引用是倒序），这里按引用名升序，与 `for-each-ref` 的顺序一致：
+	 * 提交上的标记录取该顺序，同一提交上的同类引用因此仍按名字排列。
+	 */
+	decorations.heads.sort();
+	decorations.tags.sort();
+	decorations.remotes.sort();
+	return decorations;
+}
+
+/**
+ * 剥掉 `HEAD -> ` 前缀；裸 `HEAD` 视为空。
+ *
+ * @param token - 一个装饰项。
+ * @returns 引用名；该装饰项不指向具体引用时为空串。
+ */
+function stripHeadMarker(token: string): string {
+	if (token === 'HEAD') return '';
+	if (token.startsWith('HEAD -> ')) return token.slice('HEAD -> '.length).trim();
+	return token;
+}
+
+/**
+ * 由提交记录上的装饰得到引用集合。
+ *
+ * 只覆盖窗口内的提交：窗口之外的引用本就不标注，与 `assembleCommits` 只在窗口内查表一致。
+ * 标签一律按轻量标签给出 —— 装饰不携带附注标记。
+ *
+ * @param records - 提交记录。
+ * @param hideRemotes - 要隐藏的远程名。
+ * @param showRemoteBranches - 是否给出远程分支；false 时装饰里的远程引用一并丢弃。
+ * @returns 引用集合；`head` 由调用方按 `HEAD` 补入。
+ */
+export function refsFromDecorations(
+	records: readonly LogRecord[], hideRemotes: readonly string[] = [], showRemoteBranches = true,
+): RefData {
+	const heads: RefEntry[] = [];
+	const tags: RefTag[] = [];
+	const remotes: RefEntry[] = [];
+	for (const record of records) {
+		for (const name of record.decorations.heads) heads.push({ hash: record.hash, name });
+		for (const name of record.decorations.tags) tags.push({ hash: record.hash, name, annotated: false });
+		if (!showRemoteBranches) continue;
+		for (const name of record.decorations.remotes) {
+			if (hideRemotes.some((remote) => name.startsWith(`${remote}/`))) continue;
+			remotes.push({ hash: record.hash, name });
+		}
+	}
+	return { head: null, heads, tags, remotes };
 }
 
 /**

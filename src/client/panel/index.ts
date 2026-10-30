@@ -9,9 +9,9 @@ import React from 'react';
 import {
 	addRemote, addToGitignore, addToLocalExclude, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
-	ghCreateRepo, ghRepoInfo, loadConfig, loadCommitFiles,
+	ghCreateRepo, ghRepoInfo, loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
 	abortMerge, localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, sshStatus, stagePaths, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, resetToCommit, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
@@ -27,24 +27,34 @@ import { hasGitHubRemote } from './github.ts';
 import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
-import { computeSyncMarkers, computeAutoRefs, collectRefs, currentBranchHashes, filterCommitsByRefs, sortRefs } from './refs.ts';
+import {
+	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterKeyOf, filterSummaryOf,
+	legacyFilterOf, readStoredFilter, REF_FILTER_KEY, revalidatedFilter, sortRefs, writeStoredFilter,
+} from './refs.ts';
+import type { AutoFilterContext, RefFilter } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
-import { draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue } from './storage.ts';
+import {
+	draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue,
+	storageReady as storagePrimed,
+} from './storage.ts';
 import { clearPersistedDraft, migrateLegacyState, loadHooksState, takePersistedDraft } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
 import { discardNoticeOf } from './discard-notice.ts';
+import { backgroundFlagsOf, lastRefreshText as relativeRefreshText, refreshNoticeSince } from './refresh-status.ts';
+import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries } from './optimistic.ts';
-import { canSubmitOf, commitButtonDisabledOf, primaryActionOf } from './submit-state.ts';
+import { logCommitCountOf } from './commit-diff.ts';
+import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { useResizeHandler } from './use-resize.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
-import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, Settings, WorkingTreeEntry } from '../shared/types.ts';
+import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import type { HooksState } from '../api/index.ts';
 import css from '../css/panel.module.css';
@@ -54,15 +64,6 @@ import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 /** 初始加载的提交数；切换仓库时回到该值。 */
 const INITIAL_MAX_COMMITS = 200;
 
-/** 引用筛选的三种模式：自动、全部、手动勾选。 */
-type RefFilterMode = 'auto' | 'all' | 'manual';
-
-/** 一个仓库的引用筛选状态。 */
-interface RefFilterState {
-	readonly mode: RefFilterMode;
-	/** 手动模式下的勾选集合。 */
-	readonly selected: Set<string>;
-}
 
 /** 面板属性。 */
 export interface GitGraphPanelProps {
@@ -128,11 +129,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const rescanPending = React.useRef(false);
 	const [filterOpen, setFilterOpen] = React.useState(false);
 	const [filterSearch, setFilterSearch] = React.useState('');
-	// 引用筛选按仓库持久化：模式与手动勾选都记在各自仓库名下，切换仓库即换一套。
-	// 默认「自动」，即每个仓库初次都按自动规则勾选。
-	const [filterState, setFilterState] = React.useState<{ mode: RefFilterMode; selected: Set<string> }>(
-		() => ({ mode: 'auto', selected: new Set() }),
-	);
+	/*
+	 * 引用筛选按仓库持久化，模型与 VS Code 的图形视图一致：状态是「全部」「自动」或一组手选
+	 * 引用；自动模式不落盘（持久化形状见 refs.ts）。
+	 */
+	const [refFilter, setRefFilter] = React.useState<RefFilter>(DEFAULT_REF_FILTER);
+	/** 宿主持久化是否已预取完成：筛选在完成之后再读，否则读到的是回退值。 */
+	const [storageReady, setStorageReady] = React.useState(() => storagePrimed());
+	/** 弹窗与手选校验用的全部引用；按仓库缓存。 */
+	const [refItems, setRefItems] = React.useState<{ repo: string; items: RefItem[] } | null>(null);
+	/** 引用清单的作废计数：分支/标签/远程变化后递增，手选筛选据此重新校验。 */
+	const [refsRevision, setRefsRevision] = React.useState(0);
+	/** 自动筛选的分叉来源；记录所属仓库与分支，供取数与弹窗使用。 */
+	const [branchBase, setBranchBase] = React.useState<{ repo: string; branch: string; base: string | null } | null>(null);
 	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；窗口级、不持久化。
 	// detail 是图形区内展开块的文件夹集合。
 	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; detail: Set<string> }>(
@@ -146,6 +155,39 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadValue('dsh-source-control-graph-height', 320));
 	// 存储库区高度（像素）；跨会话持久化，默认 200。
 	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
+	/*
+	 * 「上次刷新」文案的时钟：按固定间隔推进，让相对时间从「刚刚」变成「n 分钟前」。
+	 *
+	 * 只在面板可见时跑——不可见时无人看，推进只会触发无意义的重渲染。页签重新可见时立即推进
+	 * 一次，切回时文案不必等到下一个周期才更新。
+	 */
+	const [refreshClock, setRefreshClock] = React.useState<number>(() => Date.now());
+	React.useEffect(() => {
+		let timer: number | undefined;
+		/** 开始推进；已在推进时保持原定时器。 */
+		const start = (): void => {
+			if (timer !== undefined) return;
+			timer = window.setInterval(() => { setRefreshClock(Date.now()); }, 30_000);
+		};
+		/** 停止推进。 */
+		const stop = (): void => {
+			if (timer === undefined) return;
+			window.clearInterval(timer);
+			timer = undefined;
+		};
+		/** 按当前可见性启停。 */
+		const sync = (): void => {
+			if (document.visibilityState !== 'visible') { stop(); return; }
+			setRefreshClock(Date.now());
+			start();
+		};
+		sync();
+		document.addEventListener('visibilitychange', sync);
+		return () => {
+			document.removeEventListener('visibilitychange', sync);
+			stop();
+		};
+	}, []);
 	/*
 	 * 宿主状态预取。
 	 *
@@ -171,6 +213,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			setGraphSecOpen(loadValue('dsh-source-control-graph-open', true));
 			setGraphHeight(loadValue('dsh-source-control-graph-height', 320));
 			setRepoHeight(loadValue('dsh-source-control-repo-height', 200));
+			// 引用筛选也按仓库回填；标记就绪让载入 effect 重跑一次。
+			setStorageReady(true);
 		})();
 		return () => { cancelled.current = true; };
 	}, [cwd]);
@@ -222,26 +266,84 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		() => (workingTreePath === null ? INITIAL_MAX_COMMITS : (rememberedMaxCommits(workingTreePath) ?? INITIAL_MAX_COMMITS)),
 	);
 
-	// 引用筛选按仓库持久化：每个仓库各有一套模式与勾选，默认「自动」。
-	const filterKey = workingTreePath === null ? null : `dsh-source-control-ref-filter:${workingTreePath}`;
+	/** 当前选中节点的领先/落后与分支信息；随快照刷新写回。 */
+	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);
+	/**
+	 * 把筛选状态写回当前仓库。
+	 *
+	 * 持久化表按仓库键存：自动模式删掉该仓库的项，「全部」记字面量，手选记引用 id。
+	 */
+	const patchFilter = React.useCallback((next: RefFilter) => {
+		setRefFilter(next);
+		if (workingTreePath === null) return;
+		saveValue(REF_FILTER_KEY, writeStoredFilter(loadValue(REF_FILTER_KEY, {}), workingTreePath, next));
+	}, [workingTreePath]);
 
-	// 切换仓库时载入该仓库的筛选状态；没有记录就用默认的「自动」。
+	/*
+	 * 载入当前仓库的筛选状态。
+	 *
+	 * 必须等宿主持久化预取完成：预取前读到的只会是回退值，而 useState 的初值不会随预取重算
+	 * （此前漏了这一处回填，表现为重启后筛选回到默认自动）。
+	 */
 	React.useEffect(() => {
-		if (filterKey === null) return;
-		const saved = loadValue<RefFilterState | null>(filterKey, null);
-		setFilterState(saved === null
-			? { mode: 'auto', selected: new Set() }
-			: { mode: saved.mode, selected: new Set(saved.selected) });
-	}, [filterKey]);
+		if (!storageReady || workingTreePath === null) return;
+		const registry = loadValue<Record<string, unknown>>(REF_FILTER_KEY, {});
+		const key = filterKeyOf(workingTreePath);
+		if (registry[key] !== undefined) {
+			setRefFilter(readStoredFilter(registry, workingTreePath));
+			return;
+		}
+		/*
+		 * 旧版本把筛选按仓库存成独立键（`<前缀>:<仓库路径>`）：首次进入时折合到新表并清掉旧键，
+		 * 否则升级后各仓库的筛选都会回到默认自动。
+		 */
+		const legacyKey = `${REF_FILTER_KEY}:${workingTreePath}`;
+		const legacyValue = loadValue<unknown>(legacyKey, null);
+		const legacy = legacyFilterOf(legacyValue);
+		setRefFilter(legacy ?? DEFAULT_REF_FILTER);
+		if (legacy === null) return;
+		saveValue(REF_FILTER_KEY, writeStoredFilter(registry, workingTreePath, legacy));
+		saveValue(legacyKey, null);
+	}, [storageReady, workingTreePath]);
 
-	/** 写入当前仓库的筛选状态并保留模式。 */
-	const patchFilter = React.useCallback((next: RefFilterState) => {
-		setFilterState(next);
-		if (filterKey !== null) saveValue(filterKey, { mode: next.mode, selected: [...next.selected] });
-	}, [filterKey]);
+	/*
+	 * 弹窗与手选校验需要的全部引用。
+	 *
+	 * 只在打开弹窗或处于手选模式时读：刷新路径不为筛选列表起这次 `for-each-ref`。
+	 */
+	React.useEffect(() => {
+		if (workingTreePath === null) return undefined;
+		if (!filterOpen && refFilter.mode !== 'manual') return undefined;
+		const cancelled = { current: false };
+		const repo = workingTreePath;
+		void (async () => {
+			try {
+				const items = await loadRefs(repo, settings.showRemoteBranches);
+				if (!cancelled.current) setRefItems({ repo, items });
+			} catch {
+				if (!cancelled.current) setRefItems({ repo, items: [] });
+			}
+		})();
+		return () => { cancelled.current = true; };
+	}, [workingTreePath, filterOpen, refFilter.mode, settings.showRemoteBranches, refsRevision]);
 
-	const { state, setState, refresh, refreshEntries, loadMore, busyRef } = useGraphData({
+	/*
+	 * 手选引用可能已被删除或改名：按刚读到的引用重新校验，全部失效即回退自动。
+	 * 与 VS Code 的手选恢复同一判据。
+	 */
+	React.useEffect(() => {
+		if (refFilter.mode !== 'manual') return;
+		if (refItems === null || refItems.repo !== workingTreePath) return;
+		const next = revalidatedFilter(refFilter, refItems.items);
+		if (next.mode === refFilter.mode && next.ids.length === refFilter.ids.length
+			&& next.ids.every((id, index) => id === refFilter.ids[index])) return;
+		patchFilter(next);
+	}, [refFilter, refItems, workingTreePath, patchFilter]);
+
+	const { state, setState, refresh, refreshEntries, loadMore, busyRef, graphScope } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
+		filter: refFilter, branchBase, headHint: selectedNode?.branch ?? null,
+		upstreamHint: currentSync?.upstream ?? null,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
@@ -250,7 +352,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
 		graphTranslated, graphTranslating,
 		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
-	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast });
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast, cleanupSeconds: settings.cleanupSeconds });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -489,6 +591,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			}
 			// 写操作可能改动引用与提交历史，目标仓库的提交图窗口缓存随之失效。
 			dropGraphWindows(target);
+			// 引用清单同样可能变化：手选筛选据此重新校验，失效的引用会回退自动。
+			setRefsRevision((previous) => previous + 1);
 			await refresh('reconcile');
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
@@ -747,7 +851,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	}, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
-	const stagedPaths = state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path);
+	const stagedPaths = React.useMemo(
+		() => state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path),
+		[state.entries],
+	);
 
 	/**
 	 * 勾选「修补上一次提交」时填入上一提交的完整消息；取消勾选时清空。
@@ -842,7 +949,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		})();
 	}, [translateBusy, workingTreePath, message, notify]);
 
-	const currentSync = selectedId === null ? undefined : syncById.get(selectedId);
+	/*
+	 * 后台刷新指示：两个分区各自按作用面取进行中标志，「上次刷新」文案每 30 秒重算一次，
+	 * 避免每次渲染都生成新字符串、也让时间不会一直停在「刚刚」。
+	 */
+	const backgroundFlags = React.useMemo(() => backgroundFlagsOf(state.background), [state.background]);
+	const lastRefreshText = React.useMemo(() => {
+		if (state.lastRefreshAt <= 0) return '';
+		return relativeRefreshText(state.lastRefreshAt, refreshClock);
+	}, [state.lastRefreshAt, refreshClock]);
 	const syncMarkers = React.useMemo(
 		() => computeSyncMarkers(state.commits, state.head, currentSync?.upstream ?? null),
 		[state.commits, state.head, currentSync],
@@ -861,8 +976,40 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const primaryAction = primaryActionOf({ workAreaEmpty, hasRemoteDiff, isUnpublishedBranch, amend, merging: state.merging });
 	const showSyncButton = primaryAction === 'sync';
 	const showPublishButton = primaryAction === 'publish';
+	/*
+	 * 双向分叉：本地与上游各有对方没有的提交时，同步按钮的右键给出两种整体覆盖。
+	 * 普通同步只会把两侧合并，整体覆盖只能在同步入口上单独给出。
+	 */
+	const overwriteChoicesAvailable = showSyncButton && divergedOf({
+		ahead: currentSync?.ahead ?? 0, behind: currentSync?.behind ?? 0,
+	});
 	/** 提交按钮可用：有暂存改动、勾选修补，或处于未完成的合并。 */
 	const canSubmit = canSubmitOf({ stagedCount: stagedPaths.length, amend, merging: state.merging });
+
+	/*
+	 * 后台刷新完成后的轻量告知：只在条目数或已加载提交数变化时给一次，不打断操作。
+	 *
+	 * 判据是 `lastRefreshAt` 推进——它只由后台刷新写入，用户主动刷新（`full`）不经过
+	 * 后台登记，因此不会被告知「结果就在眼前的那一次刷新」。
+	 *
+	 * 只有取数范围相同且两轮都已就绪时才比较计数：换仓库、换引用起点、加载更多与加载中
+	 * 的计数不是同一批数据，差值会被误报成「提交图 ±全部提交数」。
+	 */
+	const noticeBaselineRef = React.useRef<RefreshBaseline | null>(null);
+	React.useEffect(() => {
+		if (state.lastRefreshAt <= 0) return;
+		if (noticeBaselineRef.current?.at === state.lastRefreshAt) return;
+		const current: RefreshBaseline = {
+			at: state.lastRefreshAt,
+			scope: graphScope,
+			ready: state.phase === 'ready',
+			entries: state.entries.length,
+			commits: logCommitCountOf(state.commits),
+		};
+		const notice = refreshNoticeSince(noticeBaselineRef.current, current);
+		noticeBaselineRef.current = current;
+		if (notice !== '') showToast(notice, { tone: 'info' });
+	}, [state.lastRefreshAt, state.phase, state.entries, state.commits, graphScope]);
 
 	/**
 	 * 是否显示提交信息框的翻译入口。
@@ -1092,6 +1239,92 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			}
 		}).finally(() => { setRunHooks(true); });
 	};
+
+	/**
+	 * 把上游名拆成远程名与分支名。
+	 *
+	 * 上游记作 `<远程>/<分支>`（如 `origin/main`），远程名可能含斜杠以外字符；
+	 * 没有斜杠时无法判定远程，返回 null。
+	 *
+	 * @param upstream - 上游引用名。
+	 * @returns 远程名与该远程上的分支名。
+	 */
+	const upstreamPartsOf = (upstream: string | null): { remote: string; branch: string } | null => {
+		if (upstream === null) return null;
+		const at = upstream.indexOf('/');
+		if (at <= 0 || at === upstream.length - 1) return null;
+		return { remote: upstream.slice(0, at), branch: upstream.slice(at + 1) };
+	};
+
+	/** 用本地分支覆盖远程分支：远程独有的提交会被丢弃。 */
+	const overwriteRemoteWithLocal = React.useCallback(() => {
+		const sync = currentSync;
+		const path = workingTreePath;
+		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
+		const branch = sync.branch;
+		const skipHooks = hooksState.push && !runHooks;
+		void (async () => {
+			const ok = await showCheckbox({
+				title: '用本地覆盖远程',
+				message: `把本地 ${branch} 强制推送到 ${parts.remote}/${parts.branch}：远程分支上独有的 ${String(sync.behind)} 个提交会被丢弃，推送后无法恢复。`,
+				checkboxLabel: '我确认用本地分支覆盖远程分支',
+				confirmLabel: '覆盖远程', danger: true,
+			});
+			if (!ok) return;
+			await run('network', async () => {
+				const errors = await pushBranch(path, branch, [parts.remote], skipHooks, 'force');
+				if (errors.length > 0) throw new Error(errors.join('\n'));
+			});
+		})();
+	}, [currentSync, workingTreePath, hooksState.push, runHooks, run]);
+
+	/** 用远程分支覆盖本地分支：本地独有的提交与已跟踪改动会被丢弃。 */
+	const overwriteLocalWithRemote = React.useCallback(() => {
+		const sync = currentSync;
+		const path = workingTreePath;
+		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
+		const upstream = sync.upstream as string;
+		const branch = sync.branch;
+		void (async () => {
+			const ok = await showCheckbox({
+				title: '用远程覆盖本地',
+				message: `把本地 ${branch} 重置到 ${upstream}：本地独有的 ${String(sync.ahead)} 个提交与已跟踪文件的未提交改动都会被丢弃（未跟踪文件保留），重置后无法恢复。`,
+				checkboxLabel: '我确认用远程分支覆盖本地分支',
+				confirmLabel: '覆盖本地', danger: true,
+			});
+			if (!ok) return;
+			await run('history', async () => {
+				await fetchRepo(path, parts.remote, settings.fetchAndPrune, settings.fetchAndPruneTags);
+				const error = await resetToCommit(path, upstream, 'hard');
+				if (error !== null) throw new Error(error);
+			});
+		})();
+	}, [currentSync, workingTreePath, run, settings.fetchAndPrune, settings.fetchAndPruneTags]);
+
+	/** 同步按钮的右键菜单：双向分叉时给出两种整体覆盖。 */
+	const handleSyncContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const { clientX, clientY } = event;
+		const upstream = currentSync?.upstream ?? '';
+		showContextMenu({
+			x: clientX, y: clientY,
+			items: [
+				{
+					title: '用本地覆盖远程（强制推送）', danger: true,
+					hint: upstream === '' ? undefined : `把本地分支强推到 ${upstream}`,
+					onClick: () => { overwriteRemoteWithLocal(); },
+				},
+				{
+					title: '用远程覆盖本地（硬重置）', danger: true,
+					hint: upstream === '' ? undefined : `把本地分支重置到 ${upstream}`,
+					onClick: () => { overwriteLocalWithRemote(); },
+				},
+			],
+		});
+	}, [currentSync, overwriteRemoteWithLocal, overwriteLocalWithRemote]);
 
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
 	const changeSettings = React.useCallback((next: Settings) => {
@@ -1505,51 +1738,88 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		(seconds: number) => formatDate(seconds, { type: 0, iso: settings.dateFormat.iso }),
 		[settings.dateFormat.iso],
 	);
-	const issueLinking = React.useCallback(() => issueLinkingConfigOf(settings), [settings]);
+	// Issue 链接配置按设置记忆化：每次渲染新建对象会击穿提交图的属性比较。
+	const issueLinking = React.useMemo(() => issueLinkingConfigOf(settings), [settings]);
 
-	if (state.phase === 'no-workspace') {
-		return React.createElement('div', { className: shared.empty }, '该会话没有工作区目录');
-	}
+	/** 刷新选中仓库；更改区与图形区的标题栏共用。 */
+	const refreshAll = React.useCallback(() => {
+		// 主动刷新同时重读引用清单：外部增删分支或标签后，手选筛选需要重新校验。
+		setRefsRevision((previous) => previous + 1);
+		void run('read', () => refresh('full'));
+	}, [run, refresh]);
+	/** 追加一个提交窗口。 */
+	const loadMoreCommits = React.useCallback(() => {
+		void loadMore();
+	}, [loadMore]);
+	/** 从所有远程抓取。 */
+	const fetchAll = React.useCallback(() => {
+		void run('network', async () => {
+			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
+		});
+	}, [run, workingTreePath, settings.fetchAndPrune, settings.fetchAndPruneTags]);
+	/** 打开设置面板。 */
+	const openSettingsPanel = React.useCallback(() => { setSettingsOpen(true); }, []);
+	/** 打开引用筛选弹窗。 */
+	const openFilterDialog = React.useCallback(() => { setFilterOpen(true); }, []);
+
+	/** 分叉来源的当前值，供 effect 判断是否已有同名分支的结果。 */
+	const branchBaseRef = React.useRef(branchBase);
+	branchBaseRef.current = branchBase;
+	/*
+	 * 自动筛选的分叉来源（VS Code 图形视图的 base 引用）：配置、分支创建来源、默认远程分支。
+	 * 只有自动筛选与打开弹窗时需要（弹窗按它排序）；同一仓库同一分支只取一次，分离头指针没有来源。
+	 */
+	React.useEffect(() => {
+		if (workingTreePath === null || state.head === null) { setBranchBase(null); return undefined; }
+		if (refFilter.mode !== 'auto' && !filterOpen) return undefined;
+		const cached = branchBaseRef.current;
+		if (cached !== null && cached.repo === workingTreePath && cached.branch === state.head) return undefined;
+		const cancelled = { current: false };
+		const repo = workingTreePath;
+		const branch = state.head;
+		void (async () => {
+			try {
+				const result = await loadBranchBase(repo);
+				if (cancelled.current) return;
+				setBranchBase(result.branch === branch ? { repo, branch, base: result.base } : null);
+			} catch {
+				if (!cancelled.current) setBranchBase(null);
+			}
+		})();
+		return () => { cancelled.current = true; };
+	}, [workingTreePath, state.head, refFilter.mode, filterOpen]);
 
 	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条。
 	React.useEffect(() => {
 		if (state.error !== null) showToast(state.error);
 	}, [state.error]);
 
-	// 当前仓库的全部引用：全部模式与「全选」都以它为准。
-	const allRefs = React.useMemo(() => collectRefs(state.commits), [state.commits]);
-
-	// 排序后的引用与过滤后的提交列表：两者都是 O(提交数)，而滚动会逐帧重渲染，
-	// 必须在渲染体外记忆化，否则每次滚动都重算一份全量。
-	const sortedRefs = React.useMemo(
-		() => sortRefs(allRefs, state.head, currentSync?.upstream ?? null, syncMarkers.baseHash),
-		[allRefs, state.head, currentSync?.upstream, syncMarkers.baseHash],
+	/*
+	 * 取数已按筛选在宿主侧完成（引用起点交给 `git log`），这里只整理弹窗要用的引用与勾选态。
+	 * 弹窗列出仓库的全部引用，与提交窗口无关。
+	 */
+	const filterBase = branchBase !== null && branchBase.repo === workingTreePath && branchBase.branch === state.head
+		? branchBase.base
+		: null;
+	const filterContext = React.useMemo<AutoFilterContext>(
+		() => ({ head: state.head, headHash: state.headHash, upstream: state.upstream, base: filterBase }),
+		[state.head, state.headHash, state.upstream, filterBase],
 	);
-
-	// 按模式派生实际勾选集：自动与全部每次都按规则重算，不固化首次进入时的结果。
-	const filterSelected = React.useMemo(() => {
-		if (filterState.mode === 'auto') {
-			return computeAutoRefs(state.commits, state.head, currentSync?.upstream ?? null, syncMarkers.baseHash);
-		}
-		if (filterState.mode === 'all') return new Set(allRefs.map((ref) => ref.name));
-		return filterState.selected;
-	}, [filterState, allRefs, state.commits, state.head, currentSync?.upstream, syncMarkers.baseHash]);
-
-	// 过滤后的提交列表：与引用一样是 O(提交数)，必须记忆化。
-	const visibleCommits = React.useMemo(
-		() => filterCommitsByRefs(state.commits, filterSelected),
-		[state.commits, filterSelected],
+	const dialogRefs = React.useMemo(() => {
+		const items = refItems !== null && refItems.repo === workingTreePath ? refItems.items : [];
+		return sortRefs(items, state.head, state.upstream, filterBase);
+	}, [refItems, workingTreePath, state.head, state.upstream, filterBase]);
+	const checkedIds = React.useMemo(
+		() => checkedRefIds(refFilter, dialogRefs, filterContext),
+		[refFilter, dialogRefs, filterContext],
 	);
+	// 标题栏按钮文案即当前模式：模式名，或选中的引用名/数量。只看模式，不按勾选内容反推。
+	const filterSummary = React.useMemo(() => filterSummaryOf(refFilter), [refFilter]);
 
-	// 标题栏按钮文案即当前模式：模式名，或选中的分支/标签名。只看模式，不按勾选内容反推。
-	const filterSummary = React.useMemo(() => {
-		if (filterState.mode === 'auto') return '自动';
-		if (filterState.mode === 'all') return '全部';
-		const names = [...filterState.selected];
-		if (names.length === 0) return '未选';
-		if (names.length === 1) return names[0];
-		return `${names.length} 个`;
-	}, [filterState]);
+	// 没有工作区：所有 hook 已调用完毕，这里才提前返回，保持 hook 顺序不随加载阶段变化。
+	if (state.phase === 'no-workspace') {
+		return React.createElement('div', { className: shared.empty }, '该会话没有工作区目录');
+	}
 
 	return React.createElement(
 		'div',
@@ -1564,26 +1834,26 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
-			refs: sortedRefs,
-			selected: filterSelected, search: filterSearch,
+			refs: dialogRefs,
+			selected: checkedIds, search: filterSearch,
 			onSearch: setFilterSearch,
-			// 手动勾选一处即离开规则模式，此后由勾选决定。
-			onToggle: (name: string) => {
-				const next = new Set(filterSelected);
-				if (next.has(name)) next.delete(name);
-				else next.add(name);
-				patchFilter({ mode: 'manual', selected: next });
+			/*
+			 * 勾选一处即转为手选：从当前生效集合出发增删；集合清空时回退自动
+			 * （VS Code 的手选没有「空集合」状态）。
+			 */
+			onToggle: (id: string) => {
+				const next = new Set(checkedIds);
+				if (next.has(id)) next.delete(id);
+				else next.add(id);
+				const ids = dialogRefs.filter((ref) => next.has(ref.id)).map((ref) => ref.id);
+				patchFilter(ids.length === 0 ? DEFAULT_REF_FILTER : { mode: 'manual', ids });
 			},
-			onSelectAll: (checked: boolean) => { patchFilter({
-				mode: checked ? 'all' : 'manual',
-				selected: checked ? new Set(allRefs.map((ref) => ref.name)) : new Set(),
-			}); },
+			onSelectAll: (checked: boolean) => { patchFilter(checked ? { mode: 'all', ids: [] } : DEFAULT_REF_FILTER); },
 			// 勾选态一律由模式决定，不看勾选内容反推：模式是唯一事实来源。
-			allChecked: filterState.mode === 'all',
-			autoChecked: filterState.mode === 'auto',
-			onToggleAuto: (checked: boolean) => { patchFilter(checked
-				? { mode: 'auto', selected: new Set() }
-				: { mode: 'manual', selected: new Set() }); },
+			allChecked: refFilter.mode === 'all',
+			autoChecked: refFilter.mode === 'auto',
+			// 「自动」与「全部」互斥：取消其中一个即落到另一个，不留未选状态。
+			onToggleAuto: (checked: boolean) => { patchFilter(checked ? DEFAULT_REF_FILTER : { mode: 'all', ids: [] }); },
 			onClose: () => { setFilterOpen(false); },
 		}),
 
@@ -1592,7 +1862,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			open: repoSecOpen, height: repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
-			onOpenSettings: () => { setSettingsOpen(true); },
+			onOpenSettings: openSettingsPanel,
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
@@ -1615,23 +1885,25 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			canSubmit, onSubmit: submit, onRefresh: () => { void run('read', () => refresh('full')); },
+			canSubmit, onSubmit: submit, onRefresh: refreshAll,
+			onSyncContextMenu: overwriteChoicesAvailable ? handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
 			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
 			merging: state.merging, onAbortMerge: handleAbortMerge,
+			refreshing: backgroundFlags.entries, lastRefresh: lastRefreshText,
 		}),
 
 		// ── 图形 ────────────────────────────────────────────────
 		React.createElement(GraphSection, {
 			open: graphSecOpen, height: graphHeight, busy: busyFlags, phase: state.phase,
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
-			commits: visibleCommits,
+			commits: state.commits,
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: currentSync?.upstream ?? null,
-					moreCommitsAvailable: state.more, statsByHash, messageByHash,
+			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
 			onCancelTranslateCommit: cancelTranslateCommit,
 			graphTranslated, graphTranslating,
@@ -1642,18 +1914,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			onOpenDiff: openDiff,
 			onToggleCommit: toggleCommit,
 			// 触底追加一个窗口：宿主按 offset 返回下一段，客户端不持有完整历史。
-	onLoadMore: () => { void loadMore(); },
+	onLoadMore: loadMoreCommits,
 			onContextMenu: handleContextMenu,
 			onHoverCommit: hoverCommit,
-			onOpenFilter: () => { setFilterOpen(true); },
+			onOpenFilter: openFilterDialog,
 			filterSummary,
-			filterActive: filterState.mode !== 'all',
+			filterActive: refFilter.mode !== 'all',
 			onGoToHead: goToHead,
-			onFetch: () => { void run('network', async () => { await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }); },
-			onRefresh: () => { void run('read', () => refresh('full')); },
+			onFetch: fetchAll,
+			onRefresh: refreshAll,
 			onResizeStart: startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
-			issueLinking: issueLinking(),
+			issueLinking,
+			refreshing: backgroundFlags.graph, lastRefresh: lastRefreshText,
 		}),
 	);
 }
