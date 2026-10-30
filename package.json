@@ -62,7 +62,7 @@
     "hooks:install": "node scripts/install-hooks.mjs",
     "check:duplication": "node scripts/check-duplication.mjs",
     "pretest": "pnpm run build && pnpm run check:duplication",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --import ./test/setup.mjs test/*.test.mjs"
   },
   "dsh": {
     "bundle": {
