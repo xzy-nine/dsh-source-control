@@ -273,7 +273,31 @@ export function isGitIdle(repo?: string): boolean {
 }
 
 /**
- * 等到没有写操作在跑。
+ * 是否没有会改动工作区的操作在跑。
+ *
+ * 与 {@link isGitIdle} 的区别是联网命令不算阻塞：抓取与推送期间工作区与索引都不会被改写，
+ * 读工作区的命令（status / diff / ls-files）可以照常读。抓取通常要几秒，等它会让面板明显卡顿，
+ * 而读到的内容与抓取无关。
+ *
+ * 写操作（提交、合并、检出等）仍要等：它们会改写索引或工作区，读到的可能是写了一半的状态。
+ *
+ * @param repo - 限定仓库；省略时检查所有仓库。
+ * @returns 没有会改写工作区的操作在跑时为 true。
+ */
+export function isWorktreeIdle(repo?: string): boolean {
+	for (const [key, set] of runningOperations) {
+		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
+		for (const operation of set) {
+			if (!operation.readOnly && operation.kind !== 'network') return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * 等到没有写操作在跑（含联网命令）。
+ *
+ * 提交、合并这类会改写索引或工作区的操作，以及需要独占仓库的联网操作都用它。
  *
  * @param repo - 限定仓库；省略时等待所有仓库。
  * @param signal - 取消信号。
@@ -281,6 +305,23 @@ export function isGitIdle(repo?: string): boolean {
  */
 export async function whenGitIdle(repo?: string, signal?: AbortSignal): Promise<void> {
 	while (!isGitIdle(repo)) {
+		if (signal?.aborted === true) return;
+		await new Promise<void>((resolve) => {
+			const notify = (): void => { idleListeners.delete(notify); resolve(); };
+			idleListeners.add(notify);
+		});
+	}
+}
+
+/**
+ * 等到没有会改动工作区的操作在跑（联网命令不算）。
+ *
+ * @param repo - 限定仓库；省略时等待所有仓库。
+ * @param signal - 取消信号。
+ * @returns 无。
+ */
+export async function whenWorktreeIdle(repo?: string, signal?: AbortSignal): Promise<void> {
+	while (!isWorktreeIdle(repo)) {
 		if (signal?.aborted === true) return;
 		await new Promise<void>((resolve) => {
 			const notify = (): void => { idleListeners.delete(notify); resolve(); };

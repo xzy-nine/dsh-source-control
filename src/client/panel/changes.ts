@@ -318,10 +318,10 @@ function ChangeGroupView({
 	const title = staged ? '暂存的更改' : '更改';
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 	const onStage = React.useCallback((paths: readonly string[]): void => {
-		void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false });
+		void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false, intent: `暂存 ${String(paths.length)} 个路径` });
 	}, [run, stagePaths, workingTreePath]);
 	const onUnstage = React.useCallback((paths: readonly string[]): void => {
-		void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false });
+		void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false, intent: `取消暂存 ${String(paths.length)} 个路径` });
 	}, [run, unstagePaths, workingTreePath]);
 	/**
 	 * 丢弃一批路径的改动；未跟踪与已跟踪分两条命令下发。
@@ -340,7 +340,7 @@ function ChangeGroupView({
 		await run('commit', async () => {
 			if (tracked.length > 0) discarded.push(...(await discardPaths(workingTreePath, tracked, false)).discarded);
 			if (untrackedPaths.length > 0) discarded.push(...(await discardPaths(workingTreePath, untrackedPaths, true)).discarded);
-		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
+		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(tracked.length)} 个已跟踪、${String(untrackedPaths.length)} 个未跟踪）` });
 	}, [run, discardPaths, workingTreePath]);
 	/**
 	 * 丢弃某个文件夹下的全部改动。
@@ -381,7 +381,7 @@ function ChangeGroupView({
 			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				discarded.push(...(await discardPaths(workingTreePath, paths, untracked)).discarded);
-			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
+			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(paths.length)} 个${untracked ? '未跟踪' : '已跟踪'}路径）` });
 		})();
 	}, [run, discardPaths, workingTreePath]);
 	/**

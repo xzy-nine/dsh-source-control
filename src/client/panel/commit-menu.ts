@@ -38,8 +38,13 @@ export interface RefMenuTarget {
 export interface GraphMenuDeps {
 	/** 当前工作树路径。 */
 	readonly workingTreePath: string | null;
-	/** 执行一次仓库操作并刷新；菜单里的操作都属于 history 影响面。 */
-	readonly run: (scope: BusyScope, operation: () => Promise<void>) => Promise<void>;
+	/**
+	 * 执行一次仓库操作并刷新；菜单里的操作都属于 history 影响面。
+	 *
+	 * `intent` 是给日志用的用户意图描述（如「检出分支 dev」）：日志里只有 git 命令时
+	 * 无法把「用户点了什么」和命令对上。
+	 */
+	readonly run: (scope: BusyScope, operation: () => Promise<void>, intent?: string) => Promise<void>;
 	/** 远端列表。 */
 	readonly remotes: readonly Remote[];
 	/** 创建归档。 */
@@ -571,7 +576,17 @@ const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta)
  *
  * 数组顺序即 JSON 里的顺序，提交菜单与引用菜单都按它渲染。
  */
-const ACTIONS: readonly MenuAction[] = MENU_ACTIONS.map((meta) => ({ ...meta, build: (ctx: MenuContext) => BUILDERS[meta.id](ctx, meta) }));
+const ACTIONS: readonly MenuAction[] = MENU_ACTIONS.map((meta) => ({
+	...meta,
+	/*
+	 * 每个操作各自给 `run` 注入意图：菜单项的处理函数在构建时就绑定了操作，日志因此能记下
+	 * 用户点的是哪一项，而不只是随后执行了哪条 git 命令。
+	 */
+	build: (ctx: MenuContext) => BUILDERS[meta.id](
+		{ ...ctx, deps: { ...ctx.deps, run: (scope, operation) => ctx.deps.run(scope, operation, meta.title) } },
+		meta,
+	),
+}));
 
 /** 按 id 取一项引用操作。 */
 const ACTION_BY_ID = new Map(ACTIONS.map((action) => [action.id, action]));

@@ -352,8 +352,9 @@ async function worktreesOf(dir: string): Promise<RepoNode[]> {
 				available: await gitDirAt(worktree.path) !== null, children: [],
 			});
 		}
-	} catch {
-		/* 工作树枚举失败不影响仓库节点 */
+	} catch (error) {
+		// 工作树枚举失败不影响仓库节点，但会让工作树节点缺失，需要留痕。
+		logDebug('repo', `枚举工作树失败，该仓库按无工作树处理：${error instanceof Error ? error.message : String(error)}`);
 	}
 	return nodes;
 }
@@ -716,8 +717,9 @@ export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return new Set();
 		return foreignWorktreeBranches(await readWorktrees(commonDir), repo, nodeId);
-	} catch {
-		/* 枚举失败时不排除任何分支 */
+	} catch (error) {
+		// 枚举失败时不排除任何分支：宁可让用户点到会被 git 拒绝的项，也不要漏掉可用分支。
+		logDebug('repo', `枚举别的工作树占用分支失败，本次不排除任何分支：${error instanceof Error ? error.message : String(error)}`);
 		return new Set();
 	}
 }
@@ -765,7 +767,8 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 		try {
 			const sync = await loadRepoSync(path);
 			return { path, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
-		} catch {
+		} catch (error) {
+			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${error instanceof Error ? error.message : String(error)}`);
 			return { path, branch: null, upstream: null, ahead: 0, behind: 0 };
 		}
 	})));
@@ -787,8 +790,8 @@ export async function primeCachedWorkspaces(): Promise<void> {
 			const result = await discoverRepositories(root, { knownRepos: known, shallow: true });
 			watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
 			watchWorkspace(root);
-		} catch {
-			/* 预扫失败不影响后续请求 */
+		} catch (error) {
+			logDebug('repo', `预扫工作区失败，不影响后续请求：${root}：${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 }

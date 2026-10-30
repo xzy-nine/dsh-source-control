@@ -177,7 +177,12 @@ export type RunOperation = (
 	operation: () => Promise<void>,
 	repo?: string,
 	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: { readonly historyChanged?: boolean },
+	options?: {
+		/** 是否可能改动引用与提交历史；false 表示只改工作区条目。 */
+		readonly historyChanged?: boolean;
+		/** 用户意图描述，供日志记录用户点了什么；省略时按影响面记一条。 */
+		readonly intent?: string;
+	},
 ) => Promise<void>;
 
 /** 一个子模块条目的丢弃结局。 */

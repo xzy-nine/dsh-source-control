@@ -20,7 +20,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
-import { logDebug, logWarn } from './logger.js';
+import { logDebug, logInfo, logWarn } from './logger.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
 const COALESCE_MS = 250;
@@ -413,10 +413,12 @@ export function watchRepositories(repos: readonly string[]): void {
 		if (repo === '') continue;
 		arm(repo);
 	}
+	logDebug('watcher', `登记仓库监视：本次 ${String(repos.length)} 个路径，当前监视 ${String(handles.size)} 个公共目录`);
 	while (handles.size > MAX_WATCHED_REPOS) {
 		const oldest = handles.keys().next();
 		if (oldest.done === true) break;
 		closeHandles(oldest.value);
+		logDebug('watcher', `监视数超过上限 ${String(MAX_WATCHED_REPOS)}，淘汰最早登记的公共目录`);
 	}
 }
 
@@ -548,12 +550,16 @@ export function watchWorkspace(root: string): void {
 		handle = workspaceWatch(key, root, true);
 	} catch {
 		try {
+			// 递归句柄不可用时退回只监视顶层：仓库集合变化通常发生在顶层。
 			handle = workspaceWatch(key, root, false);
-		} catch {
-			/* 工作区不可监视：目录不存在或没有权限 */
+			logWarn('watcher', `工作区递归监视不可用，已退回只监视顶层：${root}`);
+		} catch (error) {
+			// 工作区不可监视：目录不存在或没有权限。
+			logWarn('watcher', `工作区无法监视，仓库集合变化将不会被自动发现：${root}：${error instanceof Error ? error.message : String(error)}`);
 			return;
 		}
 	}
+	logInfo('watcher', `已开始监视工作区：${root}`);
 	workspaces.set(key, { root, handle, timer: null });
 	while (workspaces.size > MAX_WATCHED_WORKSPACES) {
 		const oldest = workspaces.keys().next();
@@ -617,6 +623,7 @@ function closeWorkspace(key: string): void {
  * @returns 无。
  */
 export function closeRepositoryWatchers(): void {
+	logInfo('watcher', `关闭全部监视：${String(handles.size)} 个仓库、${String(workspaces.size)} 个工作区`);
 	for (const key of [...handles.keys()]) closeHandles(key);
 	for (const key of [...workspaces.keys()]) closeWorkspace(key);
 	for (const timer of pending.values()) clearTimeout(timer);

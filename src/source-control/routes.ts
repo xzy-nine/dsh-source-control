@@ -18,7 +18,7 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle, whenWorktreeIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
@@ -189,7 +189,13 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	}, EVENTS_HEARTBEAT_MS);
 	// 保活不应阻止宿主退出。
 	if (typeof heartbeat.unref === 'function') heartbeat.unref();
+	/*
+	 * `req` 与 `res` 的 close 都会触发，且同一次断开两者都会发；不幂等的话一条断开会被记两遍。
+	 */
+	let closed = false;
 	const close = (): void => {
+		if (closed) return;
+		closed = true;
 		clearInterval(heartbeat);
 		eventStreams.delete(res);
 		logDebug('api', `面板已断开事件流，当前还剩 ${String(eventStreams.size)} 条连接`);
@@ -265,13 +271,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'loadWorkingTree':
 			await respondResult('loadWorkingTree', async () => {
 				// 写操作（暂存/提交/检出等）未结束时先等它结束：否则会读到写了一半的工作区。
-				await whenGitIdle(repo);
+				// 抓取不算：它不改工作区，等它会让面板在抓取期间白等几秒。
+				await whenWorktreeIdle(repo);
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
 			break;
 		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
-			await whenGitIdle(repo);
+			// 只读工作区：抓取期间照常读，不必等它结束。
+			await whenWorktreeIdle(repo);
 			/*
 			 * 快照键含 HEAD：外部进程的提交不产生写事件，缓存无从主动作废；带上 HEAD 后
 			 * 那次提交不会命中提交前的条目。HEAD 由文件与分支引用解析，不起子进程。
@@ -281,6 +289,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			 */
 			const cachedSnapshot = bool('noCache') ? undefined : readSnapshot(repo, await repoHeadHash(repo));
 			if (cachedSnapshot !== undefined) {
+				logDebug('cache', `工作区快照命中缓存：${repo}`);
 				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
 				break;
 			}
@@ -291,19 +300,38 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		}
 		case 'stagePaths':
-			await respondResult('stagePaths', async () => { await stagePaths(repo, arr<string>('paths')); return { repo }; });
+			await respondResult('stagePaths', async () => {
+				const paths = arr<string>('paths');
+				await stagePaths(repo, paths);
+				logInfo('repo', `已暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				return { repo };
+			});
 			break;
 		case 'unstagePaths':
-			await respondResult('unstagePaths', async () => { await unstagePaths(repo, arr<string>('paths')); return { repo }; });
+			await respondResult('unstagePaths', async () => {
+				const paths = arr<string>('paths');
+				await unstagePaths(repo, paths);
+				logInfo('repo', `已取消暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				return { repo };
+			});
 			break;
 		case 'discardPaths':
 			await respondResult('discardPaths', async () => {
-				const outcome = await discardPaths(repo, arr<string>('paths'), bool('untracked'));
+				const paths = arr<string>('paths');
+				const untracked = bool('untracked');
+				const outcome = await discardPaths(repo, paths, untracked);
+				logInfo('repo', `已丢弃 ${String(paths.length)} 个${untracked ? '未跟踪' : '已跟踪'}路径的改动`);
 				return { repo, ...outcome };
 			});
 			break;
 		case 'commitStaged':
-			await respondResult('commitStaged', async () => ({ repo, hash: await commitStaged(repo, str('message'), bool('amend'), bool('skipHooks')) }));
+			await respondResult('commitStaged', async () => {
+				const amend = bool('amend');
+				const skipHooks = bool('skipHooks');
+				const hash = await commitStaged(repo, str('message'), amend, skipHooks);
+				logInfo('repo', `提交成功${amend ? '（修补上一次提交）' : ''}${skipHooks ? '（已跳过钩子）' : ''}：${hash}`);
+				return { repo, hash };
+			});
 			break;
 		case 'addToGitignore':
 			await respondResult('addToGitignore', async () => ({ result: await addToGitignore(repo, str('path')) }));
@@ -317,7 +345,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'removeWorktree':
 			await respondResult('removeWorktree', async () => {
 				const worktreePath = str('worktreePath');
-				await removeWorktree(repo, worktreePath, bool('force'));
+				const force = bool('force');
+				await removeWorktree(repo, worktreePath, force);
+				logInfo('repo', `已移除工作树${force ? '（强制）' : ''}：${worktreePath}`);
 				return { repo, worktreePath };
 			});
 			break;
@@ -325,6 +355,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('initSubmodule', async () => {
 				const submodulePath = str('submodulePath');
 				await initSubmodule(repo, submodulePath);
+				logInfo('repo', `已初始化子模块：${submodulePath}`);
 				return { repo, submodulePath };
 			});
 			break;
@@ -344,6 +375,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					writeHooksPath(repo, hooksPath);
 				}
 				const state = await detectHooks(repo, hooksPath);
+				// 钩子决定提交与推送是否要带 --no-verify，判定结果值得留一条记录。
+				logInfo('hooks', `钩子探测：${repo} 提交钩子=${state.commit ? '有' : '无'}、推送钩子=${state.push ? '有' : '无'}，目录 ${state.directory ?? '（无法定位）'}`);
 				return { repo, commit: state.commit, push: state.push, directory: state.directory };
 			});
 			break;
@@ -418,7 +451,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
-				await whenGitIdle(repo);
+				// 读引用，不碰工作区：抓取期间照常读。
+				await whenWorktreeIdle(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 			});
@@ -429,18 +463,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
 				// 空列表不读仓库：results 为空数组。
 				if (repos.length === 0) return { repo, results: [] };
-				await whenGitIdle(repo);
+				await whenWorktreeIdle(repo);
 				return { repo, results: await loadReposSync(repos) };
 			});
 			break;
 
 		/* --- 数据查询 --- */
 		case 'loadRepoInfo': {
-			await whenGitIdle(repo);
+			// 读远程与贮藏列表：不碰工作区，抓取期间照常读。
+			await whenWorktreeIdle(repo);
 			const showRemoteBranches = bool('showRemoteBranches', true);
 			const showStashes = bool('showStashes', true);
 			const hideRemotes = arr<string>('hideRemotes');
 			let repoInfo = readRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes });
+			if (repoInfo !== undefined) logDebug('cache', `仓库信息命中缓存：${repo}`);
 			if (repoInfo === undefined) {
 				repoInfo = await getRepoInfo(repo, showRemoteBranches, showStashes, hideRemotes);
 				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
@@ -520,6 +556,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 */
 				const cachedGraph = readGraph(repo, graphParams);
 				if (cachedGraph !== undefined) {
+					logDebug('cache', `提交图窗口命中缓存：${repo}（skip=${String(skip)}，limit=${String(limit)}）`);
 					const lastCached = cachedGraph.commits.at(-1);
 					/*
 					 * 仓库信息同样来自宿主缓存：命中窗口时一并回投，客户端不必为远程与贮藏
@@ -591,6 +628,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
 					: remotesGiven ? givenRemotes : getRemoteNames(repo).catch(() => [] as string[]);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
+				logDebug('cache', `提交图窗口未命中缓存，重新取数：${repo}（skip=${String(skip)}，limit=${String(limit)}）`);
 				const data = await getCommits(
 					repo,
 					branchesArg,
@@ -680,11 +718,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		/* --- 分支操作 --- */
 		case 'checkoutBranch': {
-			const errors: unknown[] = [await checkoutBranch(repo, str('branchName'), strOrNull('remoteBranch'))];
+			const branchName = str('branchName');
+			const errors: unknown[] = [await checkoutBranch(repo, branchName, strOrNull('remoteBranch'))];
 			const pull = msg.pullAfterwards as Record<string, unknown> | null;
 			if (errors[0] === null && pull) {
 				errors.push(await pullBranch(repo, String(pull.branchName), String(pull.remote), Boolean(pull.createNewCommit), Boolean(pull.squash)));
 			}
+			if (errors.every((error) => error === null)) logInfo('repo', `已检出分支：${branchName}${pull ? '（并拉取）' : ''}`);
 			respond({ command: 'checkoutBranch', pullAfterwards: msg.pullAfterwards ?? null, errors });
 			break;
 		}
@@ -692,10 +732,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: 'createBranch', errors: await createBranch(repo, str('branchName'), str('commitHash'), bool('checkout'), bool('force')) });
 			break;
 		case 'deleteBranch': {
-			const errors: unknown[] = [await deleteBranch(repo, str('branchName'), bool('forceDelete'))];
+			const branchName = str('branchName');
+			const forceDelete = bool('forceDelete');
+			const errors: unknown[] = [await deleteBranch(repo, branchName, forceDelete)];
 			if (errors[0] === null) {
+				logInfo('repo', `已删除本地分支${forceDelete ? '（强制）' : ''}：${branchName}`);
 				for (const remote of arr<string>('deleteOnRemotes')) {
-					errors.push(await deleteRemoteBranch(repo, str('branchName'), remote));
+					errors.push(await deleteRemoteBranch(repo, branchName, remote));
 				}
 			}
 			respond({ command: 'deleteBranch', repo, branchName: str('branchName'), deleteOnRemotes: arr('deleteOnRemotes'), errors });
@@ -740,13 +783,17 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'revertCommit':
 			await respondError('revertCommit', () => revertCommit(repo, str('commitHash'), num('parentIndex')));
 			break;
-		case 'merge':
+		case 'merge': {
+			const obj = str('obj');
+			const error = await merge(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit'));
+			if (error === null) logInfo('repo', `已合并：${obj}`);
 			respond({
 				command: 'merge',
 				actionOn: msg.actionOn,
-				error: await merge(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit')),
+				error,
 			});
 			break;
+		}
 		case 'abortMerge':
 			await respondResult('abortMerge', async () => {
 				const error = await abortMerge(repo);
@@ -774,14 +821,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			respond({ command: 'mergeIntoBranch', ...(await mergeCurrentIntoBranch(repo, branchName, str('message'))) });
 			break;
 		}
-		case 'rebase':
-			respond({
-				command: 'rebase',
-				actionOn: msg.actionOn,
-				interactive: bool('interactive'),
-				error: await rebase(repo, str('obj'), typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('ignoreDate', true), bool('interactive')),
-			});
+		case 'rebase': {
+			const obj = str('obj');
+			const error = await rebase(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('ignoreDate', true), bool('interactive'));
+			if (error === null) logInfo('repo', `已变基到：${obj}`);
+			respond({ command: 'rebase', actionOn: msg.actionOn, interactive: bool('interactive'), error });
 			break;
+		}
 
 		/* --- 标签 --- */
 		case 'addTag': {
@@ -797,7 +843,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		/* --- 远程 --- */
 		case 'fetch':
-			await respondError('fetch', () => fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags')));
+			await respondResult('fetch', async () => {
+				const error = await fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags'));
+				if (error !== null) throw new Error(error);
+				logInfo('repo', `已抓取远程${strOrNull('name') === null ? '（全部）' : `：${strOrNull('name') as string}`}`);
+				return { repo };
+			});
 			break;
 		case 'addRemote':
 			await respondError('addRemote', () => addRemote(repo, str('name'), str('url'), strOrNull('pushUrl'), bool('fetch')));
@@ -826,7 +877,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondError('popStash', () => popStash(repo, str('selector'), bool('reinstateIndex')));
 			break;
 		case 'pushStash':
-			await respondError('pushStash', () => pushStash(repo, str('message'), bool('includeUntracked', true)));
+			await respondResult('pushStash', async () => {
+				const message = str('message');
+				const error = await pushStash(repo, message, bool('includeUntracked', true));
+				if (error !== null) throw new Error(error);
+				logInfo('repo', `已贮藏改动${message === '' ? '' : `：${message}`}`);
+				return { repo };
+			});
 			break;
 
 		/* --- 其它 --- */
@@ -1100,12 +1157,16 @@ let exitFlushRegistered = false;
 
 /** 一轮刷新内的累计。 */
 interface CostBucket {
-	/** 窗口起点（毫秒）。 */
-	startedAt: number;
+	/** 本轮第一条命令的开始时刻。 */
+	firstStartedAt: number;
+	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
+	lastEndedAt: number;
 	/** 各命令的执行次数。 */
 	readonly counts: Map<string, number>;
 	/** 各命令累计耗时（毫秒）。 */
 	readonly msByCommand: Map<string, number>;
+	/** 各命令命中缓存的次数（耗时 0 ms 且不是首次）。 */
+	readonly cachedCounts: Map<string, number>;
 	/** 最慢的一条命令与其耗时。 */
 	slowest: { command: string; ms: number } | null;
 	/** 本轮累计耗时（毫秒）。 */
@@ -1139,12 +1200,19 @@ function recordCommandCost(command: string, ms: number): void {
 			flushSync();
 		});
 	}
+	const now = Date.now();
 	if (bucket === null) {
-		bucket = { startedAt: Date.now(), counts: new Map(), msByCommand: new Map(), slowest: null, totalMs: 0 };
+		bucket = {
+			firstStartedAt: now - ms, lastEndedAt: now,
+			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
+		};
 	}
+	bucket.lastEndedAt = now;
 	bucket.counts.set(command, (bucket.counts.get(command) ?? 0) + 1);
 	bucket.msByCommand.set(command, (bucket.msByCommand.get(command) ?? 0) + ms);
 	bucket.totalMs += ms;
+	// 0 ms 的命令即命中了缓存：单独计数，否则无法判断缓存是否生效。
+	if (ms === 0) bucket.cachedCounts.set(command, (bucket.cachedCounts.get(command) ?? 0) + 1);
 	if (bucket.slowest === null || ms > bucket.slowest.ms) bucket.slowest = { command, ms };
 	if (bucketTimer !== undefined) return;
 	bucketTimer = setTimeout(() => {
@@ -1163,14 +1231,22 @@ function flushCommandCost(): void {
 	bucket = null;
 	const breakdown = [...current.counts.entries()]
 		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-		.map(([name, count]) => `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms`)
+		.map(([name, count]) => {
+			const cached = current.cachedCounts.get(name) ?? 0;
+			const suffix = cached === 0 ? '' : cached === count ? '（全部命中缓存）' : `（${String(cached)} 次命中缓存）`;
+			return `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms${suffix}`;
+		})
 		.join('、');
 	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
 	/*
-	 * 命令是并行发出的，各条耗时之和会大于用户实际等待的时长（一次 fetch 期间几个读命令
-	 * 同时在等，和能到墙钟的好几倍）。因此两个数都给：墙钟是用户感知，命令之和是工作量。
+	 * 墙钟取「首条命令开始 → 末条命令结束」，不是「窗口开启至今」：窗口是按最后一条命令
+	 * 之后 3 秒关闭的，用关闭时刻减开启时刻会把空闲等待也算进去（轮询间隔 10 秒时，
+	 * 一轮只有一条 70ms 的命令，却会记成 3000ms）。
+	 *
+	 * 命令是并行发出的，各条耗时之和会大于墙钟（一次 fetch 期间几个读命令同时在等），
+	 * 因此两个数都给：墙钟是用户感知，命令之和是工作量。
 	 */
-	const wall = Date.now() - current.startedAt;
+	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
 	logInfo('perf', `一轮刷新墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
 }
 
@@ -1432,6 +1508,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				return;
 			}
 
+			logInfo('ai', `开始生成提交信息：${provider}/${model}${amend ? '（修补）' : ''}，diff ${String(diff.length)} 字符`);
 			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
 			const language = typeof body.language === 'string' ? body.language.trim() : '';
@@ -1502,6 +1579,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
 				});
 				sse('done', '');
+				logInfo('ai', `AI 提交信息生成完成：${provider}/${model}，${String(outTok)} token，${String(tps)} tok/s，耗时 ${totalSec.toFixed(1)}s`);
 			} catch (e) {
 				const message = e instanceof Error ? e.message : String(e);
 				logError('ai', `生成提交信息失败（${provider}/${model}）：${message}`);
