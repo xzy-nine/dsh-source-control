@@ -19,7 +19,7 @@ The complete description of every feature is in [Docs/功能说明.md](Docs/功�
 
 ## Entry points
 
-Both entries come from this plugin and open the same page; no third-party sidebar plugin is required:
+Both entries come from this plugin and open the same page:
 
 | Entry | Behaviour |
 |---|---|
@@ -27,12 +27,6 @@ Both entries come from this plugin and open the same page; no third-party sideba
 | Session header icon | Opens the page, or focuses the open one |
 
 Switching to another sidebar page or workspace and coming back leaves the page as it was — it neither reloads nor loses its expanded state.
-
-## Working with dsh-better-sidebar
-
-When [dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) is installed, its capabilities are preferred; when it is absent or the relevant type is turned off, this plugin falls back automatically. Neither case needs configuration.
-
-An optional dependency — this plugin works on its own.
 
 ## Install
 
