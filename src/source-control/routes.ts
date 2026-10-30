@@ -1166,7 +1166,12 @@ function flushCommandCost(): void {
 		.map(([name, count]) => `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms`)
 		.join('、');
 	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
-	logInfo('perf', `一轮刷新共 ${String(current.counts.size)} 种命令、累计耗时 ${String(current.totalMs)} ms${slowest}：${breakdown}`);
+	/*
+	 * 命令是并行发出的，各条耗时之和会大于用户实际等待的时长（一次 fetch 期间几个读命令
+	 * 同时在等，和能到墙钟的好几倍）。因此两个数都给：墙钟是用户感知，命令之和是工作量。
+	 */
+	const wall = Date.now() - current.startedAt;
+	logInfo('perf', `一轮刷新墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
 }
 
 export interface GgRouteContext {
