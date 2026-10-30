@@ -5,7 +5,10 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { commitsEqual, commitsListEqual, entriesEqual, remotesListEqual, uncommittedParentOf, withUncommittedCount } from '../src/client/panel/commit-diff.ts';
+import {
+	commitsEqual, commitsListEqual, entriesEqual, logCommitCountOf, mergeCommits, mergeEntries,
+	remotesListEqual, uncommittedParentOf, withUncommittedCount,
+} from '../src/client/panel/commit-diff.ts';
 
 /** 构造一条带全部比对字段的提交。 */
 const commit = (overrides = {}) => ({
@@ -17,6 +20,13 @@ const commit = (overrides = {}) => ({
 
 /** 构造一个工作区条目。 */
 const entry = (overrides = {}) => ({ path: 'a.txt', origPath: null, index: ' ', worktree: 'M', ...overrides });
+
+test('日志记录计数：未提交伪提交行不计入', () => {
+	assert.equal(logCommitCountOf([]), 0);
+	assert.equal(logCommitCountOf([commit()]), 1);
+	// 未提交伪提交行总在最前，计数时跳过。
+	assert.equal(logCommitCountOf([commit({ hash: '*' }), commit(), commit({ hash: 'b2' })]), 2);
+});
 
 test('完全相同的两条提交判等', () => {
 	assert.equal(commitsEqual(commit(), commit()), true);
@@ -169,4 +179,43 @@ test('伪提交行的父提交必须已在列表中，否则不补出该行', ()
 	// 判据与补出联动：父提交不可用时保持原列表引用。
 	assert.equal(withUncommittedCount(list, 3, uncommittedParentOf(list, 'moved')), list);
 	assert.notEqual(withUncommittedCount(list, 3, uncommittedParentOf(list, 'c1')), list);
+});
+
+test('mergeCommits：未变化的提交复用上一份的对象，变化的替换', () => {
+	const previous = [commit({ hash: 'c3' }), commit({ hash: 'c2' }), commit({ hash: 'c1' })];
+	const changedC2 = commit({ hash: 'c2', heads: ['dev'] });
+	const next = [commit({ hash: 'c4' }), previous[0], changedC2, previous[2]];
+	const merged = mergeCommits(previous, next);
+	assert.notEqual(merged, next, '总是返回新数组');
+	assert.deepEqual(merged.map((item) => item.hash), ['c4', 'c3', 'c2', 'c1'], '顺序取新列表');
+	assert.equal(merged[0], next[0], '新出现的提交用新对象');
+	assert.equal(merged[1], previous[0], '未变化的提交复用上一份');
+	assert.equal(merged[2], changedC2, '变化的提交用新对象');
+	assert.equal(merged[3], previous[2]);
+});
+
+test('mergeCommits：上一份为空时返回新列表的副本', () => {
+	const next = [commit()];
+	const merged = mergeCommits([], next);
+	assert.deepEqual(merged, next);
+	assert.notEqual(merged, next);
+});
+
+test('mergeEntries：按路径复用，四字段全等才算未变', () => {
+	const previous = [entry({ path: 'a.txt' }), entry({ path: 'b.txt', index: 'M', worktree: ' ' })];
+	const changed = entry({ path: 'a.txt', worktree: 'A' });
+	const sameStaged = entry({ path: 'b.txt', index: 'M', worktree: ' ' });
+	const next = [changed, sameStaged, entry({ path: 'c.txt', index: '?', worktree: '?' })];
+	const merged = mergeEntries(previous, next);
+	assert.notEqual(merged, next, '总是返回新数组');
+	assert.equal(merged[0], next[0], '状态变化的条目用新对象');
+	assert.equal(merged[1], previous[1], '未变化的条目复用上一份');
+	assert.equal(merged[2], next[2], '新条目用新对象');
+});
+
+test('mergeEntries：重命名的条目按当前路径与原型路径成键', () => {
+	const renamed = entry({ path: 'new.txt', origPath: 'old.txt', index: 'R', worktree: ' ' });
+	const same = entry({ path: 'new.txt', origPath: 'old.txt', index: 'R', worktree: ' ' });
+	const merged = mergeEntries([renamed], [same]);
+	assert.equal(merged[0], renamed, '两条路径都相同才复用');
 });

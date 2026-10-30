@@ -95,3 +95,27 @@ test('已是绝对路径的目标原样复制', () => {
 	// 仓库根未知时无从拼接，原样给出。
 	assert.equal(absolutePathOf('', 'src/a.ts'), 'src/a.ts');
 });
+
+test('文件夹计数含全部后代文件', () => {
+	const rows = changeRowsOf([
+		entry('src/a.ts'), entry('src/client/b.ts'), entry('src/client/panel/c.ts'),
+	], new Set());
+	// src 自身有文件、其下分叉，因此不合并；计数为该子树下的文件总数。
+	assert.deepEqual(shape(rows), ['▸src', '▸src/client', '▸src/client/panel', 'src/client/panel/c.ts', 'src/client/b.ts', 'src/a.ts']);
+	assert.equal(rows[0].count, 3, '顶层目录计全部后代');
+	assert.equal(rows[1].count, 2, '中间目录计自身与其后代');
+	assert.equal(rows[2].count, 1, '最内层目录计自身文件');
+});
+
+test('目录计数在折叠时不变', () => {
+	const paths = [entry('src/client/panel/a.ts'), entry('src/client/panel/b.ts')];
+	const open = changeRowsOf(paths, new Set());
+	const folded = changeRowsOf(paths, new Set(['src/client/panel']));
+	assert.equal(folded.length, 1);
+	assert.equal(folded[0].count, open[0].count, '折叠不改变计数');
+});
+
+test('只有文件时不产生目录行', () => {
+	const rows = changeRowsOf([entry('a.ts')], new Set());
+	assert.deepEqual(rows.map((row) => row.kind), ['file']);
+});

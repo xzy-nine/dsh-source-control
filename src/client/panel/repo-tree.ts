@@ -1,30 +1,15 @@
 import { loadValue, saveValue } from './storage.ts';
+import { normalizePath } from '../shared/path-key.ts';
 
 /**
- * 存储库树的纯函数：路径规范化、可见节点展开、选中持久化。
+ * 存储库树的纯函数：可见节点展开、选中持久化。
  *
- * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。
+ * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。路径归一化见 `shared/path-key.ts`。
  */
 
 /** 存储键前缀。 */
 const SELECTION_KEY = 'dsh-source-control-selection';
 const EXPANDED_KEY = 'dsh-source-control-expanded';
-
-/** 运行环境是否按大小写不敏感比较路径。 */
-const CASE_INSENSITIVE = typeof navigator !== 'undefined'
-	&& (/Windows/i.test(navigator.userAgent));
-
-/**
- * 把路径规范化为与宿主节点 id 一致的形式。
- *
- * @param {string} path - 任意路径。
- * @returns `/` 分隔、去掉尾斜杠的路径；大小写不敏感环境下统一小写。
- */
-export function normalizePath(path) {
-	const normalized = String(path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
-	const insensitive = CASE_INSENSITIVE || /^[a-zA-Z]:\//.test(normalized);
-	return insensitive ? normalized.toLowerCase() : normalized;
-}
 
 /**
  * 按 id 查找节点。

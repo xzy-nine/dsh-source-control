@@ -12,6 +12,24 @@
 
 .secHead .headActions{margin-left:auto;display:flex;gap:2px}
 
+/* 后台刷新状态点：紧邻分区标题，取数期间为进行中色，空闲为中性色。 */
+
+.headDot{flex:none;margin-left:2px}
+
+/* 「上次刷新」相对时间：紧随状态点，弱化处理避免抢占标题。 */
+
+.headRefreshNote{margin-left:2px;color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:400}
+
+/* 刷新按钮进行中：图标呼吸，与批量翻译同一写法；布局不变，只改透明度。 */
+
+.iconBtn[data-refreshing]{opacity:0.6;animation:refreshPulse 1s ease-in-out infinite}
+
+@keyframes refreshPulse{0%,100%{opacity:0.45}50%{opacity:0.9}}
+
+@media (prefers-reduced-motion: reduce){
+	.iconBtn[data-refreshing]{animation:none;opacity:0.6}
+}
+
 /* 紧随分区标题文本的图标按钮：与文字留出间距，其余仍由 .headActions 靠右。 */
 
 .secHead .headAction{margin-left:2px;flex:none}

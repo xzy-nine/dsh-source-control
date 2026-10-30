@@ -37,6 +37,26 @@ export function primaryActionOf(input: PrimaryActionInput): PrimaryAction {
 	return 'commit';
 }
 
+/** 双向分叉判据的输入。 */
+export interface DivergenceInput {
+	/** 本地领先上游的提交数。 */
+	readonly ahead: number;
+	/** 本地落后上游的提交数。 */
+	readonly behind: number;
+}
+
+/**
+ * 本地与上游是否双向分叉：双方各有对方没有的提交。
+ *
+ * 双向分叉时普通同步只能「合并」两侧，若用户要的是让某一侧整体覆盖另一侧，需要单独的覆盖入口。
+ *
+ * @param input - 见 {@link DivergenceInput}。
+ * @returns 双向分叉时为 true。
+ */
+export function divergedOf(input: DivergenceInput): boolean {
+	return input.ahead > 0 && input.behind > 0;
+}
+
 /** 提交可用性判据的输入。 */
 export interface SubmitAvailabilityInput {
 	/** 已暂存的路径数。 */

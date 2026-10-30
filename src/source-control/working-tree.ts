@@ -50,10 +50,41 @@ export interface GitOptions {
  * `GIT_TERMINAL_PROMPT=0` 让缺凭据的远程操作直接失败，而不是挂在等待输入上；
  * `GIT_PAGER` 兜住 git 误判为交互终端的场合。
  *
+ * `LANGUAGE` / `LC_ALL` / `LANG` 固定为英文：git 的提示文本参与失败归类（`git-messages.ts`
+ * 按英文措辞匹配）与部分解析，随系统语言变化会让这两处行为不一致。父进程已显式给出这些
+ * 键时保留用户取值。
+ *
+ * `GIT_OPTIONAL_LOCKS=0` 只加在只读命令上：它让 git 跳过「刷新索引」这类可选加锁，
+ * 读操作因此不必等待写锁、也不会在仓库里留下锁文件。写命令不能设它，否则索引可能不落盘。
+ *
+ * @param readOnly - 本次命令是否只读。
  * @returns 传给子进程的环境变量。
  */
-export function gitEnvironment(): NodeJS.ProcessEnv {
-	return {
+export function gitEnvironment(readOnly = false): NodeJS.ProcessEnv {
+	const key = [readOnly ? '1' : '0', process.env.LANGUAGE ?? '', process.env.LC_ALL ?? '', process.env.LANG ?? ''].join('\0');
+	const cached = environmentCache.get(key);
+	if (cached !== undefined) return cached;
+	const env = buildGitEnvironment(readOnly);
+	environmentCache.set(key, env);
+	return env;
+}
+
+/**
+ * 环境对象的缓存。
+ *
+ * 一次取数会起多个子进程，环境对象因此只展开一次。键含父进程的语言取值：那三项参与结果，
+ * 只按只读形态作键会让父进程改语言后仍返回旧对象。
+ */
+const environmentCache = new Map<string, NodeJS.ProcessEnv>();
+
+/**
+ * 构造子进程环境，未命中缓存时调用一次。
+ *
+ * @param readOnly - 本次命令是否只读。
+ * @returns 传给子进程的环境变量。
+ */
+function buildGitEnvironment(readOnly: boolean): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		GIT_TERMINAL_PROMPT: '0',
 		GIT_PAGER: 'cat',
@@ -64,6 +95,11 @@ export function gitEnvironment(): NodeJS.ProcessEnv {
 		GIT_ASKPASS: '',
 		SSH_ASKPASS: '',
 	};
+	if (env.LANGUAGE === undefined) env.LANGUAGE = 'en';
+	if (env.LC_ALL === undefined) env.LC_ALL = 'en_US.UTF-8';
+	if (env.LANG === undefined) env.LANG = 'en_US.UTF-8';
+	if (readOnly) env.GIT_OPTIONAL_LOCKS = '0';
+	return env;
 }
 
 /** 一条工作区变更：索引与工作区各自的状态码。 */
@@ -511,8 +547,15 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	if (cacheable) {
 		const cached = resultCache.get(key);
 		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.result;
-		const pendingCached = inFlightGit.get(key);
-		if (pendingCached !== undefined) return pendingCached;
+	}
+	/*
+	 * 只读命令共享在途子进程，与结果缓存解耦：`status`、`diff`、`ls-files` 的输出随工作区与索引
+	 * 当前内容变化，因此不进结果缓存，但仍可复用正在跑的那个进程。客户端中止后重发、刷新与只取
+	 * 快照并发时因此只跑一次 git。写命令一律独立执行。
+	 */
+	if (readOnly) {
+		const pending = inFlightGit.get(key);
+		if (pending !== undefined) return pending;
 	}
 
 	// 只记录不阻断：并发限制会把正常的多仓库刷新串行化，稀疏化靠刷新侧的门控与冷却。
@@ -530,7 +573,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	// 所有 git 调用都经这里，因此无需在二十余处写操作里各自挂失效。
 	if (!readOnly) invalidateRepo(repo);
 
-	inFlightGit.set(key, task);
+	if (readOnly) inFlightGit.set(key, task);
 	try {
 		const result = await task;
 		// 只有成功且只读才缓存：失败结果缓存会让瞬时错误固化 200ms。
@@ -541,7 +584,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (!readOnly && result.code >= 0) notifyWrite(cwd);
 		return result;
 	} finally {
-		inFlightGit.delete(key);
+		if (readOnly) inFlightGit.delete(key);
 	}
 }
 
@@ -550,7 +593,7 @@ function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
 		command: 'git',
 		args,
 		cwd,
-		env: gitEnvironment(),
+		env: gitEnvironment(isReadOnly(args)),
 		onChild: (child) => { liveChildren.add(child); },
 		onSettled: (child) => { liveChildren.delete(child); },
 	});

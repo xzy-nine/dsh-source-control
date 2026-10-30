@@ -23,10 +23,17 @@ export async function fetchRepo(cwd: string, name: string | null, prune = false,
  * @param branchName - 要推送的分支名。
  * @param remotes - 目标远程仓库；空数组表示不推送。
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
+ * @param mode - 推送模式：空串为普通推送，`force` 覆盖远程分支。
  * @returns 每条远程的结果错误，无错误时为空数组。
  */
-export async function pushBranch(cwd: string, branchName: string, remotes: readonly string[], skipHooks = false): Promise<string[]> {
-	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode: '', skipHooks });
+export async function pushBranch(
+	cwd: string,
+	branchName: string,
+	remotes: readonly string[],
+	skipHooks = false,
+	mode: '' | 'force' | 'force-with-lease' = '',
+): Promise<string[]> {
+	const payload = await callApiRaw(cwd, { command: 'pushBranch', branchName, remotes, setUpstream: true, mode, skipHooks });
 	return errorList(payload);
 }
 

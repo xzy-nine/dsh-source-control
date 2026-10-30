@@ -34,7 +34,14 @@ test('数据缓存位于宿主内存', () => {
 
 test('宿主在读取路径上命中缓存', () => {
 	assert.match(routes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
-	assert.match(routes, /const cachedSnapshot = readSnapshot\(repo\)/, 'loadWorkingTreeSnapshot 应先查缓存');
+	// 快照键含 HEAD：外部提交不产生写事件，不带 HEAD 会回投提交前的条目。
+	assert.match(
+		routes,
+		/readSnapshot\(repo, await repoHeadHash\(repo\)\)/,
+		'loadWorkingTreeSnapshot 应先查缓存，且键含当前 HEAD',
+	);
+	// 兜底轮询要读当前值：命中缓存会让条目签名永远不变，外部改动再也发现不了。
+	assert.match(routes, /bool\('noCache'\) \? undefined : readSnapshot/, '应支持跳过快照缓存');
 	assert.match(
 		routes,
 		/let repoInfo = readRepoInfo\(repo, \{ showRemoteBranches, showStashes, hideRemotes \}\)/,
@@ -49,10 +56,13 @@ test('宿主在读取路径上命中缓存', () => {
 		/function repoInfoKey\(repo: string, params: RepoInfoParams\): string \{[\s\S]{0,400}?listKey\(params\.hideRemotes\)/,
 		'仓库信息缓存键应含取数参数',
 	);
+	/*
+	 * 按仓库作废要覆盖祖先与后代：子模块的写会改变父仓库 `status` 的结果，反之亦然。
+	 */
 	assert.match(
 		hostCache,
-		/for \(const infoKey of repoInfos\.keys\(\)\) \{\s*if \(infoKey\.startsWith\(prefix\)\) repoInfos\.delete\(infoKey\)/,
-		'invalidateRepo 应按前缀清除该仓库所有参数组合',
+		/function affectedBy\(cachedRepo: string, key: string\): boolean \{[\s\S]{0,200}?cachedRepo\.startsWith\(`\$\{key\}\/`\)/,
+		'invalidateRepo 应按祖先与后代关系清除该仓库所有参数组合',
 	);
 	assert.match(
 		hostCache,
@@ -70,11 +80,23 @@ test('宿主在读取路径上命中缓存', () => {
 	);
 });
 
-test('客户端不再自建数据缓存', () => {
-	for (const gone of ['createCommitGraphCache', 'knownRepoInfo', 'graphWindows']) {
+test('客户端不缓存提交数据，只保留取数参数', () => {
+	// 提交图窗口与工作区快照只在宿主缓存，客户端不复制一份。
+	for (const gone of ['createCommitGraphCache', 'graphWindows']) {
 		assert.ok(!graphData.includes(gone), `客户端不应再有 ${gone}`);
 	}
 	assert.ok(!graphData.includes('lastLoadedHead'), '客户端不应再缓存 HEAD');
+	/*
+	 * `knownRepoInfo` 不是数据副本：它是随请求回传宿主的取数参数（远程名与贮藏标识），
+	 * 使宿主跳过仓库信息批。因此它必须有容量上限，且随写操作作废。
+	 */
+	assert.match(graphData, /const knownRepoInfo = new Map/, '应保留已知仓库信息');
+	assert.match(graphData, /const KNOWN_REPO_INFO_LIMIT = \d+/, '已知仓库信息应有容量上限');
+	assert.match(
+		graphData,
+		/export function dropGraphWindows\(repoPath: string\): void \{[\s\S]{0,300}?knownRepoInfo\.delete\(key\)/,
+		'写操作与换仓库时应作废已知仓库信息',
+	);
 });
 
 test('客户端只保留渲染态与取数参数', () => {

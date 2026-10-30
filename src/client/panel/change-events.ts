@@ -25,6 +25,58 @@ export const CLEANUP_INTERVAL_MS = 300000;
  */
 
 /** 兜底轮询的间隔（毫秒）：页签不可见时的慢档。 */
+/** 兜底轮询间隔的下限与上限（秒）；越界的设置值收拢到区间内。 */
+export const FALLBACK_POLL_SECONDS_MIN = 5;
+export const FALLBACK_POLL_SECONDS_MAX = 600;
+
+/** 缓存清理周期的下限与上限（秒）。 */
+export const CLEANUP_PERIOD_SECONDS_MIN = 30;
+export const CLEANUP_PERIOD_SECONDS_MAX = 3600;
+
+/** 缓存清理的默认周期（秒）。 */
+export const CLEANUP_PERIOD_SECONDS_DEFAULT = 300;
+
+/** 兜底轮询间隔（页签可见）的默认秒数。 */
+export const FALLBACK_POLL_ACTIVE_SECONDS_DEFAULT = 10;
+
+/** 兜底轮询间隔（页签不可见）的默认秒数。 */
+export const FALLBACK_POLL_INTERVAL_SECONDS_DEFAULT = 120;
+
+/**
+ * 把秒数收敛到给定区间。
+ *
+ * 与 {@link autoFetchPeriodMs} 同一风格：设置值越界时收拢而非拒绝，非有限数取默认值。
+ *
+ * @param seconds - 设置里的秒数。
+ * @param min - 下限（秒）。
+ * @param max - 上限（秒）。
+ * @param fallback - 非有限数时的取值（秒）。
+ * @returns 收敛后的秒数。
+ */
+export function clampSeconds(seconds: number, min: number, max: number, fallback: number): number {
+	const value = Number.isFinite(seconds) ? Math.round(seconds) : fallback;
+	return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * 兜底轮询间隔（毫秒）按设置换算。
+ *
+ * @param seconds - 设置里的秒数。
+ * @param active - 是否取页签可见的快档。
+ * @returns 间隔毫秒数。
+ */
+export function fallbackPollMs(seconds: number, active: boolean): number {
+	const clamped = clampSeconds(
+		seconds,
+		FALLBACK_POLL_SECONDS_MIN,
+		FALLBACK_POLL_SECONDS_MAX,
+		active ? FALLBACK_POLL_ACTIVE_SECONDS_DEFAULT : FALLBACK_POLL_INTERVAL_SECONDS_DEFAULT,
+	);
+	return clamped * 1000;
+}
+
+/**
+ * 兜底轮询的间隔（毫秒）：页签不可见时的慢档。 */
 export const FALLBACK_POLL_INTERVAL_MS = 120000;
 
 /** 兜底轮询的间隔（毫秒）：页签可见且窗口聚焦时的快档。 */

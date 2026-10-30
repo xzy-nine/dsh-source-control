@@ -231,6 +231,25 @@ export async function readHeadRef(repo: string): Promise<HeadRef | null> {
 }
 
 /**
+ * 读取一个松散引用文件里的提交哈希。
+ *
+ * 松散引用位于 git 公共目录的 `refs` 下；仓库事实层（`repo-facts.ts`）也用它，因此导出。
+ *
+ * @param commonDir - git 公共目录。
+ * @param refName - 完整引用名，如 `refs/heads/main`。
+ * @returns 提交哈希；文件不存在或为空时返回 null。
+ */
+export async function readLooseRef(commonDir: string, refName: string): Promise<string | null> {
+	try {
+		const loose = (await readFile(resolve(commonDir, refName), 'utf8')).trim();
+		return loose === '' ? null : loose;
+	} catch {
+		return null;
+	}
+}
+
+
+/**
  * 取一个目录自身的 git 目录，不向上查找。
  *
  * `.git` 为目录时即它本身；为文件时读其中的 `gitdir:` 指向，该写法见于链接工作树与子模块。

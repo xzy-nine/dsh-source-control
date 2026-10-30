@@ -1,7 +1,232 @@
 /**
- * 引用与提交图的纯计算：引用收集、自动分支集合、按引用过滤、领先/落后集合。
+ * 引用与提交图的纯计算：引用筛选状态、取数起点、引用排序、领先/落后集合。
+ *
+ * 筛选与 VS Code 图形视图的模型一致：三种状态是「全部」「自动」与手选引用；自动模式取
+ * 当前分支、它的上游与分叉来源分支；手选引用按完整引用名（`refs/heads/x`）持久化。
+ * 筛选在宿主侧取数时生效（引用名交给 `git log` 作为起点），这里只做纯计算。
  */
 import type { Commit, RefItem } from '../shared/types.ts';
+import { normalizePath } from '../shared/path-key.ts';
+
+/** 引用筛选的三种模式：全部、自动、手选。 */
+export type RefFilterMode = 'all' | 'auto' | 'manual';
+
+/** 一个仓库的引用筛选状态。 */
+export interface RefFilter {
+	readonly mode: RefFilterMode;
+	/** 手选模式下的引用 id（`refs/heads/x` 等）；其余模式为空数组。 */
+	readonly ids: readonly string[];
+}
+
+/** 持久化的引用筛选表：仓库键到「全部」或手选 id 列表的映射；自动模式不落盘。 */
+export type StoredRefFilters = Record<string, 'all' | string[]>;
+
+/** 宿主状态里引用筛选的键。 */
+export const REF_FILTER_KEY = 'dsh-source-control-ref-filter';
+
+/** 默认筛选：自动。 */
+export const DEFAULT_REF_FILTER: RefFilter = { mode: 'auto', ids: [] };
+
+/** 自动模式取数起点需要的上下文。 */
+export interface AutoFilterContext {
+	/** 当前分支短名；分离头指针时为 null。 */
+	readonly head: string | null;
+	/** 当前 HEAD 的提交哈希；分离头指针时用作取数起点。 */
+	readonly headHash?: string | null;
+	/** 上游远程跟踪分支短名。 */
+	readonly upstream: string | null;
+	/** 分叉来源引用短名（VS Code 图形视图的 base 引用）。 */
+	readonly base: string | null;
+}
+
+/**
+ * 取仓库在持久化表里的键。
+ *
+ * @param repoPath - 仓库路径。
+ * @returns 归一化后的键。
+ */
+export function filterKeyOf(repoPath: string): string {
+	return normalizePath(repoPath);
+}
+
+/**
+ * 把任意值收敛成引用 id 列表。
+ *
+ * @param value - 待收敛的值。
+ * @returns 非空字符串组成的数组。
+ */
+function idsOf(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((id): id is string => typeof id === 'string' && id !== '');
+}
+
+/**
+ * 从一个仓库的持久化项读出筛选状态。
+ *
+ * @param registry - 宿主状态里的筛选表（任意值）。
+ * @param repoPath - 仓库路径。
+ * @returns 筛选状态；缺省、手选列表为空或值不合法时为自动。
+ */
+export function readStoredFilter(registry: unknown, repoPath: string): RefFilter {
+	if (registry === null || typeof registry !== 'object') return DEFAULT_REF_FILTER;
+	const value = (registry as Record<string, unknown>)[filterKeyOf(repoPath)];
+	if (value === 'all') return { mode: 'all', ids: [] };
+	const ids = idsOf(value);
+	return ids.length === 0 ? DEFAULT_REF_FILTER : { mode: 'manual', ids };
+}
+
+/**
+ * 把一个仓库的筛选状态写回持久化表。
+ *
+ * 自动模式删除该仓库的项；「全部」记一个字面量；手选记引用 id 列表。表内其余仓库原样保留。
+ *
+ * @param registry - 宿主状态里的筛选表（任意值）。
+ * @param repoPath - 仓库路径。
+ * @param filter - 新的筛选状态。
+ * @returns 新的筛选表；调用方负责落盘。
+ */
+export function writeStoredFilter(registry: unknown, repoPath: string, filter: RefFilter): StoredRefFilters {
+	const next: StoredRefFilters = {};
+	if (registry !== null && typeof registry === 'object') {
+		for (const [key, value] of Object.entries(registry)) {
+			if (value === 'all') { next[key] = 'all'; continue; }
+			const ids = idsOf(value);
+			if (ids.length > 0) next[key] = ids;
+		}
+	}
+	const key = filterKeyOf(repoPath);
+	if (filter.mode === 'all') next[key] = 'all';
+	else if (filter.mode === 'manual' && filter.ids.length > 0) next[key] = [...filter.ids];
+	else Reflect.deleteProperty(next, key);
+	return next;
+}
+
+/**
+ * 旧版筛选状态：模式与按名字保存的勾选集合。
+ *
+ * 旧版本按仓库分别存成独立键，勾选记的是引用短名；升级后统一为按仓库键的持久化表，
+ * 这里把它折算成新形状。名字的种类无法区分，按「含 `/` 即远程分支，否则本地分支」推断，
+ * 推断不到的引用随后由手选校验丢弃或回退。
+ *
+ * @param value - 旧版持久化值（任意值）。
+ * @returns 折合后的筛选状态；值不可识别时为 null。
+ */
+export function legacyFilterOf(value: unknown): RefFilter | null {
+	if (value === null || typeof value !== 'object') return null;
+	const mode = (value as { mode?: unknown }).mode;
+	if (mode === 'all') return { mode: 'all', ids: [] };
+	if (mode === 'auto') return DEFAULT_REF_FILTER;
+	if (mode !== 'manual') return null;
+	const names = idsOf((value as { selected?: unknown }).selected);
+	if (names.length === 0) return DEFAULT_REF_FILTER;
+	return { mode: 'manual', ids: names.map((name) => refIdOf(name, name.includes('/') ? 'remote' : 'branch')) };
+}
+/**
+ * 取一个引用在持久化与请求里使用的完整名。
+ *
+ * @param name - 引用短名。
+ * @param type - 引用种类。
+ * @returns 完整引用名，如 `refs/heads/main`、`refs/remotes/origin/main`。
+ */
+export function refIdOf(name: string, type: RefItem['type']): string {
+	if (name.startsWith('refs/')) return name;
+	if (type === 'tag') return `refs/tags/${name}`;
+	if (type === 'remote') return `refs/remotes/${name}`;
+	return `refs/heads/${name}`;
+}
+
+/**
+ * 由引用 id 取可交给 `git log` 的引用名。
+ *
+ * @param id - 完整引用名。
+ * @returns 引用短名；非完整引用名时原样返回。
+ */
+export function refNameOf(id: string): string {
+	for (const prefix of ['refs/heads/', 'refs/remotes/', 'refs/tags/']) {
+		if (id.startsWith(prefix)) return id.slice(prefix.length);
+	}
+	return id;
+}
+
+/**
+ * 取自动模式对应的引用名。
+ *
+ * 与 VS Code 的 auto 一致：当前分支（分离头指针时用提交哈希）、上游与分叉来源分支，按此
+ * 顺序去重；空项丢弃。
+ *
+ * @param context - 见 {@link AutoFilterContext}。
+ * @returns 引用名列表。
+ */
+export function autoRefNames(context: AutoFilterContext): string[] {
+	const names: string[] = [];
+	for (const name of [context.head ?? context.headHash ?? null, context.upstream, context.base]) {
+		if (name !== null && name !== '' && !names.includes(name)) names.push(name);
+	}
+	return names;
+}
+
+/**
+ * 取一次取数的引用起点。
+ *
+ * @param filter - 当前筛选状态。
+ * @param context - 自动模式需要的上下文。
+ * @returns 引用名列表；null 表示全部引用（宿主按 `--branches` 等枚举）。
+ */
+export function filterBranchesOf(filter: RefFilter, context: AutoFilterContext): string[] | null {
+	if (filter.mode === 'all') return null;
+	if (filter.mode === 'auto') {
+		const names = autoRefNames(context);
+		return names.length === 0 ? null : names;
+	}
+	const names = filter.ids.map(refNameOf).filter((name) => name !== '');
+	return names.length === 0 ? null : names;
+}
+
+/**
+ * 取筛选按钮上的摘要文案。
+ *
+ * @param filter - 当前筛选状态。
+ * @returns 「全部」「自动」、单个引用名或数量摘要。
+ */
+export function filterSummaryOf(filter: RefFilter): string {
+	if (filter.mode === 'all') return '全部';
+	if (filter.mode === 'auto' || filter.ids.length === 0) return '自动';
+	if (filter.ids.length === 1) return refNameOf(filter.ids[0]);
+	return `${filter.ids.length} 个`;
+}
+
+/**
+ * 按当前引用重新校验手选列表。
+ *
+ * 与 VS Code 的手选恢复一致：丢掉已不存在的引用；全部失效时回退自动（并可由调用方清除持久化项）。
+ *
+ * @param filter - 当前筛选状态。
+ * @param refs - 仓库当前的全部引用。
+ * @returns 校验后的状态；无需改动时返回原对象。
+ */
+export function revalidatedFilter(filter: RefFilter, refs: readonly RefItem[]): RefFilter {
+	if (filter.mode !== 'manual') return filter;
+	const known = new Set(refs.map((ref) => ref.id));
+	const ids = filter.ids.filter((id) => known.has(id));
+	if (ids.length === 0) return DEFAULT_REF_FILTER;
+	if (ids.length === filter.ids.length) return filter;
+	return { mode: 'manual', ids };
+}
+
+/**
+ * 取筛选弹窗里应勾选的引用 id。
+ *
+ * @param filter - 当前筛选状态。
+ * @param refs - 仓库当前的全部引用。
+ * @param context - 自动模式需要的上下文。
+ * @returns 勾选集合。
+ */
+export function checkedRefIds(filter: RefFilter, refs: readonly RefItem[], context: AutoFilterContext): Set<string> {
+	if (filter.mode === 'manual') return new Set(filter.ids);
+	if (filter.mode === 'all') return new Set(refs.map((ref) => ref.id));
+	const names = new Set(autoRefNames(context));
+	return new Set(refs.filter((ref) => names.has(ref.name)).map((ref) => ref.id));
+}
 
 /**
  * 按哈希索引提交，跳过工作区伪提交。
@@ -38,79 +263,6 @@ function reachableFrom(starts: Iterable<string>, commitByHash: ReadonlyMap<strin
 }
 
 /**
- * 从提交列表收集所有引用（分支、远程、标签），去重后按类型排序。
- *
- * @param commits - 提交列表。
- * @returns 引用列表。
- */
-export function collectRefs(commits: readonly Commit[]): RefItem[] {
-	const seen = new Set<string>();
-	const refs: RefItem[] = [];
-	for (const commit of commits) {
-		for (const name of commit.heads ?? []) {
-			const key = `b:${name}`;
-			if (!seen.has(key)) { seen.add(key); refs.push({ name, hash: commit.hash, type: 'branch', kind: '分支' }); }
-		}
-		for (const remote of commit.remotes ?? []) {
-			const key = `r:${remote.name}`;
-			if (!seen.has(key)) { seen.add(key); refs.push({ name: remote.name, hash: commit.hash, type: 'remote', kind: '远程' }); }
-		}
-		for (const tag of commit.tags ?? []) {
-			const key = `t:${tag.name}`;
-			if (!seen.has(key)) { seen.add(key); refs.push({ name: tag.name, hash: commit.hash, type: 'tag', kind: '标记' }); }
-		}
-	}
-	return refs;
-}
-
-/**
- * 计算「自动」模式应显示的分支：当前分支、它的上游，以及合并基所在提交上的引用。
- *
- * 与「全部」模式的差别是只遍历当前历史，不包含无关分支。
- *
- * @param commits - 提交列表。
- * @param head - 当前分支名。
- * @param upstream - 上游远程跟踪分支名（如 origin/main）。
- * @param baseHash - 本地与上游的合并基提交哈希；无上游时省略。
- * @returns 引用名称集合；无法确定当前分支时为空集。
- */
-export function computeAutoRefs(
-	commits: readonly Commit[], head: string | null, upstream: string | null = null, baseHash: string | null = null,
-): Set<string> {
-	if (head === null) return new Set();
-	const result = new Set<string>([head]);
-	if (upstream !== null) result.add(upstream);
-	// 合并基提交通常没有引用；有引用时一并纳入，与 VS Code 的 auto 遍历范围一致。
-	if (baseHash !== null) {
-		for (const ref of collectRefs(commits)) if (ref.hash === baseHash) result.add(ref.name);
-	}
-	return result;
-}
-
-/**
- * 按引用优先级排序：HEAD(1) < 上游(2) < 合并基(3) < 有色(4) < 其他(99)。
- *
- * 多引用提交据此取排序最前的引用色。
- *
- * @param refs - 引用列表。
- * @param head - 当前分支名。
- * @param upstream - 上游远程跟踪分支名。
- * @param baseHash - 合并基提交哈希；无上游时省略。
- * @returns 排序后的新数组。
- */
-export function sortRefs(
-	refs: readonly RefItem[], head: string | null, upstream: string | null, baseHash: string | null = null,
-): RefItem[] {
-	const rank = (ref: RefItem): number => {
-		if (head !== null && ref.name === head) return 1;
-		if (upstream !== null && ref.name === upstream) return 2;
-		if (baseHash !== null && ref.hash === baseHash) return 3;
-		return ref.type === 'branch' || ref.type === 'remote' ? 4 : 99;
-	};
-	return [...refs].sort((a, b) => rank(a) - rank(b));
-}
-
-/**
  * 取当前分支可达的提交哈希集合（含分支尖端自身）。
  *
  * 提交图可能被加载上限截断，此时窗口外的提交不在集合内。
@@ -130,33 +282,27 @@ export function currentBranchHashes(commits: readonly Commit[], head: string | n
 	return reachableFrom([headHash], commitByHash);
 }
 
-/** 该提交是否带贮藏标记。 */
-function isStash(commit: Commit): boolean {
-	return commit.stash !== null && commit.stash !== undefined;
-}
-
 /**
- * 按选中的引用名称过滤提交列表：仅保留选中引用可达的提交（含工作区伪提交与贮藏）。
+ * 按引用优先级排序：HEAD(1) < 上游(2) < 分叉来源(3) < 有色(4) < 其他(99)。
  *
- * 贮藏提交的父提交是它所在分支的尖端，即它是尖端之后的分支外提交，可达性遍历取不到，
- * 因此按标记直接保留。
+ * 多引用提交据此取排序最前的引用色。
  *
- * @param commits - 全部提交。
- * @param selectedNames - 选中的引用名称集合；空集表示不过滤。
- * @returns 过滤后的提交列表。
+ * @param refs - 引用列表。
+ * @param head - 当前分支名。
+ * @param upstream - 上游远程跟踪分支名。
+ * @param base - 分叉来源引用名；无来源时为 null。
+ * @returns 排序后的新数组。
  */
-export function filterCommitsByRefs(commits: readonly Commit[], selectedNames: ReadonlySet<string>): readonly Commit[] {
-	if (selectedNames.size === 0) return commits;
-	const commitByHash = indexByHash(commits);
-	const rootHashes = new Set<string>();
-	for (const commit of commits) {
-		if (commit.hash === '*') continue;
-		for (const name of commit.heads ?? []) if (selectedNames.has(name)) rootHashes.add(commit.hash);
-		for (const remote of commit.remotes ?? []) if (selectedNames.has(remote.name)) rootHashes.add(commit.hash);
-		for (const tag of commit.tags ?? []) if (selectedNames.has(tag.name)) rootHashes.add(commit.hash);
-	}
-	const reachable = reachableFrom(rootHashes, commitByHash);
-	return commits.filter((commit) => commit.hash === '*' || isStash(commit) || reachable.has(commit.hash));
+export function sortRefs(
+	refs: readonly RefItem[], head: string | null, upstream: string | null, base: string | null = null,
+): RefItem[] {
+	const rank = (ref: RefItem): number => {
+		if (head !== null && ref.name === head) return 1;
+		if (upstream !== null && ref.name === upstream) return 2;
+		if (base !== null && ref.name === base) return 3;
+		return ref.type === 'branch' || ref.type === 'remote' ? 4 : 99;
+	};
+	return [...refs].sort((a, b) => rank(a) - rank(b));
 }
 
 /**

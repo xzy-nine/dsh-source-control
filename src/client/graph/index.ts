@@ -28,6 +28,10 @@ import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 import { shouldLoadMore } from './auto-load.ts';
+import {
+	avatarUrlsOf, groupText, labelsOf, titleOf,
+} from './row-model.ts';
+import { topIndexOf, visibleRange } from './window-range.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
@@ -45,49 +49,6 @@ const SCROLL_SETTLE_MS = 160;
 
 /** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
 const LOAD_MORE_SETTLE_MS = 10000;
-
-/** GitHub 的 noreply 邮箱，形如 `ID+用户名@users.noreply.github.com` 或 `用户名@users.noreply.github.com`。 */
-const GITHUB_NOREPLY = /^(?:(\d+)\+)?([^@+]+)@users\.noreply\.github\.com$/i;
-
-/**
- * 取正则捕获组的文本。
- *
- * 未参与匹配的捕获组读出 `undefined`，而 `RegExpExecArray` 的元素类型声明为 `string`。
- *
- * @param match - 匹配结果。
- * @param index - 捕获组序号。
- * @returns 该组文本；该组未参与匹配时为 undefined。
- */
-function groupText(match: RegExpExecArray, index: number): string | undefined {
-	return match.at(index);
-}
-
-/**
- * 构造作者头像的候选地址，按优先次序排列。
- *
- * GitHub 邮箱由 GitHub 直接提供头像；其余邮箱用 Gravatar。GitHub 在前，取不到时由
- * Gravatar 兜底。
- *
- * @param {string} email - 作者邮箱。
- * @param {number} size - 请求的图片像素边长。
- * @returns {string[]} 候选地址；无邮箱时为空数组。
- */
-function avatarUrls(email, size = 40) {
-	if (typeof email !== 'string') return [];
-	const urls = [];
-	const trimmed = email.trim();
-	if (trimmed === '') return [];
-	const noreply = GITHUB_NOREPLY.exec(trimmed);
-	if (noreply !== null) {
-		const id = groupText(noreply, 1);
-		const username = noreply[2];
-		// 带数字 id 时按 id 取；只有用户名时按用户名取。
-		urls.push(id !== undefined
-			? `https://avatars.githubusercontent.com/u/${id}?s=${size}&v=4`
-			: `https://avatars.githubusercontent.com/${encodeURIComponent(username)}?s=${size}&v=4`);
-	}
-	return urls;
-}
 
 /**
  * 画作者头像：依次尝试候选地址，全部失败时回退到用户图标。
@@ -128,7 +89,7 @@ function AvatarImage({ urls }) {
  * @param props.isUncommitted - 是否是工作区未提交行。
  * @returns SVG 元素。
  */
-function LaneCell({ row, isHead, isMerge, isUncommitted }) {
+function LaneCellView({ row, isHead, isMerge, isUncommitted }) {
 	const width = laneSpanWidth(row.width);
 	const half = ROW_HEIGHT / 2;
 	const colour = row.colour;
@@ -214,69 +175,7 @@ function LaneCell({ row, isHead, isMerge, isUncommitted }) {
 	);
 }
 
-/**
- * 贮藏标记的文本：取贮藏消息。
- *
- * git 在有消息时把贮藏的 reflog 主题写成 `On <分支>: <消息>`，展示取用户写的那一段；
- * 没有消息（如自动贮藏）或取不到主题时，退回短引用名。
- *
- * @param commit - 带贮藏标记的提交。
- * @returns 展示文本。
- */
-function stashMessage(commit) {
-	const text = String(commit.message ?? '').trim();
-	if (text === '') {
-		const selector = String(commit.stash?.selector ?? 'stash');
-		return selector.startsWith('refs/') ? selector.slice('refs/'.length) : selector;
-	}
-	const match = /^On [^:]*: (.*)$/.exec(text);
-	return match !== null && match[1].trim() !== '' ? match[1].trim() : text;
-}
-
-/**
- * 取提交的引用标记，并附上用于右键识别的类型与名称。
- *
- * 本地分支与远程分支各自成标记：同名的一对分别显示，便于确认远程分支的存在。
- *
- * @param commit - 提交。
- * @param head - 当前 HEAD 指向的分支。
- * @returns 标记列表：{ key, kind, text, title, refType, refName }。
- */
-function refLabels(commit, head) {
-	const labels = [];
-	for (const name of commit.heads ?? []) {
-		const isHead = head !== null && name === head;
-		labels.push({
-			key: `h:${name}`,
-			kind: isHead ? 'head' : 'branch',
-			text: name,
-			title: isHead ? `当前分支 ${name}` : `分支 ${name}`,
-			refType: 'head',
-			refName: name,
-		});
-	}
-	for (const remote of commit.remotes ?? []) {
-		labels.push({
-			key: `r:${remote.name}`, kind: 'remote', text: remote.name,
-			title: `远程分支 ${remote.name}`, refType: 'remote', refName: remote.name,
-		});
-	}
-	for (const tag of commit.tags ?? []) {
-		labels.push({
-			key: `t:${tag.name}`, kind: 'tag', text: tag.name,
-			title: `标签 ${tag.name}`, refType: 'tag', refName: tag.name,
-		});
-	}
-	if (commit.stash !== null && commit.stash !== undefined) {
-		const selector = commit.stash.selector ?? 'stash';
-		const message = stashMessage(commit);
-		labels.push({
-			key: 'stash', kind: 'stash', text: message,
-			title: `贮藏 ${message}`, refType: 'stash', refName: selector,
-		});
-	}
-	return labels;
-}
+const LaneCell = React.memo(LaneCellView);
 
 /** 默认只显示图标、名称进 title 的种类；本地分支、HEAD 与标记始终带名称。 */
 const ROUND_KINDS = new Set(['remote', 'stash']);
@@ -296,7 +195,7 @@ const REF_CLASSES: Record<string, string> = {
  * @param props.expanded - 是否把默认收起的种类展开为「图标 + 名称」药丸。
  * @returns 标记元素。
  */
-function RefChip({ label, expanded = false }) {
+function RefChipView({ label, expanded = false }) {
 	const icon = label.kind === 'remote'
 		? React.createElement(RemoteRefIcon)
 		: label.kind === 'tag'
@@ -322,23 +221,7 @@ function RefChip({ label, expanded = false }) {
 	);
 }
 
-/** 未提交伪提交的 message 形如 `Uncommitted Changes (2)`；数据层给出英文，这里译成中文。 */
-const UNCOMMITTED_MESSAGE = /^Uncommitted Changes(?: \((\d+)\))?$/;
-
-/**
- * 取一行显示的提交信息：贮藏行取贮藏消息，未提交伪提交的英文文案译成中文。
- *
- * @param commit - 提交。
- * @returns 显示用文本。
- */
-function displayMessage(commit) {
-	if (commit.stash !== null && commit.stash !== undefined) return stashMessage(commit);
-	const message = String(commit.message ?? '');
-	if (commit.hash !== '*') return message;
-	const match = UNCOMMITTED_MESSAGE.exec(message);
-	if (match === null) return message;
-	return groupText(match, 1) === undefined ? '未提交的更改' : `未提交的更改（${match[1]}）`;
-}
+const RefChip = React.memo(RefChipView);
 
 /**
  * 悬停卡片的正文：作者与时间（时间右侧是翻译入口）、完整提交信息、改动统计、引用标记、短哈希。
@@ -374,10 +257,10 @@ function CommitCard({
 	const [originalTitle, ...bodyLines] = fullMessage.split('\n');
 	// 标题：批量翻译只译标题，单条翻译译整条信息；两者都取译文首行。
 	const titleLine = translatedTitle(
-		displayMessage(commit), original, translation ?? null, translatedFrom ?? null,
+		titleOf(commit), original, translation ?? null, translatedFrom ?? null,
 	) ?? originalTitle;
 	const body = bodyLines.filter((line) => line.trim() !== '');
-	const avatars = showAvatars && !isUncommitted ? avatarUrls(commit.email ?? commit.author, 40) : [];
+	const avatars = showAvatars && !isUncommitted ? avatarUrlsOf(commit.email ?? commit.author, 40) : [];
 	// key 取首个候选：换作者时重建，尝试进度不跨提交沿用。
 	const avatarEl = avatars.length > 0
 		? React.createElement(AvatarImage, { key: avatars[0], urls: avatars })
@@ -512,24 +395,26 @@ function renderSubject(message, issueLinking) {
  * @param props.issueLinking - Issue 链接配置，为 null 时不识别。
  * @param props.stats - 该提交的改动统计，未知时为 null。
  * @param props.onHover - 悬停回调：进入传哈希，离开传 null。
+ * @param props.onTranslateCommit - 请求翻译该行的提交信息（哈希 + 文本）。
+ * @param props.onCancelTranslateCommit - 取消该行的翻译，回到原文。
  * @param props.widthAnchorRef - 卡片宽度对齐用的图区元素。
  * @returns 行元素。
  */
-function CommitRow({
+function CommitRowView({
 	commit, row, head, selected, onSelect, onContextMenu, formatDate, formatDetail, issueLinking,
 	markdown, showAvatars, muteMergeCommits,
 	stats, message, onHover, widthAnchorRef,
-	translation, translatedFrom, translating, translateReady, onTranslate, onCancelTranslate,
+	translation, translatedFrom, translating, translateReady, onTranslateCommit, onCancelTranslateCommit,
 }) {
 	const isUncommitted = commit.hash === '*';
 	// 贮藏标记行不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
 	const stashSelector = commit.stash?.selector ?? null;
-	const labels = refLabels(commit, head);
+	const labels = labelsOf(commit, head);
 	const isHead = !isUncommitted && head !== null && (commit.heads ?? []).includes(head);
 	const isMerge = (commit.parents ?? []).length > 1;
 	const isMuted = muteMergeCommits && isMerge && !isHead;
 	// 行标题：批量翻译或单条翻译的译文首行可用时用它，否则用原文。
-	const title = displayMessage(commit);
+	const title = titleOf(commit);
 	const shownTitle = translatedTitle(title, message, translation, translatedFrom) ?? title;
 	const anchor = React.createElement(
 		'div',
@@ -577,12 +462,17 @@ function CommitRow({
 		anchor,
 		content: React.createElement(CommitCard, {
 			commit, labels, stats, message, formatDate, formatDetail, markdown, showAvatars,
-			translation, translatedFrom, translating, translateReady, onTranslate, onCancelTranslate,
+			translation, translatedFrom, translating, translateReady,
+			// 行内按哈希自建闭包，父组件因此只传稳定的两个回调。
+			onTranslate: (text) => { onTranslateCommit?.(commit.hash, text); },
+			onCancelTranslate: () => { onCancelTranslateCommit?.(commit.hash); },
 		}),
 		variant: 'preview',
 		widthAnchorRef,
 	});
 }
+
+const CommitRow = React.memo(CommitRowView);
 
 /**
  * 领先/落后指示行：虚拟行，没有对应提交。
@@ -591,7 +481,7 @@ function CommitRow({
  * @param props.indicator - 'incoming' 云端领先、'outgoing' 本地领先。
  * @returns 行元素。
  */
-function IndicatorRow({ row, indicator }) {
+function IndicatorRowView({ row, indicator }) {
 	return React.createElement(
 		'div',
 		{ className: cx(css.row, css.rowIndicator) },
@@ -601,13 +491,15 @@ function IndicatorRow({ row, indicator }) {
 	);
 }
 
+const IndicatorRow = React.memo(IndicatorRowView);
+
 /**
  * 展开块左侧的泳道续画：把该行画到行底的线段在展开块高度内继续向下延伸。
  *
  * @param props.row - 该行的布局。
  * @returns SVG 元素；没有向下线段时返回 null。
  */
-function DetailGutter({ row }) {
+function DetailGutterView({ row }) {
 	const width = laneSpanWidth(row.width);
 	const continued = (row.segments ?? []).filter((segment) => segment.toBottom);
 	if (width === 0 || continued.length === 0) return null;
@@ -627,6 +519,8 @@ function DetailGutter({ row }) {
 	);
 }
 
+const DetailGutter = React.memo(DetailGutterView);
+
 /**
  * 提交图主体。
  *
@@ -645,7 +539,7 @@ function DetailGutter({ row }) {
  * @param props.renderDetail - 选中行的展开内容：({ commit, row }) => 元素或 null。
  * @returns 提交图元素。
  */
-export function CommitGraph({
+function CommitGraphView({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
 	localTip, remoteTip, baseTip, upstream,
@@ -660,8 +554,12 @@ export function CommitGraph({
 	const graphRef = React.useRef<HTMLDivElement | null>(null);
 	/** 可视区高度；窗口化渲染据此决定渲染哪一段。 */
 	const [viewportHeight, setViewportHeight] = React.useState(0);
-	/** 当前滚动位置。 */
-	const [scrollTop, setScrollTop] = React.useState(0);
+	/** 可视窗口的起始行下标；滚动按帧合并后才更新。 */
+	const [topIndex, setTopIndex] = React.useState(0);
+	/** 最近一次算出的行偏移表；滚动处理按它换算起始行。 */
+	const offsetsRef = React.useRef<Float64Array>(new Float64Array(0));
+	/** 已排队但尚未执行的一帧；卸载时取消。 */
+	const cancelFrameRef = React.useRef<(() => void) | null>(null);
 	/** 展开详情的实测高度；没有展开时为 0。 */
 	const [detailHeight, setDetailHeight] = React.useState(0);
 	/** 详情块的尺寸观察者。 */
@@ -760,23 +658,52 @@ export function CommitGraph({
 	const pendingHoverRef = React.useRef<string | null>(null);
 	const scrollSettleRef = React.useRef<number | null>(null);
 
+	/**
+	 * 按当前滚动位置重算起始行。
+	 *
+	 * @returns 无。
+	 */
+	const syncTopIndex = React.useCallback(() => {
+		const element = graphRef.current;
+		const offsets = offsetsRef.current;
+		const next = element === null ? 0 : topIndexOf(offsets, element.scrollTop, offsets.length - 1);
+		setTopIndex((previous) => (previous === next ? previous : next));
+	}, []);
+
+	/** 把滚动引起的重算合并到下一帧；同一帧内只排队一次。 */
+	const scheduleTopIndex = React.useCallback(() => {
+		if (cancelFrameRef.current !== null) return;
+		const run = (): void => {
+			cancelFrameRef.current = null;
+			syncTopIndex();
+		};
+		if (typeof requestAnimationFrame === 'function') {
+			const handle = requestAnimationFrame(run);
+			cancelFrameRef.current = () => { cancelAnimationFrame(handle); };
+			return;
+		}
+		const timer = window.setTimeout(run, 0);
+		cancelFrameRef.current = () => { clearTimeout(timer); };
+	}, [syncTopIndex]);
+
 	/** 记录滚动位置、触发窗口重算，并推迟滚动期间的悬停请求。 */
 	const handleScroll = React.useCallback(() => {
 		const element = graphRef.current;
 		if (element === null) return;
-		setScrollTop(element.scrollTop);
 		// 用户滚动：不限制续取，只要到了底部就取。
 		maybeLoadMore(false);
+		scheduleTopIndex();
 		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
 		scrollSettleRef.current = window.setTimeout(() => {
 			scrollSettleRef.current = null;
 			const hash = pendingHoverRef.current;
 			if (hash !== null) onHoverCommit?.(hash);
 		}, SCROLL_SETTLE_MS);
-	}, [maybeLoadMore, onHoverCommit]);
+	}, [maybeLoadMore, onHoverCommit, scheduleTopIndex]);
 
 	React.useEffect(() => () => {
 		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
+		if (cancelFrameRef.current !== null) cancelFrameRef.current();
 	}, []);
 
 	// 记录可视高度：窗口化渲染据此决定渲染哪一段；容器尺寸变化时重算。
@@ -834,19 +761,21 @@ export function CommitGraph({
 		}
 		return out;
 	}, [rows, selectedIndex, detailHeight]);
+	offsetsRef.current = offsets;
 	/*
 	 * 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。
 	 *
 	 * 同一区间也作为「当前可见窗口」上报：图形区标题栏的批量翻译只译这一段内的提交。
 	 */
-	const range = React.useMemo(() => {
-		let first = 0;
-		while (first < rows.length && offsets[first + 1] <= scrollTop) first++;
-		first = Math.max(0, first - OVERSCAN_ROWS);
-		let last = first;
-		while (last < rows.length && offsets[last] < scrollTop + viewportHeight) last++;
-		return { first, last: Math.min(rows.length, last + OVERSCAN_ROWS) };
-	}, [rows, offsets, scrollTop, viewportHeight]);
+	const range = React.useMemo(
+		() => visibleRange(offsets, topIndex, viewportHeight, OVERSCAN_ROWS, rows.length),
+		[offsets, topIndex, viewportHeight, rows.length],
+	);
+	/*
+	 * 行偏移或可视高度变化后按当前滚动位置重算起始行：展开详情会改变行高，只靠滚动事件会对不上。
+	 */
+	React.useEffect(() => { syncTopIndex(); }, [offsets, viewportHeight, syncTopIndex]);
+
 	// 上报可见窗口内的提交：标题栏的批量翻译按这一批下发。
 	const visibleCommits = React.useMemo(() => {
 		const out: { hash: string; text: string }[] = [];
@@ -856,7 +785,7 @@ export function CommitGraph({
 			const commit = commitByHash.get(row.hash);
 			// 未提交行与贮藏行不是提交，没有可翻译的提交信息。
 			if (commit === undefined || commit.hash === '*' || commit.stash !== null && commit.stash !== undefined) continue;
-			out.push({ hash: commit.hash, text: displayMessage(commit) });
+			out.push({ hash: commit.hash, text: titleOf(commit) });
 		}
 		return out;
 	}, [rows, range, commitByHash]);
@@ -897,8 +826,8 @@ export function CommitGraph({
 			translatedFrom: translatedFrom?.get(commit.hash) ?? null,
 			translating: translatingHash === commit.hash,
 			translateReady,
-			onTranslate: (text: string) => { onTranslateCommit?.(commit.hash, text); },
-			onCancelTranslate: () => { onCancelTranslateCommit?.(commit.hash); },
+			onTranslateCommit,
+			onCancelTranslateCommit,
 			onHover: hoverOrDefer,
 			widthAnchorRef: graphRef,
 		}));
@@ -927,3 +856,5 @@ export function CommitGraph({
 		),
 	);
 }
+
+export const CommitGraph = React.memo(CommitGraphView);
