@@ -13,6 +13,7 @@ import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 import { registerGgRoutes } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
+import { initLog, logInfo } from './source-control/logger.js';
 
 export const name = 'source-control';
 export const inject = ['webServer'];
@@ -29,6 +30,13 @@ interface WebServerLike {
 
 export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {}): void {
 	void config;
+	// 文本日志：每次启动一个文件，目录与清理判据见 source-control/logger.ts。
+	try {
+		initLog();
+		logInfo('source-control', `插件已装载：${name}`);
+	} catch (error) {
+		void error;
+	}
 
 	ctx.inject(['webServer'], (host) => {
 		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
@@ -41,6 +49,7 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		void primeCachedWorkspaces().catch(() => { /* 预扫失败不影响路由 */ });
 
 		(ctx.on as (event: string, cb: () => void) => void)('dispose', () => {
+			logInfo('source-control', '插件已卸载');
 			for (const d of disposers) d();
 		});
 	});

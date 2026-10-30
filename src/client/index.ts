@@ -64,6 +64,15 @@ function GitGraphTab(props) {
 			{ sidebarRight: props.sidebarRightService, terminals: props.terminals }, targetSessionId, command,
 		);
 	}, [props.terminals, props.sidebarRightService]);
+	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
+	const revealPath = React.useCallback((path: string): void => {
+		if (typeof props.revealPath !== 'function') return;
+		try {
+			void Promise.resolve(props.revealPath(path)).catch(() => { /* 定位失败不影响面板 */ });
+		} catch {
+			/* 同上报错忽略 */
+		}
+	}, [props.revealPath]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
@@ -97,6 +106,7 @@ function GitGraphTab(props) {
 		sessionId,
 		cwd: typeof cwd === 'string' ? cwd : null,
 		onOpenDiff,
+		onRevealPath: revealPath,
 		pickDirectory,
 		runInTerminal,
 		getSessions: props.getSessions,
@@ -301,9 +311,22 @@ export function apply(ctx) {
 
 	// 目录选择器来自 ui-workspace、终端来自 ui-sidebar-terminal；都可能未装载，
 	// 因此在渲染期按需读取，缺失时由面板提示。
+	/** 在系统文件管理器中定位一个路径；宿主不具备桌面能力时返回 false。 */
+	const revealPath = async (path: string): Promise<boolean> => {
+		try {
+			const remote = ctx.get?.('remote') as { session?: { openWorkspacePath?: (request: { path: string; action?: string }) => Promise<{ ok?: boolean }> } } | undefined;
+			const session = remote?.session;
+			if (session === undefined || typeof session.openWorkspacePath !== 'function') return false;
+			const result = await session.openWorkspacePath({ path, action: 'reveal' });
+			return result.ok === true;
+		} catch {
+			return false;
+		}
+	};
 	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
 		...props,
 		getSessions: () => ctx.get?.('sessions'),
+		revealPath,
 		uiWorkspace: ctx.get?.('uiWorkspace'),
 		terminals: ctx.get?.('webTerminals'),
 		sidebarRightService: ctx.get?.('sidebarRight'),
@@ -349,4 +372,9 @@ export function apply(ctx) {
 	}
 }
 
-export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs'];
+/*
+ * `remote` 与 `remote.session` 是宿主 Remote 命名空间，"在文件管理器中打开"走它。
+ * 两项都要：Cordis 会按 inject 列表校验嵌套属性访问（`ctx.get('remote').session`），
+ * 缺一项会抛 `cannot get property "remote.session" without inject`。
+ */
+export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];

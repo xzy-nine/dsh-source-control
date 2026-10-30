@@ -13,7 +13,9 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Diff page**: side-by-side or unified views, word wrap, and git-hunk-only rendering.
 - **GitHub integration**: create and push a repository, and create pull requests, through the `gh` CLI, degrading gracefully when it is missing, logged out, or short of scopes.
 - **Remote protocols**: a remote address can be switched between HTTPS and SSH in both directions, checking the local SSH status before switching to SSH.
-- **Safety and feedback**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
+- **Text logs**: Android logcat threadtime format, one file per startup, grouped by day, kept 15 days with a 15 MB daily cap.
+- **Feedback**: submit an issue from the settings **Feedback** tab or the feedback button in the repositories header; opt in to attach logs and the tool packs a zip, creates the issue, and the user drags the zip into its comment box.
+- **Safety**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
 
 The complete description of every feature is in [Docs/功能说明.md](Docs/功能说明.md) (Chinese only).
 

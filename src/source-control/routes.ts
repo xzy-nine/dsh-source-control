@@ -34,6 +34,9 @@ import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 import { repoHead, repoHeadHash } from './repo-facts.js';
+import { currentLogFile, logError, logInfo, logRoot, recentLogFiles } from './logger.js';
+import { submitFeedback } from './feedback.js';
+import { formatBytes } from './feedback-text.js';
 import type { StashEntry } from './git-types.js';
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
@@ -185,7 +188,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		return;
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
-	if (!repo) {
+	// 日志信息与仓库无关：面板未选中仓库时也要能取到日志目录。
+	if (!repo && msg.command !== 'feedbackInfo') {
 		sendBadRequest(res, '缺少 repo');
 		return;
 	}
@@ -198,6 +202,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 
 	const respond = (payload: Record<string, unknown>): void => {
 		sendJson(res, 200, payload);
+	};
+	/** 同步回投一条命令结果（无需等待异步操作）。 */
+	const respondResultSync = (cmd: string, payload: Record<string, unknown>): void => {
+		respond({ command: cmd, ...payload, error: null });
 	};
 	const respondError = async (cmd: string, fn: () => Promise<unknown>): Promise<void> => {
 		respond({ command: cmd, error: await fn() });
@@ -990,6 +998,38 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			invalidateRepo(repo);
 			respond({ command: 'invalidateCache', repo, error: null });
 			break;
+
+		/* --- 反馈与日志 --- */
+		case 'feedbackInfo':
+			// 日志目录与最近文件供反馈页展示：失败时用户据此手动提交。
+			respondResultSync('feedbackInfo', {
+				logDir: logRoot(),
+				currentFile: currentLogFile(),
+				// 体积文本由宿主给出：客户端不再自带一份格式化实现。
+				files: recentLogFiles(5).map((file) => ({ ...file, sizeText: formatBytes(file.size) })),
+			});
+			break;
+		case 'submitFeedback': {
+			const type = str('type');
+			if (type !== 'bug' && type !== 'suggestion' && type !== 'other') { sendBadRequest(res, '未知反馈类型'); break; }
+			if (str('title').trim() === '') { sendBadRequest(res, '缺少标题'); break; }
+			if (str('description').trim() === '') { sendBadRequest(res, '缺少描述'); break; }
+			const result = await submitFeedback({
+				type,
+				title: str('title'),
+				description: str('description'),
+				attachLogs: bool('attachLogs'),
+				logFile: strOrNull('logFile') ?? undefined,
+				disableRedaction: bool('disableRedaction'),
+				exemptions: arr<string>('exemptions'),
+				pluginVersion: str('pluginVersion'),
+				cwd: repo,
+			});
+			if (result.error !== null) logError('feedback', `提交失败（${result.kind}）：${result.error}`);
+			else logInfo('feedback', `已创建 issue：${result.url}`);
+			respond({ command: 'submitFeedback', ...result });
+			break;
+		}
 
 		default:
 			sendBadRequest(res, '未知命令: ' + String(msg.command));

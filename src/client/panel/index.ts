@@ -54,6 +54,7 @@ import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { useResizeHandler } from './use-resize.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
+import { PLUGIN_VERSION } from '../shared/version.ts';
 import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import type { HooksState } from '../api/index.ts';
@@ -73,6 +74,8 @@ export interface GitGraphPanelProps {
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
+	readonly onRevealPath?: ((path: string) => void) | undefined;
 	/** 打开宿主目录选择器；未装载时为 undefined。 */
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
@@ -92,7 +95,7 @@ function issueLinkingConfigOf(settings: Settings): unknown {
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
 	const [message, setMessage] = React.useState('');
 	const [aiBusy, setAiBusy] = React.useState(false);
 	const [aiWarning, setAiWarning] = React.useState('');
@@ -115,6 +118,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 	const [hooksState, setHooksState] = React.useState<HooksState>({ commit: false, push: false, directory: null });
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
+	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
+	const [settingsTab, setSettingsTab] = React.useState<'repo' | 'global' | 'feedback'>('repo');
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
 	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
 	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
@@ -740,6 +745,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		}
 		return Promise.resolve();
 	}, [onOpenDiff, workingTreePath]);
+
+	/** 打开一个日志文件：绝对路径按普通文件打开（不比较差异）。 */
+	const openLogFile = React.useCallback((path: string): void => { void openDiff('*', path, false, true); }, [openDiff]);
 
 	/**
 	 * 选中一个提交，并加载其改动文件。
@@ -1758,7 +1766,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		});
 	}, [run, workingTreePath, settings.fetchAndPrune, settings.fetchAndPruneTags]);
 	/** 打开设置面板。 */
-	const openSettingsPanel = React.useCallback(() => { setSettingsOpen(true); }, []);
+	const openSettingsPanel = React.useCallback(() => { setSettingsTab('repo'); setSettingsOpen(true); }, []);
+	/** 打开设置并直接落在反馈页签。 */
+	const openFeedbackPanel = React.useCallback(() => { setSettingsTab('feedback'); setSettingsOpen(true); }, []);
 	/** 打开引用筛选弹窗。 */
 	const openFilterDialog = React.useCallback(() => { setFilterOpen(true); }, []);
 
@@ -1826,7 +1836,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 		{ className: css.root },
 
 		React.createElement(SettingsPanel, {
-			open: settingsOpen, onClose: () => { setSettingsOpen(false); },
+			open: settingsOpen, onClose: () => { setSettingsOpen(false); }, initialTab: settingsTab,
+			cwd: workingTreePath, pluginVersion: PLUGIN_VERSION,
+			onOpenFile: openLogFile, onRevealPath,
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
 			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
 			onCheckSsh: handleCheckSsh,
@@ -1863,6 +1875,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, pickDirectory, runIn
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
 			onToggleSection: toggleRepoSec,
 			onOpenSettings: openSettingsPanel,
+			onOpenFeedback: openFeedbackPanel,
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,

@@ -16,6 +16,7 @@ import {
 	FALLBACK_POLL_SECONDS_MAX, FALLBACK_POLL_SECONDS_MIN, CLEANUP_PERIOD_SECONDS_MAX, CLEANUP_PERIOD_SECONDS_MIN,
 } from './change-events.ts';
 import { fetchAiModels } from '../api/index.ts';
+import { FeedbackTab } from './feedback.ts';
 import { loadValue, saveValue } from './storage.ts';
 import { showConfirmation, showMessage } from '../ui/dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
@@ -351,8 +352,15 @@ export interface UserDetails {
 	readonly userEmail?: { local?: string | null; global?: string | null } | null;
 }
 
-/** 设置页签：作用范围。 */
-export type SettingsTab = 'repo' | 'global';
+/** 设置页签。 */
+export type SettingsTab = 'repo' | 'global' | 'feedback';
+
+/** 页签对应的面板 id。 */
+const PANEL_ID_OF: Readonly<Record<SettingsTab, string>> = {
+	repo: 'ggg-set-panel-repo',
+	global: 'ggg-set-panel-global',
+	feedback: 'ggg-set-panel-feedback',
+};
 
 /** 设置面板属性。 */
 export interface SettingsPanelProps {
@@ -370,6 +378,16 @@ export interface SettingsPanelProps {
 	readonly userDetails: UserDetails | null;
 	readonly onEditUserDetails: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;
 	readonly onDeleteUserDetails: (delName: boolean, delEmail: boolean, location: string) => void;
+	/** 当前会话工作区路径；反馈页签据此提交 gh 命令。 */
+	readonly cwd?: string | null;
+	/** 插件版本，写进反馈正文。 */
+	readonly pluginVersion?: string;
+	/** 打开设置时直接落在反馈页签。 */
+	readonly initialTab?: SettingsTab;
+	/** 按绝对路径打开一个文件（复用更改区的文件打开接线）。 */
+	readonly onOpenFile?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
+	readonly onRevealPath?: ((path: string) => void) | undefined;
 }
 
 /**
@@ -383,9 +401,12 @@ export interface SettingsPanelProps {
  */
 export function SettingsPanel({
 	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, onCheckSsh,
-	userDetails, onEditUserDetails, onDeleteUserDetails,
+	userDetails, onEditUserDetails, onDeleteUserDetails, cwd = null, pluginVersion = '', initialTab = 'repo',
+	onOpenFile, onRevealPath,
 }: SettingsPanelProps): React.ReactElement | null {
-	const [tab, setTab] = React.useState<SettingsTab>('repo');
+	const [tab, setTab] = React.useState<SettingsTab>(initialTab);
+	// 外部指定页签时跟随：面板打开前先设好目标页签，打开即落位。
+	React.useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
 	if (!open) return null;
 	const patch = (partial: Partial<Settings>): void => { onChange({ ...settings, ...partial }); };
 	const userSection = (scope: SettingsTab): React.ReactElement => React.createElement(Section, { title: 'User Details' },
@@ -564,17 +585,20 @@ export function SettingsPanel({
 				items: [
 					{ value: 'repo', label: '仓库设置', id: 'ggg-set-tab-repo', panelId: 'ggg-set-panel-repo' },
 					{ value: 'global', label: '全局设置', id: 'ggg-set-tab-global', panelId: 'ggg-set-panel-global' },
+					{ value: 'feedback', label: '反馈', id: 'ggg-set-tab-feedback', panelId: 'ggg-set-panel-feedback' },
 				],
 			}),
 			React.createElement('div', {
 				className: css.settingsBody,
-				id: tab === 'repo' ? 'ggg-set-panel-repo' : 'ggg-set-panel-global',
+				id: PANEL_ID_OF[tab],
 				role: 'tabpanel',
-				'aria-labelledby': tab === 'repo' ? 'ggg-set-tab-repo' : 'ggg-set-tab-global',
+				'aria-labelledby': `ggg-set-tab-${tab}`,
 			},
 				...(tab === 'repo'
 					? repoSections
-					: [userSection('global'), ...generalSections]),
+					: tab === 'global'
+						? [userSection('global'), ...generalSections]
+						: [React.createElement(FeedbackTab, { key: 'feedback', cwd, pluginVersion, onOpenFile, onRevealPath })]),
 			),
 		),
 	);

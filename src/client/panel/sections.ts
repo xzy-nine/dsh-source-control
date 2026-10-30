@@ -7,7 +7,7 @@ import React from 'react';
 import {
 	Button, Checkbox, FileTypeIcon, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
 	IconCloseOutlineRegular,
-	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
+	IconDownloadOutlineRegular, IconGoalOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular,
 	IconSettingsOutlineRegular, IconSparkleRegular, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../graph/index.ts';
@@ -69,6 +69,8 @@ export interface RepoSectionProps {
 	readonly headHash: string | null;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
+	/** 打开设置并直接落在反馈页签。 */
+	readonly onOpenFeedback: () => void;
 	/** 克隆远程仓库：输入地址后选父目录，在其中创建同名子目录。 */
 	readonly onClone: () => void;
 	/** 克隆进行中：只禁用克隆入口，不影响其它控件。 */
@@ -88,7 +90,7 @@ export interface RepoSectionProps {
  */
 function RepoSectionView({
 	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
-	onToggleSection, onOpenSettings, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
+	onToggleSection, onOpenSettings, onOpenFeedback, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
@@ -106,6 +108,11 @@ function RepoSectionView({
 					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy.network || cloneBusy,
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onClone(); },
 				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				// 反馈是本地入口，不随仓库操作禁用。
+				React.createElement('button', {
+					type: 'button', className: css.iconBtn, title: '反馈',
+					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFeedback(); },
+				}, React.createElement(IconPaperPlaneOutlineRegular, { size: 14 })),
 				// 设置是本地入口，不随仓库操作禁用。
 				React.createElement('button', {
 					type: 'button', className: css.iconBtn, title: '设置',
