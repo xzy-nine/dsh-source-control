@@ -3,16 +3,15 @@
  *
  * 两项都直接组装菜单项与执行体，不持有 React 状态；状态与回调由面板传入。
  */
-import { checkoutBranch, fetchRepo, initSubmodule, removeWorktree, throwIfError } from '../api/index.ts';
+import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, throwIfError } from '../api/index.ts';
 import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox } from '../ui/dialog.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { reportError } from './errors.ts';
-import { logClient } from '../api/index.ts';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 import { dropGraphWindows } from './graph-window-cache.ts';
-import type { BusyScope, Commit, RepoNode, Settings, WorkingTreeEntry } from '../shared/types.ts';
+import type { Commit, RepoNode, PanelRun, Settings } from '../shared/types.ts';
 import type { PanelState } from '../shared/types.ts';
 
 /** 仓库行菜单的依赖面。 */
@@ -36,13 +35,8 @@ export interface RepoMenuDeps {
 	/** 清掉选中节点。 */
 	readonly setSelectedId: React.Dispatch<React.SetStateAction<string | null>>;
 	/** 执行一次操作并刷新。 */
-	readonly run: (
-		scope: BusyScope,
-		operation: () => Promise<void>,
-		repo?: string,
-		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-		options?: { readonly historyChanged?: boolean; readonly intent?: string },
-	) => Promise<void>;
+	readonly run: PanelRun;
+
 	/** 重新加载选中仓库。 */
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 重取仓库树。 */

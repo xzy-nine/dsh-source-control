@@ -7,12 +7,12 @@
  */
 import React from 'react';
 import {
-	addRemote, addToGitignore, addToLocalExclude, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
-	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
+	addRemote, addToGitignore, addToLocalExclude, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
+	editRemote, editUserDetails, exportRepoConfig, fetchRepo, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
-	abortMerge, localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, resetToCommit, sshStatus, stagePaths, throwIfError, translateAvailable,
-	translateText, unstagePaths,
+	abortMerge, localExcludeState,
+	merge, pushBranch, pushStash, pushUpstream, resetToCommit, sshStatus, stagePaths, throwIfError,
+	unstagePaths,
 } from '../api/index.ts';
 import { showContextMenu } from '../ui/context-menu.ts';
 import { cloneTerminalCommand } from '../git/clone-command.ts';
@@ -24,7 +24,6 @@ import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { ROW_HEIGHT } from '../graph/lanes.ts';
 import { changeOf } from './changes.ts';
 import { hasGitHubRemote } from './github.ts';
-import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import {
@@ -34,10 +33,10 @@ import {
 import type { AutoFilterContext, RefFilter } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import {
-	draftKeyOf, loadSessionValue, loadValue, migrateLegacyDrafts, primeStorage, saveSessionValue, saveValue,
+	loadValue, migrateLegacyDrafts, primeStorage, saveValue,
 	storageReady as storagePrimed,
 } from './storage.ts';
-import { clearPersistedDraft, logClient, migrateLegacyState, loadHooksState, takePersistedDraft } from '../api/index.ts';
+import { logClient, migrateLegacyState } from '../api/index.ts';
 import { useAutoFetch } from './use-auto-fetch.ts';
 import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
@@ -49,17 +48,16 @@ import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
-import { commitEntries } from './optimistic.ts';
 import { logCommitCountOf } from './commit-diff.ts';
-import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from './submit-state.ts';
+import { divergedOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
+import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
-import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
+import type { BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
 import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
-import type { HooksState } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 
@@ -97,26 +95,6 @@ function issueLinkingConfigOf(settings: Settings): unknown {
  * @returns 面板元素。
  */
 export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
-	const [message, setMessage] = React.useState('');
-	const [aiBusy, setAiBusy] = React.useState(false);
-	const [aiWarning, setAiWarning] = React.useState('');
-	const [aiStats, setAiStats] = React.useState<AiStats | null>(null);
-	const [translateBusy, setTranslateBusy] = React.useState(false);
-	// 翻译服务由 cot-translation bundle 可选装载；不可用时连入口都不显示。
-	const [translateReady, setTranslateReady] = React.useState(false);
-	// 已翻译过的文本：避免对同一内容重复请求，也用于标记「已翻译」。
-	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
-	const aiAbortRef = React.useRef<AbortController | null>(null);
-	const [amend, setAmend] = React.useState(false);
-	/**
-	 * 本次提交与推送是否运行 git 钩子。
-	 *
-	 * 提交钩子或推送钩子存在时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择：
-	 * 每次切换仓库与每次提交、推送完成后都回到默认勾选，不持久化。
-	 */
-	const [runHooks, setRunHooks] = React.useState(true);
-	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */
-	const [hooksState, setHooksState] = React.useState<HooksState>({ commit: false, push: false, directory: null });
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
@@ -310,7 +288,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
-
+	/** 翻译服务是否可用：提交框与图形区共用同一判据。 */
+	const translateReady = useTranslateReady(workingTreePath);
 	const {
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
 		graphTranslated, graphTranslating,
@@ -395,14 +374,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		};
 	}, [rescan]);
 
-	/* 翻译服务是否可用：换仓库时重查一次（同一进程内结果稳定，不必频繁请求）。 */
-	React.useEffect(() => {
-		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
-		let cancelled = false;
-		void translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
-		return () => { cancelled = true; };
-	}, [workingTreePath]);
-
 	/* 本地排除条目：换仓库时读一次，写入后再刷新，决定提交框是否显示查看入口。 */
 	React.useEffect(() => {
 		if (workingTreePath === null) { setLocalExclude(null); return undefined; }
@@ -413,70 +384,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return () => { cancelled = true; };
 	}, [workingTreePath]);
 
-	/*
-	 * git 钩子状态：换仓库时探测一次，决定提交框是否显示 githook 勾选项。
-	 *
-	 * 换仓库即回到「运行钩子」：勾选是临时选择，不跨仓库、不跨会话保留。
-	 */
-	React.useEffect(() => {
-		setRunHooks(true);
-		if (workingTreePath === null) { setHooksState({ commit: false, push: false, directory: null }); return undefined; }
-		let cancelled = false;
-		loadHooksState(workingTreePath)
-			.then((state) => { if (!cancelled) setHooksState(state); })
-			.catch(() => { if (!cancelled) setHooksState({ commit: false, push: false, directory: null }); });
-		return () => { cancelled = true; };
-	}, [workingTreePath]);
-
-  /*
-	 * 提交信息草稿：按仓库根存会话级存储（sessionStorage），键为 ggg-commit-msg:<仓库根绝对路径>。
-	 *
-	 * 草稿只活在本次会话，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
-	 *
-	 * 写入必须等草稿读完：message 初始为空串，若在读回之前就写入，会把刚切换过来的仓库的草稿覆盖成空。
-	 * readDone 标记读完这一刻，之后才允许写。切换仓库时先把上一个仓库的草稿写回它自己的键，再读新仓库的。
-	 */
-	const [draftReadDone, setDraftReadDone] = React.useState(false);
-	/** 当前 message 所属的仓库；与 workingTreePath 不同时不得写入。 */
-	const [draftPath, setDraftPath] = React.useState<string | null>(null);
-	/** message 的当前值：切换仓库的收尾里读取它，避免把旧值写进新仓库的键。 */
-	const messageRef = React.useRef(message);
-	messageRef.current = message;
-
-	React.useEffect(() => {
-		const path = workingTreePath;
-		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
-		const cancelled = { current: false };
-		// 本轮读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
-		let readDone = false;
-		setDraftReadDone(false);
-		const key = draftKeyOf(path);
-		void (async () => {
-			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
-			const persisted = await takePersistedDraft(path, key);
-			if (cancelled.current) return;
-			const saved = loadSessionValue<string | null>(key, null);
-			if (saved === null && persisted !== null) {
-				saveSessionValue(key, persisted);
-				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
-				void clearPersistedDraft(path, key).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
-			}
-			setMessage(saved ?? persisted ?? '');
-			setDraftPath(path);
-			readDone = true;
-			setDraftReadDone(true);
-		})();
-		return () => {
-			cancelled.current = true;
-			// 离开本仓库：读回完成后 message 才是本仓库的内容，此时才把草稿写回它自己的键。
-			if (!readDone) return;
-			saveSessionValue(key, messageRef.current);
-		};
-	}, [workingTreePath]);
-	React.useEffect(() => {
-		if (workingTreePath === null || !draftReadDone || draftPath !== workingTreePath) return;
-		saveSessionValue(draftKeyOf(workingTreePath), message);
-	}, [workingTreePath, message, draftReadDone, draftPath]);
 
 	/**
 	 * 选中一个仓库节点并重置面板状态。
@@ -570,6 +477,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
 		}
 	}, [workingTreePath, refresh, refreshEntries, setState]);
+
+	/* 提交框：草稿、钩子勾选、AI 生成、翻译与提交。 */
+	const composer = useCommitComposer({
+		workingTreePath, settings, commits: state.commits, merging: state.merging,
+		entries: state.entries, translateReady, commitBusy: busyFlags.commit, run,
+		notify: (message: string) => { showToast(message); return Promise.resolve(); },
+	});
 
 	/**
 	 * 在进度条下执行一次不刷新的预备调用。
@@ -824,104 +738,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, [workingTreePath]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
-	const stagedPaths = React.useMemo(
-		() => state.entries.filter((entry) => changeOf(entry).staged).map((entry) => entry.path),
-		[state.entries],
-	);
-
-	/**
-	 * 勾选「修补上一次提交」时填入上一提交的完整消息；取消勾选时清空。
-	 *
-	 * 提交列表里的 message 只含标题（`git log --format=%s`），正文需按需取回。
-	 *
-	 * @param checked - 是否勾选。
-	 */
-	const toggleAmend = React.useCallback((checked: boolean) => {
-		setAmend(checked);
-		if (!checked) {
-			setMessage('');
-			return;
-		}
-		const lastCommit = state.commits.find((commit) => commit.hash !== '*');
-		if (lastCommit === undefined) return;
-		// 先填标题，正文取回后再替换；取不到时保留标题。
-		setMessage(lastCommit.message ?? '');
-		if (workingTreePath === null) return;
-		void loadCommitMessage(workingTreePath, lastCommit.hash)
-			.then((full) => { if (full !== null && full !== '') setMessage(full); })
-			.catch(() => { /* 取不到正文时保留标题 */ });
-	}, [state.commits, workingTreePath]);
-
-	/**
-	 * 提交暂存区。
-	 *
-	 * 勾选修补时允许没有暂存改动，只改提交信息；处于未完成的合并时同样允许，此时提交是结束合并
-	 * 的唯一动作，提交信息留空表示沿用 git 生成的合并信息。
-	 */
-	const submit = (): void => {
-		const merging = state.merging;
-		if (commitButtonDisabledOf({ busy: busyFlags.commit, canSubmit: canSubmitOf({ stagedCount: stagedPaths.length, amend, merging }), messageEmpty: message.trim() === '', merging })) return;
-		// 钩子激活且取消勾选时本次跳过；提交完成后回到默认勾选。
-		const skipHooks = hooksState.commit && !runHooks;
-		void run('commit', async () => {
-			await commitStaged(workingTreePath as string, message, amend, skipHooks);
-			setMessage('');
-			setAmend(false);
-			setRunHooks(true);
-		}, undefined, commitEntries, { intent: amend ? '修补上一次提交' : (merging ? '提交并结束合并' : '提交暂存的更改') });
-	};
-
-	/**
-	 * AI 生成提交信息：流式输出，不开启思考。
-	 *
-	 * 系统提示词带上当前界面语言，降低生成错语言的概率；生成完成后若内容仍以
-	 * 非当前语言为主，界面出现翻译按钮。
-	 */
-	const handleAiCommit = (): void => {
-		if (aiBusy) return;
-		if (workingTreePath === null) { setAiWarning('未选中仓库'); return; }
-		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
-		setAiBusy(true);
-		setAiWarning('');
-		setAiStats(null);
-		setTranslatedFrom(null);
-		setMessage('');
-		const controller = new AbortController();
-		aiAbortRef.current = controller;
-		generateCommitMessage(workingTreePath, settings.aiCommitProvider, settings.aiCommitModel, settings.aiCommitRules, {
-			signal: controller.signal,
-			onChunk: (text) => { setMessage((prev) => prev + text); },
-			onWarning: (text) => { setAiWarning(text); },
-			onError: (text) => { setAiWarning(text); },
-			onStats: (stats) => { setAiStats(stats as AiStats); },
-		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
-		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => { setAiWarning(err instanceof Error ? err.message : String(err)); });
-	};
-
-	/**
-	 * 翻译提交信息：按行请求，保持原有换行结构。
-	 *
-	 * 逐行而不是整段一次：整段会被翻译服务拼成一行，丢失标题与要点的分行。
-	 * 每行的 git 惯例前缀（`feat:`、`fix(api):` 等）原样保留，只翻译其后的正文。
-	 */
-	const handleTranslate = React.useCallback(() => {
-		if (translateBusy || workingTreePath === null || message.trim() === '') return;
-		const source = message;
-		const locale = interfaceLanguage();
-		setTranslateBusy(true);
-		void (async () => {
-			try {
-				// 空行保留为空行，其余每行单独翻译。
-				setMessage(await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale)));
-				setTranslatedFrom(source);
-			} catch (error) {
-				await notify(error instanceof Error ? error.message : String(error));
-			} finally {
-				setTranslateBusy(false);
-			}
-		})();
-	}, [translateBusy, workingTreePath, message, notify]);
-
 	/*
 	 * 后台刷新指示：两个分区各自按作用面取进行中标志，「上次刷新」文案每 30 秒重算一次，
 	 * 避免每次渲染都生成新字符串、也让时间不会一直停在「刚刚」。
@@ -946,7 +762,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/*
 	 * 主按钮的动作：待合并状态与修补期间固定为提交，其余按有无暂存改动、领先落后与是否已发布决定。
 	 */
-	const primaryAction = primaryActionOf({ workAreaEmpty, hasRemoteDiff, isUnpublishedBranch, amend, merging: state.merging });
+	const primaryAction = primaryActionOf({ workAreaEmpty, hasRemoteDiff, isUnpublishedBranch, amend: composer.amend, merging: state.merging });
 	const showSyncButton = primaryAction === 'sync';
 	const showPublishButton = primaryAction === 'publish';
 	/*
@@ -956,8 +772,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const overwriteChoicesAvailable = showSyncButton && divergedOf({
 		ahead: currentSync?.ahead ?? 0, behind: currentSync?.behind ?? 0,
 	});
-	/** 提交按钮可用：有暂存改动、勾选修补，或处于未完成的合并。 */
-	const canSubmit = canSubmitOf({ stagedCount: stagedPaths.length, amend, merging: state.merging });
 
 	/*
 	 * 后台刷新完成后的轻量告知：只在条目数或已加载提交数变化时给一次，不打断操作。
@@ -983,17 +797,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		noticeBaselineRef.current = current;
 		if (notice !== '') showToast(notice, { tone: 'info' });
 	}, [state.lastRefreshAt, state.phase, state.entries, state.commits, graphScope]);
-
-	/**
-	 * 是否显示提交信息框的翻译入口。
-	 *
-	 * 判据与提交浮窗共用 {@link showTranslateEntry}：翻译服务已装载（否则点了也失败）、
-	 * 当前无生成或翻译任务、内容非空且以非当前语言为主。已翻译过的内容不再重复提示。
-	 */
-	const showTranslate = showTranslateEntry({
-		ready: translateReady, busy: aiBusy || translateBusy, text: message,
-		locale: interfaceLanguage(), translatedFrom,
-	});
 
 	/**
 	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
@@ -1155,8 +958,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		const branch = currentSync.branch;
 		const path = workingTreePath;
 		// 推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。
-		const skipHooks = hooksState.push && !runHooks;
-		const publishDone = (): void => { setRunHooks(true); };
+		const skipHooks = composer.hooksState.push && !composer.runHooks;
+		const publishDone = (): void => { composer.setRunHooks(true); };
 		void (async () => {
 			let remote = '';
 			if (state.remotes.length === 1) {
@@ -1197,11 +1000,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			}, undefined, undefined, { intent: `推送分支 ${branch}` });
 			publishDone();
 		})();
-	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, hooksState.push, runHooks]);
+	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, composer.hooksState.push, composer.runHooks, composer.setRunHooks]);
 
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
-		const skipHooks = hooksState.push && !runHooks;
+		const skipHooks = composer.hooksState.push && !composer.runHooks;
 		void run('network', async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
@@ -1210,7 +1013,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
 				await pushCurrentBranch(undefined, skipHooks);
 			}
-		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）' }).finally(() => { setRunHooks(true); });
+		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）' }).finally(() => { composer.setRunHooks(true); });
 	};
 
 	/**
@@ -1236,7 +1039,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
 		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
 		const branch = sync.branch;
-		const skipHooks = hooksState.push && !runHooks;
+		const skipHooks = composer.hooksState.push && !composer.runHooks;
 		void (async () => {
 			const ok = await showCheckbox({
 				title: '用本地覆盖远程',
@@ -1250,7 +1053,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 				if (errors.length > 0) throw new Error(errors.join('\n'));
 			}, undefined, undefined, { intent: '用本地覆盖远程（强制推送）' });
 		})();
-	}, [currentSync, workingTreePath, hooksState.push, runHooks, run]);
+	}, [currentSync, workingTreePath, composer.hooksState.push, composer.runHooks, run]);
 
 	/** 用远程分支覆盖本地分支：本地独有的提交与已跟踪改动会被丢弃。 */
 	const overwriteLocalWithRemote = React.useCallback(() => {
@@ -1587,7 +1390,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive, head: state.head,
-		notify, setCommitMessage: setMessage,
+		notify, setCommitMessage: composer.setMessage,
 		handleCreatePullRequest, canCreatePullRequest,
 		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
 		foreignBranches: state.foreignBranches,
@@ -1756,8 +1559,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
-			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: hooksState.push, runHooks, setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
-			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: hooksState.push, runHooks, setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
+			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
+			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
 			onResizeStart: layout.startRepoResize,
 		}),
 
@@ -1765,17 +1568,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		React.createElement(ChangesSection, {
 			entries: state.entries, busy: busyFlags, phase: state.phase,
 			workingTreePath, head: state.head,
-			message, onMessageChange: setMessage, amend, onToggleAmend: toggleAmend, onStash: handleStash,
+			message: composer.message, onMessageChange: composer.setMessage, amend: composer.amend, onToggleAmend: composer.toggleAmend, onStash: handleStash,
 			// 任一类钩子存在即显示：同一个勾选项同时决定提交与推送是否带 --no-verify。
-			hooksActive: hooksState.commit || hooksState.push, runHooks, onToggleRunHooks: setRunHooks,
-			showTranslate, translateBusy, onTranslate: handleTranslate,
-			aiBusy, aiWarning, aiStats, onAiCommit: handleAiCommit,
+			hooksActive: composer.hooksActive, runHooks: composer.runHooks, onToggleRunHooks: composer.setRunHooks,
+			showTranslate: composer.showTranslate, translateBusy: composer.translateBusy, onTranslate: composer.handleTranslate,
+			aiBusy: composer.aiBusy, aiWarning: composer.aiWarning, aiStats: composer.aiStats, onAiCommit: composer.handleAiCommit,
 			showSyncButton,
 			syncBehind: currentSync?.behind ?? 0,
 			syncAhead: currentSync?.ahead ?? 0,
 			onSync: handleSync,
 			showPublishButton, onPublish: handlePublish,
-			canSubmit, onSubmit: submit, onRefresh: refreshAll,
+			canSubmit: composer.canSubmit, onSubmit: composer.submit, onRefresh: refreshAll,
 			onSyncContextMenu: overwriteChoicesAvailable ? handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
