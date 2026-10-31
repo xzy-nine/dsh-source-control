@@ -117,7 +117,8 @@ v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 gi
 串行跑仓库自己的钩子（如 Gradle 的 `ktlintFormat`），其耗时不由插件限制。执行层只登记在跑的子进程，
 用于宿主退出与终止信号时按进程树清理（`killRunningGit`）。非只读命令结束时按 `onRepositoryWrite`
 通知一次（判据是命令跑完，不看退出码：冲突合并、拣选冲突与变基停下都以非零退出但已改动仓库），
-宿主据此清空快照、提交图与仓库信息缓存、作废发现缓存并广播 `repository-write`。
+宿主据此按仓库作废快照、提交图与仓库信息缓存（含祖先与后代，以及共享同一 git 公共目录的其它
+工作树）、作废发现缓存并广播 `repository-write`。
 `runGit` 的只读结果缓存按毫秒计有效期，只对**输出不随工作区或索引当前内容变化**的子命令
 （`log`、`show`、`for-each-ref`、`rev-list` 等）生效。`status`、`diff`、`ls-files` 的输出随工作区
 与索引变化，而缓存失效只覆盖插件自己执行的写命令 —— 插件之外的写（编辑器、外部命令）无从感知，
@@ -161,12 +162,19 @@ missing-cli / not-logged-in / missing-scope / forbidden / not-found / invalid / 
 
 日志模块三件：`log-format.ts` 只做格式（logcat threadtime：`MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message`，
 含换行的消息逐行写出、续行沿用同一时间戳）；`log-retention.ts` 只做命名与淘汰判据（纯函数，可直接单测）；
-`logger.ts` 负责落盘与清理。目录为 `<root>/<YYYY-MM-DD>/logcat-YYYYMMDD-HHmmssSSS-<pid>.log`，
+`logger.ts` 负责落盘与清理。目录为 `<root>/<YYYY-MM-DD>/<YYYYMMDD>-<HHmmss>.log`，
 root 与 `state-store.ts` 同序解析（`DSH_SOURCE_CONTROL_HOME` → `DSH_HOME` → `~/.dsh`）。
-文件名含启动时刻，因此同一日文件夹内按文件名升序即启动先后。
+文件名含启动时刻，因此同一日文件夹内按文件名升序即启动先后（同一秒内多次启动时追加写入同一份）。
 
 写入策略：行先入缓冲，`FLUSH_DELAY_MS`（250ms）合并为一次追加写，缓冲到 512 行立即落盘，
 `process.on('exit')` 同步收尾。定时器 `unref()`，不阻止进程退出；写盘失败静默，不影响插件功能。
+
+耗时汇总（`api/cost.ts`）：单条命令不记日志，按「一次刷新」把墙钟、命令耗时合计、git 子进程数与
+各命令明细汇总成一行 `perf` 记录。分组按客户端随请求带来的 `refreshId`（`panel/graph-window-cache.ts` 的
+`nextRefreshId`，带随机会话前缀以免多面板撞号），无编号的命令按仓库与空闲窗口（3 秒）归组；
+**只按空闲定时器冲刷**，不因同一仓库出现新编号提前写出 —— 一轮里的提交图与工作区快照并行发出、
+下一轮可能在上一轮收尾前就开始，编号交错到达会让每条汇总只剩部分命令。墙钟取「首条命令开始 →
+末条命令结束」（不含命令之间的空闲），子进程数按仓库分别计数。
 
 清理：`initLog()` 调 `cleanLogs()` 各判一次。保留期按日文件夹名比字符串（`planExpiredDayFolders`，
 当天算第一天，早于「今天 − 14 天」的整体删除）；体积按 `planDayEvictions` 从最新文件向前累计到
@@ -309,7 +317,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 |---|---|---|---|---|
 | 进程级事实 | `repo-facts.ts` 的 `layouts` / `packedRefs` | 规范化仓库路径（分隔符统一为 `/`）/ 规范化公共目录 | 布局 10s、容量 64；打包引用无 TTL，按 `mtimeMs + size` 守卫、容量 8 | 写命令结束按仓库（含祖先与后代）作废布局；打包引用由守卫自校验 |
 | 子进程结果 | `git-exec.ts` 的 `resultCache` / `inFlightGit` | 仓库 + `JSON.stringify(args)` | 200ms / 64；在途条目收尾即删 | 写命令按仓库（含祖先与后代） |
-| 宿主响应 | `host-cache.ts` 的 `graphs` / `repoInfos` / `snapshots` / `hooksPaths` | 仓库 + 取数参数（图窗口另含 HEAD 与贮藏 / 远程标识）/ 仓库 | 30s / 60s / 500ms / 60s，容量 64 / 32 / 32 / 32 | 任何写命令清空整表；`invalidateCache` 按仓库（含祖先与后代） |
+| 宿主响应 | `host-cache.ts` 的 `graphs` / `repoInfos` / `snapshots` / `hooksPaths` | 仓库 + 取数参数（图窗口另含 HEAD 与贮藏 / 远程标识）/ 仓库 | 30s / 60s / 500ms / 60s，容量 64 / 32 / 32 / 32 | 写命令按仓库作废（`invalidateOnWrite`：含祖先与后代，以及按 `noteRepoCommonDir` 登记的共享 git 公共目录的其它工作树）；`invalidateCache` 同范围 |
 | 客户端取数参数 | `panel/graph-window-cache.ts` 的 `knownRepoInfo` / `lastPanelState` / `lastMaxCommits` | 归一化仓库路径 | 模块级，容量 8 | 写操作与换仓库（`dropGraphWindows`） |
 
 `runGit` 的在途复用只对**确认只读**的命令生效（`isReadOnly` 的形态清单）：`status`、`diff`、`ls-files`

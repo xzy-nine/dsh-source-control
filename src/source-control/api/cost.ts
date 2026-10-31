@@ -118,14 +118,10 @@ function recordCommandCost(command: string, ms: number, repo: string, refreshId:
 	const repoLabel = repo === '' ? '（未指定仓库）' : repo;
 	const key = `${repo.toLowerCase()}\u0000${refreshId === null ? '*' : String(refreshId)}`;
 	/*
-	 * 同一仓库出现新的轮次编号时，说明上一轮已经打完：先把它写出去，不再等定时器。
-	 * 定时器只兜「客户端不再发新轮次」的情形（例如窗口被关掉）。
+	 * 只按空闲定时器归组，不因「同一仓库出现新编号」提前冲刷：一轮刷新里的提交图与工作区快照
+	 * 是并行发出的，而下一轮可能在上一轮还没收尾时就已开始。编号因此会交错到达，按新编号冲刷
+	 * 会让每个编号被反复打断、各记出若干条只有部分命令的汇总。
 	 */
-	for (const existing of [...costBuckets.keys()]) {
-		if (existing === key) continue;
-		if (!existing.startsWith(`${repo.toLowerCase()}\u0000`)) continue;
-		flushCostBucket(existing);
-	}
 	const now = Date.now();
 	let current = costBuckets.get(key);
 	if (current === undefined) {
