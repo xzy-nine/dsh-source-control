@@ -55,6 +55,8 @@ export interface RemoteSync {
 	readonly handleSync: () => void;
 	/** 同步按钮的右键菜单。 */
 	readonly handleSyncContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
+	/** 推送某个仓库的当前分支到其上游，失败时报错。 */
+	readonly pushCurrentBranch: (repoPath?: string, skipHooks?: boolean) => Promise<void>;
 	/** 是否可用同步按钮的右键覆盖项。 */
 	readonly overwriteChoicesAvailable: boolean;
 }
@@ -403,7 +405,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	const overwriteChoicesAvailable = leadGapOf(currentSync);
 
 	return {
-		handleCheckSsh, handlePublish, handleSync, handleSyncContextMenu, overwriteChoicesAvailable,
+		handleCheckSsh, handlePublish, handleSync, handleSyncContextMenu, overwriteChoicesAvailable, pushCurrentBranch,
 	};
 }
 

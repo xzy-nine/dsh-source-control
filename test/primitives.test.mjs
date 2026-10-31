@@ -134,13 +134,13 @@ test('展开块左内边距与提交行一致', () => {
 
 test('再次点击同一提交行收起展开', () => {
 	// 点已选中的行必须收起（清空选中与详情），否则无法二次点击关闭。
-	const source = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const source = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
 	const start = source.indexOf('const toggleCommit');
 	assert.ok(start !== -1, '未找到 toggleCommit');
-	const body = source.slice(start, source.indexOf('const stagedPaths', start));
+	const body = source.slice(start, source.indexOf('const toggleCommit', start + 10));
 	assert.match(body, /state\.selectedHash === hash/, '必须先判断是否已选中');
 	assert.match(body, /selectedHash: null, detail: null/, '收起时必须清空选中与详情');
-	assert.match(source, /onToggleCommit: toggleCommit/, '图形行点击必须走 toggleCommit');
+	assert.match(readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8'), /onToggleCommit: toggleCommit/, '图形行点击必须走 toggleCommit');
 });
 
 test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primitives 源码检出' }, () => {
@@ -189,7 +189,7 @@ test('新增文件走普通文件地址', () => {
 	const source = readFileSync(indexPath, 'utf8');
 	assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
 	assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
-	const panelSource = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panelSource = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
 	assert.match(panelSource, /isNew \? 'file'/, '新增文件应生成 file 类型目标');
 	// 已暂存的 A 与未跟踪的 ? 都算新增：只看 ? 会漏掉 A。
 	const changesSource = readFileSync(join(panelDir, 'changes.ts'), 'utf8');

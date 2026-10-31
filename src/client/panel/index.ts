@@ -7,14 +7,12 @@
  */
 import React from 'react';
 import {
-	compareCommits, discardPaths, fetchRepo, loadBranchBase, loadCommitFiles, loadRefs,
-	abortMerge, pushStash, pushUpstream, stagePaths, unstagePaths,
+	discardPaths, fetchRepo, loadBranchBase, loadRefs,
+	abortMerge, pushStash, stagePaths, unstagePaths,
 } from '../api/index.ts';
 import { showCheckbox, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
-import { ROW_HEIGHT } from '../graph/lanes.ts';
-import { changeOf } from './changes.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import {
@@ -46,9 +44,10 @@ import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { useRemoteSync } from './use-remote-sync.ts';
 import { useRepoCommands } from './use-repo-commands.ts';
+import { useCommitSelection } from './use-commit-selection.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
-import type { BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
+import type { BusyScope, Commit, PanelRun, RefInfo, RefItem, Settings } from '../shared/types.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 
@@ -138,14 +137,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			await migrateLegacyState(cwd);
 			await primeStorage(cwd);
 			if (cancelled.current) return;
-			setSettings(loadSettings());
-			layout.reload();
-			setSettings(loadSettings());
-			layout.reload();
-			setSettings(loadSettings());
-			layout.reload();
-			setSettings(loadSettings());
-			layout.reload();
 			setSettings(loadSettings());
 			layout.reload();
 			// 引用筛选也按仓库回填；标记就绪让载入 effect 重跑一次。
@@ -409,13 +400,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * @param optimistic - 写操作成功后对条目的推算；省略时不推算，只做对账刷新。
 	 * @param options - 见上；省略时按可能改动引用与提交历史处理。
 	 */
-	const run = React.useCallback(async (
-		scope: BusyScope,
-		operation: () => Promise<void>,
-		repo?: string,
-		optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-		options?: { readonly historyChanged?: boolean; readonly intent?: string },
-	) => {
+	const run: PanelRun = React.useCallback(async (scope, operation, repo, optimistic, options) => {
 		const target = repo ?? workingTreePath;
 		if (target === null) return;
 		const historyChanged = options?.historyChanged !== false;
@@ -484,28 +469,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, setState]);
 
-	/**
-	 * 推送某个仓库的当前分支到其上游，失败时报错。
-	 *
-	 * `pushUpstream` 把失败放在返回值里而不抛错，因此这里显式检查，避免静默失败。
-	 * 未配置远程或当前分支没有上游时，git 给出的是多行长文，这里替换为可读提示；
-	 * 这两类提示按 git 的实际措辞匹配，措辞变化时退回原文。
-	 *
-	 * @param repoPath - 目标仓库路径；省略时用当前选中的工作树。
-	 * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
-	 */
-	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false) => {
-		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks);
-		if (error === null) return;
-		if (/no configured push destination|no configured remote/i.test(error)) {
-			throw new Error('未配置远程仓库，请先在设置中添加远程。');
-		}
-		if (/has no upstream branch/i.test(error)) {
-			throw new Error('当前分支没有上游分支，请先设置上游后再推送。');
-		}
-		throw new Error(error);
-	}, [workingTreePath]);
-
 	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
 	const notify = React.useCallback((message: string): Promise<void> => {
 		showToast(message);
@@ -568,45 +531,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			}, undefined, undefined, { intent: '贮藏改动' });
 		})();
 	}, [run, workingTreePath]);
-
-	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）。 */
-	/** 选中仓库的 HEAD 提交哈希（用于检出提交状态显示）；查找是 O(提交数)，随滚动逐帧重渲染时须记忆化。 */
-	const headCommitHash = React.useMemo(
-		() => state.commits.find((commit) => commit.hash !== '*')?.hash ?? null,
-		[state.commits],
-	);
-
+	/* 提交详情与选择：打开差异、选中提交、对比两个提交、滚动到 HEAD。 */
+	const selection = useCommitSelection({
+		workingTreePath, state, setState, graphScrollRef, onOpenDiff,
+		scrollToHeadOnLoad: settings.onRepoLoadScrollToHead,
+	});
+	const { openDiff, openLogFile, toggleCommit, goToHead, headCommitHash } = selection;
 	/** 当前分支可达的提交哈希集合；重置这类改写当前分支的操作据此显示。 */
-	const branchHashes = React.useMemo(
-		() => currentBranchHashes(state.commits, state.head),
-		[state.commits, state.head],
-	);
+	const branchHashes = React.useMemo(() => currentBranchHashes(state.commits, state.head), [state.commits, state.head]);
 
-	/**
-	 * 打开某个提交或工作区文件。
-	 *
-	 * 新增文件（已暂存的 `A` 与未跟踪的 `?`）没有可比差异，按普通文件打开（kind 为 'file'）。
-	 * repoRoot 传所选仓库根：它与会话工作区根未必相同，地址由索引侧换算。
-	 *
-	 * @param hash - 提交哈希；'*' 表示工作区。
-	 * @param path - 文件路径（相对仓库根）。
-	 * @param staged - 工作区时是否取暂存区内容。
-	 * @param isNew - 是否是新增文件。
-	 * @param baseHash - 旧侧提交哈希；非空时按两提交对比打开。
-	 */
-	const openDiff = React.useCallback((hash: string, path: string, staged: boolean, isNew = false, baseHash?: string): Promise<void> => {
-		const kind = isNew ? 'file' : (hash === '*' ? 'worktree' : 'commit');
-		const diff = kind === 'file'
-			? { kind, path, repoRoot: workingTreePath }
-			: kind === 'worktree'
-				? { kind, path, staged, untracked: false, repoRoot: workingTreePath }
-				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath, baseHash: baseHash ?? null };
-		if (typeof onOpenDiff === 'function') {
-			// 对比时 id 带上旧侧哈希：同一文件的不同对比组合各自成页。
-			onOpenDiff({ id: `gg-diff:${baseHash ?? ''}:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
-		}
-		return Promise.resolve();
-	}, [onOpenDiff, workingTreePath]);
+
+
 
 	/* 仓库级动作：设置、远程与身份、忽略规则、克隆、Pull Request、导出与归档。 */
 	const repoCommands = useRepoCommands({
@@ -615,108 +550,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		actions: { run, withProgress, notify }, setState, rescanPending, setSettings,
 	});
 
-	/** 打开一个日志文件：绝对路径按普通文件打开（不比较差异）。 */
-	const openLogFile = React.useCallback((path: string): void => { void openDiff('*', path, false, true); }, [openDiff]);
-
-	/**
-	 * 选中一个提交，并加载其改动文件。
-	 *
-	 * @param hash - 目标提交哈希。
-	 * @param baseHash - 旧侧提交哈希；非空时加载两个提交之间的改动。
-	 */
-	const selectCommit = React.useCallback(async (hash: string, baseHash?: string) => {
-		setState((previous) => ({ ...previous, selectedHash: hash, detail: null }));
-		if (workingTreePath === null) return;
-		try {
-			const commit = state.commits.find((item) => item.hash === hash);
-			const compareWith = baseHash === undefined ? null : state.commits.find((item) => item.hash === baseHash) ?? null;
-			setState((previous) => ({
-				...previous,
-				detail: commit === undefined ? null : { commit, files: [], compareWith, loading: true },
-			}));
-			if (baseHash !== undefined) {
-				const files = await compareCommits(workingTreePath, baseHash, hash);
-				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false } }
-					: previous));
-				return;
-			}
-			if (hash === '*') {
-				const files: CommitFile[] = state.entries.map((entry) => ({ path: entry.path, type: changeOf(entry).type, additions: null, deletions: null }));
-				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false } }
-					: previous));
-				return;
-			}
-			const files = await loadCommitFiles(workingTreePath, hash);
-			setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-				? { ...previous, detail: { ...previous.detail, files, loading: false } }
-				: previous));
-		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
-		}
-	}, [workingTreePath, state.commits, state.entries, setState]);
-
-	/**
-	 * 点击提交行。
-	 *
-	 * 已有展开项时按住 Ctrl/Cmd 点击其他提交进入对比：方向取列表中靠后的（较旧）为 `from`，
-	 * 靠前的（较新）为 `to`，与改动方向一致。再次点击同一对组合取消对比。
-	 *
-	 * @param hash - 被点击的提交哈希。
-	 * @param additive - 是否按住了 Ctrl/Cmd。
-	 */
-	const toggleCommit = React.useCallback((hash: string, additive = false) => {
-		const current = state.detail;
-		if (additive && current !== null && current.commit.hash !== hash) {
-			// 已在对比同一组合时取消，回到单个提交详情。
-			if (current.compareWith !== null && current.compareWith.hash === hash) {
-				void selectCommit(current.commit.hash);
-				return;
-			}
-			const order = new Map(state.commits.map((item, index) => [item.hash, index]));
-			const fromFirst = (order.get(current.commit.hash) ?? 0) > (order.get(hash) ?? 0);
-			const from = fromFirst ? current.commit.hash : hash;
-			const to = fromFirst ? hash : current.commit.hash;
-			void selectCommit(to, from);
-			return;
-		}
-		if (state.selectedHash === hash) {
-			setState((previous) => ({ ...previous, selectedHash: null, detail: null }));
-			return;
-		}
-		void selectCommit(hash);
-	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
-
-	/**
-	 * 转到当前 HEAD 提交：把滚动容器定位到该提交所在行。
-	 *
-	 * 图形区按可视区窗口化渲染，目标行可能尚未挂载，因此不能靠 `querySelector` 找行；
-	 * 直接按行号算出偏移并设置滚动位置，窗口随之把该行渲染出来。
-	 */
-	const goToHead = React.useCallback(() => {
-		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
-		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
-		if (target === undefined) return;
-		const container = graphScrollRef.current;
-		if (container === null) return;
-		const index = state.commits.indexOf(target);
-		if (index < 0) return;
-		// 真正滚动的是图区内部元素（`graphScrollRef` 给的是外层容器）。
-		const scroller = container.querySelector('[data-graph-scroll]') ?? container;
-		scroller.scrollTo({ top: index * ROW_HEIGHT, behavior: 'smooth' });
-	}, [state.commits, state.head]);
-
-	/** 加载仓库后自动滚动到 HEAD。 */
-	const didAutoScrollRef = React.useRef(false);
-	React.useEffect(() => {
-		if (!settings.onRepoLoadScrollToHead) return undefined;
-		if (didAutoScrollRef.current) return undefined;
-		if (state.phase !== 'ready' || state.commits.length === 0) return undefined;
-		didAutoScrollRef.current = true;
-		const timer = setTimeout(goToHead, 60);
-		return () => { clearTimeout(timer); };
-	}, [settings.onRepoLoadScrollToHead, state.phase, state.commits, goToHead]);
 	/*
 	 * 切换仓库时把已加载提交数收回到该仓库上次的值（没有记录时用初始值）：避免跨仓库累积，
 	 * 同时保证切回同一仓库时窗口缓存的键不变、不必重发 `git log`。
@@ -726,7 +559,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			? INITIAL_MAX_COMMITS
 			: (rememberedMaxCommits(workingTreePath) ?? INITIAL_MAX_COMMITS));
 	}, [workingTreePath]);
-	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
 	/*
 	 * 后台刷新指示：两个分区各自按作用面取进行中标志，「上次刷新」文案每 30 秒重算一次，
@@ -977,8 +809,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onClone: repoCommands.handleClone, cloneBusy: repoCommands.cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
-			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
-			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
+			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
+			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
 			onResizeStart: layout.startRepoResize,
 		}),
 
