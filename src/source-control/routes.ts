@@ -18,7 +18,7 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, gitSpawnCount, initSubmodule, loadWorkingTree, notifyRepositoryWrite, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle, whenWorktreeIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, notifyRepositoryWrite, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle, whenWorktreeIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
@@ -35,10 +35,13 @@ import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 import { repoHead, repoHeadHash } from './repo-facts.js';
 import { resolveGitDir } from './worktree-branches.js';
-import { currentLogFile, flushSync, log, logDebug, logError, logInfo, logRoot, logWarn, recentLogFiles, type LogLevel } from './logger.js';
+import { currentLogFile, log, logDebug, logError, logInfo, logRoot, logWarn, recentLogFiles, type LogLevel } from './logger.js';
 import { submitFeedback } from './feedback.js';
 import { formatBytes } from './feedback-text.js';
 import type { StashEntry } from './git-types.js';
+import { recordCommandCost } from './api/cost.js';
+import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
+import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
 
 /** 不要求会话仓库的命令：日志位置、反馈与客户端日志与仓库无关。 */
 const REPO_FREE_COMMANDS: ReadonlySet<string> = new Set(['feedbackInfo', 'submitFeedback', 'logEvent']);
@@ -57,39 +60,7 @@ function clientLogLevel(value: unknown): LogLevel {
 	return level === 'D' || level === 'W' || level === 'E' ? level : 'I';
 }
 
-function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
-	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-	res.end(JSON.stringify(body));
-}
 
-function sendBadRequest(res: http.ServerResponse, message: string): void {
-	logWarn('api', `请求被拒绝（400）：${message}`);
-	sendJson(res, 400, { error: message });
-}
-
-function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
-	return new Promise((resolve, reject) => {
-		const chunks: Buffer[] = [];
-		req.on('data', (c: Buffer) => chunks.push(c));
-		req.on('end', () => {
-			try {
-				resolve(chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>) : {});
-			} catch (e) {
-				reject(e instanceof Error ? e : new Error(String(e)));
-			}
-		});
-		req.on('error', reject);
-	});
-}
-
-/** 事件流连接的保活间隔（毫秒）。 */
-const EVENTS_HEARTBEAT_MS = 25000;
-
-/** 事件流连接数上限：每个连接占一个响应流，不设上限时页面反复重连会累积。 */
-const MAX_EVENT_STREAMS = 16;
-
-/** 当前打开的事件流连接。 */
-const eventStreams = new Set<http.ServerResponse>();
 
 /**
  * 取节点树里全部可用节点的路径。
@@ -111,100 +82,6 @@ function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
 	walk(nodes);
 	return paths;
 }
-
-/**
- * 向所有事件流连接推送一条仓库变更。
- *
- * @param repo - 发生变更的仓库路径。
- * @returns 无。
- */
-function broadcastRepositoryWrite(repo: string): void {
-	broadcastEvent('repository-write', repo);
-}
-
-/**
- * 向所有事件流连接推送一条仓库结构变更。
- *
- * 结构变更指工作树登记、子模块目录或 `.gitmodules` 的变化；接收方据此重新枚举仓库树。
- *
- * @param repo - 结构发生变化的仓库路径。
- * @returns 无。
- */
-function broadcastRepositoryTree(repo: string): void {
-	broadcastEvent('repository-tree', repo);
-}
-
-/**
- * 向所有事件流连接推送一条事件帧。
- *
- * @param event - 事件名。
- * @param repo - 仓库路径。
- * @returns 无。
- */
-function broadcastEvent(event: string, repo: string): void {
-	// 事件本身即状态变化：写操作与结构变化的唯一记录点，同时记下发给了几个面板。
-	const receivers = eventStreams.size;
-	const suffix = receivers === 0 ? '（当前没有面板在监听，事件已丢弃）' : `（推送给 ${String(receivers)} 个面板）`;
-	if (event === 'repository-tree') logInfo('watcher', `仓库结构已变化，通知面板重扫仓库树：${repo}${suffix}`);
-	else logInfo('repo', `仓库已被写入，通知面板刷新工作区与提交图：${repo}${suffix}`);
-	const frame = `event: ${event}\ndata: ${JSON.stringify({ repo })}\n\n`;
-	for (const stream of eventStreams) {
-		try {
-			stream.write(frame);
-		} catch {
-			/* 连接已断开时由 close 事件清理 */
-		}
-	}
-}
-
-/**
- * 处理一条事件流连接。
- *
- * 通道只做一件事：把本进程里任何**成功**的仓库写操作推给所有面板，让别的会话、别的工作区与
- * 外部进程造成的改动也能即时反映。推送不携带数据，接收方自行重读。
- *
- * @param req - 请求。
- * @param res - 响应。
- * @returns 无。
- */
-function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void {
-	if (eventStreams.size >= MAX_EVENT_STREAMS) {
-		logWarn('api', `事件流连接数已达上限 ${String(MAX_EVENT_STREAMS)} 条，拒绝新连接`);
-		sendJson(res, 503, { error: '事件流连接数已达上限' });
-		return;
-	}
-	res.writeHead(200, {
-		'content-type': 'text/event-stream; charset=utf-8',
-		'cache-control': 'no-store',
-		'connection': 'keep-alive',
-	});
-	res.write(': connected\n\n');
-	eventStreams.add(res);
-	logDebug('api', `面板已连接事件流，当前共 ${String(eventStreams.size)} 条连接`);
-	const heartbeat = setInterval(() => {
-		try {
-			res.write(': ping\n\n');
-		} catch {
-			/* 写失败由 close 事件清理 */
-		}
-	}, EVENTS_HEARTBEAT_MS);
-	// 保活不应阻止宿主退出。
-	if (typeof heartbeat.unref === 'function') heartbeat.unref();
-	/*
-	 * `req` 与 `res` 的 close 都会触发，且同一次断开两者都会发；不幂等的话一条断开会被记两遍。
-	 */
-	let closed = false;
-	const close = (): void => {
-		if (closed) return;
-		closed = true;
-		clearInterval(heartbeat);
-		eventStreams.delete(res);
-		logDebug('api', `面板已断开事件流，当前还剩 ${String(eventStreams.size)} 条连接`);
-	};
-	req.on('close', close);
-	res.on('close', close);
-}
-
 /*
  * 并发请求合并：同一仓库、同一命令、同一参数的请求同时到达时只执行一轮，其余等它的结果。
  *
@@ -225,24 +102,6 @@ const COALESCE_TIMEOUT_MS = 30_000;
 /** 在飞的合并项：键为命令 + 仓库 + 参数，值为最终回投的载荷。 */
 const inFlightPayloads = new Map<string, Promise<Record<string, unknown>>>();
 
-/**
- * 生成合并键。
- *
- * `refreshId` 不参与：它是客户端各自的轮次编号，不影响取数结果。
- *
- * @param command - 命令名。
- * @param repo - 仓库路径。
- * @param msg - 请求体。
- * @returns 合并键。
- */
-function coalesceKeyOf(command: string, repo: string, msg: Record<string, unknown>): string {
-	const params: Record<string, unknown> = {};
-	for (const key of Object.keys(msg).sort()) {
-		if (key === 'command' || key === 'repo' || key === 'refreshId') continue;
-		params[key] = msg[key];
-	}
-	return `${command}\u0000${repo.toLowerCase()}\u0000${JSON.stringify(params)}`;
-}
 
 /**
  * 读全部引用的签名。
@@ -1390,159 +1249,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
 }
 
-/*
- * 刷新耗时汇总：单条命令不记日志，按「一次刷新」把耗时与 git 子进程数汇总成一行。
- *
- * 这是「显示到界面」之外唯一需要的性能观测点：一次刷新会打十几次命令，逐条记既淹没日志，
- * 又看不出那一次刷新到底花了多少。
- *
- * 分组按客户端随请求带来的 `refreshId`：同一轮刷新的命令归到一组，轮次边界由客户端决定。
- * 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的、或旧版客户端）按仓库与时间窗口归组。
- */
-
-/** 无轮次编号时一轮的合并窗口（毫秒）。 */
-const COST_WINDOW_MS = 3000;
-
-/** 退出时冲刷的已登记标志。 */
-let exitFlushRegistered = false;
-
-/** 一轮刷新内的累计。 */
-interface CostBucket {
-	/** 本轮的标识，仅用于日志展示。 */
-	readonly label: string;
-	/** 本轮所属仓库；git 子进程计数按它取。 */
-	readonly repo: string;
-	/** 本轮第一条命令的开始时刻。 */
-	firstStartedAt: number;
-	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
-	lastEndedAt: number;
-	/** 本轮开始时的 git 子进程计数。 */
-	spawnsAtStart: number;
-	/** 各命令的执行次数。 */
-	readonly counts: Map<string, number>;
-	/** 各命令累计耗时（毫秒）。 */
-	readonly msByCommand: Map<string, number>;
-	/** 各命令命中缓存的次数（耗时 0 ms 且不是首次）。 */
-	readonly cachedCounts: Map<string, number>;
-	/** 最慢的一条命令与其耗时。 */
-	slowest: { command: string; ms: number } | null;
-	/** 本轮累计耗时（毫秒）。 */
-	totalMs: number;
-}
-
-/** 在跑的轮次：键为仓库 + 轮次编号（无编号时用 `*`）。 */
-const costBuckets = new Map<string, CostBucket>();
-
-/** 各轮次的归组键 → 超时冲刷定时器。 */
-const costTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/**
- * 输出一轮的汇总。
- *
- * @param key - 归组键。
- * @returns 无。
- */
-function flushCostBucket(key: string): void {
-	const timer = costTimers.get(key);
-	if (timer !== undefined) {
-		clearTimeout(timer);
-		costTimers.delete(key);
-	}
-	const current = costBuckets.get(key);
-	if (current === undefined) return;
-	costBuckets.delete(key);
-	const breakdown = [...current.counts.entries()]
-		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-		.map(([name, count]) => {
-			const cached = current.cachedCounts.get(name) ?? 0;
-			const suffix = cached === 0 ? '' : cached === count ? '（全部命中缓存）' : `（${String(cached)} 次命中缓存）`;
-			return `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms${suffix}`;
-		})
-		.join('、');
-	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
-	/*
-	 * 墙钟取「首条命令开始 → 末条命令结束」，不是「归组开启至今」：命令之间的空闲不算用户等待。
-	 *
-	 * 命令是并行发出的，各条耗时之和会大于墙钟，因此两个数都给：墙钟是用户感知，
-	 * 命令之和是工作量。git 子进程数是这套取数的主要成本来源（一次约 80ms 固定开销）。
-	 */
-	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
-	// 按仓库计数：并发轮次各自算差值，共用全局计数会把别的轮次的子进程算进来。
-	const spawns = gitSpawnCount(current.repo) - current.spawnsAtStart;
-	logInfo('perf', `${current.label}墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，git 子进程 ${String(spawns)} 个，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
-}
-
-/**
- * 输出全部在跑的轮次并复位。
- *
- * @returns 无。
- */
-function flushCommandCost(): void {
-	for (const key of [...costBuckets.keys()]) flushCostBucket(key);
-}
-
-/**
- * 记一条命令的耗时；轮次结束时输出一行汇总。
- *
- * @param command - 命令名。
- * @param ms - 本次耗时（毫秒）。
- * @param repo - 仓库路径。
- * @param refreshId - 客户端给出的轮次编号；未给出时为 null。
- * @returns 无。
- */
-function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null): void {
-	if (command === '' || command === 'logEvent') return;
-	if (!exitFlushRegistered) {
-		exitFlushRegistered = true;
-		/*
-		 * 定时器 unref 过：进程退出时靠这里把最后一轮写出去。
-		 *
-		 * 退出钩子按注册顺序执行，而日志模块自己的收尾钩子在插件装载时就已注册、会先跑；
-		 * 因此这里写完必须自己再 flush 一次，否则刚写进缓冲的行赶不上落盘。
-		 */
-		process.once('exit', () => {
-			flushCommandCost();
-			flushSync();
-		});
-	}
-	const repoLabel = repo === '' ? '（未指定仓库）' : repo;
-	const key = `${repo.toLowerCase()}\u0000${refreshId === null ? '*' : String(refreshId)}`;
-	/*
-	 * 同一仓库出现新的轮次编号时，说明上一轮已经打完：先把它写出去，不再等定时器。
-	 * 定时器只兜「客户端不再发新轮次」的情形（例如窗口被关掉）。
-	 */
-	for (const existing of [...costBuckets.keys()]) {
-		if (existing === key) continue;
-		if (!existing.startsWith(`${repo.toLowerCase()}\u0000`)) continue;
-		flushCostBucket(existing);
-	}
-	const now = Date.now();
-	let current = costBuckets.get(key);
-	if (current === undefined) {
-		current = {
-			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
-			repo, firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart: gitSpawnCount(repo),
-			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
-		};
-		costBuckets.set(key, current);
-	}
-	current.lastEndedAt = now;
-	current.counts.set(command, (current.counts.get(command) ?? 0) + 1);
-	current.msByCommand.set(command, (current.msByCommand.get(command) ?? 0) + ms);
-	current.totalMs += ms;
-	// 0 ms 的命令即命中了缓存：单独计数，否则无法判断缓存是否生效。
-	if (ms === 0) current.cachedCounts.set(command, (current.cachedCounts.get(command) ?? 0) + 1);
-	if (current.slowest === null || ms > current.slowest.ms) current.slowest = { command, ms };
-	// 每一轮都重新计时：轮次内的命令可能间隔很久（用户在等某个慢操作）。
-	const existTimer = costTimers.get(key);
-	if (existTimer !== undefined) clearTimeout(existTimer);
-	const timer = setTimeout(() => {
-		costTimers.delete(key);
-		flushCostBucket(key);
-	}, COST_WINDOW_MS);
-	if (typeof timer.unref === 'function') timer.unref();
-	costTimers.set(key, timer);
-}
 export interface GgRouteContext {
 	register(spec: {
 		kind: 'exact' | 'prefix';
