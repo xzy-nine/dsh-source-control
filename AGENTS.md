@@ -31,8 +31,10 @@
 ```
 src/index.ts        宿主入口：注册 web 路由与 AI 依赖，注册后按已持久化的工作区根预扫仓库树
 src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、查询层、操作层、差异收集、仓库发现
-                    （repo-discovery.ts：逐层并行扫描、60 秒 TTL 发现缓存、启动预扫；批量领先/
-                    落后取数经 child-process.ts 的 createLimiter 限流）、仓库事实层
+                    （repo-discovery.ts 发现流程与启动预扫；repo-node.ts 节点类型与目录探测、
+                    repo-enrich.ts 节点构造与工作树/子模块补齐、repo-discovery-cache.ts 60 秒 TTL
+                    发现缓存、repo-sync.ts 批量领先/落后取数经 child-process.ts 的 createLimiter
+                    限流）、仓库事实层
                     （repo-facts.ts：git 目录布局与打包引用的进程级缓存）、引用筛选取数
                     （git-query.ts 的 getRefSummaries / getBranchBase，对应路由命令 loadRefs /
                     loadBranchBase：弹窗用的全部引用与当前分支的分叉来源）、
@@ -49,6 +51,9 @@ src/source-control/ 宿主侧：git 命令路由、执行层、纯解析层、�
                     log-retention.ts 的命名与淘汰判据）与反馈
                     （feedback.ts 提交、feedback-text.ts 正文拼装、
                     log-archive.ts 打包、log-redact.ts 脱敏）
+  src/source-control/api/  命令分派：context.ts 是处理器共用的上下文契约，http.ts 是 HTTP 适配，
+                    events.ts 是 SSE 事件流，cost.ts 是命令耗时汇总，其余按命令域分文件
+                    （workspace / state / repos / graph / history / misc）
 src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，其余按职责分目录
   src/client/api/   宿主 API 客户端：传输层与按命令域拆分的命令封装，index.ts 汇总导出；
                     stream.ts 是流式响应的增量解码（事件流与流式提交信息共用）；
@@ -63,7 +68,8 @@ src/client/         客户端侧：只有 index.ts（侧栏页入口）平铺，
                     数据源，menu-actions.ts 补缺省并给出类型；变更区三个目标（文件夹行 / 文件行 /
                     分组标题）的菜单共用 change-menu.ts 的注册表，元数据在 change-menu-actions.json
   src/client/graph/ 泳道图：index.ts 组件、lanes.ts 布局纯计算、row-model.ts 行文本与引用标记、
-                    window-range.ts 窗口区间、auto-load.ts 触底续取判据
+                    window-range.ts 窗口区间、auto-load.ts 触底续取判据、
+                    use-graph-windowing.ts 滚动窗口化（可视区测量、起始行换算、触底续取）
   src/client/diff/  差异页：file-diff.tsx 视图（复制自 DSH）、resource-path.ts 地址换算
   src/client/git/   仓库本地操作：remote-url.ts 地址解析、clone-command.ts 克隆命令、
                     terminal-run.ts 终端执行
@@ -98,7 +104,9 @@ assets/icons/       引用标记用的 SVG
 JSON 在 TS 里是宽类型（字符串推成 `string`、缺键不报错），因此形状、占位符与各目标的必备操作由
 `test/data-sources.test.mjs` 校验。
 
-宿主侧数据层分四块：`working-tree.ts` 是 git 执行层（`runGit` / `gitOrThrow`）与工作区变更，
+宿主侧数据层分四块：`working-tree.ts` 是 git 执行层与工作区变更的对外出口（只做再导出，实现见
+`git-exec.ts` 执行层、`status-parse.ts` 状态解析、`worktree-ops.ts` 读取与暂存提交、`discard.ts` 丢弃、
+`worktree-remove.ts` 移除工作树、`submodule-ops.ts` 子模块），
 其 `parseStatusSnapshot` 解析 `status --porcelain=v2 --branch`（条目与分支上游来自同一次调用，
 v2 的 `.` 空列按空列输出）；`git-parse.ts` 是纯解析层，输入 git 原始输出、输出数据结构，
 无 git 调用，可被测试直接导入，分支同步解析见其 `BRANCH_SYNC_FORMAT` 与 `parseBranchSync`；
@@ -300,16 +308,16 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 | 层 | 落点 | 键 | 有效期 / 容量 | 作废 |
 |---|---|---|---|---|
 | 进程级事实 | `repo-facts.ts` 的 `layouts` / `packedRefs` | 规范化仓库路径（分隔符统一为 `/`）/ 规范化公共目录 | 布局 10s、容量 64；打包引用无 TTL，按 `mtimeMs + size` 守卫、容量 8 | 写命令结束按仓库（含祖先与后代）作废布局；打包引用由守卫自校验 |
-| 子进程结果 | `working-tree.ts` 的 `resultCache` / `inFlightGit` | 仓库 + `JSON.stringify(args)` | 200ms / 64；在途条目收尾即删 | 写命令按仓库（含祖先与后代） |
+| 子进程结果 | `git-exec.ts` 的 `resultCache` / `inFlightGit` | 仓库 + `JSON.stringify(args)` | 200ms / 64；在途条目收尾即删 | 写命令按仓库（含祖先与后代） |
 | 宿主响应 | `host-cache.ts` 的 `graphs` / `repoInfos` / `snapshots` / `hooksPaths` | 仓库 + 取数参数（图窗口另含 HEAD 与贮藏 / 远程标识）/ 仓库 | 30s / 60s / 500ms / 60s，容量 64 / 32 / 32 / 32 | 任何写命令清空整表；`invalidateCache` 按仓库（含祖先与后代） |
-| 客户端取数参数 | `use-graph-data.ts` 的 `knownRepoInfo` / `lastPanelState` / `lastMaxCommits` | 归一化仓库路径 | 模块级，容量 8 | 写操作与换仓库（`dropGraphWindows`） |
+| 客户端取数参数 | `panel/graph-window-cache.ts` 的 `knownRepoInfo` / `lastPanelState` / `lastMaxCommits` | 归一化仓库路径 | 模块级，容量 8 | 写操作与换仓库（`dropGraphWindows`） |
 
 `runGit` 的在途复用只对**确认只读**的命令生效（`isReadOnly` 的形态清单）：`status`、`diff`、`ls-files`
 的输出随工作区与索引当前内容变化，因此不进 200ms 结果缓存，但仍与在途调用共享同一个子进程 —— 客户端
 中止后重发、刷新与只取快照并发时因此只跑一次 git。写命令一律独立执行，并发两次写命令仍起两个进程。
 子进程环境按「只读形态 + 父进程的语言取值」缓存，父进程改语言即重建。
 
-仓库树的批量领先/落后取数是唯一入队的取数：`repo-discovery.ts` 的 `loadReposSync` 走模块级
+仓库树的批量领先/落后取数是唯一入队的取数：`repo-sync.ts` 的 `loadReposSync` 走模块级
 `createLimiter(SYNC_CONCURRENCY)`（`child-process.ts`，上限 5），一次下发全部路径时同时在跑的 git
 不超过 5 个；面板的单仓库命令不入队，与「宿主不串行化命令」一致。
 
@@ -330,14 +338,14 @@ reflog 创建来源 → 默认远程分支，取值顺序同 VS Code 图形视�
 
 | 机制 | 落点 | 约束 |
 |---|---|---|
-| 窗口状态按起始行步进 | `graph/index.ts` 的 `topIndex` 与 `graph/window-range.ts` | 滚动事件经 `requestAnimationFrame` 合并（缺失时退回 `setTimeout(0)`），起始行未变不写状态；行偏移或可视高度变化后按当前滚动位置重算 |
-| 行级 `memo` | `graph/index.ts` 的 `LaneCell`/`RefChip`/`IndicatorRow`/`DetailGutter`/`CommitRow`/`CommitGraph`、`changes.ts` 的 `ChangeNodeRow`/`CommitDetail`/`ChangeGroup`、`sections.ts` 的三个分区与 `CommitBox`/`ChangeLists`、`repo-row.ts` 的 `RepoRow` | 传进去的回调必须是 `useCallback` 或模块级稳定值；行组件按「哈希 + 文本」这类稳定参数自建闭包 |
-| 提交框与变更列表分拆 | `sections.ts` 的 `CommitBox` 与 `ChangeLists` | 输入提交信息只重渲染提交框；同文件内 `css.commitBox` 须排在 `css.changesScroll` 之前，两个分组的 `staged: true`/`staged: false` 须排在其后（`primitives.test.mjs` 按文本顺序断言） |
+| 窗口状态按起始行步进 | `graph/use-graph-windowing.ts` 的 `topIndex` 与 `graph/window-range.ts` | 滚动事件经 `requestAnimationFrame` 合并（缺失时退回 `setTimeout(0)`），起始行未变不写状态；行偏移或可视高度变化后按当前滚动位置重算 |
+| 行级 `memo` | `graph/index.ts` 的 `LaneCell`/`RefChip`/`IndicatorRow`/`DetailGutter`/`CommitRow`/`CommitGraph`、`changes.ts` 的 `ChangeNodeRow`/`CommitDetail`/`ChangeGroup`、`sections/` 下三个分区与 `CommitBox`/`ChangeLists`、`repo-row.ts` 的 `RepoRow` | 传进去的回调必须是 `useCallback` 或模块级稳定值；行组件按「哈希 + 文本」这类稳定参数自建闭包 |
+| 提交框与变更列表分拆 | `sections/changes.ts` 的 `CommitBox` 与 `ChangeLists` | 输入提交信息只重渲染提交框；同文件内 `css.commitBox` 须排在 `css.changesScroll` 之前，两个分组的 `staged: true`/`staged: false` 须排在其后（`primitives.test.mjs` 按文本顺序断言） |
 | 派生值按身份缓存 | `graph/row-model.ts` 的 `titleOf`/`labelsOf`、`panel/changes.ts` 的 `guidesOf` | `labelsOf` 的缓存键含 HEAD，检出后自动重算 |
 | 派生值按键缓存 | `graph/row-model.ts` 的 `avatarUrlsOf`、`panel/language.ts` 的 `needsTranslationMemo` | 上限各 1024，键含语言或边长 |
 | 悬停缓存容量 | `panel/use-commit-stats.ts` 的 `statsByHash`/`messageByHash`/`translatedByHash`/`translatedFromByHash` | 各自独立上限 1200，写入后按插入序淘汰；与既有 TTL 清理正交 |
 | 对象身份复用 | `panel/commit-diff.ts` 的 `mergeCommits`/`mergeEntries` | 判据复用 `commitsEqual`/`entriesEqual`（提交只比影响图形的字段）；顺序取新列表，**总是返回新数组**，`full` 刷新不短路 |
-| 时钟门控 | `panel/index.ts` 的 `refreshClock` | 只按 `document.visibilityState === 'visible'` 推进；`visibilitychange` 时启停并立即推进一次 |
+| 时钟门控 | `panel/use-panel-layout.ts` 的 `refreshClock` | 只按 `document.visibilityState === 'visible'` 推进；`visibilitychange` 时启停并立即推进一次 |
 
 `src/client/shared/cache.ts` 是这些缓存的基元（`LruMap`/`forObject`/`forKey`/`mapsEqual`/`trimOldest`），
 纯模块无 React 依赖。新增缓存先在此取基元，不另写淘汰逻辑。
@@ -392,7 +400,7 @@ reflog 创建来源 → 默认远程分支，取值顺序同 VS Code 图形视�
 
 `use-file-change-refresh.ts` 订阅事件源：窗口没聚焦、面板正忙时挂起，连续变更按冷却节流。
 `use-auto-fetch.ts` 是唯一的定时网络操作，按「聚焦 + 空闲」门控。`use-cache-cleanup.ts` 丢弃过期的
-悬停统计与完整提交信息缓存。以上 hook 与 `use-graph-data.ts` 的兜底轮询都从该 hook 暴露的
+悬停统计与完整提交信息缓存。以上 hook 与 `use-graph-polling.ts` 的兜底轮询都从该 hook 暴露的
 `busyRef` 读进行中的操作记录，只有**目标仓库**在忙时才挂起。
 
 ## 忙碌状态
