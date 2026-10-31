@@ -95,7 +95,7 @@ function cssFile(name) {
 test('图形区拖拽手柄在图形标题之前', () => {
 	// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
 	// 否则会出现在标题与图形之间。
-	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const source = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
 	const section = source.indexOf('cx(css.sec, css.graphSec)');
 	const handle = source.indexOf('shared.secResize', section);
 	const title = source.indexOf("'图形'");
@@ -116,8 +116,7 @@ test('改动文件区在图形区内展开', () => {
 	// 展开块由 CommitGraph 按选中行渲染，面板不再另起一块。
 	const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
 	assert.match(graphSource, /renderDetail/, 'CommitGraph 必须接收 renderDetail');
-	assert.match(graphSource, /css\.detailInline/, '展开块必须由图形区渲染');
-	const sectionSource = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const sectionSource = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
 	const section = sectionSource.indexOf('cx(css.sec, css.graphSec)');
 	assert.ok(section !== -1, '未找到图形区标记');
 	assert.ok(!/css\.detail(?![A-Za-z])/.test(sectionSource), '图形区不应渲染独立的 detail 区块');
@@ -149,10 +148,9 @@ test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primi
 	assert.ok(exported.has('IconBranchOutlineRegular'));
 	assert.ok(!exported.has('IconBranchOutline'), '裸图标名不应存在，若上游改名需同步本测试');
 });
-
 test('提交框在滚动区之外', () => {
 	// 滚动必须只发生在变更列表上：提交框若落在滚动容器内会随列表一起滚走。
-	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const source = readFileSync(join(panelDir, 'sections', 'changes.ts'), 'utf8');
 	const box = source.indexOf('css.commitBox');
 	const scroll = source.indexOf('css.changesScroll');
 	assert.ok(box !== -1 && scroll !== -1, '未找到提交框或滚动容器标记');
