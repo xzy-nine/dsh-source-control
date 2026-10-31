@@ -7,14 +7,14 @@
  */
 import React from 'react';
 import {
-	addRemote, addToGitignore, addToLocalExclude, checkoutBranch, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
+	addRemote, addToGitignore, addToLocalExclude, commitStaged, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
 	editRemote, editUserDetails, exportRepoConfig, fetchRepo, generateCommitMessage, ghAccount, ghCreatePullRequest,
 	ghCreateRepo, ghRepoInfo, loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
 	abortMerge, localExcludeState, loadCommitMessage,
-	merge, pushBranch, pushStash, pushUpstream, initSubmodule, removeWorktree, resetToCommit, sshStatus, stagePaths, throwIfError, translateAvailable,
+	merge, pushBranch, pushStash, pushUpstream, resetToCommit, sshStatus, stagePaths, throwIfError, translateAvailable,
 	translateText, unstagePaths,
 } from '../api/index.ts';
-import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { showContextMenu } from '../ui/context-menu.ts';
 import { cloneTerminalCommand } from '../git/clone-command.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from '../ui/dialog.ts';
@@ -48,12 +48,13 @@ import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
-import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
+import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
 import { commitEntries } from './optimistic.ts';
 import { logCommitCountOf } from './commit-diff.ts';
 import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
+import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
@@ -61,7 +62,6 @@ import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import type { HooksState } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
-import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 
 /** 初始加载的提交数；切换仓库时回到该值。 */
 const INITIAL_MAX_COMMITS = 200;
@@ -1561,110 +1561,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	/* ── 右键菜单组装 ─────────────────────────────────────────── */
 
-	/** 仓库行「更多操作」右键菜单。 */
-	const handleRepoMoreActions = React.useCallback((node, event) => {
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		const branchName = node.branch ?? '';
-		// 只有链接工作树能被移除：主工作树会被 git 拒绝（is a main working tree）。
-		const isLinkedWorktree = node.kind === 'worktree';
-		// 未检出的子模块在磁盘上没有工作区，需要初始化后才能读取。
-		const isUninitializedSubmodule = node.kind === 'submodule' && !node.available;
-		const items: ContextMenuItem[] = [
-			{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path, undefined, { intent: `刷新仓库 ${node.name}` }); } },
-			{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path, undefined, { intent: `抓取仓库 ${node.name}` }); } },
-			{
-				title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '',
-				onClick: () => {
-					selectNodeAndReset(node);
-					void run('network', async () => {
-						await pushCurrentBranch(node.path, hooksState.push && !runHooks);
-					}, node.path, undefined, { intent: `推送仓库 ${node.name}` }).finally(() => { setRunHooks(true); });
-				},
-			},
-			{ type: 'divider' },
-			{ title: '复制路径', onClick: () => { void copyText(node.path); } },
-		];
-		if (isUninitializedSubmodule) {
-			items.push({ type: 'divider' }, {
-				title: '初始化子模块', disabled: isRepoBusy(state.busy, node.path, 'network'),
-				onClick: () => {
-					void (async () => {
-						/*
-						 * 以子模块路径为仓库目标：宿主按路径取父仓库并换算相对路径，因此子模块尚未
-						 * 检出（目录里没有 `.git`）时也能执行。该命令可能访问远端，按网络影响面记录。
-						 */
-						selectNodeAndReset(node);
-						logClient('I', 'action', `用户操作：初始化子模块 ${node.name}（${node.path}）`);
-						setState((previous) => ({ ...previous, busy: addBusy(previous.busy, node.path, 'network'), error: null }));
-						try {
-							await initSubmodule(node.path, node.path);
-						} catch (error) {
-							reportError(setState, error instanceof Error ? error.message : String(error));
-							return;
-						} finally {
-							setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, node.path, 'network') }));
-						}
-						rescan();
-					})();
-				},
-			});
-		}
-		if (isLinkedWorktree) {
-			items.push({ type: 'divider' }, {
-				title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, workingTreePath, 'history'),
-				onClick: () => {
-					void (async () => {
-						const ok = await showCheckbox({
-							title: '移除工作树',
-							message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
-							checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
-						});
-						if (!ok) return;
-						/*
-						 * 直接以该工作树路径为目标执行移除，不经面板的 `run`：被移除的可能正是当前
-						 * 选中的工作树，之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
-						 */
-						logClient('I', 'action', `用户操作：移除工作树 ${node.name}（${node.path}，强制）`);
-						try {
-							await removeWorktree(node.path, node.path, true);
-						} catch (error) {
-							reportError(setState, error instanceof Error ? error.message : String(error));
-							return;
-						}
-						dropGraphWindows(node.path);
-						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
-						setSelectedId((previous) => (previous === node.id ? null : previous));
-						rescan();
-					})();
-				},
-			});
-		}
-		showContextMenu({
-			x: event.clientX, y: event.clientY,
-			onClose: () => target.classList.remove(MENU_TARGET_CLASS),
-			items,
-		});
-	}, [selectNodeAndReset, run, refresh, rescan, setState, state.busy, settings, workingTreePath, setSelectedId, hooksState.push, runHooks, pushCurrentBranch]);
-
-	/** 仓库行分支名点击：弹出分支切换菜单。 */
-	const handleBranchClick = React.useCallback((node, event) => {
-		const branches = new Set<string>();
-		for (const commit of state.commits) {
-			for (const name of commit.heads ?? []) branches.add(name);
-		}
-		if (branches.size === 0) return;
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		showContextMenu({
-			x: event.clientX, y: event.clientY,
-			onClose: () => target.classList.remove(MENU_TARGET_CLASS),
-			items: [...branches].sort().map((name) => ({
-				title: name,
-				onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path, undefined, { intent: `检出分支 ${name}` }); },
-			})),
-		});
-	}, [state.commits, selectNodeAndReset, run]);
 
 	/**
 	 * 是否可以创建 Pull Request：必须有 GitHub 远程，且当前分支已推送到远程。
@@ -1860,8 +1756,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onClone: handleClone, cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
-			onMoreActions: handleRepoMoreActions,
-			onBranchClick: handleBranchClick,
+			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: hooksState.push, runHooks, setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
+			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: hooksState.push, runHooks, setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
 			onResizeStart: layout.startRepoResize,
 		}),
 

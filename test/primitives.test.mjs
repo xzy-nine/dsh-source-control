@@ -476,7 +476,7 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 });
 
 test('工作树右键提供移除入口', () => {
-	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panel = readFileSync(join(clientDir, 'panel', 'repo-menu.ts'), 'utf8');
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
 	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录，因此不经 run 直接执行。
