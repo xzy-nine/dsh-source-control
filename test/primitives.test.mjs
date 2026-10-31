@@ -21,6 +21,12 @@ const clientDir = join(root, 'src', 'client');
 const panelDir = join(clientDir, 'panel');
 const cssDir = join(clientDir, 'css');
 
+/** 右键菜单全部源码：装配在 commit-menu.ts，处理函数按域在 panel/menu/ 下。 */
+function menuSources() {
+	const files = ['commit-menu.ts', ...readdirSync(join(panelDir, 'menu')).filter((name) => name.endsWith('.ts')).map((name) => join('menu', name))];
+	return files.map((name) => readFileSync(join(panelDir, name), 'utf8'));
+}
+
 /** ui-primitives 在源码检出中的位置；profile 安装版没有源码，此时跳过。 */
 const PRIMITIVES_INDEX = 'E:/GitHubCode/02DSH/deepseek-harness/packages/client/ui-primitives/src/index.ts';
 const PRIMITIVES_ICONS = 'E:/GitHubCode/02DSH/deepseek-harness/packages/client/ui-primitives/src/icons/index.tsx';
@@ -399,8 +405,8 @@ test('差异面板默认自动换行', () => {
 
 test('删除分支只列以该提交为尖端的分支', () => {
 	// 包含该提交的分支是它的后代，删除后不影响该提交：作为候选会让「删除分支」指向无关分支。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	const build = menu.slice(menu.indexOf('deleteBranch: (ctx, meta) =>'), menu.indexOf('checkoutRemoteBranch: (ctx, meta) =>'));
+	const branchMenu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
+	const build = branchMenu.slice(branchMenu.indexOf('deleteBranch: (ctx, meta) =>'), branchMenu.indexOf('deleteRemoteBranch: (ctx, meta) =>'));
 	assert.match(build, /ctx\.tipBranches\.filter/, '本地候选取自尖端分支');
 	assert.match(build, /ctx\.tipRemoteBranches/, '远程候选取自尖端远程分支');
 	assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
@@ -444,8 +450,8 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 	assert.ok(!/heads: commit\.heads\.filter/.test(routes), '不得再从 heads 里删除占用分支');
 	assert.match(routes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
 
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	assert.match(menu, /function localBranchItem/, '本地分支操作应统一经占用判定');
+	const menu = menuSources().join('\n');
+	assert.match(menu, /export function localBranchItem/, '本地分支操作应统一经占用判定');
 	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
 	/*
 	 * 按 builder 逐个截取：每个 builder 的范围从其定义到下一个 builder 定义之前。
@@ -494,7 +500,7 @@ test('工作树右键提供移除入口', () => {
 
 test('删除当前分支时提示而非静默失败', () => {
 	// 当前分支仍在候选里，但点击后说明原因。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	const menu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
 	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
 	assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
 	// 删除项本身不因当前分支置灰：点击后提示；被别的工作树检出时才由 localBranchItem 置灰。
@@ -509,8 +515,8 @@ test('删除当前分支时提示而非静默失败', () => {
 
 test('提交菜单与引用菜单共用同一份操作注册表', () => {
 	// 两处菜单由 ACTIONS 驱动：引用菜单按 refTypes 过滤，不再各自维护一份定义。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按 id 绑在本文件。
+	const menu = menuSources().join('\n');
+	// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按域绑定在 panel/menu/ 下。
 	const { actions } = JSON.parse(readFileSync(join(panelDir, 'menu-actions.json'), 'utf8'));
 	assert.ok(Array.isArray(actions) && actions.length > 0, '注册表数据源应有操作');
 	for (const action of actions) {
