@@ -247,9 +247,9 @@ test('文件差异视图为复制自 DSH 的实现', () => {
 	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 	assert.match(indexSource, /from '[^']*\/file-diff\.tsx'/, '差异页应引用复制的视图');
 	assert.ok(!indexSource.includes('DiffBlock'), '不应再使用 ui-primitives 的 DiffBlock');
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
-	assert.match(routes, /--unified=3/, '宿主应请求带上下文的统一差异');
+	const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
+	assert.match(miscRoutes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
+	assert.match(miscRoutes, /--unified=3/, '宿主应请求带上下文的统一差异');
 });
 
 test('构建脚本把 CSS 模块的样式内联进包', () => {
@@ -424,9 +424,9 @@ test('删除分支只列以该提交为尖端的分支', () => {
 
 	const api = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
-	assert.match(routes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
+	const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+	assert.match(workspaceRoutes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
+	assert.match(workspaceRoutes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
 });
 
 test('异步打开提交菜单前先取出事件字段', () => {
@@ -444,12 +444,12 @@ test('异步打开提交菜单前先取出事件字段', () => {
 test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
 	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们，也不能在本工作树检出。
 	// 这类分支仍作为标签显示：它们确实指向该提交，隐藏会让图形区少一个真实存在的分支。
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
-	assert.match(routes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
-	assert.ok(!/heads: commit\.heads\.filter/.test(routes), '不得再从 heads 里删除占用分支');
-	assert.match(routes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
-
+	const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
+	const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+	assert.match(workspaceRoutes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
+	assert.match(graphRoutes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
+	assert.ok(!/heads: commit\.heads\.filter/.test(graphRoutes), '不得再从 heads 里删除占用分支');
+	assert.match(workspaceRoutes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
 	const menu = menuSources().join('\n');
 	assert.match(menu, /export function localBranchItem/, '本地分支操作应统一经占用判定');
 	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');

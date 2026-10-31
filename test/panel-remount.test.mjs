@@ -19,7 +19,9 @@ const windowCache = readFileSync(join(root, 'src', 'client', 'panel', 'graph-win
 const polling = readFileSync(join(root, 'src', 'client', 'panel', 'use-graph-polling.ts'), 'utf8');
 const panel = readFileSync(join(root, 'src', 'client', 'panel', 'index.ts'), 'utf8');
 const hostCache = readFileSync(join(root, 'src', 'source-control', 'host-cache.ts'), 'utf8');
-const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
+const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
+const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
 
 test('数据缓存位于宿主内存', () => {
 	for (const store of ['graphs', 'repoInfos', 'snapshots']) {
@@ -38,21 +40,21 @@ test('数据缓存位于宿主内存', () => {
 });
 
 test('宿主在读取路径上命中缓存', () => {
-	assert.match(routes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
+	assert.match(graphRoutes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
 	// 快照键含 HEAD：外部提交不产生写事件，不带 HEAD 会回投提交前的条目。
 	assert.match(
-		routes,
+		workspaceRoutes,
 		/readSnapshot\(repo, await repoHeadHash\(repo\)\)/,
 		'loadWorkingTreeSnapshot 应先查缓存，且键含当前 HEAD',
 	);
 	// 兜底轮询要读当前值：命中缓存会让条目签名永远不变，外部改动再也发现不了。
-	assert.match(routes, /bool\('noCache'\) \? undefined : readSnapshot/, '应支持跳过快照缓存');
+	assert.match(workspaceRoutes, /bool\('noCache'\) \? undefined : readSnapshot/, '应支持跳过快照缓存');
 	assert.match(
-		routes,
+		graphRoutes,
 		/let repoInfo = readRepoInfo\(repo, \{ showRemoteBranches, showStashes, hideRemotes \}\)/,
 		'loadRepoInfo 应按取数参数查缓存',
 	);
-	assert.match(routes, /case 'invalidateCache'/, '应提供主动作废命令');
+	assert.match(miscRoutes, /case 'invalidateCache'/, '应提供主动作废命令');
 	/*
 	 * 仓库信息的缓存键必须含三个取数参数：远程分支、贮藏与隐藏远程都会改变 getRepoInfo 的结果。
 	 */
