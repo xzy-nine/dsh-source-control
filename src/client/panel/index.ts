@@ -7,18 +7,14 @@
  */
 import React from 'react';
 import {
-	addRemote, addToGitignore, addToLocalExclude, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
-	editRemote, editUserDetails, exportRepoConfig, fetchRepo, ghAccount, ghCreatePullRequest, ghRepoInfo,
-	loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
-	abortMerge, localExcludeState, pushStash, pushUpstream, stagePaths, throwIfError, unstagePaths,
+	compareCommits, discardPaths, fetchRepo, loadBranchBase, loadCommitFiles, loadRefs,
+	abortMerge, pushStash, pushUpstream, stagePaths, unstagePaths,
 } from '../api/index.ts';
-import { cloneTerminalCommand } from '../git/clone-command.ts';
-import { showCheckbox, showForm, showSelect, showText } from '../ui/dialog.ts';
+import { showCheckbox, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { ROW_HEIGHT } from '../graph/lanes.ts';
 import { changeOf } from './changes.ts';
-import { hasGitHubRemote } from './github.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import {
@@ -45,15 +41,14 @@ import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
 import { logCommitCountOf } from './commit-diff.ts';
 import { primaryActionOf } from './submit-state.ts';
-import { formatDate, loadSettings, saveSettings, SettingsPanel } from './settings.ts';
+import { formatDate, loadSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { useRemoteSync } from './use-remote-sync.ts';
+import { useRepoCommands } from './use-repo-commands.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
-import { textOf, trimmedTextOf } from '../shared/text.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 import type { BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
-import type { LocalExcludeState, IgnoreWriteResult } from '../api/index.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 
@@ -95,11 +90,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
 	const [settingsTab, setSettingsTab] = React.useState<'repo' | 'global' | 'feedback'>('repo');
-	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
-	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
-	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
-	/** 克隆进行中：只禁用克隆入口，不影响面板其余控件。 */
-	const [cloneBusy, setCloneBusy] = React.useState(false);
 	/**
 	 * 待重扫标志：命令写进终端后置位，窗口重新获得焦点时重扫一次。
 	 *
@@ -370,16 +360,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		};
 	}, [rescan]);
 
-	/* 本地排除条目：换仓库时读一次，写入后再刷新，决定提交框是否显示查看入口。 */
-	React.useEffect(() => {
-		if (workingTreePath === null) { setLocalExclude(null); return undefined; }
-		let cancelled = false;
-		localExcludeState(workingTreePath)
-			.then((state) => { if (!cancelled) setLocalExclude(state); })
-			.catch(() => { if (!cancelled) setLocalExclude(null); });
-		return () => { cancelled = true; };
-	}, [workingTreePath]);
-
 
 	/**
 	 * 选中一个仓库节点并重置面板状态。
@@ -536,7 +516,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const remoteSync = useRemoteSync({
 		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync, remotes: state.remotes, head: state.head,
 		settings, busyFlags, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks,
-		setRunHooks: composer.setRunHooks, run, withProgress, notify,
+		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify },
 	});
 
 	/**
@@ -627,6 +607,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 		return Promise.resolve();
 	}, [onOpenDiff, workingTreePath]);
+
+	/* 仓库级动作：设置、远程与身份、忽略规则、克隆、Pull Request、导出与归档。 */
+	const repoCommands = useRepoCommands({
+		cwd, workingTreePath, sessionId, settings, settingsOpen, remotes: state.remotes, head: state.head,
+		detail: state.detail, busyFlags, selectedNode, pickDirectory, runInTerminal, openDiff,
+		actions: { run, withProgress, notify }, setState, rescanPending, setSettings,
+	});
 
 	/** 打开一个日志文件：绝对路径按普通文件打开（不比较差异）。 */
 	const openLogFile = React.useCallback((path: string): void => { void openDiff('*', path, false, true); }, [openDiff]);
@@ -799,277 +786,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		if (notice !== '') showToast(notice, { tone: 'info' });
 	}, [state.lastRefreshAt, state.phase, state.entries, state.commits, graphScope]);
 
-	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
-	const changeSettings = React.useCallback((next: Settings) => {
-		setSettings(next);
-		saveSettings(next);
-	}, []);
-
-	/** 删除远程并刷新。 */
-	const deleteRemoteByName = React.useCallback((name: string) => {
-		void run('history', async () => { throwIfError(await deleteRemote(workingTreePath as string, name)); }, undefined, undefined, { intent: `删除远程 ${name}` });
-	}, [workingTreePath, run]);
-
-	/* 打开设置时加载仓库配置（用户身份等）。 */
-	React.useEffect(() => {
-		if (!settingsOpen || workingTreePath === null) return;
-		void (async () => {
-			try {
-				const cfg = await loadConfig(workingTreePath, state.remotes.map((remote) => remote.name));
-				const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
-				setUserDetails({ userName: user?.name, userEmail: user?.email });
-			} catch { /* 加载失败时保留空表单 */ }
-		})();
-	}, [settingsOpen, workingTreePath, state.remotes]);
-
-	const reloadUserDetails = async (): Promise<void> => {
-		const cfg = await loadConfig(workingTreePath as string, state.remotes.map((remote) => remote.name));
-		const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
-		setUserDetails({ userName: user?.name, userEmail: user?.email });
-	};
-
-	const handleEditUserDetails = React.useCallback((name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => {
-		void run('history', async () => {
-			const errors = await editUserDetails(workingTreePath as string, name, email, location, deleteLocalName, deleteLocalEmail);
-			if (errors.length > 0) throw new Error(errors[0]);
-			await reloadUserDetails();
-		}, undefined, undefined, { intent: `修改用户身份（${location === 'global' ? '全局' : '当前仓库'}）` });
-	}, [workingTreePath, run, state.remotes]);
-
-	const handleDeleteUserDetails = React.useCallback((delName: boolean, delEmail: boolean, location: string) => {
-		void run('history', async () => {
-			const errors = await deleteUserDetails(workingTreePath as string, delName, delEmail, location);
-			if (errors.length > 0) throw new Error(errors[0]);
-			await reloadUserDetails();
-		}, undefined, undefined, { intent: `删除用户身份（${location === 'global' ? '全局' : '当前仓库'}）` });
-	}, [workingTreePath, run, state.remotes]);
-
-	/** 添加远程并刷新。 */
-	const handleAddRemote = React.useCallback((name: string, url: string, pushUrl: string | null) => {
-		void run('history', async () => { throwIfError(await addRemote(workingTreePath as string, name, url, pushUrl, false)); }, undefined, undefined, { intent: `添加远程 ${name}` });
-	}, [workingTreePath, run]);
-
-	/** 编辑远程并刷新。 */
-	const handleEditRemote = React.useCallback((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => {
-		void run('history', async () => { throwIfError(await editRemote(workingTreePath as string, nameOld, nameNew, urlOld, urlNew, pushUrlOld, pushUrlNew)); }, undefined, undefined, { intent: `编辑远程 ${nameOld}` });
-	}, [workingTreePath, run]);
-
-	/**
-	 * 把未暂存的路径加入 `.gitignore`，随后打开该文件的差异视图。
-	 *
-	 * 规则写进最近的 `.gitignore`（没有则在仓库根新建）；新建的文件没有旧侧内容，
-	 * 因此按普通文件打开而不是差异。
-	 */
-	const handleAddToGitignore = React.useCallback((path: string) => {
-		void (async () => {
-			const written: { value: IgnoreWriteResult | null } = { value: null };
-			await run('commit', async () => { written.value = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent: `加入 .gitignore：${path}` });
-			const result = written.value;
-			if (result === null || result.file === '') return;
-			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
-			await openDiff('*', result.file, false, !result.tracked);
-		})();
-	}, [run, workingTreePath, openDiff, notify]);
-
-	/**
-	 * 把未暂存的路径加入本地排除文件 `.git/info/exclude`，随后打开该文件。
-	 *
-	 * 该文件在 `.git` 目录内，以宿主返回的绝对路径按普通文件打开。
-	 */
-	const handleAddToLocalExclude = React.useCallback((path: string) => {
-		void (async () => {
-			const written: { value: LocalExcludeState | null } = { value: null };
-			await run('commit', async () => { written.value = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent: `加入本地排除：${path}` });
-			const state = written.value;
-			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
-			if (state === null || state.path === '') return;
-			setLocalExclude(state);
-			await openDiff('*', state.path, false, true);
-		})();
-	}, [run, workingTreePath, openDiff]);
-
-	/** 打开本地排除文件；它在 `.git` 目录内，以绝对路径按普通文件打开。 */
-	const handleShowLocalExclude = React.useCallback(() => {
-		const state = localExclude;
-		if (state === null || state.path === '') return;
-		void openDiff('*', state.path, false, true);
-	}, [localExclude, openDiff]);
-
-	/**
-	 * 克隆远程仓库：先填地址，再选父目录，然后在 DSH 终端里执行克隆命令。
-	 *
-	 * 克隆由终端承担——进度、凭据提示与交互都在那里，插件不自己跑 git；命令只依赖
-	 * `git -C <父目录> clone`，不必切换终端目录。命令写入后置起重扫标志，窗口重新获得
-	 * 焦点时重扫一次仓库树。
-	 */
-	const handleClone = React.useCallback(() => {
-		void (async () => {
-			if (cwd === undefined) {
-				await notify('没有可用的会话工作区，无法克隆。');
-				return;
-			}
-			if (cloneBusy) return;
-			const form = await showForm({
-				title: '克隆远程仓库',
-				message: '输入远程仓库地址，下一步选择存放位置；克隆在 DSH 终端里执行。',
-				fields: [
-					{ type: 'text', name: 'url', label: '仓库地址', placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git' },
-					{ type: 'checkbox', name: 'shallow', label: '浅克隆（只取最近的历史）', value: false },
-					{
-						type: 'text', name: 'depth', label: '浅克隆深度', value: '1', placeholder: '1',
-						visibleWhen: (values) => values.shallow === true,
-					},
-				],
-				confirmLabel: '下一步',
-			});
-			if (form === null) return;
-			const url = trimmedTextOf(form.url);
-			if (url === '') return;
-			const shallow = form.shallow === true;
-			// 深度按正整数处理：0 与非数值都表示不做浅克隆，由 shallowCloneArgs 生成参数。
-			const parsedDepth = Number.parseInt(textOf(form.depth), 10);
-			const depth = shallow && Number.isInteger(parsedDepth) && parsedDepth > 0 ? parsedDepth : 0;
-			if (pickDirectory === undefined) {
-				await notify('当前界面没有装载目录选择器，无法选择存放位置。');
-				return;
-			}
-			const parent = await pickDirectory();
-			if (parent === null) return;
-			const command = cloneTerminalCommand(parent, url, { depth });
-			if (command === null) {
-				await notify('地址或目录含无法自动转义的字符，请在终端里手动克隆。');
-				return;
-			}
-			if (runInTerminal === undefined) {
-				await notify('当前界面没有装载终端，无法在其中克隆。');
-				return;
-			}
-			setCloneBusy(true);
-			try {
-				const started = await runInTerminal(sessionId, command);
-				await notify(started
-					? `已在终端执行克隆：${command}`
-					: '无法在终端里执行克隆命令，请在终端里手动执行。');
-				// 回到本窗口时重扫一次：克隆可能已经完成，也可能还在跑。
-				if (started) rescanPending.current = true;
-			} finally {
-				setCloneBusy(false);
-			}
-		})();
-	}, [cwd, notify, pickDirectory, runInTerminal, sessionId, cloneBusy, rescan]);
-
-	/**
-	 * 创建 Pull Request：选目标分支、填标题与正文，交给 gh 创建。
-	 *
-	 * 当前分支没有上游时先说明原因；gh 不可用时给出降级提示而不是静默失败。
-	 */
-	const handleCreatePullRequest = React.useCallback(async () => {
-		if (workingTreePath === null || state.head === null || busyFlags.network) return;
-		const path = workingTreePath;
-		const head = state.head;
-
-		const account = await withProgress('network', () => ghAccount(path));
-		if (account === null || !account.loggedIn) {
-			await notify('未检测到可用的 GitHub 登录，请先运行 gh auth login。');
-			return;
-		}
-		const blocked = account.unavailable.find((item) => item.feature === 'create-pr');
-		if (blocked !== undefined) {
-			await notify(blocked.message);
-			return;
-		}
-
-		const info = await withProgress('network', () => ghRepoInfo(path));
-		const branches = (info?.branches ?? []).filter((name) => name !== head);
-		if (branches.length === 0) {
-			await notify('没有可作为目标的分支，请先把分支推送到远程。');
-			return;
-		}
-		const base = info?.defaultBranch !== null && info?.defaultBranch !== undefined && branches.includes(info.defaultBranch)
-			? info.defaultBranch
-			: branches[0];
-		const form = await showForm({
-			title: '创建 Pull Request',
-			message: `把 ${head} 合并到目标分支。`,
-			fields: [
-				{ type: 'select', name: 'base', label: '目标分支', value: base, options: branches.map((name) => ({ value: name, label: name })) },
-				{ type: 'text', name: 'title', label: '标题', value: state.detail !== null && state.detail.commit.hash !== '*' ? (state.detail.commit.message ?? '') : '', placeholder: 'PR 标题' },
-				{ type: 'textarea', name: 'body', label: '正文（可选）', placeholder: '' },
-				{ type: 'checkbox', name: 'draft', label: '创建为草稿', value: false },
-			],
-		});
-		if (form === null) return;
-		const title = trimmedTextOf(form.title);
-		if (title === '') return;
-		await run('network', async () => {
-			const url = await ghCreatePullRequest(path, {
-				head,
-				base: textOf(form.base, base),
-				title,
-				body: textOf(form.body),
-				draft: form.draft === true,
-			});
-			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
-		}, undefined, undefined, { intent: `创建 Pull Request：${title}` });
-	}, [workingTreePath, state.head, busyFlags.network, state.detail, run, notify, withProgress]);
-
-	/** 导出仓库配置为 JSON 文件下载。 */
-	const handleExportConfig = React.useCallback(async () => {
-		if (workingTreePath === null) return;
-		try {
-			const config = await exportRepoConfig(workingTreePath);
-			if (config === null) return;
-			const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = 'source-control-config.json';
-			a.click();
-			URL.revokeObjectURL(url);
-		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
-		}
-	}, [workingTreePath, setState]);
-
-
-	/** 创建归档。 */
-	const handleCreateArchive = React.useCallback(async (ref: string, refLabel: string) => {
-		const format = await showSelect({
-			title: '创建归档',
-			message: `从 ${refLabel} 创建归档`,
-			options: [
-				{ value: 'zip', label: 'zip' },
-				{ value: 'tar', label: 'tar' },
-				{ value: 'tgz', label: 'tar.gz' },
-			],
-			value: 'zip',
-		});
-		if (format === null) return;
-		const defaultName = `${ref.replace(/[^a-zA-Z0-9._-]/g, '-')}.${format}`;
-		const outputPath = await showText({
-			title: '归档输出路径',
-			label: '文件路径',
-			placeholder: defaultName,
-			value: defaultName,
-		});
-		if (outputPath === null || outputPath === '') return;
-		void run('read', async () => {
-			const err = await createArchive(workingTreePath as string, ref, format, outputPath);
-			if (err !== null) reportError(setState, err);
-		}, undefined, undefined, { intent: `导出归档 ${ref}` });
-	}, [workingTreePath, run, setState]);
 
 	/* ── 右键菜单组装 ─────────────────────────────────────────── */
 
 
 	/**
-	 * 是否可以创建 Pull Request：必须有 GitHub 远程，且当前分支已推送到远程。
-	 *
-	 * 远程列表只含已配置的远程；分支未推送时 gh 也找不到可比较的 head，因此一并隐藏入口。
-	 */
-	const canCreatePullRequest = React.useMemo(
-		() => hasGitHubRemote(state.remotes) && currentSync !== undefined && currentSync.upstream !== null,
-		[state.remotes, currentSync],
 	);
 
 	/**
@@ -1086,14 +807,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
-		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive, head: state.head,
+		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive: repoCommands.handleCreateArchive, head: state.head,
 		notify, setCommitMessage: composer.setMessage,
-		handleCreatePullRequest, canCreatePullRequest,
+		handleCreatePullRequest: repoCommands.handleCreatePullRequest, canCreatePullRequest: repoCommands.canCreatePullRequest,
 		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
 		foreignBranches: state.foreignBranches,
 	}), [
-		workingTreePath, menuRun, state.remotes, handleCreateArchive, state.head, notify,
-		handleCreatePullRequest, canCreatePullRequest, state.foreignBranches,
+		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify,
+		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches,
 	]);
 
 	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
@@ -1216,10 +937,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			open: settingsOpen, onClose: () => { setSettingsOpen(false); }, initialTab: settingsTab,
 			cwd: workingTreePath, pluginVersion: PLUGIN_VERSION,
 			onOpenFile: openLogFile, onRevealPath,
-			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
-			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
+			settings, onChange: repoCommands.changeSettings, remotes: state.remotes, onDeleteRemote: repoCommands.deleteRemoteByName,
+			onAddRemote: repoCommands.handleAddRemote, onEditRemote: repoCommands.handleEditRemote, onExportConfig: repoCommands.handleExportConfig,
 			onCheckSsh: remoteSync.handleCheckSsh,
-			userDetails, onEditUserDetails: handleEditUserDetails, onDeleteUserDetails: handleDeleteUserDetails,
+			userDetails: repoCommands.userDetails, onEditUserDetails: repoCommands.handleEditUserDetails, onDeleteUserDetails: repoCommands.handleDeleteUserDetails,
 		}),
 
 		filterOpen && React.createElement(RefFilterDialog, {
@@ -1253,7 +974,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onToggleSection: layout.toggleRepoSec,
 			onOpenSettings: openSettingsPanel,
 			onOpenFeedback: openFeedbackPanel,
-			onClone: handleClone, cloneBusy,
+			onClone: repoCommands.handleClone, cloneBusy: repoCommands.cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
 			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch }, node, event); },
@@ -1279,8 +1000,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onSyncContextMenu: overwriteChoicesAvailable ? remoteSync.handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
-			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
-			hasLocalExclude: (localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: handleShowLocalExclude,
+			onAddToGitignore: repoCommands.handleAddToGitignore, onAddToLocalExclude: repoCommands.handleAddToLocalExclude,
+			hasLocalExclude: (repoCommands.localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: repoCommands.handleShowLocalExclude,
 			merging: state.merging, onAbortMerge: handleAbortMerge,
 			refreshing: backgroundFlags.entries, lastRefresh: lastRefreshText,
 		}),

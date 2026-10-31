@@ -17,7 +17,8 @@ import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-ur
 import { checkoutFailureText } from './git-messages.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
-import type { BusyFlags, BusyScope, PanelRun, RepoSync, Settings } from '../shared/types.ts';
+import type { BusyFlags, RepoSync, Settings } from '../shared/types.ts';
+import type { PanelActionDeps } from './action-deps.ts';
 
 /** 远程动作的依赖面。 */
 export interface RemoteSyncDeps {
@@ -40,13 +41,8 @@ export interface RemoteSyncDeps {
 	readonly runHooks: boolean;
 	/** 操作结束复位钩子勾选。 */
 	readonly setRunHooks: (next: boolean) => void;
-	/** 面板的 
-un。 */
-	readonly run: PanelRun;
-	/** 面板的 withProgress。 */
-	readonly withProgress: <T>(scope: BusyScope, operation: () => Promise<T>) => Promise<T | null>;
-	/** 轻量提示。 */
-	readonly notify: (message: string) => Promise<void>;
+	/** 面板动作依赖：run、withProgress 与 notify。 */
+	readonly actions: PanelActionDeps;
 }
 
 /** 远程动作。 */
@@ -72,8 +68,9 @@ export interface RemoteSync {
 export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	const {
 		workingTreePath, selectedRepoName, currentSync, remotes, head, settings, busyFlags,
-		pushHookActive, runHooks, setRunHooks, run, withProgress, notify,
+		pushHookActive, runHooks, setRunHooks, actions,
 	} = deps;
+	const { run, withProgress, notify } = actions;
 
 	/**
 	 * 推送某个仓库的当前分支到其上游，失败时报错。
