@@ -127,6 +127,11 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
 	const aiAbortRef = React.useRef<AbortController | null>(null);
 
+	/* 卸载时终止进行中的生成：回调会写 message 与 aiBusy，组件已不在时不应再更新。 */
+	React.useEffect(() => () => {
+		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
+	}, []);
+
 	/** 草稿是否已读完；读完之前不得写入。 */
 	const [draftReadDone, setDraftReadDone] = React.useState(false);
 	/** 当前 message 所属的仓库；与 workingTreePath 不同时不得写入。 */

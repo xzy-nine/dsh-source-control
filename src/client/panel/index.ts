@@ -621,10 +621,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	/* ── 右键菜单组装 ─────────────────────────────────────────── */
 
-
-	/**
-	);
-
 	/**
 	 * 菜单用的执行入口：把意图转成 `run` 的选项。
 	 *

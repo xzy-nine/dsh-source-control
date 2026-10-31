@@ -270,7 +270,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 | 引用只枚举一次 | 引用集合与分支列表读的是同一批引用：首屏由一次 `for-each-ref` 同时产出（`REF_BRANCH_FORMAT` 与 `parseRefsAndBranches`，`getRefsAndBranches`），提交图的引用标记不来自这次枚举（见下一行）；`HEAD` 由 `HEAD` 文件解析（`worktree-branches.ts` 的 `readHeadRef`），不起 `git rev-parse` |
 | 引用标注并入日志 | `LOG_FORMAT` 末位是 `%D`、`getLog` 传 `--decorate=full`；`parseDecorations` 把装饰解析成 heads / tags / remotes，`refsFromDecorations` 组装成 `RefData` 交给 `assembleCommits`。刷新路径因此不再跑 `for-each-ref`（首屏的仓库信息批仍要一次，用于分支列表）。`CommitTag.annotated` 恒为 false —— 装饰无法区分附注标签，客户端只在 `commitsEqual` 里读它 |
 | 仓库事实缓存 | `repo-facts.ts`：`repoLayout` 缓存 git 目录与公共目录（10s、容量 64，写命令按仓库含祖先与后代作废），`readPackedRef` 把 `packed-refs` 解成表（容量 8，按 `mtimeMs + size` 守卫）。`HEAD` 不缓存 —— 它是各缓存键的失效判据 |
-| 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
+| 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（`panel/graph-window-cache.ts` 的模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
 | 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存 |
 | 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
 

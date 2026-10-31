@@ -152,6 +152,8 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
  */
 export function openRepoBranchMenu(deps: RepoMenuDeps, node: RepoNode, event: React.MouseEvent<HTMLElement>): void {
 	const { state, run, selectNodeAndReset } = deps;
+	// 分支候选取自当前选中仓库的提交列表，对别的仓库给出的候选是错的。
+	if (deps.workingTreePath === null || deps.workingTreePath !== node.path) return;
 	const branches = new Set<string>();
 	for (const commit of state.commits as readonly Commit[]) {
 		for (const name of commit.heads ?? []) branches.add(name);

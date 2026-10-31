@@ -1,14 +1,13 @@
 /**
  * 仓库级动作：设置写入、远程与用户身份、忽略规则、克隆、Pull Request、配置导出与归档。
  *
- * 这些动作只依赖当前仓库、仓库信息与面板的 
-un/withProgress，集中在一个 hook 里；
+ * 这些动作只依赖当前仓库、仓库信息与面板的 run/withProgress，集中在一个 hook 里；
  * 过程状态（克隆进行中、用户身份、本地排除条目）也在这里维护。
  */
 import React from 'react';
 import {
 	addRemote, addToGitignore, addToLocalExclude, createArchive, deleteRemote, deleteUserDetails, editRemote,
-	editUserDetails, exportRepoConfig, ghAccount, ghCreatePullRequest, ghRepoInfo, loadConfig, throwIfError,
+	editUserDetails, exportRepoConfig, ghAccount, ghCreatePullRequest, ghRepoInfo, loadConfig, localExcludeState, throwIfError,
 } from '../api/index.ts';
 import type { IgnoreWriteResult, LocalExcludeState } from '../api/index.ts';
 import { showForm, showSelect, showText } from '../ui/dialog.ts';
@@ -111,6 +110,23 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
 	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
 	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
+
+	/* 本地排除条目按工作树归属：换工作树即重读，切换后显示与操作都落在新路径上。 */
+	React.useEffect(() => {
+		if (workingTreePath === null) { setLocalExclude(null); return undefined; }
+		const cancelled = { current: false };
+		void (async () => {
+			try {
+				const state = await localExcludeState(workingTreePath);
+				if (cancelled.current) return;
+				setLocalExclude(state.path === '' ? null : state);
+			} catch {
+				// 读取失败按无排除条目处理，不保留上一工作树的状态。
+				if (!cancelled.current) setLocalExclude(null);
+			}
+		})();
+		return () => { cancelled.current = true; };
+	}, [workingTreePath]);
 	/** 克隆进行中：只禁用克隆入口，不影响面板其余控件。 */
 	const [cloneBusy, setCloneBusy] = React.useState(false);
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
