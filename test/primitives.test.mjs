@@ -486,7 +486,7 @@ test('工作树右键提供移除入口', () => {
 	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
-	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');
+	const host = readFileSync(join(root, 'src', 'source-control', 'worktree-remove.ts'), 'utf8');
 	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
 	assert.match(host, /removalCwd/, '移除时的工作目录应避开被删目录');
 	assert.match(host, /resolveGitCommonDir/, '应退回 git 公共目录');
