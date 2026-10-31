@@ -37,7 +37,6 @@ import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
-import { logCommitCountOf } from './commit-diff.ts';
 import { primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
@@ -284,7 +283,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, [getSessions]);
 
 	/*
-	 * 文件改动事件驱动的自动刷新：工具写入/编辑落地、且目标确实在所选仓库内时重载面板。
+	 * 文件改动事件驱动的自动刷新：工具写入/编辑落地、且目标确实在所选仓库内时重取工作区快照。
 	 * 事件窗口覆盖当前会话（含 run_code 里的嵌套调用）。
 	 */
 	useFileChangeRefresh({
@@ -294,7 +293,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		cwd: cwd ?? null,
 		enabled: settings.autoRefresh,
 		busyRef,
-		refresh,
+		// 写入与编辑不移动 HEAD：只重取工作区快照，图形区不参与。
+		refresh: refreshEntries,
 	});
 
 	/*
@@ -622,12 +622,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			scope: graphScope,
 			ready: state.phase === 'ready',
 			entries: state.entries.length,
-			commits: logCommitCountOf(state.commits),
+			// 已加载的日志记录数：宿主给出的下一页偏移，不含贮藏行与未提交伪提交行。
+			commits: state.nextSkip,
 		};
 		const notice = refreshNoticeSince(noticeBaselineRef.current, current);
 		noticeBaselineRef.current = current;
 		if (notice !== '') showToast(notice, { tone: 'info' });
-	}, [state.lastRefreshAt, state.phase, state.entries, state.commits, graphScope]);
+	}, [state.lastRefreshAt, state.phase, state.entries, state.nextSkip, graphScope]);
 
 
 	/* ── 右键菜单组装 ─────────────────────────────────────────── */

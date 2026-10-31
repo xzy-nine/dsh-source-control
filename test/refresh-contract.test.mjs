@@ -72,6 +72,32 @@ async function mount(initialDelays = {}, overrides = {}) {
 	const delays = new Map(Object.entries(initialDelays));
 	/** 当前快照条目；测试可改写以制造条目变化。 */
 	const snapshot = { entries: SNAPSHOT_PAYLOAD.entries };
+	/**
+	 * 提交图数据源；`records` 为 null 时回固定响应。
+	 *
+	 * 给出 `records` 后按请求的 `limit` 与 `skip` 切窗口，并像宿主那样在窗口前插入一条贮藏行：
+	 * 贮藏行不是 `git log` 记录，`nextSkip` 只按实际消费的记录数推进。
+	 */
+	const graph = { records: null, stash: false };
+	/** 按请求切出的提交图响应。 */
+	const graphPayload = (body) => {
+		if (graph.records === null) return COMMITS_PAYLOAD;
+		const limit = body.limit ?? 200;
+		const skip = body.skip ?? 0;
+		const window = graph.records.slice(skip, skip + limit + 1);
+		const moreCommitsAvailable = window.length === limit + 1;
+		const page = moreCommitsAvailable ? window.slice(0, limit) : window;
+		const stashRow = {
+			hash: 'stash0', parents: ['c1'], heads: [], tags: [], remotes: [],
+			stash: { selector: 'refs/stash@{0}' }, message: 'WIP', author: 'a', email: 'a@b.c', date: 1700000000,
+		};
+		return {
+			...COMMITS_PAYLOAD,
+			commits: graph.stash ? [stashRow, ...page] : page,
+			moreCommitsAvailable,
+			nextSkip: skip + page.length,
+		};
+	};
 	globalThis.fetch = async (url, init) => {
 		const body = JSON.parse(init.body);
 		calls.push(body.command);
@@ -80,7 +106,7 @@ async function mount(initialDelays = {}, overrides = {}) {
 		if (wait > 0) await new Promise((done) => setTimeout(done, wait));
 		// 与真实 fetch 一致：请求被中止时调用方看到 AbortError，而不是拿到正常响应。
 		if (init.signal?.aborted === true) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
-		const payload = body.command === 'loadCommits' ? COMMITS_PAYLOAD
+		const payload = body.command === 'loadCommits' ? graphPayload(body)
 			: body.command === 'loadWorkingTreeSnapshot' ? { ...SNAPSHOT_PAYLOAD, entries: snapshot.entries }
 				: body.command === 'loadRepoInfo' ? { command: body.command, error: null, branches: ['main'], head: 'main', remotes: [], stashes: [] }
 					: { command: body.command, error: null };
@@ -89,7 +115,7 @@ async function mount(initialDelays = {}, overrides = {}) {
 
 	const reactRoot = createRoot(document.getElementById('root'));
 	/** hook 的最新状态与函数。 */
-	const latest = { state: null, refresh: null, refreshEntries: null };
+	const latest = { state: null, refresh: null, refreshEntries: null, loadMore: null };
 	/** 当前仓库路径；测试可改写以制造换仓库。 */
 	const target = { path: '/repo' };
 	/** hook 的可变入参：本用例的筛选与分叉来源等。 */
@@ -104,11 +130,12 @@ async function mount(initialDelays = {}, overrides = {}) {
 		latest.state = result.state;
 		latest.refresh = result.refresh;
 		latest.refreshEntries = result.refreshEntries;
+		latest.loadMore = result.loadMore;
 		return null;
 	}
 	await act(async () => { reactRoot.render(React.createElement(Probe)); });
 	return {
-		calls, bodies, delays, snapshot, latest, act, reactRoot,
+		calls, bodies, delays, snapshot, graph, latest, act, reactRoot,
 		/** 换到另一个仓库并重渲染。 */
 		setPath: (path) => {
 			target.path = path;
@@ -270,6 +297,60 @@ test('取数起点：自动筛选取当前分支、上游与分叉来源', { ski
 	});
 	await settle(harness, 400);
 	assert.deepEqual(lastBranches(harness), ['main', 'origin/main', 'origin/dev']);
+	await harness.act(async () => { harness.reactRoot.unmount(); });
+});
+
+/**
+ * 取最近一次提交图请求的窗口大小。
+ *
+ * @param harness - 挂载句柄。
+ * @returns `limit` 入参；最近一次请求不是提交图时为 undefined。
+ */
+function lastLimit(harness) {
+	const last = [...harness.bodies].reverse().find((body) => body.command === 'loadCommits');
+	return last === undefined ? undefined : last.limit;
+}
+
+/** 构造 `count` 条日志记录。 */
+function recordsOf(count) {
+	return Array.from({ length: count }, (_, index) => ({
+		hash: 'c' + String(index + 1), parents: [], heads: [], tags: [], remotes: [], stash: null,
+		message: 'c' + String(index + 1), author: 'a', email: 'a@b.c', date: 1700000000,
+	}));
+}
+
+test('对账刷新：窗口不随列表里的贮藏行逐轮增大', { skip }, async () => {
+	// 记录数大于初始窗口，窗口才会由已加载记录数决定；窗口前再插一条贮藏行。
+	const harness = await mount();
+	harness.graph.records = recordsOf(250);
+	harness.graph.stash = true;
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	const first = lastLimit(harness);
+	assert.equal(harness.latest.state.commits.some((commit) => commit.stash !== null), true, '首轮应带上贮藏行');
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	assert.equal(lastLimit(harness), first, '第二轮窗口必须与第一轮相同');
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	assert.equal(lastLimit(harness), first, '第三轮窗口同样不变');
+	// 窗口稳定后数据不再变化：提交列表必须保持原引用，图形区因此不重算。
+	const before = harness.latest.state.commits;
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	assert.equal(harness.latest.state.commits, before, '数据未变时提交列表保持原引用');
+	await harness.act(async () => { harness.reactRoot.unmount(); });
+});
+
+test('对账刷新：触底加载过的分页不被收回', { skip }, async () => {
+	const harness = await mount();
+	harness.graph.records = recordsOf(250);
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	const firstPage = harness.latest.state.commits.length;
+	await harness.act(async () => { await harness.latest.loadMore(); });
+	const loaded = harness.latest.state.commits.length;
+	assert.equal(loaded > firstPage, true, '触底加载应追加下一页');
+	// 已加载的日志记录数由 `nextSkip` 给出；列表长度另有未提交伪提交行与贮藏行。
+	const recordsLoaded = harness.latest.state.nextSkip;
+	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
+	assert.equal(lastLimit(harness) >= recordsLoaded, true, '对账窗口不小于已加载的日志记录数');
+	assert.equal(harness.latest.state.commits.length, loaded, '对账不收回已加载的分页');
 	await harness.act(async () => { harness.reactRoot.unmount(); });
 });
 

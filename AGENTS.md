@@ -217,7 +217,9 @@ content type，文本与压缩包一律被 `content_type` 校验拒绝（实测 
 类别），只报变化量、不报总数。基线把取数范围（仓库、引用起点、提交窗口与影响提交行的设置项，
 `use-graph-data.ts` 的 `graphScope`）与「两轮都已就绪」一并记入，范围不同或加载中的轮次只重建基线
 不提示——否则换仓库、换筛选或加载更多会把两份不同批次的提交数误报成「提交图 ±全部提交数」。
-对账与轮询补取按已加载条数请求窗口（`reconcileWindow`），后台刷新不会把触底加载过的分页收回去。
+对账与轮询补取按已加载的日志记录数请求窗口（`reconcileWindow`，入参是宿主给出的 `nextSkip`），
+后台刷新不会把触底加载过的分页收回去。窗口大小不进「按列表长度推导」这条路：列表里还插着贮藏行
+与未提交伪提交行，按长度算会让窗口逐轮变化，而窗口大小是宿主提交图窗口缓存键的一部分。
 错误类提示显示期间到来的信息类提示直接丢弃：失败原因（如 git 钩子未通过）只有这一次，不能被后台
 刷新的结果告知盖掉。停留时长按类别与文本长度推算（`HOLD_OF`：错误 8–20 秒，信息 3–8 秒）。
 
@@ -279,7 +281,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 | 引用标注并入日志 | `LOG_FORMAT` 末位是 `%D`、`getLog` 传 `--decorate=full`；`parseDecorations` 把装饰解析成 heads / tags / remotes，`refsFromDecorations` 组装成 `RefData` 交给 `assembleCommits`。刷新路径因此不再跑 `for-each-ref`（首屏的仓库信息批仍要一次，用于分支列表）。`CommitTag.annotated` 恒为 false —— 装饰无法区分附注标签，客户端只在 `commitsEqual` 里读它 |
 | 仓库事实缓存 | `repo-facts.ts`：`repoLayout` 缓存 git 目录与公共目录（10s、容量 64，写命令按仓库含祖先与后代作废），`readPackedRef` 把 `packed-refs` 解成表（容量 8，按 `mtimeMs + size` 守卫）。`HEAD` 不缓存 —— 它是各缓存键的失效判据 |
 | 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（`panel/graph-window-cache.ts` 的模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
-| 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存 |
+| 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存。`use-file-change-refresh.ts` 触发的刷新同样走 `refreshEntries()`：写入与编辑不移动 HEAD |
 | 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
 
 未提交伪提交行的父提交必须已在提交列表中：提交列表与工作区快照可能读自不同时刻，HEAD 已被别的进程

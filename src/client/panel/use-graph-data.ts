@@ -18,13 +18,13 @@ import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
-	branchNamesEqual, commitsListEqual, entriesEqual, logCommitCountOf, mergeCommits, mergeEntries,
+	branchNamesEqual, commitsListEqual, entriesEqual, mergeCommits, mergeEntries,
 	remotesListEqual, uncommittedParentOf, withUncommittedCount,
 } from './commit-diff.ts';
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
-import type { BusyEntry, Commit, PanelState, Settings } from '../shared/types.ts';
+import type { BusyEntry, PanelState, Settings } from '../shared/types.ts';
 import type { GraphData } from '../api/index.ts';
 import {
 	dropGraphWindows, dropRenderedGraph, getActiveGraphRepo, nextRefreshId, rememberPanelState, rememberRepoInfo,
@@ -120,15 +120,20 @@ function graphRequest(
 /**
  * 对账刷新与轮询补取要请求的提交窗口。
  *
- * 触底加载取过的提交保留在客户端列表里：按已加载条数请求，后台刷新就不会把列表收回到初始
- * 窗口——收回去会让用户已看过的那段消失，提交数差值也会被误报。
+ * 触底加载取过的提交保留在客户端列表里：按已加载的日志记录数请求，后台刷新就不会把列表收回到
+ * 初始窗口——收回去会让用户已看过的那段消失，提交数差值也会被误报。
+ *
+ * 记录数取自 `nextSkip`（宿主给出的下一页偏移，按 git log 记录计），不按提交列表长度推导：
+ * 列表里还插着贮藏行与未提交伪提交行，它们不是日志记录。按列表长度算会让窗口每轮比上一轮多一
+ * （宿主插入的贮藏行被当成日志记录），窗口大小因此逐轮变化；而窗口大小是宿主提交图窗口缓存键的
+ * 一部分，每一轮因此都是未命中并真的重跑一次 git log，列表末尾还会多出一条旧提交，图形区整体重算。
  *
  * @param maxCommits - 已加载的提交数上限。
- * @param commits - 当前提交列表。
+ * @param nextSkip - 宿主给出的下一页偏移，即已加载的日志记录数。
  * @returns 本轮请求的提交数上限。
  */
-function reconcileWindow(maxCommits: number, commits: readonly Commit[]): number {
-	return Math.max(maxCommits, logCommitCountOf(commits));
+function reconcileWindow(maxCommits: number, nextSkip: number): number {
+	return Math.max(maxCommits, nextSkip);
 }
 
 /**
@@ -219,10 +224,10 @@ export function useGraphData({
 	 * 两份提交列表不是同一批数据，差值没有意义。
 	 */
 	const graphScope = React.useMemo(() => JSON.stringify([
-		workingTreePath, branchesKey, reconcileWindow(maxCommits, state.commits),
+		workingTreePath, branchesKey, reconcileWindow(maxCommits, state.nextSkip),
 		settings.commitOrdering, settings.showStashes, settings.showTags, settings.showRemoteBranches,
 		settings.onlyFollowFirstParent, settings.includeCommitsMentionedByReflogs,
-	]), [workingTreePath, branchesKey, maxCommits, state.commits, settings]);
+	]), [workingTreePath, branchesKey, maxCommits, state.nextSkip, settings]);
 
 	/**
 	 * 选中节点的引用。
@@ -287,7 +292,7 @@ export function useGraphData({
 		loadedBranchesRef.current = requestKey;
 		// 同一仓库同一取数起点的对账保留已加载的分页；换仓库或换起点按初始窗口重取。
 		const requestMax = mode === 'reconcile' && !repoChanged && !branchesChanged
-			? reconcileWindow(maxCommits, stateRef.current.commits)
+			? reconcileWindow(maxCommits, stateRef.current.nextSkip)
 			: maxCommits;
 		if (mode === 'full' || repoChanged) {
 			dropGraphWindows(workingTreePath);
@@ -484,7 +489,7 @@ export function useGraphData({
 		try {
 			const known = rememberedRepoInfo(repo);
 			const graph = await loadGraph(repo, {
-				...graphRequest(repo, reconcileWindow(maxCommits, stateRef.current.commits), settings, undefined, branchesRef.current),
+				...graphRequest(repo, reconcileWindow(maxCommits, stateRef.current.nextSkip), settings, undefined, branchesRef.current),
 				refreshId: nextRefreshId(),
 			});
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
