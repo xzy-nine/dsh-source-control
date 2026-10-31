@@ -8,17 +8,12 @@
 import React from 'react';
 import {
 	addRemote, addToGitignore, addToLocalExclude, compareCommits, createArchive, deleteRemote, deleteUserDetails, discardPaths,
-	editRemote, editUserDetails, exportRepoConfig, fetchRepo, ghAccount, ghCreatePullRequest,
-	ghCreateRepo, ghRepoInfo, loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
-	abortMerge, localExcludeState,
-	merge, pushBranch, pushStash, pushUpstream, resetToCommit, sshStatus, stagePaths, throwIfError,
-	unstagePaths,
+	editRemote, editUserDetails, exportRepoConfig, fetchRepo, ghAccount, ghCreatePullRequest, ghRepoInfo,
+	loadBranchBase, loadConfig, loadCommitFiles, loadRefs,
+	abortMerge, localExcludeState, pushStash, pushUpstream, stagePaths, throwIfError, unstagePaths,
 } from '../api/index.ts';
-import { showContextMenu } from '../ui/context-menu.ts';
 import { cloneTerminalCommand } from '../git/clone-command.ts';
-import { checkoutFailureText } from './git-messages.ts';
-import { showCheckbox, showForm, showMessage, showSelect, showTabbedForm, showText, type FormPage } from '../ui/dialog.ts';
-import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
+import { showCheckbox, showForm, showSelect, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { ROW_HEIGHT } from '../graph/lanes.ts';
@@ -49,10 +44,11 @@ import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
 import { logCommitCountOf } from './commit-diff.ts';
-import { divergedOf, primaryActionOf } from './submit-state.ts';
-import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
+import { primaryActionOf } from './submit-state.ts';
+import { formatDate, loadSettings, saveSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
+import { useRemoteSync } from './use-remote-sync.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
@@ -536,6 +532,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return Promise.resolve();
 	}, []);
 
+	/* 远程相关动作：SSH 校验、发布、同步、双向覆盖与同步按钮的右键菜单。 */
+	const remoteSync = useRemoteSync({
+		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync, remotes: state.remotes, head: state.head,
+		settings, busyFlags, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks,
+		setRunHooks: composer.setRunHooks, run, withProgress, notify,
+	});
+
 	/**
 	 * 丢弃路径上的改动，并把未能完全丢弃的情形告知用户。
 	 *
@@ -769,9 +772,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 双向分叉：本地与上游各有对方没有的提交时，同步按钮的右键给出两种整体覆盖。
 	 * 普通同步只会把两侧合并，整体覆盖只能在同步入口上单独给出。
 	 */
-	const overwriteChoicesAvailable = showSyncButton && divergedOf({
-		ahead: currentSync?.ahead ?? 0, behind: currentSync?.behind ?? 0,
-	});
+	const overwriteChoicesAvailable = showSyncButton && remoteSync.overwriteChoicesAvailable;
 
 	/*
 	 * 后台刷新完成后的轻量告知：只在条目数或已加载提交数变化时给一次，不打断操作。
@@ -797,310 +798,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		noticeBaselineRef.current = current;
 		if (notice !== '') showToast(notice, { tone: 'info' });
 	}, [state.lastRefreshAt, state.phase, state.entries, state.commits, graphScope]);
-
-	/**
-	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
-	 *
-	 * @param host - 目标主机名。
-	 * @param refresh - 为 true 时忽略宿主缓存重新探测。
-	 * @returns SSH 状态；没有工作区或请求失败时为 null。
-	 */
-	const handleCheckSsh = React.useCallback(async (host: string, refresh = false) => (
-		workingTreePath === null ? null : withProgress('network', () => sshStatus(workingTreePath, host, refresh))
-	), [workingTreePath, withProgress]);
-
-	/**
-	 * 校验目标主机的 SSH 可用性：客户端、私钥与认证。
-	 *
-	 * @param host - 目标主机名。
-	 * @returns 就绪时为 true；否则说明原因并返回 false。
-	 */
-	const ensureSshReady = React.useCallback(async (host: string): Promise<boolean> => {
-		const status = await handleCheckSsh(host);
-		if (status !== null && status.ready) return true;
-		await showMessage({
-			title: 'SSH 未就绪',
-			message: status === null ? '无法获取本地 SSH 状态，请稍后重试。' : status.message ?? `本地 SSH 无法用于 ${status.host}。`,
-		});
-		return false;
-	}, [handleCheckSsh]);
-
-	/**
-	 * 没有远程时：在同一个对话框里用页签选择发布方式。
-	 *
-	 * GitHub 页签与手工页签一并列出，切换页签不丢失已填内容；未安装 gh / 未登录 / 缺 scope
-	 * 时不显示 GitHub 页签，改为在对话框内说明原因，手工页签始终可用。
-	 * 两页都可选协议：手工页按所选协议换算地址（HTTPS ⇄ SSH），GitHub 页让 gh 以所选协议建远程；
-	 * 换算为 SSH 或建仓前先校验本机 SSH 状态。
-	 *
-	 * @param branch - 当前分支名。
-	 * @returns 选中的方式与参数；取消时返回 null。
-	 */
-	const askRemoteSource = React.useCallback(async (branch: string): Promise<
-		| { kind: 'manual'; name: string; url: string; protocol: 'https' | 'ssh' }
-		| { kind: 'github'; owner: string; name: string; private: boolean; description: string; protocol: 'https' | 'ssh' }
-		| null
-	> => {
-		const account = await withProgress('network', () => ghAccount(workingTreePath as string));
-		const ghReady = account !== null && account.loggedIn
-			&& account.owners.length > 0
-			&& !account.unavailable.some((item) => item.feature === 'create-repo');
-		// 仓库名预填存储库区域显示的名称，即所选节点的末段目录名。
-		const repoName = selectedNode?.name ?? '';
-		const user = account?.user ?? '';
-		const orgs = (account?.owners ?? []).filter((owner) => owner !== user);
-		const protocolField = {
-			type: 'select' as const, name: 'protocol', label: '协议', value: 'https', options: REMOTE_PROTOCOLS,
-		};
-
-		const manualPage: FormPage = {
-			value: 'manual',
-			label: '手动输入地址',
-			message: '填写已有远程仓库的地址。',
-			fields: [
-				{ type: 'text', name: 'name', label: '远程名', value: 'origin', placeholder: 'origin' },
-				{ type: 'text', name: 'url', label: '远程地址', placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git' },
-				protocolField,
-			],
-		};
-		const unavailableNote = account !== null && account.loggedIn
-			? account.unavailable.find((item) => item.feature === 'create-repo')?.message ?? ''
-			: '未检测到可用的 GitHub 登录，请先运行 gh auth login。';
-
-		const pages: [FormPage, ...FormPage[]] = ghReady
-			? [
-				{
-					value: 'github',
-					label: '新建 GitHub 仓库',
-					message: `仓库将创建在所选账号下，并把分支 ${branch} 推送上去。`,
-					fields: [
-						{
-							// 账户类型决定下一级：个人账号直接用当前账号，组织再选具体组织。
-							// 没有加入任何组织时不显示该字段，避免出现无选项的分支。
-							type: 'select', name: 'accountType', label: '账户类型', value: 'user',
-							options: [
-								{ value: 'user', label: `个人（${user}）` },
-								{ value: 'org', label: '组织' },
-							],
-							visibleWhen: () => orgs.length > 0,
-						},
-						{
-							type: 'dropdown', name: 'owner', label: '组织', value: orgs[0] ?? '',
-							options: orgs.map((org) => ({ value: org, label: org })),
-							visibleWhen: (values: Record<string, unknown>) => orgs.length > 0 && values.accountType === 'org',
-						},
-						{ type: 'text', name: 'name', label: '仓库名', value: repoName, placeholder: 'my-repo' },
-						{
-							type: 'select', name: 'visibility', label: '可见性', value: 'private', options: [
-								{ value: 'private', label: '私有' },
-								{ value: 'public', label: '公开' },
-							],
-						},
-						protocolField,
-						{ type: 'text', name: 'description', label: '简介（可选）', placeholder: '' },
-					],
-				},
-				manualPage,
-			]
-			: [
-				{
-					...manualPage,
-					message: `当前仓库还没有远程仓库，请输入地址后发布。\n${unavailableNote}`.trim(),
-				},
-			];
-
-		const form = await showTabbedForm({ title: '发布', pages, confirmLabel: '发布' });
-		if (form === null) return null;
-		if (form.page === 'github') {
-			const name = trimmedTextOf(form.name);
-			if (name === '') return null;
-			// 个人账号固定为当前登录用户；组织取所选组织。组织为空时退回个人账号。
-			const chosenOrg = trimmedTextOf(form.owner);
-			const owner = form.accountType === 'org' && chosenOrg !== '' ? chosenOrg : user;
-			if (owner === '') return null;
-			// 选 SSH 时先确认本机可认证，避免仓库已建好却推送失败。
-			if (form.protocol === 'ssh' && !await ensureSshReady('github.com')) return null;
-			return {
-				kind: 'github',
-				owner,
-				name,
-				private: textOf(form.visibility, 'private') !== 'public',
-				description: trimmedTextOf(form.description),
-				protocol: form.protocol === 'ssh' ? 'ssh' : 'https',
-			};
-		}
-		const name = trimmedTextOf(form.name) === '' ? 'origin' : trimmedTextOf(form.name);
-		let url = trimmedTextOf(form.url);
-		if (url === '') return null;
-		if (form.protocol === 'ssh') {
-			const sshUrl = toSshRemoteUrl(url);
-			if (sshUrl === null) {
-				await showMessage({ title: '无法转换', message: '该地址不是 HTTP(S) 或 SSH 形态的远程地址，无法按 SSH 发布。' });
-				return null;
-			}
-			const host = remoteHostOf(url);
-			if (sshUrl !== url && !await ensureSshReady(host === '' ? 'github.com' : host)) return null;
-			url = sshUrl;
-		} else {
-			// 选择 HTTPS 时把 SSH 形态的地址换算回 HTTPS；不可换算的地址按原样使用。
-			url = toHttpsRemoteUrl(url) ?? url;
-		}
-		return { kind: 'manual', name, url, protocol: form.protocol === 'ssh' ? 'ssh' : 'https' };
-	}, [workingTreePath, selectedNode, withProgress, ensureSshReady]);
-
-	/**
-	 * 发布当前本地分支：推送到选定远程并建立上游。
-	 *
-	 * 单一远程直接推送；多个远程弹窗选择；没有远程时可选 GitHub 建仓或手工输入地址。
-	 */
-	const handlePublish = React.useCallback(() => {
-		if (busyFlags.network || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
-		const branch = currentSync.branch;
-		const path = workingTreePath;
-		// 推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。
-		const skipHooks = composer.hooksState.push && !composer.runHooks;
-		const publishDone = (): void => { composer.setRunHooks(true); };
-		void (async () => {
-			let remote = '';
-			if (state.remotes.length === 1) {
-				remote = state.remotes[0].name;
-			} else if (state.remotes.length > 1) {
-				const picked = await showSelect({
-					title: '发布到远程仓库',
-					message: `把分支 ${branch} 推送到哪个远程仓库？`,
-					options: state.remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== '' ? `（${item.url}）` : ''}` })),
-				});
-				if (picked === null || picked === '') return;
-				remote = picked;
-			} else {
-				const source = await askRemoteSource(branch);
-				if (source === null) return;
-				if (source.kind === 'github') {
-					await run('network', async () => {
-						const url = await ghCreateRepo(path, {
-							name: source.name, owner: source.owner, private: source.private, description: source.description,
-							protocol: source.protocol,
-						});
-						await notify(`已发布到 ${url}`);
-					}, undefined, undefined, { intent: '发布到 GitHub 新仓库' });
-					return;
-				}
-				await run('network', async () => {
-					const addError = await addRemote(path, source.name, source.url, null, false);
-					if (addError !== null) throw new Error(addError);
-					const errors = await pushBranch(path, branch, [source.name], skipHooks);
-					if (errors.length > 0) throw new Error(errors.join('\n'));
-				}, undefined, undefined, { intent: '添加远程并推送（发布）' });
-				publishDone();
-				return;
-			}
-			await run('network', async () => {
-				const errors = await pushBranch(path, branch, [remote], skipHooks);
-				if (errors.length > 0) throw new Error(errors.join('\n'));
-			}, undefined, undefined, { intent: `推送分支 ${branch}` });
-			publishDone();
-		})();
-	}, [busyFlags.network, state.remotes, currentSync, workingTreePath, run, askRemoteSource, notify, composer.hooksState.push, composer.runHooks, composer.setRunHooks]);
-
-	const handleSync = (): void => {
-		if (busyFlags.network || workingTreePath === null) return;
-		const skipHooks = composer.hooksState.push && !composer.runHooks;
-		void run('network', async () => {
-			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
-			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
-				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
-			}
-			if (currentSync !== undefined && currentSync.ahead > 0 && state.head !== null) {
-				await pushCurrentBranch(undefined, skipHooks);
-			}
-		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）' }).finally(() => { composer.setRunHooks(true); });
-	};
-
-	/**
-	 * 把上游名拆成远程名与分支名。
-	 *
-	 * 上游记作 `<远程>/<分支>`（如 `origin/main`），远程名可能含斜杠以外字符；
-	 * 没有斜杠时无法判定远程，返回 null。
-	 *
-	 * @param upstream - 上游引用名。
-	 * @returns 远程名与该远程上的分支名。
-	 */
-	const upstreamPartsOf = (upstream: string | null): { remote: string; branch: string } | null => {
-		if (upstream === null) return null;
-		const at = upstream.indexOf('/');
-		if (at <= 0 || at === upstream.length - 1) return null;
-		return { remote: upstream.slice(0, at), branch: upstream.slice(at + 1) };
-	};
-
-	/** 用本地分支覆盖远程分支：远程独有的提交会被丢弃。 */
-	const overwriteRemoteWithLocal = React.useCallback(() => {
-		const sync = currentSync;
-		const path = workingTreePath;
-		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
-		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
-		const branch = sync.branch;
-		const skipHooks = composer.hooksState.push && !composer.runHooks;
-		void (async () => {
-			const ok = await showCheckbox({
-				title: '用本地覆盖远程',
-				message: `把本地 ${branch} 强制推送到 ${parts.remote}/${parts.branch}：远程分支上独有的 ${String(sync.behind)} 个提交会被丢弃，推送后无法恢复。`,
-				checkboxLabel: '我确认用本地分支覆盖远程分支',
-				confirmLabel: '覆盖远程', danger: true,
-			});
-			if (!ok) return;
-			await run('network', async () => {
-				const errors = await pushBranch(path, branch, [parts.remote], skipHooks, 'force');
-				if (errors.length > 0) throw new Error(errors.join('\n'));
-			}, undefined, undefined, { intent: '用本地覆盖远程（强制推送）' });
-		})();
-	}, [currentSync, workingTreePath, composer.hooksState.push, composer.runHooks, run]);
-
-	/** 用远程分支覆盖本地分支：本地独有的提交与已跟踪改动会被丢弃。 */
-	const overwriteLocalWithRemote = React.useCallback(() => {
-		const sync = currentSync;
-		const path = workingTreePath;
-		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
-		if (sync === undefined || path === null || parts === null || sync.branch === null) return;
-		const upstream = sync.upstream as string;
-		const branch = sync.branch;
-		void (async () => {
-			const ok = await showCheckbox({
-				title: '用远程覆盖本地',
-				message: `把本地 ${branch} 重置到 ${upstream}：本地独有的 ${String(sync.ahead)} 个提交与已跟踪文件的未提交改动都会被丢弃（未跟踪文件保留），重置后无法恢复。`,
-				checkboxLabel: '我确认用远程分支覆盖本地分支',
-				confirmLabel: '覆盖本地', danger: true,
-			});
-			if (!ok) return;
-			await run('history', async () => {
-				await fetchRepo(path, parts.remote, settings.fetchAndPrune, settings.fetchAndPruneTags);
-				const error = await resetToCommit(path, upstream, 'hard');
-				if (error !== null) throw new Error(error);
-			}, undefined, undefined, { intent: '用远程覆盖本地（硬重置）' });
-		})();
-	}, [currentSync, workingTreePath, run, settings.fetchAndPrune, settings.fetchAndPruneTags]);
-
-	/** 同步按钮的右键菜单：双向分叉时给出两种整体覆盖。 */
-	const handleSyncContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
-		event.preventDefault();
-		event.stopPropagation();
-		const { clientX, clientY } = event;
-		const upstream = currentSync?.upstream ?? '';
-		showContextMenu({
-			x: clientX, y: clientY,
-			items: [
-				{
-					title: '用本地覆盖远程（强制推送）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支强推到 ${upstream}`,
-					onClick: () => { overwriteRemoteWithLocal(); },
-				},
-				{
-					title: '用远程覆盖本地（硬重置）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支重置到 ${upstream}`,
-					onClick: () => { overwriteLocalWithRemote(); },
-				},
-			],
-		});
-	}, [currentSync, overwriteRemoteWithLocal, overwriteLocalWithRemote]);
 
 	/** 写入设置并刷新（排序/显示项变化需要重新拉取提交图）。 */
 	const changeSettings = React.useCallback((next: Settings) => {
@@ -1521,7 +1218,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onOpenFile: openLogFile, onRevealPath,
 			settings, onChange: changeSettings, remotes: state.remotes, onDeleteRemote: deleteRemoteByName,
 			onAddRemote: handleAddRemote, onEditRemote: handleEditRemote, onExportConfig: handleExportConfig,
-			onCheckSsh: handleCheckSsh,
+			onCheckSsh: remoteSync.handleCheckSsh,
 			userDetails, onEditUserDetails: handleEditUserDetails, onDeleteUserDetails: handleDeleteUserDetails,
 		}),
 
@@ -1576,10 +1273,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			showSyncButton,
 			syncBehind: currentSync?.behind ?? 0,
 			syncAhead: currentSync?.ahead ?? 0,
-			onSync: handleSync,
-			showPublishButton, onPublish: handlePublish,
+			onSync: remoteSync.handleSync,
+			showPublishButton, onPublish: remoteSync.handlePublish,
 			canSubmit: composer.canSubmit, onSubmit: composer.submit, onRefresh: refreshAll,
-			onSyncContextMenu: overwriteChoicesAvailable ? handleSyncContextMenu : undefined,
+			onSyncContextMenu: overwriteChoicesAvailable ? remoteSync.handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: handleAddToGitignore, onAddToLocalExclude: handleAddToLocalExclude,
