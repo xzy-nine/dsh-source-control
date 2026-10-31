@@ -11,12 +11,12 @@
  * 已知值；写操作后作废，使贮藏这类会变的字段重新读取。
  */
 import React from 'react';
-import { invalidateHostCache, loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
+import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
-import { fallbackPollMs, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
-import { isRepoBusy } from './busy.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
+import { mergeSnapshot, writeSync } from './graph-state.ts';
+import { useGraphPolling } from './use-graph-polling.ts';
 import {
 	branchNamesEqual, commitsListEqual, entriesEqual, logCommitCountOf, mergeCommits, mergeEntries,
 	remotesListEqual, uncommittedParentOf, withUncommittedCount,
@@ -24,163 +24,15 @@ import {
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
-import type { BusyEntry, Commit, PanelState, Remote, RepoSync, Settings } from '../shared/types.ts';
-import type { GraphStash, GraphData } from '../api/index.ts';
+import type { BusyEntry, Commit, PanelState, RepoSync, Settings } from '../shared/types.ts';
+import type { GraphData } from '../api/index.ts';
+import {
+	dropGraphWindows, dropRenderedGraph, getActiveGraphRepo, nextRefreshId, rememberPanelState, rememberRepoInfo,
+	rememberedPanelState, rememberedRepoInfo, setActiveGraphRepo,
+} from './graph-window-cache.ts';
+import type { KnownRepoInfo } from './graph-window-cache.ts';
 
-/**
- * 各仓库最近一次渲染的面板状态。
- *
- * 这是**渲染态**，不是数据缓存：数据缓存（提交图窗口、仓库信息、工作区快照）在宿主内存里，
- * 见 `source-control/host-cache.ts`。这里只记住界面最后一次画出来的结果，供面板重新挂载时
- * 首帧呈现——侧栏页签按会话存储，切换会话会让面板整体重新挂载。
- */
-const lastPanelState = new Map<string, PanelState>();
-
-/**
- * 各仓库最近一次已加载的提交数上限。
- *
- * 重新挂载时 `maxCommits` 会回到初始值，宿主缓存键随之变化、命中不到已取过的窗口。
- * 这是与渲染态配套的取数参数，因此与它一起留在客户端。
- */
-const lastMaxCommits = new Map<string, number>();
-
-/** 状态缓存的仓库数上限；超出按插入序淘汰最旧。 */
-const LAST_PANEL_STATE_LIMIT = 8;
-
-/**
- * 取一个仓库最近一次已加载的提交数上限。
- *
- * @param repoPath - 仓库路径。
- * @returns 提交数上限；从未加载过时为 undefined。
- */
-export function rememberedMaxCommits(repoPath: string): number | undefined {
-	return lastMaxCommits.get(repoKeyOf(repoPath));
-}
-
-/**
- * 记下一个仓库最近一次渲染的面板状态。
- *
- * @param repoPath - 仓库路径。
- * @param state - 面板状态。
- * @param maxCommits - 该状态对应的提交数上限。
- * @returns 无。
- */
-function rememberPanelState(repoPath: string, state: PanelState, maxCommits: number): void {
-	const key = repoKeyOf(repoPath);
-	lastPanelState.delete(key);
-	lastPanelState.set(key, state);
-	lastMaxCommits.delete(key);
-	lastMaxCommits.set(key, maxCommits);
-	while (lastPanelState.size > LAST_PANEL_STATE_LIMIT) {
-		const oldest = lastPanelState.keys().next();
-		if (oldest.done === true) break;
-		lastPanelState.delete(oldest.value);
-		lastMaxCommits.delete(oldest.value);
-	}
-}
-
-/**
- * 取一个仓库最近一次渲染的面板状态。
- *
- * @param repoPath - 仓库路径。
- * @returns 面板状态；从未渲染过时为 undefined。
- */
-function rememberedPanelState(repoPath: string): PanelState | undefined {
-	return lastPanelState.get(repoKeyOf(repoPath));
-}
-
-/**
- * 最近一次取数的仓库（模块级）。
- *
- * 不能用实例内的 ref：侧栏页签按会话存储，切换会话会让面板重新挂载，实例 ref 必为 null，
- * 于是每次挂载都会被当成「换了仓库」而丢弃渲染态。
- */
-let activeGraphRepo: string | null = null;
-
-/** 一个仓库已知的远程与贮藏：随刷新请求传给宿主，宿主因此不重取仓库信息批。 */
-interface KnownRepoInfo {
-	readonly remotes: readonly Remote[];
-	readonly stashes: readonly GraphStash[];
-}
-
-/**
- * 各仓库已知的远程与贮藏（模块级）。
- *
- * 首次进入仓库时随提交图请求一并取回（`withRepoInfo`），此后刷新把它们传回宿主：宿主据此
- * 跳过仓库信息批，一次刷新少起一组子进程。写操作会改变贮藏与远程，因此由
- * {@link dropGraphWindows} 作废。键同 {@link repoKeyOf}。
- */
-const knownRepoInfo = new Map<string, KnownRepoInfo>();
-
-/** 已知仓库信息的条目上限；超出按插入序淘汰最旧。 */
-const KNOWN_REPO_INFO_LIMIT = 8;
-
-/**
- * 取仓库信息的键。
- *
- * @param repoPath - 仓库路径。
- * @returns 归一化后的键。
- */
-function repoKeyOf(repoPath: string): string {
-	return repoPath.replace(/[\\/]+$/, '').toLowerCase();
-}
-
-/**
- * 记下一个仓库已知的远程与贮藏。
- *
- * @param repoPath - 仓库路径。
- * @param info - 远程与贮藏。
- * @returns 无。
- */
-function rememberRepoInfo(repoPath: string, info: KnownRepoInfo): void {
-	const key = repoKeyOf(repoPath);
-	knownRepoInfo.delete(key);
-	knownRepoInfo.set(key, info);
-	while (knownRepoInfo.size > KNOWN_REPO_INFO_LIMIT) {
-		const oldest = knownRepoInfo.keys().next();
-		if (oldest.done === true) break;
-		knownRepoInfo.delete(oldest.value);
-	}
-}
-
-/**
- * 取一个仓库已知的远程与贮藏。
- *
- * @param repoPath - 仓库路径。
- * @returns 已知值；从未取过时为 undefined。
- */
-function rememberedRepoInfo(repoPath: string): KnownRepoInfo | undefined {
-	return knownRepoInfo.get(repoKeyOf(repoPath));
-}
-
-/**
- * 丢弃某个仓库的渲染态与已知仓库信息。
- *
- * 写操作与用户主动刷新后调用：界面必须按新数据重建。数据缓存由宿主在写操作后自行作废，
- * 这里不需要通知宿主。
- *
- * @param repoPath - 仓库路径。
- * @returns 无。
- */
-export function dropGraphWindows(repoPath: string): void {
-	const key = repoKeyOf(repoPath);
-	lastPanelState.delete(key);
-	lastMaxCommits.delete(key);
-	// 贮藏与远程随写操作变化，作废后下一次取数重新带回。
-	knownRepoInfo.delete(key);
-}
-
-/**
- * 只丢弃一个仓库的渲染态。
- *
- * 引用筛选变化只换提交窗口，远程与贮藏不受影响：整表作废会让下一次取数多带一次仓库信息批。
- *
- * @param repoPath - 仓库路径。
- * @returns 无。
- */
-export function dropRenderedGraph(repoPath: string): void {
-	lastPanelState.delete(repoKeyOf(repoPath));
-}
+export { dropGraphWindows, dropRenderedGraph, rememberedMaxCommits } from './graph-window-cache.ts';
 
 /** 提交图数据 hook 的入参。 */
 export interface UseGraphDataOptions {
@@ -229,61 +81,6 @@ export interface UseGraphDataResult {
  * @param options - 见 {@link UseGraphDataOptions}。
  * @returns 面板状态与刷新函数。
  */
-/**
- * 把一个快照的分支、上游与领先/落后写回选中节点。
- *
- * 领先/落后与条目来自同一次读取，因此调用点都在拿到快照之后，不再单独请求。
- *
- * @param setSyncById - 节点同步状态的写入器。
- * @param selectedId - 选中节点 id；null 时不写。
- * @param snapshot - 本轮工作区快照。
- * @returns 无。
- */
-function writeSync(
-	setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>,
-	selectedId: string | null,
-	snapshot: WorkingTreeSnapshot,
-): void {
-	if (selectedId === null) return;
-	setSyncById((previous) => {
-		const current = previous.get(selectedId);
-		/* 四项都未变时返回原 Map：仓库行按该引用记忆化，每轮换新 Map 会让它跟着重渲染。 */
-		if (current !== undefined
-			&& current.branch === snapshot.branch && current.upstream === snapshot.upstream
-			&& current.ahead === snapshot.ahead && current.behind === snapshot.behind) {
-			return previous;
-		}
-		return new Map(previous).set(selectedId, {
-			branch: snapshot.branch, upstream: snapshot.upstream,
-			ahead: snapshot.ahead, behind: snapshot.behind,
-		});
-	});
-}
-
-/**
- * 按一轮快照就地修正条目与未提交伪提交行。
- *
- * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。父提交必须已在列表中，宿主不再负责
- * 这一判定，两处补出该行的调用点共用同一判据。
- *
- * @param previous - 当前状态。
- * @param snapshot - 本轮工作区快照。
- * @returns 新状态；条目未变时除 error 外保持原引用。
- */
-function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapshot): PanelState {
-	const entriesSame = entriesEqual(previous.entries, snapshot.entries);
-	const parent = uncommittedParentOf(previous.commits, snapshot.head ?? previous.head);
-	const commits = entriesSame
-		? previous.commits
-		: mergeCommits(previous.commits, withUncommittedCount(previous.commits, snapshot.entries.length, parent));
-	return {
-		...previous, error: null, merging: snapshot.merging,
-		headHash: snapshot.head, upstream: snapshot.upstream,
-		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
-		commits,
-	};
-}
-
 /**
  * 组装一次提交图取数请求。
  *
@@ -352,31 +149,6 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 	rememberRepoInfo(repo, { remotes: graph.remotes, stashes: graph.stashes });
 }
 
-/**
- * 刷新轮次计数器。
- *
- * 每次刷新取一个新编号随请求带给宿主：宿主据此把同一轮的几条命令归成一组记耗时，
- * 不再按时间窗口猜轮次边界。编号只在本次会话内单调递增，不持久化。
- */
-let refreshIdCounter = 0;
-
-/**
- * 本次会话的编号前缀。
- *
- * 多个面板各自从 1 开始计数会撞号：宿主按「仓库 + 编号」归组，同仓库的两个面板会并进同一组，
- * 日志里的墙钟与命令明细互相稀释。前缀取随机值，各面板的编号因此互不相同。
- */
-const refreshIdPrefix = Math.floor(Math.random() * 1_000_000) * 10_000;
-
-/**
- * 取一个新的轮次编号。
- *
- * @returns 编号；宿主把 0 当作「未给出」，因此取值恒为正。
- */
-function nextRefreshId(): number {
-	refreshIdCounter += 1;
-	return refreshIdPrefix + refreshIdCounter;
-}
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null,
@@ -463,7 +235,7 @@ export function useGraphData({
 	 *
 	 * 初值取模块级记录：重新挂载时不能把「同一个仓库」误判成换了仓库。
 	 */
-	const loadedRepoRef = React.useRef<string | null>(activeGraphRepo);
+	const loadedRepoRef = React.useRef<string | null>(getActiveGraphRepo());
 	/** 已加载提交图对应的 HEAD：取自同一轮快照，兜底轮询据此判断 HEAD 是否移动。 */
 	const loadedHeadRef = React.useRef<string | null>(null);
 
@@ -519,7 +291,7 @@ export function useGraphData({
 		} else if (branchesChanged) {
 			dropRenderedGraph(workingTreePath);
 		}
-		activeGraphRepo = workingTreePath;
+		setActiveGraphRepo(workingTreePath);
 		// 换仓库后旧 HEAD 不再适用；同仓库沿用旧值，直到本轮快照返回后写入。
 		if (repoChanged) loadedHeadRef.current = null;
 		loadedRepoRef.current = workingTreePath;
@@ -808,96 +580,10 @@ export function useGraphData({
 		rememberPanelState(workingTreePath, { ...state, busy: [] }, maxCommits);
 	}, [workingTreePath, state, maxCommits]);
 
-	// 已加载的工作区签名：兜底轮询据此判断是否需要重载。
-	const loadedSigRef = React.useRef('');
-	loadedSigRef.current = entriesSignature(state.entries);
-
-	/*
-	 * 兜底轮询：覆盖事件窗口之外的写入（其它会话、其它工作区、编辑器、终端），是事件驱动之外的
-	 * 定期校对。页签可见时按快档跑，不可见时退回慢档以省资源，切换时重建定时器。
-	 * 页签不可见、上一次未结束、面板正忙时跳过。
-	 *
-	 * 稳定判定按档位取所需观测次数：快档一次读到与已加载不同的签名即重载，慢档仍要求连续两次
-	 * 读到同一份签名，避免克隆等长时间写盘期间反复拉取整棵目录树。
-	 *
-	 * 签名取自工作区快照：它与随后的重载读同一份数据，命中宿主侧同一份结果缓存。
-	 */
-	React.useEffect(() => {
-		if (!settings.autoRefresh || workingTreePath === null) return undefined;
-		const cancelled = { current: false };
-		let polling = false;
-		let lastSeen = '';
-		let seenCount = 0;
-		let timerId: number | undefined;
-		let timerInterval = 0;
-
-		/** 已加载提交图的 HEAD：取自最近一轮快照。 */
-		const loadedHead = (): string | null => loadedHeadRef.current;
-
-		const poll = (): void => {
-			if (cancelled.current || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
-			polling = true;
-			// 轮询读的也是工作区快照：与其它后台刷新同一套指示，取数期间给出反馈。
-			setState((previous) => beginBackground(previous, 'entries'));
-			void (async () => {
-				try {
-					// 轮询必须读当前值：命中宿主快照缓存会让签名永远不变，外部改动再也发现不了。
-				const snapshot = await loadWorkingTreeSnapshot(workingTreePath, undefined, true, nextRefreshId());
-					if (cancelled.current) return;
-					const signature = entriesSignature(snapshot.entries);
-					const previous = lastSeen;
-					seenCount = signature === previous ? seenCount + 1 : 1;
-					lastSeen = signature;
-					const active = document.visibilityState === 'visible';
-					const reload = active
-						? seenCount >= stableObservationsRequired(true) && signature !== loadedSigRef.current
-						: shouldFallbackRefresh(signature, previous, loadedSigRef.current, seenCount);
-					if (!reload) return;
-					/*
-					 * 轮询读到的是**工作区**签名，它只说明有文件改动，不说明引用或提交历史变了。
-					 * 区分两者的是 HEAD：只有 HEAD 移动（提交、检出、重置等）才需要重取提交图。
-					 *
-					 * 外部进程的提交不经过本插件的执行层，宿主收不到写事件、缓存不会自动作废，
-					 * 因此这里显式请宿主作废该仓库的缓存。宿主缓存键已含 HEAD，作废是为覆盖
-					 * 「HEAD 未动但引用变了」的情形（fetch、打标签等）。
-					 *
-					 * 只重取提交图：本轮快照已经在手，再走一次全量刷新会把它重读一遍。
-					 *
-					 * 纯文件改动只更新变更区：一律作废缓存会让每次保存都重取整页提交
-					 * （大仓库数百毫秒），并让图形区整体重渲染。
-					 */
-					if (snapshot.head !== null && snapshot.head !== loadedHead()) {
-						await invalidateHostCache(workingTreePath).catch(() => { /* 作废失败按未作废处理 */ });
-						await reloadGraphOnly(workingTreePath, snapshot);
-						return;
-					}
-					setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
-				} catch { /* 忽略兜底轮询失败 */ } finally {
-					setState((previous) => endBackground(previous, 'entries'));
-					polling = false;
-				}
-			})();
-		};
-
-		/** 按页签可见性取轮询间隔，间隔未变时保留原定时器。 */
-		const schedule = (): void => {
-			const active = document.visibilityState === 'visible';
-			const next = fallbackPollMs(active ? settings.pollActiveSeconds : settings.pollIdleSeconds, active);
-			if (timerId !== undefined && next === timerInterval) return;
-			if (timerId !== undefined) window.clearInterval(timerId);
-			timerInterval = next;
-			timerId = window.setInterval(poll, next);
-		};
-
-		const onVisibilityChange = (): void => { schedule(); };
-		document.addEventListener('visibilitychange', onVisibilityChange);
-		schedule();
-		return () => {
-			cancelled.current = true;
-			document.removeEventListener('visibilitychange', onVisibilityChange);
-			if (timerId !== undefined) window.clearInterval(timerId);
-		};
-	}, [workingTreePath, reloadGraphOnly, settings.autoRefresh, settings.pollActiveSeconds, settings.pollIdleSeconds]);
+	const loadedSignature = entriesSignature(state.entries);
+	useGraphPolling({
+		workingTreePath, settings, busyRef, setState, loadedHeadRef, reloadGraphOnly, loadedSignature,
+	});
 
 	return { state, setState, refresh, refreshEntries, loadMore, busyRef, graphScope };
 

@@ -15,9 +15,13 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const graphData = readFileSync(join(root, 'src', 'client', 'panel', 'use-graph-data.ts'), 'utf8');
+const windowCache = readFileSync(join(root, 'src', 'client', 'panel', 'graph-window-cache.ts'), 'utf8');
+const polling = readFileSync(join(root, 'src', 'client', 'panel', 'use-graph-polling.ts'), 'utf8');
 const panel = readFileSync(join(root, 'src', 'client', 'panel', 'index.ts'), 'utf8');
 const hostCache = readFileSync(join(root, 'src', 'source-control', 'host-cache.ts'), 'utf8');
-const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
+const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
+const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
 
 test('数据缓存位于宿主内存', () => {
 	for (const store of ['graphs', 'repoInfos', 'snapshots']) {
@@ -36,21 +40,21 @@ test('数据缓存位于宿主内存', () => {
 });
 
 test('宿主在读取路径上命中缓存', () => {
-	assert.match(routes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
+	assert.match(graphRoutes, /const cachedGraph = readGraph\(repo, graphParams\)/, 'loadCommits 应先查缓存');
 	// 快照键含 HEAD：外部提交不产生写事件，不带 HEAD 会回投提交前的条目。
 	assert.match(
-		routes,
+		workspaceRoutes,
 		/readSnapshot\(repo, await repoHeadHash\(repo\)\)/,
 		'loadWorkingTreeSnapshot 应先查缓存，且键含当前 HEAD',
 	);
 	// 兜底轮询要读当前值：命中缓存会让条目签名永远不变，外部改动再也发现不了。
-	assert.match(routes, /bool\('noCache'\) \? undefined : readSnapshot/, '应支持跳过快照缓存');
+	assert.match(workspaceRoutes, /bool\('noCache'\) \? undefined : readSnapshot/, '应支持跳过快照缓存');
 	assert.match(
-		routes,
+		graphRoutes,
 		/let repoInfo = readRepoInfo\(repo, \{ showRemoteBranches, showStashes, hideRemotes \}\)/,
 		'loadRepoInfo 应按取数参数查缓存',
 	);
-	assert.match(routes, /case 'invalidateCache'/, '应提供主动作废命令');
+	assert.match(miscRoutes, /case 'invalidateCache'/, '应提供主动作废命令');
 	/*
 	 * 仓库信息的缓存键必须含三个取数参数：远程分支、贮藏与隐藏远程都会改变 getRepoInfo 的结果。
 	 */
@@ -93,19 +97,19 @@ test('客户端不缓存提交数据，只保留取数参数', () => {
 	 * `knownRepoInfo` 不是数据副本：它是随请求回传宿主的取数参数（远程名与贮藏标识），
 	 * 使宿主跳过仓库信息批。因此它必须有容量上限，且随写操作作废。
 	 */
-	assert.match(graphData, /const knownRepoInfo = new Map/, '应保留已知仓库信息');
-	assert.match(graphData, /const KNOWN_REPO_INFO_LIMIT = \d+/, '已知仓库信息应有容量上限');
+	assert.match(windowCache, /const knownRepoInfo = new Map/, '应保留已知仓库信息');
+	assert.match(windowCache, /const KNOWN_REPO_INFO_LIMIT = \d+/, '已知仓库信息应有容量上限');
 	assert.match(
-		graphData,
+		windowCache,
 		/export function dropGraphWindows\(repoPath: string\): void \{[\s\S]{0,300}?knownRepoInfo\.delete\(key\)/,
 		'写操作与换仓库时应作废已知仓库信息',
 	);
 });
 
 test('客户端只保留渲染态与取数参数', () => {
-	assert.match(graphData, /const lastPanelState = new Map/, '应缓存渲染态');
-	assert.match(graphData, /const lastMaxCommits = new Map/, '应缓存提交数上限');
-	assert.match(graphData, /export function rememberedMaxCommits/, '面板需要读取该上限');
+	assert.match(windowCache, /const lastPanelState = new Map/, '应缓存渲染态');
+	assert.match(windowCache, /const lastMaxCommits = new Map/, '应缓存提交数上限');
+	assert.match(windowCache, /export function rememberedMaxCommits/, '面板需要读取该上限');
 	assert.match(
 		graphData,
 		/rememberPanelState\(workingTreePath, \{ \.\.\.state, busy: \[\] \}, maxCommits\)/,
@@ -128,6 +132,6 @@ test('重新挂载时初始状态直接取渲染态', () => {
 
 test('外部改动经显式命令作废宿主缓存', () => {
 	// 外部进程的提交不产生写事件，宿主无从得知，只能由读到 HEAD 变化的客户端请求作废。
-	assert.match(graphData, /await invalidateHostCache\(workingTreePath\)/, 'HEAD 移动时应请求宿主作废');
+	assert.match(polling, /await invalidateHostCache\(workingTreePath\)/, 'HEAD 移动时应请求宿主作废');
 	assert.match(hostCache, /export function clearHostCache/, '宿主应提供整表清空');
 });

@@ -254,6 +254,20 @@ export type PanelPhase = 'loading' | 'ready' | 'no-workspace';
  */
 export type BusyScope = 'read' | 'commit' | 'history' | 'network';
 
+/**
+ * 执行一次仓库操作并刷新面板。
+ *
+ * `repo` 省略时用当前选中的工作树；`optimistic` 给出时按它的推算就地更新条目；
+ * `historyChanged` 缺省为 true，即按可能改动引用与提交历史处理。
+ */
+export type PanelRun = (
+	scope: BusyScope,
+	operation: () => Promise<void>,
+	repo?: string,
+	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+	options?: { readonly historyChanged?: boolean; readonly intent?: string },
+) => Promise<void>;
+
 /** 一条进行中的操作：目标仓库路径与影响面。 */
 export interface BusyEntry {
 	readonly repo: string;

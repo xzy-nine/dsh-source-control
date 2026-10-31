@@ -1,10 +1,9 @@
 /**
  * 差异文件地址的构造：把 git 给出的仓库相对路径拼成 `dsh-resource://file/…` 地址。
  *
- * git 的 `status` / `diff --name-status` 返回的路径相对**仓库根**，而地址里的
- * `session/<id>/<path>` 由宿主相对**会话工作区根**解析（`workspaceRoot` 取会话
- * header 的 `cwd`）。选中的仓库与工作区不是同一个时基准不同，因此先用仓库根拼出
- * 绝对路径：在工作区内就给相对路径，区外直接给绝对路径（该 scope 同样接受）。
+ * git 的 `status` / `diff --name-status` 返回的路径相对**仓库根**，因此先用仓库根拼成
+ * 绝对路径。地址里的路径保持绝对形式：`session/<id>/<path>` 由宿主按其会话工作区根解析，
+ * 相对路径会被再拼一次，而插件持有的工作区根未必与宿主一致。
  */
 
 /** 地址前缀（scope 为 session）。 */
@@ -13,41 +12,32 @@ const FILE_ADDRESS_PREFIX = 'dsh-resource://file/session/';
 /** 统一分隔符并去掉尾斜杠。 */
 const normalize = (path: string | null | undefined): string => (path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
 
-/** 盘符路径按 Windows 规则忽略大小写比较。 */
-const comparable = (path: string): string => (/^[a-zA-Z]:\//.test(path) ? path.toLowerCase() : path);
-
 /**
- * 取绝对路径相对工作区根的部分。
+ * 是否已是绝对路径。
  *
- * @param workspaceRoot - 会话工作区根。
- * @param absolute - 目标绝对路径。
- * @returns 相对路径（工作区根本身为空串）；不在工作区内时返回 null。
+ * @param path - 统一分隔符后的路径。
+ * @returns 盘符路径、POSIX 绝对路径或 UNC 路径时为 true。
  */
-function relativeTo(workspaceRoot: string, absolute: string): string | null {
-	const root = normalize(workspaceRoot);
-	if (root === '') return null;
-	if (comparable(absolute) === comparable(root)) return '';
-	return comparable(absolute).startsWith(`${comparable(root)}/`) ? absolute.slice(root.length + 1) : null;
-}
+const isAbsolutePath = (path: string): boolean => /^[a-zA-Z]:\//.test(path) || path.startsWith('/') || /^\/\//.test(path);
 
 /**
  * 构造某个差异文件的资源地址。
  *
+ * 地址里的路径一律用绝对路径。`session/<id>/<path>` 由宿主按该会话的工作区根解析，
+ * 而插件持有的工作区根来自会话快照，与宿主实际使用的未必一致（选中链接工作树、
+ * 或在检出外的工作树里操作时），按它换算相对路径会被宿主再拼一次，得到重复路径。
+ *
  * @param sessionId - 会话 id。
- * @param workspaceRoot - 会话工作区根；未知时传 null。
  * @param repoRoot - 仓库根的绝对路径，来自 diff 描述。
- * @param filePath - git 给出的文件路径，相对仓库根。
+ * @param filePath - git 给出的文件路径，相对仓库根或已是绝对路径。
  * @returns `dsh-resource://file/session/<sessionId>/<path>` 地址。
  */
-export function diffFileAddress(sessionId: string, workspaceRoot: string | null, repoRoot: string, filePath: string): string | null {
+export function diffFileAddress(sessionId: string, repoRoot: string, filePath: string): string | null {
 	const file = normalize(filePath);
 	if (file === '') return null;
 	const root = normalize(repoRoot);
-	const absolute = /^[a-zA-Z]:\//.test(file) || file.startsWith('/') || root === '' ? file : `${root}/${file}`;
-	// 相对路径更短也更稳；区外保留绝对形式——POSIX 靠前导空段表达，盘符自带前缀。
-	const relative = workspaceRoot === null ? null : relativeTo(workspaceRoot, absolute);
-	const path = relative === null || relative === '' ? absolute : relative;
-	const encoded = path.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
+	const absolute = isAbsolutePath(file) || root === '' ? file : `${root}/${file}`;
+	const encoded = absolute.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
 	return `${FILE_ADDRESS_PREFIX}${encodeURIComponent(sessionId)}/${encoded}`;
 }
 

@@ -21,6 +21,12 @@ const clientDir = join(root, 'src', 'client');
 const panelDir = join(clientDir, 'panel');
 const cssDir = join(clientDir, 'css');
 
+/** 右键菜单全部源码：装配在 commit-menu.ts，处理函数按域在 panel/menu/ 下。 */
+function menuSources() {
+	const files = ['commit-menu.ts', ...readdirSync(join(panelDir, 'menu')).filter((name) => name.endsWith('.ts')).map((name) => join('menu', name))];
+	return files.map((name) => readFileSync(join(panelDir, name), 'utf8'));
+}
+
 /** ui-primitives 在源码检出中的位置；profile 安装版没有源码，此时跳过。 */
 const PRIMITIVES_INDEX = 'E:/GitHubCode/02DSH/deepseek-harness/packages/client/ui-primitives/src/index.ts';
 const PRIMITIVES_ICONS = 'E:/GitHubCode/02DSH/deepseek-harness/packages/client/ui-primitives/src/icons/index.tsx';
@@ -89,7 +95,7 @@ function cssFile(name) {
 test('图形区拖拽手柄在图形标题之前', () => {
 	// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
 	// 否则会出现在标题与图形之间。
-	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const source = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
 	const section = source.indexOf('cx(css.sec, css.graphSec)');
 	const handle = source.indexOf('shared.secResize', section);
 	const title = source.indexOf("'图形'");
@@ -99,7 +105,7 @@ test('图形区拖拽手柄在图形标题之前', () => {
 
 test('图形区高度跟随拖动方向', () => {
 	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panel = readFileSync(join(clientDir, 'panel', 'use-panel-layout.ts'), 'utf8');
 	assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
 	assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
 	const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');
@@ -110,8 +116,7 @@ test('改动文件区在图形区内展开', () => {
 	// 展开块由 CommitGraph 按选中行渲染，面板不再另起一块。
 	const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
 	assert.match(graphSource, /renderDetail/, 'CommitGraph 必须接收 renderDetail');
-	assert.match(graphSource, /css\.detailInline/, '展开块必须由图形区渲染');
-	const sectionSource = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const sectionSource = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
 	const section = sectionSource.indexOf('cx(css.sec, css.graphSec)');
 	assert.ok(section !== -1, '未找到图形区标记');
 	assert.ok(!/css\.detail(?![A-Za-z])/.test(sectionSource), '图形区不应渲染独立的 detail 区块');
@@ -128,13 +133,13 @@ test('展开块左内边距与提交行一致', () => {
 
 test('再次点击同一提交行收起展开', () => {
 	// 点已选中的行必须收起（清空选中与详情），否则无法二次点击关闭。
-	const source = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const source = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
 	const start = source.indexOf('const toggleCommit');
 	assert.ok(start !== -1, '未找到 toggleCommit');
-	const body = source.slice(start, source.indexOf('const stagedPaths', start));
+	const body = source.slice(start, source.indexOf('const toggleCommit', start + 10));
 	assert.match(body, /state\.selectedHash === hash/, '必须先判断是否已选中');
 	assert.match(body, /selectedHash: null, detail: null/, '收起时必须清空选中与详情');
-	assert.match(source, /onToggleCommit: toggleCommit/, '图形行点击必须走 toggleCommit');
+	assert.match(readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8'), /onToggleCommit: toggleCommit/, '图形行点击必须走 toggleCommit');
 });
 
 test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primitives 源码检出' }, () => {
@@ -143,10 +148,9 @@ test('图标导出名带权重后缀', { skip: !available && '未找到 ui-primi
 	assert.ok(exported.has('IconBranchOutlineRegular'));
 	assert.ok(!exported.has('IconBranchOutline'), '裸图标名不应存在，若上游改名需同步本测试');
 });
-
 test('提交框在滚动区之外', () => {
 	// 滚动必须只发生在变更列表上：提交框若落在滚动容器内会随列表一起滚走。
-	const source = readFileSync(join(panelDir, 'sections.ts'), 'utf8');
+	const source = readFileSync(join(panelDir, 'sections', 'changes.ts'), 'utf8');
 	const box = source.indexOf('css.commitBox');
 	const scroll = source.indexOf('css.changesScroll');
 	assert.ok(box !== -1 && scroll !== -1, '未找到提交框或滚动容器标记');
@@ -183,7 +187,7 @@ test('新增文件走普通文件地址', () => {
 	const source = readFileSync(indexPath, 'utf8');
 	assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
 	assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
-	const panelSource = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panelSource = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
 	assert.match(panelSource, /isNew \? 'file'/, '新增文件应生成 file 类型目标');
 	// 已暂存的 A 与未跟踪的 ? 都算新增：只看 ? 会漏掉 A。
 	const changesSource = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
@@ -203,11 +207,13 @@ test('差异页默认并排且可切换', () => {
 	assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 });
 
-test('普通文件地址按仓库根换算', () => {
-	// 会话工作区根未必是仓库根：路径要用仓库根拼绝对路径后再相对工作区根取地址。
+test('普通文件地址用绝对路径', () => {
+	// 地址里的路径必须是绝对路径：宿主按它自己的会话工作区根解析相对路径，
+	// 插件持有的根未必一致（选中链接工作树时不同），换算成相对路径会被再拼一次。
 	const source = readFileSync(join(clientDir, 'diff', 'resource-path.ts'), 'utf8');
-	assert.match(source, /relativeTo\(workspaceRoot, absolute\)/, '应先换算成相对工作区根的路径');
+	assert.match(source, /isAbsolutePath\(file\)/, '入参已是绝对路径时原样使用');
 	assert.match(source, /repoRoot/, '仓库根参与绝对路径拼接');
+	assert.ok(!/relativeTo\(/.test(source), '不应再按会话工作区根换算相对路径');
 });
 
 test('状态字符与文件夹数量同处最右一列', () => {
@@ -241,9 +247,9 @@ test('文件差异视图为复制自 DSH 的实现', () => {
 	const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 	assert.match(indexSource, /from '[^']*\/file-diff\.tsx'/, '差异页应引用复制的视图');
 	assert.ok(!indexSource.includes('DiffBlock'), '不应再使用 ui-primitives 的 DiffBlock');
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
-	assert.match(routes, /--unified=3/, '宿主应请求带上下文的统一差异');
+	const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
+	assert.match(miscRoutes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
+	assert.match(miscRoutes, /--unified=3/, '宿主应请求带上下文的统一差异');
 });
 
 test('构建脚本把 CSS 模块的样式内联进包', () => {
@@ -399,8 +405,8 @@ test('差异面板默认自动换行', () => {
 
 test('删除分支只列以该提交为尖端的分支', () => {
 	// 包含该提交的分支是它的后代，删除后不影响该提交：作为候选会让「删除分支」指向无关分支。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	const build = menu.slice(menu.indexOf('deleteBranch: (ctx, meta) =>'), menu.indexOf('checkoutRemoteBranch: (ctx, meta) =>'));
+	const branchMenu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
+	const build = branchMenu.slice(branchMenu.indexOf('deleteBranch: (ctx, meta) =>'), branchMenu.indexOf('deleteRemoteBranch: (ctx, meta) =>'));
 	assert.match(build, /ctx\.tipBranches\.filter/, '本地候选取自尖端分支');
 	assert.match(build, /ctx\.tipRemoteBranches/, '远程候选取自尖端远程分支');
 	assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
@@ -418,9 +424,9 @@ test('删除分支只列以该提交为尖端的分支', () => {
 
 	const api = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
 	assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
-	assert.match(routes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
+	const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+	assert.match(workspaceRoutes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
+	assert.match(workspaceRoutes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
 });
 
 test('异步打开提交菜单前先取出事件字段', () => {
@@ -438,14 +444,14 @@ test('异步打开提交菜单前先取出事件字段', () => {
 test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
 	// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们，也不能在本工作树检出。
 	// 这类分支仍作为标签显示：它们确实指向该提交，隐藏会让图形区少一个真实存在的分支。
-	const routes = readFileSync(join(root, 'src', 'source-control', 'routes.ts'), 'utf8');
-	assert.match(routes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
-	assert.match(routes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
-	assert.ok(!/heads: commit\.heads\.filter/.test(routes), '不得再从 heads 里删除占用分支');
-	assert.match(routes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
-
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	assert.match(menu, /function localBranchItem/, '本地分支操作应统一经占用判定');
+	const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
+	const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
+	assert.match(workspaceRoutes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
+	assert.match(graphRoutes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
+	assert.ok(!/heads: commit\.heads\.filter/.test(graphRoutes), '不得再从 heads 里删除占用分支');
+	assert.match(workspaceRoutes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
+	const menu = menuSources().join('\n');
+	assert.match(menu, /export function localBranchItem/, '本地分支操作应统一经占用判定');
 	assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
 	/*
 	 * 按 builder 逐个截取：每个 builder 的范围从其定义到下一个 builder 定义之前。
@@ -470,7 +476,7 @@ test('工作树占用的分支照常显示，只禁用检出、删除与重命�
 });
 
 test('工作树右键提供移除入口', () => {
-	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panel = readFileSync(join(clientDir, 'panel', 'repo-menu.ts'), 'utf8');
 	assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
 	assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
 	// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录，因此不经 run 直接执行。
@@ -486,7 +492,7 @@ test('工作树右键提供移除入口', () => {
 	const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
 	assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
 	assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
-	const host = readFileSync(join(root, 'src', 'source-control', 'working-tree.ts'), 'utf8');
+	const host = readFileSync(join(root, 'src', 'source-control', 'worktree-remove.ts'), 'utf8');
 	assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
 	assert.match(host, /removalCwd/, '移除时的工作目录应避开被删目录');
 	assert.match(host, /resolveGitCommonDir/, '应退回 git 公共目录');
@@ -494,7 +500,7 @@ test('工作树右键提供移除入口', () => {
 
 test('删除当前分支时提示而非静默失败', () => {
 	// 当前分支仍在候选里，但点击后说明原因。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
+	const menu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
 	assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
 	assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
 	// 删除项本身不因当前分支置灰：点击后提示；被别的工作树检出时才由 localBranchItem 置灰。
@@ -509,8 +515,8 @@ test('删除当前分支时提示而非静默失败', () => {
 
 test('提交菜单与引用菜单共用同一份操作注册表', () => {
 	// 两处菜单由 ACTIONS 驱动：引用菜单按 refTypes 过滤，不再各自维护一份定义。
-	const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-	// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按 id 绑在本文件。
+	const menu = menuSources().join('\n');
+	// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按域绑定在 panel/menu/ 下。
 	const { actions } = JSON.parse(readFileSync(join(panelDir, 'menu-actions.json'), 'utf8'));
 	assert.ok(Array.isArray(actions) && actions.length > 0, '注册表数据源应有操作');
 	for (const action of actions) {
