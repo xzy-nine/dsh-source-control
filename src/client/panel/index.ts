@@ -47,6 +47,7 @@ import { backgroundFlagsOf, lastRefreshText as relativeRefreshText, refreshNotic
 import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
+import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, isRepoBusy, removeBusy } from './busy.ts';
 import { commitEntries } from './optimistic.ts';
 import { logCommitCountOf } from './commit-diff.ts';
@@ -248,16 +249,28 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const startRepoResize = useResizeHandler(repoHeight, 'down', commitRepoHeight);
 
 	const {
-		treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
+		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
 		selectNode, toggleNode, setSyncById, setSelectedId, rescan, refreshTree,
 	} = useRepos({ cwd, sessionId });
 
-	// 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。
-	// 路径已不存在的节点（刚被移除的工作树或子模块）按未选中处理：否则 git 子进程的工作目录
-	// 不存在，命令以 `spawn git ENOENT` 失败，而重取尚未返回时节点仍在树上。
+	/*
+	 * 取数目标：选中节点优先，其次**当且仅当工作区根本身是仓库**时用它。
+	 *
+	 * 工作区根常常只是一层目录（`E:\GitHubCode` 这类），里面才是各个仓库。对它取数会让
+	 * 每一条 git 命令都以 `not a git repository` 失败：一轮刷新起五六个必然失败的子进程，
+	 * 日志里全是错误。判据是树里有没有该路径的节点——发现层只产出仓库节点。
+	 *
+	 * 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。路径已不存在的节点
+	 * （刚被移除的工作树或子模块）按未选中处理：否则 git 子进程的工作目录不存在，
+	 * 命令以 `spawn git ENOENT` 失败，而重取尚未返回时节点仍在树上。
+	 */
+	const workspaceIsRepo = React.useMemo(
+		() => (cwd === undefined ? false : findNodeByPath(repoNodes, cwd) !== null),
+		[repoNodes, cwd],
+	);
 	const workingTreePath = selectedNode !== null && selectedNode.available
 		? selectedNode.path
-		: (treeStatus === 'loading' ? null : (cwd ?? null));
+		: (treeStatus === 'loading' || !workspaceIsRepo ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined;
 
 	/**

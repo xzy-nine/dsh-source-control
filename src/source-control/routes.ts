@@ -34,6 +34,7 @@ import { sshStatus } from './ssh-status.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { readEntries, readRepoLocations, writeEntry, writeRepoLocations } from './state-store.js';
 import { repoHead, repoHeadHash } from './repo-facts.js';
+import { resolveGitDir } from './worktree-branches.js';
 import { currentLogFile, flushSync, log, logDebug, logError, logInfo, logRoot, logWarn, recentLogFiles, type LogLevel } from './logger.js';
 import { submitFeedback } from './feedback.js';
 import { formatBytes } from './feedback-text.js';
@@ -297,6 +298,26 @@ function graphParamsLog(params: {
 	const head = params.head === null ? '分离头指针或未提交' : params.head.slice(0, 8);
 	return `（HEAD ${head}，${flags.join('，')}）`;
 }
+/** 仓库判定结果的缓存有效期（毫秒）。
+ *
+ * 判定要逐级向上找 `.git`，每次刷新对同一路径反复判会重复读盘。仓库被创建或删除属于结构变化，
+ * 由仓库监视经 `invalidateCache` 之外的事件流通知，因此短有效期足够。
+ */
+const REPO_PATH_TTL_MS = 5000;
+
+/** 仓库判定缓存：规范化路径 → 结果与过期时刻。 */
+const repoPathChecks = new Map<string, { value: boolean; expiresAt: number }>();
+/** 非仓库路径上返回的空工作区快照。 */
+const EMPTY_SNAPSHOT = {
+	entries: [] as unknown[],
+	head: null,
+	branch: null,
+	upstream: null,
+	ahead: 0,
+	behind: 0,
+	merging: false,
+	error: null,
+};
 /**
  * 处理一条 API 命令。
  *
@@ -369,6 +390,26 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const num = (k: string, dflt = 0): number => (typeof msg[k] === 'number' ? msg[k] : dflt);
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
+	/**
+	 * 判定目标路径是否在 git 仓库内。
+	 *
+	 * 只读命令在非仓库路径上必然失败：一次刷新会起五六个必定失败的子进程，日志也被错误填满。
+	 * 判据用文件系统（逐级向上找 `.git`），不起子进程；结果按路径缓存，反复判只读一次盘。
+	 *
+	 * @param target - 目标路径。
+	 * @returns 在仓库内时为 true。
+	 */
+	const isRepoPath = async (target: string): Promise<boolean> => {
+		if (target === '') return false;
+		const key = target.replace(/[\\/]+$/, '').toLowerCase();
+		const cached = repoPathChecks.get(key);
+		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.value;
+		const value = await resolveGitDir(target) !== null;
+		repoPathChecks.set(key, { value, expiresAt: Date.now() + REPO_PATH_TTL_MS });
+		return value;
+	};
+
+
 	const respond = (payload: Record<string, unknown>): void => {
 		// 所有命令级失败都经这里回投，因此错误日志只需挂在这一处。
 		const error = payload.error;
@@ -416,6 +457,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			// 只读工作区：抓取期间照常读，不必等它结束。
 			await whenWorktreeIdle(repo);
+			/*
+			 * 非仓库路径直接回空快照，不起子进程：工作区根常常只是一层目录，对它取数会让
+			 * 每条 git 命令都以 `not a git repository` 失败。
+			 */
+			if (!(await isRepoPath(repo))) {
+				logDebug('repo', `目标路径不是 git 仓库，按空工作区返回：${repo}`);
+				respond({ command: 'loadWorkingTreeSnapshot', repo, ...EMPTY_SNAPSHOT });
+				break;
+			}
 			/*
 			 * 快照键含 HEAD：外部进程的提交不产生写事件，缓存无从主动作废；带上 HEAD 后
 			 * 那次提交不会命中提交前的条目。HEAD 由文件与分支引用解析，不起子进程。
@@ -476,7 +526,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondResult('addToLocalExclude', async () => ({ state: await addToLocalExclude(repo, str('path')) }));
 			break;
 		case 'localExcludeState':
-			await respondResult('localExcludeState', async () => ({ state: await localExcludeState(repo) }));
+			await respondResult('localExcludeState', async () => {
+				// 非仓库路径没有本地排除文件：直接回空，不起 git rev-parse。
+				if (!(await isRepoPath(repo))) return { state: null };
+				return { state: await localExcludeState(repo) };
+			});
 			break;
 		case 'removeWorktree':
 			await respondResult('removeWorktree', async () => {
@@ -497,6 +551,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			break;
 		case 'hooksState':
 			await respondResult('hooksState', async () => {
+				// 非仓库路径没有钩子目录：直接回空，不起 git config 与文件系统探测。
+				if (!(await isRepoPath(repo))) return { repo, commit: false, push: false, directory: null };
 				/*
 				 * `core.hooksPath` 由 git 解析（含 includeIf 等条件），因此读它的取值而不是只看
 				 * `.git/hooks`；读取失败时按未配置处理，退回默认钩子目录。
@@ -608,6 +664,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'loadRepoInfo': {
 			// 读远程与贮藏列表：不碰工作区，抓取期间照常读。
 			await whenWorktreeIdle(repo);
+			/*
+			 * 非仓库路径直接回空信息，不起子进程。原先靠 getRepoInfo 失败后再启一次
+			 * `git rev-parse` 反判，等于先失败一遍再确认。
+			 */
+			if (!(await isRepoPath(repo))) {
+				logDebug('repo', `目标路径不是 git 仓库，按空仓库信息返回：${repo}`);
+				respond({
+					command: 'loadRepoInfo', refreshId: num('refreshId'),
+					branches: [], head: null, remotes: [], stashes: [], error: null, isRepo: false,
+				});
+				break;
+			}
 			const showRemoteBranches = bool('showRemoteBranches', true);
 			const showStashes = bool('showStashes', true);
 			const hideRemotes = arr<string>('hideRemotes');
@@ -629,6 +697,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		case 'loadCommits':
 			// 提交图同样等写操作结束：写操作可能正在改写引用。
 			await whenGitIdle(repo);
+			/*
+			 * 非仓库路径直接回空窗口：对工作区根取提交图必然失败，且每次要起 git log、
+			 * for-each-ref 与 config 三条子进程。
+			 */
+			if (!(await isRepoPath(repo))) {
+				logDebug('repo', `目标路径不是 git 仓库，按空提交图返回：${repo}`);
+				respond({
+					command: 'loadCommits',
+					refreshId: num('refreshId'),
+					error: null,
+					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+					commits: [],
+					head: null,
+					branch: null,
+					tags: [],
+					moreCommitsAvailable: false,
+					nextSkip: 0,
+					nextCursor: null,
+					foreignBranches: [],
+					repoInfo: null,
+				});
+				break;
+			}
 			{
 				/*
 				 * 偏移分页：客户端传 `skip`（已加载条数）与 `limit`，git 跳过前 skip 条再输出本页。
@@ -982,6 +1073,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			const remoteName = strOrNull('name');
 			const pruneRemotes = bool('prune');
 			const pruneAllTags = bool('pruneTags');
+			// 非仓库路径抓不了：直接回未变化，不起 git fetch 与两次 for-each-ref。
+			if (!(await isRepoPath(repo))) {
+				logDebug('repo', `目标路径不是 git 仓库，跳过抓取：${repo}`);
+				respondResultSync('fetch', { repo, changed: false });
+				break;
+			}
 			await respondResult('fetch', async () => {
 				/*
 				 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
@@ -1313,6 +1410,8 @@ let exitFlushRegistered = false;
 interface CostBucket {
 	/** 本轮的标识，仅用于日志展示。 */
 	readonly label: string;
+	/** 本轮所属仓库；git 子进程计数按它取。 */
+	readonly repo: string;
 	/** 本轮第一条命令的开始时刻。 */
 	firstStartedAt: number;
 	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
@@ -1368,7 +1467,8 @@ function flushCostBucket(key: string): void {
 	 * 命令之和是工作量。git 子进程数是这套取数的主要成本来源（一次约 80ms 固定开销）。
 	 */
 	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
-	const spawns = gitSpawnCount() - current.spawnsAtStart;
+	// 按仓库计数：并发轮次各自算差值，共用全局计数会把别的轮次的子进程算进来。
+	const spawns = gitSpawnCount(current.repo) - current.spawnsAtStart;
 	logInfo('perf', `${current.label}墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，git 子进程 ${String(spawns)} 个，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
 }
 
@@ -1421,7 +1521,7 @@ function recordCommandCost(command: string, ms: number, repo: string, refreshId:
 	if (current === undefined) {
 		current = {
 			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
-			firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart: gitSpawnCount(),
+			repo, firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart: gitSpawnCount(repo),
 			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
 		};
 		costBuckets.set(key, current);

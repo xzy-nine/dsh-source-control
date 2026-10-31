@@ -627,7 +627,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	const operation = startOperation(repo, kindOf(args));
 	const task = (async (): Promise<GitResult> => {
 		try {
-			return await spawnGit(args, cwd);
+			return await spawnGit(args, cwd, repo);
 		} finally {
 			endOperation(repo, operation);
 		}
@@ -709,20 +709,23 @@ export function isProbeCommand(args: readonly string[]): boolean {
 	return false;
 }
 
-/** 进程启动的 git 子进程总数；供耗时汇总统计一轮刷新起了几个子进程。 */
-let gitSpawns = 0;
+/** 各仓库已启动的 git 子进程数；供耗时汇总按仓库统计一轮刷新起了几个子进程。 */
+const gitSpawnsByRepo = new Map<string, number>();
 
 /**
- * 取已启动的 git 子进程总数。
+ * 取一个仓库已启动的 git 子进程数。
  *
- * @returns 自进程启动以来的子进程数。
+ * 按仓库分别计数：并发轮次各按自己的起点算差值，共用一个全局计数会把别的轮次的子进程算进来。
+ *
+ * @param repo - 仓库路径。
+ * @returns 该仓库自进程启动以来的子进程数。
  */
-export function gitSpawnCount(): number {
-	return gitSpawns;
+export function gitSpawnCount(repo: string): number {
+	return gitSpawnsByRepo.get(normalizeRepo(repo)) ?? 0;
 }
 
-function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
-	gitSpawns += 1;
+function spawnGit(args: readonly string[], cwd: string, repo: string): Promise<GitResult> {
+	gitSpawnsByRepo.set(repo, (gitSpawnsByRepo.get(repo) ?? 0) + 1);
 	return collectProcess({
 		command: 'git',
 		args,

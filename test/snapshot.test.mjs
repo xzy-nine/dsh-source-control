@@ -327,18 +327,21 @@ test('对照：复杂工作区下快照条目与 loadWorkingTree 条目一致', 
 	}
 });
 
-test('非仓库：error 为字符串且其余字段为空值', async () => {
+test('非仓库：不起子进程，直接回空快照', async () => {
 	const absent = join(tmpdir(), `gg-snap-absent-${Date.now()}`);
 	const snap = await snapshot(await makeCaller(absent));
 	assert.equal(snap.command, 'loadWorkingTreeSnapshot');
-	assert.equal(typeof snap.error, 'string');
-	assert.ok(snap.error.length > 0, '非仓库应给出错误文本');
+	/*
+	 * 非仓库路径不再让每条 git 命令各自失败一遍：工作区根常常只是一层目录，那样一轮刷新会起
+	 * 五六个必定失败的子进程。判据是文件系统，命中即回空快照，error 保持 null。
+	 */
+	assert.equal(snap.error, null, '非仓库不是错误状态');
 	assert.equal(snap.branch, null);
 	assert.equal(snap.upstream, null);
 	assert.equal(snap.ahead, 0);
 	assert.equal(snap.behind, 0);
-	assert.equal(snap.merging, false, '读取失败时按未合并处理');
-	assert.equal((snap.entries ?? []).length, 0, '失败时 entries 应为空');
+	assert.equal(snap.merging, false);
+	assert.equal((snap.entries ?? []).length, 0, '非仓库没有工作区条目');
 });
 
 test('合并状态：冲突合并与无冲突 --no-commit 合并都判为合并中', async () => {

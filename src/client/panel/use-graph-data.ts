@@ -361,13 +361,21 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 let refreshIdCounter = 0;
 
 /**
+ * 本次会话的编号前缀。
+ *
+ * 多个面板各自从 1 开始计数会撞号：宿主按「仓库 + 编号」归组，同仓库的两个面板会并进同一组，
+ * 日志里的墙钟与命令明细互相稀释。前缀取随机值，各面板的编号因此互不相同。
+ */
+const refreshIdPrefix = Math.floor(Math.random() * 1_000_000) * 10_000;
+
+/**
  * 取一个新的轮次编号。
  *
- * @returns 编号；从 1 开始，宿主把 0 当作「未给出」。
+ * @returns 编号；宿主把 0 当作「未给出」，因此取值恒为正。
  */
 function nextRefreshId(): number {
 	refreshIdCounter += 1;
-	return refreshIdCounter;
+	return refreshIdPrefix + refreshIdCounter;
 }
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,

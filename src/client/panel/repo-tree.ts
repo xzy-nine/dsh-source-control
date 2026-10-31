@@ -98,6 +98,26 @@ export function attachChildren(nodes, childrenByPath) {
 }
 
 /**
+ * 在树里按路径查找节点。
+ *
+ * @param {object[]} nodes - 仓库节点列表。
+ * @param {string|null} path - 目标路径。
+ * @returns {object|null} 命中的节点；不存在时为 null。
+ */
+export function findNodeByPath(nodes, path) {
+	const target = normalizePath(path);
+	if (target === '') return null;
+	const walk = (list) => {
+		for (const node of list ?? []) {
+			if (normalizePath(node.path) === target) return node;
+			const found = walk(node.children ?? []);
+			if (found !== null) return found;
+		}
+		return null;
+	};
+	return walk(nodes);
+}
+/**
  * 选出初始选中节点：持久化命中优先，其次是工作区根自身，最后取第一个仓库。
  *
  * @param {object[]} nodes - 仓库节点列表。
