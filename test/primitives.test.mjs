@@ -207,11 +207,13 @@ test('差异页默认并排且可切换', () => {
 	assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 });
 
-test('普通文件地址按仓库根换算', () => {
-	// 会话工作区根未必是仓库根：路径要用仓库根拼绝对路径后再相对工作区根取地址。
+test('普通文件地址用绝对路径', () => {
+	// 地址里的路径必须是绝对路径：宿主按它自己的会话工作区根解析相对路径，
+	// 插件持有的根未必一致（选中链接工作树时不同），换算成相对路径会被再拼一次。
 	const source = readFileSync(join(clientDir, 'diff', 'resource-path.ts'), 'utf8');
-	assert.match(source, /relativeTo\(workspaceRoot, absolute\)/, '应先换算成相对工作区根的路径');
+	assert.match(source, /isAbsolutePath\(file\)/, '入参已是绝对路径时原样使用');
 	assert.match(source, /repoRoot/, '仓库根参与绝对路径拼接');
+	assert.ok(!/relativeTo\(/.test(source), '不应再按会话工作区根换算相对路径');
 });
 
 test('状态字符与文件夹数量同处最右一列', () => {

@@ -81,7 +81,7 @@ function GitGraphTab(props) {
 		const path = String(diff.path ?? '');
 		// 未跟踪的新文件没有可比差异：交给普通文件页打开，地址为 dsh-resource://file/…。
 		if (diff.kind === 'file') {
-			const address = diffFileAddress(sessionId, cwd, String(diff.repoRoot ?? cwd ?? ''), path);
+			const address = diffFileAddress(sessionId, String(diff.repoRoot ?? cwd ?? ''), path);
 			if (address === null) return;
 			try {
 				tabActions.openResource(address);
