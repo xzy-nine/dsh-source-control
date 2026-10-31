@@ -10,7 +10,7 @@
  */
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { getCached, putCached } from './host-cache.js';
+import { getCached, noteRepoCommonDir, putCached } from './host-cache.js';
 import type { CacheEntry } from './host-cache.js';
 import { onRepositoryWrite } from './working-tree.js';
 import { gitCommonDirOf, parseHeadRef, readLooseRef, resolveGitDir } from './worktree-branches.js';
@@ -109,7 +109,10 @@ export function parsePackedRefs(source: string): Map<string, string> {
 async function readLayout(repo: string): Promise<RepoLayout | null> {
 	const gitDir = await resolveGitDir(repo);
 	if (gitDir === null) return null;
-	return { gitDir, commonDir: await gitCommonDirOf(gitDir) };
+	const commonDir = await gitCommonDirOf(gitDir);
+	// 登记公共目录：写命令按它找到共享同一公共目录的其它工作树，一并作废缓存。
+	noteRepoCommonDir(repo, commonDir);
+	return { gitDir, commonDir };
 }
 
 /**

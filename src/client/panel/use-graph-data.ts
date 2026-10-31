@@ -352,6 +352,23 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 	rememberRepoInfo(repo, { remotes: graph.remotes, stashes: graph.stashes });
 }
 
+/**
+ * 刷新轮次计数器。
+ *
+ * 每次刷新取一个新编号随请求带给宿主：宿主据此把同一轮的几条命令归成一组记耗时，
+ * 不再按时间窗口猜轮次边界。编号只在本次会话内单调递增，不持久化。
+ */
+let refreshIdCounter = 0;
+
+/**
+ * 取一个新的轮次编号。
+ *
+ * @returns 编号；从 1 开始，宿主把 0 当作「未给出」。
+ */
+function nextRefreshId(): number {
+	refreshIdCounter += 1;
+	return refreshIdCounter;
+}
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
 	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null,
@@ -462,6 +479,8 @@ export function useGraphData({
 		const generation = generationRef.current + 1;
 		generationRef.current = generation;
 		const startedAt = Date.now();
+		// 本轮编号随请求带给宿主：宿主据此把同轮命令归成一组记耗时，而不是按时间窗口猜。
+		const refreshId = nextRefreshId();
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
@@ -554,9 +573,10 @@ export function useGraphData({
 			const known = rememberedRepoInfo(workingTreePath);
 			const graphSource = loadGraph(workingTreePath, {
 				...graphRequest(workingTreePath, requestMax, settings, undefined, requestBranches),
+				refreshId,
 				signal: controller.signal,
 			});
-			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal).then((snapshot) => {
+			const snapshotSource = loadWorkingTreeSnapshot(workingTreePath, controller.signal, false, refreshId).then((snapshot) => {
 				if (generation !== generationRef.current || controller.signal.aborted) return snapshot;
 				// 提交列表与快照同轮写入：HEAD 以快照为准，不从提交列表首条推导。
 				loadedHeadRef.current = snapshot.head;
@@ -648,7 +668,7 @@ export function useGraphData({
 		const startedAt = Date.now();
 		setState((previous) => beginBackground(previous, 'entries'));
 		try {
-			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal);
+			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal, false, nextRefreshId());
 			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
 			setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
@@ -679,7 +699,10 @@ export function useGraphData({
 		setState((previous) => beginBackground(previous, 'graph'));
 		try {
 			const known = rememberedRepoInfo(repo);
-			const graph = await loadGraph(repo, graphRequest(repo, reconcileWindow(maxCommits, stateRef.current.commits), settings, undefined, branchesRef.current));
+			const graph = await loadGraph(repo, {
+				...graphRequest(repo, reconcileWindow(maxCommits, stateRef.current.commits), settings, undefined, branchesRef.current),
+				refreshId: nextRefreshId(),
+			});
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
 			loadedHeadRef.current = snapshot.head;
 			const commits = withUncommittedCount(
@@ -811,7 +834,7 @@ export function useGraphData({
 			void (async () => {
 				try {
 					// 轮询必须读当前值：命中宿主快照缓存会让签名永远不变，外部改动再也发现不了。
-				const snapshot = await loadWorkingTreeSnapshot(workingTreePath, undefined, true);
+				const snapshot = await loadWorkingTreeSnapshot(workingTreePath, undefined, true, nextRefreshId());
 					if (cancelled.current) return;
 					const signature = entriesSignature(snapshot.entries);
 					const previous = lastSeen;

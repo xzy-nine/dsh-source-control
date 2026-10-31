@@ -18,7 +18,7 @@ import {
 	pruneRemote, pullBranch, pushBranchToMultipleRemotes, pushStash, pushTag, pushUpstream, rebase, renameBranch,
 	resetFileToRevision, resetToCommit, revertCommit, setConfigValue, unsetConfigValue,
 } from './git-actions.js';
-import { commitStaged, discardPaths, gitOrThrow, initSubmodule, loadWorkingTree, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle, whenWorktreeIdle } from './working-tree.js';
+import { commitStaged, discardPaths, gitOrThrow, gitSpawnCount, initSubmodule, loadWorkingTree, notifyRepositoryWrite, onRepositoryWrite, removeWorktree, runGit, stagePaths, unstagePaths, whenGitIdle, whenWorktreeIdle } from './working-tree.js';
 import { collectDiff } from './commit-diff.js';
 import { parseUnifiedDiffHunks, type DiffHunkText } from './diff-hunks.js';
 import { branchesOfOtherWorktrees, clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync, type RepoNode } from './repo-discovery.js';
@@ -204,6 +204,99 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 	res.on('close', close);
 }
 
+/*
+ * 并发请求合并：同一仓库、同一命令、同一参数的请求同时到达时只执行一轮，其余等它的结果。
+ *
+ * 多个面板同时打开同一仓库时（多标签页、多窗口），一次写事件会让它们同时重取；不合并的话
+ * 每个面板各起一遍 git 与解析。命中缓存的请求很便宜，因此只合并真正可能要取数的命令。
+ */
+
+/** 可以合并的只读命令。 */
+const COALESCABLE_COMMANDS: ReadonlySet<string> = new Set(['loadCommits', 'loadWorkingTreeSnapshot', 'loadRepoInfo']);
+
+/**
+ * 合并等待的上限（毫秒）。
+ *
+ * 超过它按超时回投，不无限等待：某个请求的处理体异常退出而没回投时，后来者不能一直挂着。
+ */
+const COALESCE_TIMEOUT_MS = 30_000;
+
+/** 在飞的合并项：键为命令 + 仓库 + 参数，值为最终回投的载荷。 */
+const inFlightPayloads = new Map<string, Promise<Record<string, unknown>>>();
+
+/**
+ * 生成合并键。
+ *
+ * `refreshId` 不参与：它是客户端各自的轮次编号，不影响取数结果。
+ *
+ * @param command - 命令名。
+ * @param repo - 仓库路径。
+ * @param msg - 请求体。
+ * @returns 合并键。
+ */
+function coalesceKeyOf(command: string, repo: string, msg: Record<string, unknown>): string {
+	const params: Record<string, unknown> = {};
+	for (const key of Object.keys(msg).sort()) {
+		if (key === 'command' || key === 'repo' || key === 'refreshId') continue;
+		params[key] = msg[key];
+	}
+	return `${command}\u0000${repo.toLowerCase()}\u0000${JSON.stringify(params)}`;
+}
+
+/**
+ * 读全部引用的签名。
+ *
+ * 抓取只改动引用与 `FETCH_HEAD`；签名前后一致即表示本次抓取没有拉回任何东西，
+ * 不必让面板重取，也不必作废缓存。
+ *
+ * @param repo - 仓库路径。
+ * @returns 引用名与哈希的拼接串；读取失败时为空串。
+ */
+async function refsSignature(repo: string): Promise<string> {
+	const result = await runGit(['for-each-ref', '--format=%(refname)%00%(objectname)'], repo);
+	return result.code === 0 ? result.stdout : '';
+}
+/**
+ * 拼提交图窗口取数参数的可读描述。
+ *
+ * 键里含全部影响结果的参数，日志也要含它们：只给 skip 与 limit 时，同一秒内几次未命中
+ * 无法判断是重复请求还是不同窗口。
+ *
+ * @param params - 取数参数。
+ * @returns 一段可直接接在仓库路径后的描述。
+ */
+function graphParamsLog(params: {
+	readonly head: string | null;
+	readonly maxCommits: number;
+	readonly skip: number;
+	readonly ordering: string;
+	readonly showTags: boolean;
+	readonly showRemoteBranches: boolean;
+	readonly showStashes: boolean;
+	readonly onlyFollowFirstParent: boolean;
+	readonly includeCommitsMentionedByReflogs: boolean;
+	readonly hideRemotes: readonly string[];
+	readonly branches: readonly string[] | null;
+	readonly remotes: readonly string[];
+	readonly stashes: readonly string[];
+}): string {
+	const flags: string[] = [];
+	if (params.skip !== 0) flags.push(`skip=${String(params.skip)}`);
+	flags.push(`limit=${String(params.maxCommits)}`);
+	if (params.ordering !== 'topo') flags.push(`排序=${params.ordering}`);
+	if (!params.showTags) flags.push('无标签');
+	if (!params.showRemoteBranches) flags.push('无远程分支');
+	if (!params.showStashes) flags.push('无贮藏');
+	if (params.onlyFollowFirstParent) flags.push('只跟第一个父提交');
+	if (params.includeCommitsMentionedByReflogs) flags.push('含 reflog 提及');
+	if (params.hideRemotes.length > 0) flags.push(`隐藏远程 ${params.hideRemotes.join(',')}`);
+	if (params.branches !== null) flags.push(`引用 ${params.branches.length > 0 ? params.branches.join(',') : '（空）'}`);
+	if (params.remotes.length > 0) flags.push(`远程 ${params.remotes.join(',')}`);
+	// 贮藏键在调用方未给列表时是 `*`：与「确实没有贮藏」不是同一批提交行。
+	if (params.stashes.length > 0) flags.push(`贮藏 ${params.stashes.join(',')}`);
+	const head = params.head === null ? '分离头指针或未提交' : params.head.slice(0, 8);
+	return `（HEAD ${head}，${flags.join('，')}）`;
+}
 /**
  * 处理一条 API 命令。
  *
@@ -221,12 +314,53 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	}
 	const repo = typeof msg.repo === 'string' ? msg.repo : '';
 	const command = typeof msg.command === 'string' ? msg.command : '';
-	// 单条命令只在失败时记日志；成功路径的耗时按「一次刷新」汇总（见 refreshCost）。
+	// 单条命令只在失败时记日志；成功路径的耗时按「一次刷新」汇总。
 	const started = Date.now();
+	/**
+	 * 客户端给出的轮次编号；0 与缺失都按「未给出」处理。
+	 *
+	 * 0 是旧版客户端的缺省值，与真实轮次 0 无法区分，因此统一当成没有编号。
+	 */
+	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
 	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
 		return;
+	}
+
+	/*
+	 * 并发合并：同一键已有请求在飞时直接等它的载荷，不再执行一遍。
+	 *
+	 * 只合并能整份复用结果的只读命令；发送本身仍按各自的响应对象进行，因此两个面板都拿到
+	 * 完整响应，只是背后只取了一次数。
+	 */
+	const coalesceKey = COALESCABLE_COMMANDS.has(command) ? coalesceKeyOf(command, repo, msg) : null;
+	if (coalesceKey !== null) {
+		const inFlight = inFlightPayloads.get(coalesceKey);
+		if (inFlight !== undefined) {
+			const shared = await inFlight;
+			sendJson(res, 200, shared);
+			recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
+			return;
+		}
+	}
+
+	/** 本轮结果的落定函数；非合并命令为 null。 */
+	let settleShared: ((payload: Record<string, unknown>) => void) | null = null;
+	if (coalesceKey !== null) {
+		let resolveShared: (payload: Record<string, unknown>) => void = () => { /* 先占位，随后覆盖 */ };
+		const shared = new Promise<Record<string, unknown>>((resolve) => { resolveShared = resolve; });
+		inFlightPayloads.set(coalesceKey, shared);
+		const timer = setTimeout(() => {
+			inFlightPayloads.delete(coalesceKey);
+			resolveShared({ command, error: '并发合并超时' });
+		}, COALESCE_TIMEOUT_MS);
+		if (typeof timer.unref === 'function') timer.unref();
+		settleShared = (payload) => {
+			clearTimeout(timer);
+			inFlightPayloads.delete(coalesceKey);
+			resolveShared(payload);
+		};
 	}
 
 	const str = (k: string): string => (typeof msg[k] === 'string' ? msg[k] : '');
@@ -240,6 +374,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 		const error = payload.error;
 		const failed = typeof payload.command === 'string' ? payload.command : command;
 		if (typeof error === 'string' && error !== '') logError('api', `命令 ${failed} 执行失败：${error}`);
+		// 先放行在等的合并请求：它们要的是载荷，与本请求的响应对象无关。
+		settleShared?.(payload);
 		sendJson(res, 200, payload);
 	};
 	/** 同步回投一条命令结果（无需等待异步操作）。 */
@@ -556,7 +692,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 				 */
 				const cachedGraph = readGraph(repo, graphParams);
 				if (cachedGraph !== undefined) {
-					logDebug('cache', `提交图窗口命中缓存：${repo}（skip=${String(skip)}，limit=${String(limit)}）`);
+					logDebug('cache', `提交图窗口命中缓存：${repo}${graphParamsLog(graphParams)}`);
 					const lastCached = cachedGraph.commits.at(-1);
 					/*
 					 * 仓库信息同样来自宿主缓存：命中窗口时一并回投，客户端不必为远程与贮藏
@@ -628,7 +764,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 					? batchSource.then((batch) => batch?.info.remotes.map((remote) => remote.name) ?? givenRemotes)
 					: remotesGiven ? givenRemotes : getRemoteNames(repo).catch(() => [] as string[]);
 				// getCommits 内部已按「多取一条作哨兵」判断是否还有更多。
-				logDebug('cache', `提交图窗口未命中缓存，重新取数：${repo}（skip=${String(skip)}，limit=${String(limit)}）`);
+				logDebug('cache', `提交图窗口未命中缓存，重新取数：${repo}${graphParamsLog(graphParams)}`);
 				const data = await getCommits(
 					repo,
 					branchesArg,
@@ -842,14 +978,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			await respondError('deleteTag', () => deleteTag(repo, str('tagName'), strOrNull('deleteOnRemote')));
 			break;
 		/* --- 远程 --- */
-		case 'fetch':
+		case 'fetch': {
+			const remoteName = strOrNull('name');
+			const pruneRemotes = bool('prune');
+			const pruneAllTags = bool('pruneTags');
 			await respondResult('fetch', async () => {
-				const error = await fetch(repo, strOrNull('name'), bool('prune'), bool('pruneTags'));
+				/*
+				 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
+				 *
+				 * 不比较的话，自动抓取（默认每 180s 一轮）会让所有面板每轮都重取一次提交图
+				 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
+				 */
+				const before = await refsSignature(repo);
+				const error = await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true);
 				if (error !== null) throw new Error(error);
-				logInfo('repo', `已抓取远程${strOrNull('name') === null ? '（全部）' : `：${strOrNull('name') as string}`}`);
-				return { repo };
+				const after = await refsSignature(repo);
+				const changed = before !== after;
+				// 抓取以 quietWrite 执行：确有改动才补发写事件，否则面板不会白刷新。
+				if (changed) notifyRepositoryWrite(repo);
+				logInfo('repo', `已抓取远程${remoteName === null ? '（全部）' : `：${remoteName}`}${changed ? '，引用有更新' : '，引用无变化'}`);
+				return { repo, changed };
 			});
 			break;
+		}
 		case 'addRemote':
 			await respondError('addRemote', () => addRemote(repo, str('name'), str('url'), strOrNull('pushUrl'), bool('fetch')));
 			break;
@@ -1139,28 +1290,35 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			sendBadRequest(res, '未知命令: ' + String(msg.command));
 	}
 
-	recordCommandCost(command, Date.now() - started);
+	recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
 }
 
 /*
- * 刷新耗时汇总：单条命令不记日志，按「一次刷新」把耗时与子进程数汇总成一行。
+ * 刷新耗时汇总：单条命令不记日志，按「一次刷新」把耗时与 git 子进程数汇总成一行。
  *
  * 这是「显示到界面」之外唯一需要的性能观测点：一次刷新会打十几次命令，逐条记既淹没日志，
  * 又看不出那一次刷新到底花了多少。
+ *
+ * 分组按客户端随请求带来的 `refreshId`：同一轮刷新的命令归到一组，轮次边界由客户端决定。
+ * 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的、或旧版客户端）按仓库与时间窗口归组。
  */
 
-/** 一次刷新的耗时汇总窗口：同一窗口内的命令计入同一轮。 */
+/** 无轮次编号时一轮的合并窗口（毫秒）。 */
 const COST_WINDOW_MS = 3000;
 
-/** 退出时冲刷当前轮次的一次性登记。 */
+/** 退出时冲刷的已登记标志。 */
 let exitFlushRegistered = false;
 
 /** 一轮刷新内的累计。 */
 interface CostBucket {
+	/** 本轮的标识，仅用于日志展示。 */
+	readonly label: string;
 	/** 本轮第一条命令的开始时刻。 */
 	firstStartedAt: number;
 	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
 	lastEndedAt: number;
+	/** 本轮开始时的 git 子进程计数。 */
+	spawnsAtStart: number;
 	/** 各命令的执行次数。 */
 	readonly counts: Map<string, number>;
 	/** 各命令累计耗时（毫秒）。 */
@@ -1173,19 +1331,66 @@ interface CostBucket {
 	totalMs: number;
 }
 
-/** 当前轮次；无在跑的命令时为 null。 */
-let bucket: CostBucket | null = null;
+/** 在跑的轮次：键为仓库 + 轮次编号（无编号时用 `*`）。 */
+const costBuckets = new Map<string, CostBucket>();
 
-/** 汇总定时器。 */
-let bucketTimer: ReturnType<typeof setTimeout> | undefined;
+/** 各轮次的归组键 → 超时冲刷定时器。 */
+const costTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
- * 记一条命令的耗时；窗口结束时输出一行汇总。
+ * 输出一轮的汇总。
+ *
+ * @param key - 归组键。
+ * @returns 无。
+ */
+function flushCostBucket(key: string): void {
+	const timer = costTimers.get(key);
+	if (timer !== undefined) {
+		clearTimeout(timer);
+		costTimers.delete(key);
+	}
+	const current = costBuckets.get(key);
+	if (current === undefined) return;
+	costBuckets.delete(key);
+	const breakdown = [...current.counts.entries()]
+		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+		.map(([name, count]) => {
+			const cached = current.cachedCounts.get(name) ?? 0;
+			const suffix = cached === 0 ? '' : cached === count ? '（全部命中缓存）' : `（${String(cached)} 次命中缓存）`;
+			return `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms${suffix}`;
+		})
+		.join('、');
+	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
+	/*
+	 * 墙钟取「首条命令开始 → 末条命令结束」，不是「归组开启至今」：命令之间的空闲不算用户等待。
+	 *
+	 * 命令是并行发出的，各条耗时之和会大于墙钟，因此两个数都给：墙钟是用户感知，
+	 * 命令之和是工作量。git 子进程数是这套取数的主要成本来源（一次约 80ms 固定开销）。
+	 */
+	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
+	const spawns = gitSpawnCount() - current.spawnsAtStart;
+	logInfo('perf', `${current.label}墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，git 子进程 ${String(spawns)} 个，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
+}
+
+/**
+ * 输出全部在跑的轮次并复位。
+ *
+ * @returns 无。
+ */
+function flushCommandCost(): void {
+	for (const key of [...costBuckets.keys()]) flushCostBucket(key);
+}
+
+/**
+ * 记一条命令的耗时；轮次结束时输出一行汇总。
  *
  * @param command - 命令名。
  * @param ms - 本次耗时（毫秒）。
+ * @param repo - 仓库路径。
+ * @param refreshId - 客户端给出的轮次编号；未给出时为 null。
+ * @returns 无。
  */
-function recordCommandCost(command: string, ms: number): void {
+function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null): void {
 	if (command === '' || command === 'logEvent') return;
 	if (!exitFlushRegistered) {
 		exitFlushRegistered = true;
@@ -1200,56 +1405,44 @@ function recordCommandCost(command: string, ms: number): void {
 			flushSync();
 		});
 	}
+	const repoLabel = repo === '' ? '（未指定仓库）' : repo;
+	const key = `${repo.toLowerCase()}\u0000${refreshId === null ? '*' : String(refreshId)}`;
+	/*
+	 * 同一仓库出现新的轮次编号时，说明上一轮已经打完：先把它写出去，不再等定时器。
+	 * 定时器只兜「客户端不再发新轮次」的情形（例如窗口被关掉）。
+	 */
+	for (const existing of [...costBuckets.keys()]) {
+		if (existing === key) continue;
+		if (!existing.startsWith(`${repo.toLowerCase()}\u0000`)) continue;
+		flushCostBucket(existing);
+	}
 	const now = Date.now();
-	if (bucket === null) {
-		bucket = {
-			firstStartedAt: now - ms, lastEndedAt: now,
+	let current = costBuckets.get(key);
+	if (current === undefined) {
+		current = {
+			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
+			firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart: gitSpawnCount(),
 			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
 		};
+		costBuckets.set(key, current);
 	}
-	bucket.lastEndedAt = now;
-	bucket.counts.set(command, (bucket.counts.get(command) ?? 0) + 1);
-	bucket.msByCommand.set(command, (bucket.msByCommand.get(command) ?? 0) + ms);
-	bucket.totalMs += ms;
+	current.lastEndedAt = now;
+	current.counts.set(command, (current.counts.get(command) ?? 0) + 1);
+	current.msByCommand.set(command, (current.msByCommand.get(command) ?? 0) + ms);
+	current.totalMs += ms;
 	// 0 ms 的命令即命中了缓存：单独计数，否则无法判断缓存是否生效。
-	if (ms === 0) bucket.cachedCounts.set(command, (bucket.cachedCounts.get(command) ?? 0) + 1);
-	if (bucket.slowest === null || ms > bucket.slowest.ms) bucket.slowest = { command, ms };
-	if (bucketTimer !== undefined) return;
-	bucketTimer = setTimeout(() => {
-		bucketTimer = undefined;
-		flushCommandCost();
+	if (ms === 0) current.cachedCounts.set(command, (current.cachedCounts.get(command) ?? 0) + 1);
+	if (current.slowest === null || ms > current.slowest.ms) current.slowest = { command, ms };
+	// 每一轮都重新计时：轮次内的命令可能间隔很久（用户在等某个慢操作）。
+	const existTimer = costTimers.get(key);
+	if (existTimer !== undefined) clearTimeout(existTimer);
+	const timer = setTimeout(() => {
+		costTimers.delete(key);
+		flushCostBucket(key);
 	}, COST_WINDOW_MS);
-	if (typeof bucketTimer.unref === 'function') bucketTimer.unref();
+	if (typeof timer.unref === 'function') timer.unref();
+	costTimers.set(key, timer);
 }
-
-/**
- * 输出当前轮次的汇总并复位。
- */
-function flushCommandCost(): void {
-	if (bucket === null) return;
-	const current = bucket;
-	bucket = null;
-	const breakdown = [...current.counts.entries()]
-		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-		.map(([name, count]) => {
-			const cached = current.cachedCounts.get(name) ?? 0;
-			const suffix = cached === 0 ? '' : cached === count ? '（全部命中缓存）' : `（${String(cached)} 次命中缓存）`;
-			return `${name}×${String(count)}=${String(current.msByCommand.get(name) ?? 0)}ms${suffix}`;
-		})
-		.join('、');
-	const slowest = current.slowest === null ? '' : `，最慢 ${current.slowest.command} ${String(current.slowest.ms)} ms`;
-	/*
-	 * 墙钟取「首条命令开始 → 末条命令结束」，不是「窗口开启至今」：窗口是按最后一条命令
-	 * 之后 3 秒关闭的，用关闭时刻减开启时刻会把空闲等待也算进去（轮询间隔 10 秒时，
-	 * 一轮只有一条 70ms 的命令，却会记成 3000ms）。
-	 *
-	 * 命令是并行发出的，各条耗时之和会大于墙钟（一次 fetch 期间几个读命令同时在等），
-	 * 因此两个数都给：墙钟是用户感知，命令之和是工作量。
-	 */
-	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
-	logInfo('perf', `一轮刷新墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
-}
-
 export interface GgRouteContext {
 	register(spec: {
 		kind: 'exact' | 'prefix';

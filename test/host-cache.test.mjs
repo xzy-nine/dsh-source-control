@@ -153,3 +153,43 @@ test('钩子路径：按仓库失效，祖先与后代一并覆盖', () => {
 	cache.clearHostCache();
 	assert.equal(cache.readHooksPath('/repo/parent'), undefined, '清空后不再命中');
 });
+
+test('写命令按仓库作废：别的仓库缓存保留', () => {
+	cache.clearHostCache();
+	const params = { showRemoteBranches: true, showStashes: true, hideRemotes: [] };
+	for (const repo of ['/repo/a', '/repo/b']) {
+		cache.writeGraph(repo, graphParams(), graphValue());
+		cache.writeRepoInfo(repo, params, { branches: [], head: null, remotes: [], stashes: [], error: null });
+		cache.writeSnapshot(repo, snapshotValue('aaa'));
+		cache.writeHooksPath(repo, '');
+	}
+	cache.invalidateOnWrite('/repo/a');
+	for (const read of [
+		() => cache.readGraph('/repo/a', graphParams()),
+		() => cache.readRepoInfo('/repo/a', params),
+		() => cache.readSnapshot('/repo/a', 'aaa'),
+		() => cache.readHooksPath('/repo/a'),
+	]) assert.equal(read(), undefined, '写入仓库的全部缓存应失效');
+	assert.notEqual(cache.readGraph('/repo/b', graphParams()), undefined, '别的仓库的提交图应保留');
+	assert.notEqual(cache.readRepoInfo('/repo/b', params), undefined, '别的仓库的仓库信息应保留');
+	assert.notEqual(cache.readSnapshot('/repo/b', 'aaa'), undefined, '别的仓库的快照应保留');
+	assert.notEqual(cache.readHooksPath('/repo/b'), undefined, '别的仓库的钩子路径应保留');
+	cache.clearHostCache();
+});
+
+test('写命令按仓库作废：同一公共目录的工作树一并失效', () => {
+	cache.clearHostCache();
+	const params = { showRemoteBranches: true, showStashes: true, hideRemotes: [] };
+	cache.noteRepoCommonDir('/repo/main', '/repo/main/.git');
+	cache.noteRepoCommonDir('/repo/linked', '/repo/main/.git');
+	cache.noteRepoCommonDir('/repo/other', '/repo/other/.git');
+	for (const repo of ['/repo/main', '/repo/linked', '/repo/other']) {
+		cache.writeGraph(repo, graphParams(), graphValue());
+	}
+	// 写链接工作树：路径不同但共享同一公共目录，主工作树的窗口也必须失效。
+	cache.invalidateOnWrite('/repo/linked');
+	assert.equal(cache.readGraph('/repo/linked', graphParams()), undefined, '写入路径自身应失效');
+	assert.equal(cache.readGraph('/repo/main', graphParams()), undefined, '同一公共目录的主工作树应失效');
+	assert.notEqual(cache.readGraph('/repo/other', graphParams()), undefined, '其它仓库不受影响');
+	cache.clearHostCache();
+});

@@ -2,10 +2,10 @@
  * 宿主侧数据缓存：提交图窗口、仓库信息与工作区快照。
  *
  * 缓存留在宿主进程内存里，不落盘：数据随仓库写入变化，跨进程重启后按需重取即可。
- * 任何写命令结束后都会清空全部缓存（`onRepositoryWrite`）：同一仓库的主工作树与
- * 链接工作树是不同的路径，按执行目录作废只会漏掉另一半。因此读到的内容不会比最近一次
- * 写操作更旧，代价是写操作后各仓库都要重取一次。非零退出的写命令同样清空 —— 冲突合并、
- * 拣选冲突与变基停下都以非零退出，但仓库已被改动。
+ * 写命令结束后按**仓库**作废（`onRepositoryWrite` → {@link invalidateOnWrite}）：该仓库
+ * 及其祖先与后代的条目失效，共享同一 git 公共目录的链接工作树一并失效，其余仓库的缓存
+ * 保留。非零退出的写命令同样作废 —— 冲突合并、拣选冲突与变基停下都以非零退出，但仓库
+ * 已被改动。
  *
  * 分三类，各自的有效期与容量按读取成本与变化频率定：
  * - 提交图窗口：一次完整 `git log`，按「仓库 + 取数参数」区分；翻页与切回同一仓库都命中。
@@ -392,12 +392,56 @@ export function clearHostCache(): void {
 	repoInfos.clear();
 	snapshots.clear();
 	hooksPaths.clear();
+	commonDirByRepo.clear();
+}
+
+/**
+ * 已知仓库的 git 公共目录。
+ *
+ * 同一仓库的主工作树与链接工作树路径不同，但共享同一个公共目录；按路径作废只能覆盖一半。
+ * 布局解析的调用方经 {@link noteRepoCommonDir} 登记，作废时据此找到另一半。
+ */
+const commonDirByRepo = new Map<string, string>();
+
+/**
+ * 登记一个仓库的公共目录。
+ *
+ * 由布局解析在成功后调用；同一仓库重复登记覆盖即可。
+ *
+ * @param repo - 仓库路径。
+ * @param commonDir - git 公共目录。
+ * @returns 无。
+ */
+export function noteRepoCommonDir(repo: string, commonDir: string): void {
+	commonDirByRepo.set(keyOf(repo), keyOf(commonDir));
+}
+
+/**
+ * 作废一条写命令影响到的全部缓存。
+ *
+ * 覆盖三类影响：该仓库自身及其祖先与后代（子模块的写会改变父仓库 `status` 的结果），
+ * 以及与它共享同一 git 公共目录的其它工作树（主工作树与链接工作树是不同路径）。
+ * 其余仓库的缓存不受影响。
+ *
+ * @param repo - 发生写入的仓库路径。
+ * @returns 无。
+ */
+export function invalidateOnWrite(repo: string): void {
+	invalidateRepo(repo);
+	const commonDir = commonDirByRepo.get(keyOf(repo));
+	if (commonDir === undefined) return;
+	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
+		if (cachedCommonDir === commonDir && cachedRepo !== keyOf(repo)) invalidateRepo(cachedRepo);
+	}
 }
 
 /*
- * 每次仓库写命令结束后清空缓存：写命令会改变引用、提交历史、工作区或仓库配置。
+ * 每次仓库写命令结束后按仓库作废：写命令会改变引用、提交历史、工作区或仓库配置。
  *
- * 不能只按执行目录作废：同一仓库的主工作树与链接工作树是两个不同路径，按路径作废会漏掉
- * 另一半，那些路径上的提交图与仓库信息会继续命中旧数据。
+ * 不作废全部缓存：别的仓库的数据不受这次写入影响，清表会让同时打开多个仓库的面板各自
+ * 重取一遍（一次自动抓取就能触发多个面板的全量刷新）。
+ *
+ * 同一仓库的主工作树与链接工作树是两个不同路径，但共享同一 git 公共目录，
+ * 由 {@link invalidateOnWrite} 一并覆盖。
  */
-onRepositoryWrite(() => { clearHostCache(); });
+onRepositoryWrite((repo) => { invalidateOnWrite(repo); });

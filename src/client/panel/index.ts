@@ -405,10 +405,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		enabled: settings.autoFetch,
 		periodSeconds: settings.autoFetchPeriod,
 		busyRef,
-		fetch: async (path) => { await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); },
+		fetch: async (path) => await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags),
 		/*
-		 * 抓取完成后重载：面板先用本地引用渲染，抓取拉回的远程引用与领先/落后随后并入。
-		 * 抓取改动了引用，因此提交图窗口缓存一并作废。
+		 * 抓取拉回了新引用才重载：面板先用本地引用渲染，抓取完成后并入远程引用与领先/落后。
+		 * 远端没有新提交时不作废窗口缓存、不重取 —— 定时抓取每轮都重取一遍是纯浪费。
 		 */
 		onFetched: (path) => {
 			dropGraphWindows(path);

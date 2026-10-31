@@ -46,6 +46,13 @@ export interface GitOptions {
 	 * 读到的可能是旧值。
 	 */
 	readonly noCache?: boolean;
+	/**
+	 * 不通知仓库写事件。
+	 *
+	 * 供「可能没改动任何东西」的写命令使用：抓取在远端没有新提交时不改变任何引用，通知会
+	 * 让所有面板重取一遍。调用方在确认确有改动后经 {@link notifyRepositoryWrite} 补发。
+	 */
+	readonly quietWrite?: boolean;
 }
 
 /**
@@ -568,6 +575,18 @@ function notifyWrite(cwd: string): void {
 }
 
 /**
+ * 通知一次仓库写入事件。
+ *
+ * 供以 {@link GitOptions.quietWrite} 执行、事后才确认确有改动的命令补发。
+ *
+ * @param repo - 仓库路径。
+ * @returns 无。
+ */
+export function notifyRepositoryWrite(repo: string): void {
+	notifyWrite(repo);
+}
+
+/**
  * 运行一次 git。
  *
  * 子进程无法启动（git 不在 PATH、工作目录不存在）时不抛错，而是以退出码 -1 与
@@ -643,7 +662,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (cacheable && result.code === 0) setCachedResult(key, result);
 		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
 		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
-		if (!readOnly && result.code >= 0) notifyWrite(cwd);
+		if (!readOnly && result.code >= 0 && options.quietWrite !== true) notifyWrite(cwd);
 		return result;
 	} finally {
 		if (readOnly) inFlightGit.delete(key);
@@ -690,7 +709,20 @@ export function isProbeCommand(args: readonly string[]): boolean {
 	return false;
 }
 
+/** 进程启动的 git 子进程总数；供耗时汇总统计一轮刷新起了几个子进程。 */
+let gitSpawns = 0;
+
+/**
+ * 取已启动的 git 子进程总数。
+ *
+ * @returns 自进程启动以来的子进程数。
+ */
+export function gitSpawnCount(): number {
+	return gitSpawns;
+}
+
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
+	gitSpawns += 1;
 	return collectProcess({
 		command: 'git',
 		args,

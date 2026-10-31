@@ -27,9 +27,12 @@ test('数据缓存位于宿主内存', () => {
 		assert.match(hostCache, new RegExp(`export function ${fn}`), `宿主应导出 ${fn}`);
 	}
 	/*
-	 * 写操作后整表清空：同一仓库的主工作树与链接工作树路径不同，按执行目录作废会漏掉另一半。
+	 * 写操作按仓库作废：别的仓库数据不受影响，清全表会让同时打开多个仓库的面板各自重取。
+	 * 同一仓库的主工作树与链接工作树路径不同，按 git 公共目录一并覆盖。
 	 */
-	assert.match(hostCache, /onRepositoryWrite\(\(\) => \{ clearHostCache\(\); \}\)/, '成功的写操作应清空全部缓存');
+	assert.match(hostCache, /onRepositoryWrite\(\(repo\) => \{ invalidateOnWrite\(repo\); \}\)/, '成功的写操作应按仓库作废缓存');
+	assert.match(hostCache, /export function invalidateOnWrite/, '应导出按仓库作废的实现');
+	assert.match(hostCache, /noteRepoCommonDir/, '应登记 git 公共目录以覆盖链接工作树');
 });
 
 test('宿主在读取路径上命中缓存', () => {

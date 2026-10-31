@@ -128,10 +128,14 @@ export interface WorkingTreeSnapshot {
  * @param signal - 取消信号。
  * @param noCache - 跳过宿主快照缓存，强制读当前值；兜底轮询用它，否则命中缓存会让签名
  *   永远不变，外部改动再也发现不了。
+ * @param refreshId - 本轮刷新的编号；宿主按它把同轮命令归成一组记耗时。
  * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
-export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false): Promise<WorkingTreeSnapshot> {
-	const payload = await callApi(cwd, { command: 'loadWorkingTreeSnapshot', noCache }, signal);
+export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false, refreshId?: number): Promise<WorkingTreeSnapshot> {
+	const payload = await callApi(cwd, {
+		command: 'loadWorkingTreeSnapshot', noCache,
+		...(refreshId === undefined ? {} : { refreshId }),
+	}, signal);
 	return {
 		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
 		head: typeof payload.head === 'string' ? payload.head : null,
@@ -211,6 +215,8 @@ export interface LoadGraphOptions {
 	 * 引用筛选在这里落地：`git log` 只遍历这些引用的历史，分页与窗口因此随筛选变化。
 	 */
 	readonly branches?: readonly string[] | null;
+	/** 本轮刷新的编号；宿主按它把同轮命令归成一组记耗时。 */
+	readonly refreshId?: number;
 	readonly signal?: AbortSignal;
 }
 
@@ -244,7 +250,7 @@ export async function loadGraph(cwd: string, {
 	maxCommits = 200, skip = 0, commitOrdering = 'topo',
 	showStashes = true, showTags = true, showRemoteBranches = true,
 	onlyFollowFirstParent = false, includeCommitsMentionedByReflogs = false,
-	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, branches = null, signal,
+	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, branches = null, refreshId, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
 	const commitsPayload = await callApi(cwd, {
@@ -256,6 +262,7 @@ export async function loadGraph(cwd: string, {
 		...(givenRemotes === undefined ? {} : { remotes: givenRemotes }),
 		...(givenStashes === undefined ? {} : { stashes: givenStashes }),
 		hideRemotes: [],
+		...(refreshId === undefined ? {} : { refreshId }),
 	}, signal);
 	const batch = commitsPayload.repoInfo;
 	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;
@@ -264,7 +271,7 @@ export async function loadGraph(cwd: string, {
 	 */
 	const repoInfo = fetched ?? (givenRemotes !== undefined && givenStashes !== undefined
 		? null
-		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [] }, signal));
+		: await callApi(cwd, { command: 'loadRepoInfo', showRemoteBranches, showStashes, hideRemotes: [], ...(refreshId === undefined ? {} : { refreshId }) }, signal));
 	const remotes = (repoInfo === null ? givenRemotes : repoInfo.remotes) as Remote[] | undefined;
 	const stashes = (repoInfo === null ? givenStashes : repoInfo.stashes) as GraphStash[] | undefined;
 	/*

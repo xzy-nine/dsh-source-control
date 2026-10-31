@@ -27,10 +27,10 @@ function stripTrailingNewlines(text: string): string {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 成功为 null；失败为 stderr 文本（去掉末尾换行），stderr 为空时退回 stdout，两者皆空时返回通用失败文本。
  */
-async function gitErrorInfo(args: readonly string[], cwd: string): Promise<ErrorInfo> {
+async function gitErrorInfo(args: readonly string[], cwd: string, options: { readonly quietWrite?: boolean } = {}): Promise<ErrorInfo> {
 	let result: GitResult;
 	try {
-		result = await runGit(args, cwd);
+		result = await runGit(args, cwd, options);
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
 	}
@@ -98,7 +98,7 @@ export async function addRemote(repo: string, name: string, url: string, pushUrl
 		if (pushUrlError !== null) return pushUrlError;
 	}
 
-	return fetch ? fetchRemote(repo, name, false, false) : null;
+	return fetch ? fetchRemote(repo, name, false, false, false) : null;
 }
 
 /**
@@ -211,7 +211,7 @@ export async function deleteTag(repo: string, tagName: string, deleteOnRemote: s
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean): Promise<ErrorInfo> {
+async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet: boolean): Promise<ErrorInfo> {
 	if (pruneTags && !prune) {
 		return '要清理标签，从' + (remote !== null ? '某个远程仓库' : '远程仓库') + '抓取时也必须同时启用清理。';
 	}
@@ -219,7 +219,7 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
 	const args = ['fetch', remote === null ? '--all' : remote];
 	if (prune) args.push('--prune');
 	if (pruneTags) args.push('--prune-tags');
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(args, repo, { quietWrite: quiet });
 }
 
 /**
@@ -231,8 +231,8 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean): Promise<ErrorInfo> {
-	return fetchRemote(repo, remote, prune, pruneTags);
+export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet = false): Promise<ErrorInfo> {
+	return fetchRemote(repo, remote, prune, pruneTags, quiet);
 }
 
 /**
