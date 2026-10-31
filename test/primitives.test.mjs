@@ -105,7 +105,7 @@ test('图形区拖拽手柄在图形标题之前', () => {
 
 test('图形区高度跟随拖动方向', () => {
 	// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-	const panel = readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8');
+	const panel = readFileSync(join(clientDir, 'panel', 'use-panel-layout.ts'), 'utf8');
 	assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
 	assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
 	const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');

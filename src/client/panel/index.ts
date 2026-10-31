@@ -53,7 +53,7 @@ import { commitEntries } from './optimistic.ts';
 import { logCommitCountOf } from './commit-diff.ts';
 import { canSubmitOf, commitButtonDisabledOf, divergedOf, primaryActionOf } from './submit-state.ts';
 import { formatDate, loadSettings, REMOTE_PROTOCOLS, saveSettings, SettingsPanel } from './settings.ts';
-import { useResizeHandler } from './use-resize.ts';
+import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 import type { AiStats, BusyScope, Commit, CommitFile, RefInfo, RefItem, Settings, WorkingTreeEntry } from '../shared/types.ts';
@@ -154,46 +154,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		() => ({ staged: new Set(), unstaged: new Set(), detail: new Set() }),
 	);
 	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
-	// 存储库、图形两区可收起（默认展开）；跨会话持久化。
-	const [repoSecOpen, setRepoSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-repo-open', true));
-	const [graphSecOpen, setGraphSecOpen] = React.useState<boolean>(() => loadValue('dsh-source-control-graph-open', true));
-	// 图形区高度（像素）；跨会话持久化，默认 320。
-	const [graphHeight, setGraphHeight] = React.useState<number>(() => loadValue('dsh-source-control-graph-height', 320));
-	// 存储库区高度（像素）；跨会话持久化，默认 200。
-	const [repoHeight, setRepoHeight] = React.useState<number>(() => loadValue('dsh-source-control-repo-height', 200));
-	/*
-	 * 「上次刷新」文案的时钟：按固定间隔推进，让相对时间从「刚刚」变成「n 分钟前」。
-	 *
-	 * 只在面板可见时跑——不可见时无人看，推进只会触发无意义的重渲染。页签重新可见时立即推进
-	 * 一次，切回时文案不必等到下一个周期才更新。
-	 */
-	const [refreshClock, setRefreshClock] = React.useState<number>(() => Date.now());
-	React.useEffect(() => {
-		let timer: number | undefined;
-		/** 开始推进；已在推进时保持原定时器。 */
-		const start = (): void => {
-			if (timer !== undefined) return;
-			timer = window.setInterval(() => { setRefreshClock(Date.now()); }, 30_000);
-		};
-		/** 停止推进。 */
-		const stop = (): void => {
-			if (timer === undefined) return;
-			window.clearInterval(timer);
-			timer = undefined;
-		};
-		/** 按当前可见性启停。 */
-		const sync = (): void => {
-			if (document.visibilityState !== 'visible') { stop(); return; }
-			setRefreshClock(Date.now());
-			start();
-		};
-		sync();
-		document.addEventListener('visibilitychange', sync);
-		return () => {
-			document.removeEventListener('visibilitychange', sync);
-			stop();
-		};
-	}, []);
 	/*
 	 * 宿主状态预取。
 	 *
@@ -215,38 +175,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			await primeStorage(cwd);
 			if (cancelled.current) return;
 			setSettings(loadSettings());
-			setRepoSecOpen(loadValue('dsh-source-control-repo-open', true));
-			setGraphSecOpen(loadValue('dsh-source-control-graph-open', true));
-			setGraphHeight(loadValue('dsh-source-control-graph-height', 320));
-			setRepoHeight(loadValue('dsh-source-control-repo-height', 200));
+			layout.reload();
+			setSettings(loadSettings());
+			layout.reload();
+			setSettings(loadSettings());
+			layout.reload();
+			setSettings(loadSettings());
+			layout.reload();
+			setSettings(loadSettings());
+			layout.reload();
 			// 引用筛选也按仓库回填；标记就绪让载入 effect 重跑一次。
 			setStorageReady(true);
 		})();
 		return () => { cancelled.current = true; };
 	}, [cwd]);
+	const layout = usePanelLayout();
+	const refreshClock = useRefreshClock();
 	const graphScrollRef = React.useRef<HTMLDivElement | null>(null);
-
-	const toggleRepoSec = React.useCallback(() => {
-		setRepoSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-repo-open', next); return next; });
-	}, []);
-	const toggleGraphSec = React.useCallback(() => {
-		setGraphSecOpen((previous) => { const next = !previous; saveValue('dsh-source-control-graph-open', next); return next; });
-	}, []);
-	const commitGraphHeight = React.useCallback((value: number) => {
-		const clamped = Math.max(120, Math.min(value, 720));
-		setGraphHeight(clamped);
-		saveValue('dsh-source-control-graph-height', clamped);
-	}, []);
-	// 拖拽图形区上沿（工作区与图形的分界线）：向上拖＝图形变高。
-	const startGraphResize = useResizeHandler(graphHeight, 'up', commitGraphHeight);
-
-	const commitRepoHeight = React.useCallback((value: number) => {
-		const clamped = Math.max(80, Math.min(value, 600));
-		setRepoHeight(clamped);
-		saveValue('dsh-source-control-repo-height', clamped);
-	}, []);
-	// 拖拽存储库区下沿（存储库与更改的分界线）：向下拖＝存储库变高。
-	const startRepoResize = useResizeHandler(repoHeight, 'down', commitRepoHeight);
 
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
@@ -1907,9 +1852,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		// ── 存储库 ──────────────────────────────────────────────
 		React.createElement(RepoSection, {
-			open: repoSecOpen, height: repoHeight, busy: busyFlags,
+			open: layout.repoSecOpen, height: layout.repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
-			onToggleSection: toggleRepoSec,
+			onToggleSection: layout.toggleRepoSec,
 			onOpenSettings: openSettingsPanel,
 			onOpenFeedback: openFeedbackPanel,
 			onClone: handleClone, cloneBusy,
@@ -1917,7 +1862,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onToggle: toggleNode,
 			onMoreActions: handleRepoMoreActions,
 			onBranchClick: handleBranchClick,
-			onResizeStart: startRepoResize,
+			onResizeStart: layout.startRepoResize,
 		}),
 
 		// ── 更改 ──────────────────────────────────────────────
@@ -1946,7 +1891,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		// ── 图形 ────────────────────────────────────────────────
 		React.createElement(GraphSection, {
-			open: graphSecOpen, height: graphHeight, busy: busyFlags, phase: state.phase,
+			open: layout.graphSecOpen, height: layout.graphHeight, busy: busyFlags, phase: state.phase,
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
 			commits: state.commits,
 			head: state.head, selectedHash: state.selectedHash,
@@ -1958,7 +1903,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			graphTranslated, graphTranslating,
 			onTranslateVisible: translateCommits, onCancelTranslate: cancelTranslateCommits,
 			detail: state.detail, detailCollapsed: collapsedByGroup.detail, settings,
-			onToggleSection: toggleGraphSec,
+			onToggleSection: layout.toggleGraphSec,
 			onToggleChange: toggleChange,
 			onOpenDiff: openDiff,
 			onToggleCommit: toggleCommit,
@@ -1972,7 +1917,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onGoToHead: goToHead,
 			onFetch: fetchAll,
 			onRefresh: refreshAll,
-			onResizeStart: startGraphResize,
+			onResizeStart: layout.startGraphResize,
 			formatDate: dateFmt, formatDetail: dateDetail,
 			issueLinking,
 			refreshing: backgroundFlags.graph, lastRefresh: lastRefreshText,
