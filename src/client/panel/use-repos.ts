@@ -152,8 +152,22 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			setRepoNodes(snapshot.nodes);
 			setTreeStatus(treeStatusOf(snapshot, true));
 			setTreeNote(noteOf(snapshot));
+			/*
+			 * 按节点合并，不整表替换：快照可能只带部分仓库的同步值（按仓库重取时只发布一条），
+			 * 整表替换会把其余行抹掉。节点已不在树里的条目随节点一起丢弃，避免残留。
+			 */
 			setSyncById((previous) => {
-				const next = new Map(snapshot.syncById);
+				const alive = new Set<string>();
+				const collect = (nodes: readonly RepoNode[]): void => {
+					for (const node of nodes) {
+						alive.add(node.id);
+						collect(node.children);
+					}
+				};
+				collect(snapshot.nodes);
+				const next = new Map<string, RepoSync>();
+				for (const [id, sync] of previous) if (alive.has(id)) next.set(id, sync);
+				for (const [id, sync] of snapshot.syncById) next.set(id, sync);
 				// 内容未变时保持原引用：仓库行按该映射记忆化。
 				return mapsEqual(previous, next, syncEqual) ? previous : next;
 			});

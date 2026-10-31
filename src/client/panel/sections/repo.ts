@@ -25,6 +25,12 @@ export interface RepoSectionProps {
 	readonly selectedId: string | null;
 	readonly expandedIds: ReadonlySet<string>;
 	readonly syncById: ReadonlyMap<string, RepoSync>;
+	/**
+	 * 选中仓库的同步状态；取自当前工作区快照。
+	 *
+	 * 比仓库树的批量取数新（那一份只在预加载与作废后重取），选中行用它才能与图形区一致。
+	 */
+	readonly selectedSync: RepoSync | null;
 	readonly headHash: string | null;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
@@ -48,7 +54,7 @@ export interface RepoSectionProps {
  * @returns 分区元素。
  */
 function RepoSectionView({
-	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash,
+	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, selectedSync, headHash,
 	onToggleSection, onOpenSettings, onOpenFeedback, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
 	return React.createElement(
@@ -89,7 +95,8 @@ function RepoSectionView({
 				key: node.id, node, depth,
 				active: node.id === selectedId,
 				expanded: expandedIds.has(node.id),
-				sync: syncById.get(node.id),
+				// 选中行用快照值：仓库树的批量取数较旧，两者混用会让同一行在两个数之间跳。
+				sync: node.id === selectedId && selectedSync !== null ? selectedSync : syncById.get(node.id),
 				onSelect,
 				onToggle,
 				onMoreActions,

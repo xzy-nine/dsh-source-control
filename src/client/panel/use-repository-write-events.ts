@@ -12,6 +12,7 @@
  */
 import React from 'react';
 import { logClient, matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
+import { refreshRepoSync } from './repo-preload.ts';
 import { dropGraphWindows } from './use-graph-data.ts';
 import { createRefreshScheduler } from './refresh-scheduler.ts';
 import { isRepoBusy } from './busy.ts';
@@ -73,6 +74,15 @@ export function useRepositoryWriteEvents({
 
 		const unsubscribe = subscribeRepositoryWrites({
 			onWrite: (event) => {
+				/*
+				 * 仓库树里该仓库的领先/落后同样要更新：那一份只在预加载与整棵重扫时取过，
+				 * 不随写事件重取的话，抓取或推送之后未选中仓库的行会一直显示旧值。
+				 * 这一项与选中仓库无关，因此不参与下面的过滤。
+				 */
+				const root = cwdRef.current;
+				if (root !== null && root !== '' && matchesRepository(root, event.repo)) {
+					refreshRepoSync(root, event.repo);
+				}
 				const target = targetRef.current;
 				if (target === null) return;
 				if (!matchesRepository(target, event.repo)) return;

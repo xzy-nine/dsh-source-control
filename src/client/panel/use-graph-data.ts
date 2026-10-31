@@ -15,7 +15,7 @@ import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot
 import { reportError } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
-import { mergeSnapshot, writeSync } from './graph-state.ts';
+import { mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
 	branchNamesEqual, commitsListEqual, entriesEqual, logCommitCountOf, mergeCommits, mergeEntries,
@@ -24,7 +24,7 @@ import {
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
-import type { BusyEntry, Commit, PanelState, RepoSync, Settings } from '../shared/types.ts';
+import type { BusyEntry, Commit, PanelState, Settings } from '../shared/types.ts';
 import type { GraphData } from '../api/index.ts';
 import {
 	dropGraphWindows, dropRenderedGraph, getActiveGraphRepo, nextRefreshId, rememberPanelState, rememberRepoInfo,
@@ -47,7 +47,6 @@ export interface UseGraphDataOptions {
 	/** 选中节点 id，用于回写领先/落后。 */
 	readonly selectedId: string | null;
 	/** 回写某个节点的领先/落后。 */
-	readonly setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>;
 	/** 引用筛选：决定提交图的取数起点，与 VS Code 图形视图同一模型；省略时按自动。 */
 	readonly filter?: RefFilter;
 	/** 自动筛选的分叉来源：带所属分支，供本 hook 校验是否与当前分支匹配。 */
@@ -150,7 +149,7 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 }
 
 export function useGraphData({
-	workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
+	workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
 	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null,
 }: UseGraphDataOptions): UseGraphDataResult {
 	/*
@@ -165,10 +164,14 @@ export function useGraphData({
 	const [state, setState] = React.useState<PanelState>(() => {
 		const remembered = workingTreePath === null ? undefined : rememberedPanelState(workingTreePath);
 		if (remembered !== undefined) {
-			return { ...remembered, headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null };
+			return {
+			...remembered,
+			headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null,
+		};
 		}
 		return {
 			phase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
+			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
 			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
 			background: [], lastRefreshAt: 0,
@@ -370,7 +373,7 @@ export function useGraphData({
 						? previous.entries
 						: mergeEntries(previous.entries, snapshot.entries),
 				}));
-				writeSync(setSyncById, selectedIdRef.current, snapshot);
+		
 				return snapshot;
 			});
 			const [graph, snapshot] = await Promise.all([graphSource, snapshotSource]);
@@ -405,7 +408,8 @@ export function useGraphData({
 				return {
 					...settled, phase: 'ready', error: null, merging: snapshot.merging,
 					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
-					head: graph.head, headHash: snapshot.head, upstream: snapshot.upstream,
+					head: graph.head, headHash: snapshot.head,
+					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? settled.remotes : graph.remotes,
 					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
@@ -419,7 +423,7 @@ export function useGraphData({
 			if (background) setState((previous) => endBackground(endBackground(previous, 'graph'), 'entries'));
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, maxCommits, settings, hasWorkspace, setSyncById, branchesKey]);
+	}, [workingTreePath, maxCommits, settings, hasWorkspace, branchesKey]);
 
 	/**
 	 * 只重取工作区快照并写入条目。
@@ -452,14 +456,14 @@ export function useGraphData({
 			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
 			setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
-			writeSync(setSyncById, selectedId, snapshot);
+	
 			logClient('D', 'refresh', `只取工作区快照完成，仓库 ${repo}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			setState((previous) => endBackground(previous, 'entries'));
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, selectedId, setSyncById]);
+	}, [workingTreePath, selectedId]);
 
 	/**
 	 * 只重取提交图并合并进现有状态。
@@ -499,7 +503,8 @@ export function useGraphData({
 					...endBackground(endBackground(previous, 'graph'), 'entries'),
 					phase: 'ready', error: null, merging: snapshot.merging,
 					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
-					head: graph.head, headHash: snapshot.head, upstream: snapshot.upstream,
+					head: graph.head, headHash: snapshot.head,
+					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,

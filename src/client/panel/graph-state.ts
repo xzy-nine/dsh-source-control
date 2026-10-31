@@ -8,34 +8,19 @@ import type { WorkingTreeSnapshot } from '../api/index.ts';
 import type { PanelState, RepoSync } from '../shared/types.ts';
 
 /**
- * 把一个快照的分支、上游与领先/落后写回选中节点。
+ * 把一轮工作区快照的分支状态转成仓库树的同步条目。
  *
- * 领先/落后与条目来自同一次读取，因此调用点都在拿到快照之后，不再单独请求。
+ * 选中行由它取值：这一份来自当前快照，比仓库树的批量取数（loadReposSync，只在预加载与作废后
+ * 重取）新，因此选中行与图形区显示同一个数。
  *
- * @param setSyncById - 节点同步状态的写入器。
- * @param selectedId - 选中节点 id；null 时不写。
  * @param snapshot - 本轮工作区快照。
- * @returns 无。
+ * @returns 同步条目。
  */
-export function writeSync(
-	setSyncById: React.Dispatch<React.SetStateAction<Map<string, RepoSync>>>,
-	selectedId: string | null,
-	snapshot: WorkingTreeSnapshot,
-): void {
-	if (selectedId === null) return;
-	setSyncById((previous) => {
-		const current = previous.get(selectedId);
-		/* 四项都未变时返回原 Map：仓库行按该引用记忆化，每轮换新 Map 会让它跟着重渲染。 */
-		if (current !== undefined
-			&& current.branch === snapshot.branch && current.upstream === snapshot.upstream
-			&& current.ahead === snapshot.ahead && current.behind === snapshot.behind) {
-			return previous;
-		}
-		return new Map(previous).set(selectedId, {
-			branch: snapshot.branch, upstream: snapshot.upstream,
-			ahead: snapshot.ahead, behind: snapshot.behind,
-		});
-	});
+export function syncOfSnapshot(snapshot: WorkingTreeSnapshot): RepoSync {
+	return {
+		branch: snapshot.branch, upstream: snapshot.upstream,
+		ahead: snapshot.ahead, behind: snapshot.behind,
+	};
 }
 
 /**
@@ -56,7 +41,8 @@ export function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapsho
 		: mergeCommits(previous.commits, withUncommittedCount(previous.commits, snapshot.entries.length, parent));
 	return {
 		...previous, error: null, merging: snapshot.merging,
-		headHash: snapshot.head, upstream: snapshot.upstream,
+		headHash: snapshot.head,
+		upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
 		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
 		commits,
 	};

@@ -312,6 +312,15 @@ export interface PanelState {
 	headHash: string | null;
 	/** 上游远程跟踪分支名；无上游时为 null。 */
 	upstream: string | null;
+	/**
+	 * 相对上游领先的提交数。
+	 *
+	 * 与 `upstream` 同源（宿主一次 `git status --branch`），因此图形区、更改区与提交框读的是
+	 * 同一份值；仓库树另有自己的取数（`loadReposSync`），两者互不覆盖。
+	 */
+	ahead: number;
+	/** 相对上游落后的提交数。 */
+	behind: number;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
 	/**

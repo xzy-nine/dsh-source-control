@@ -47,7 +47,7 @@ import { useRepoCommands } from './use-repo-commands.ts';
 import { useCommitSelection } from './use-commit-selection.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
-import type { BusyScope, Commit, PanelRun, RefInfo, RefItem, Settings } from '../shared/types.ts';
+import type { BusyScope, Commit, PanelRun, RefInfo, RefItem, RepoSync, Settings } from '../shared/types.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 
@@ -150,7 +150,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSyncById, setSelectedId, rescan, refreshTree,
+		selectNode, toggleNode, setSelectedId, rescan, refreshTree,
 	} = useRepos({ cwd, sessionId });
 
 	/*
@@ -259,8 +259,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, [refFilter, refItems, workingTreePath, patchFilter]);
 
 	const { state, setState, refresh, refreshEntries, loadMore, busyRef, graphScope } = useGraphData({
-		workingTreePath, hasWorkspace, maxCommits, settings, selectedId, setSyncById,
+		workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
 		filter: refFilter, branchBase, headHint: selectedNode?.branch ?? null,
+		// 仅作首轮筛选的起点提示：这是渲染态缺席时的兜底，取数结果仍以本轮快照为准。
 		upstreamHint: currentSync?.upstream ?? null,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
@@ -475,9 +476,19 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return Promise.resolve();
 	}, []);
 
+	/*
+	 * 选中仓库的同步状态：取自当前工作区快照，与图形区、更改区、提交框读同一个数。
+	 *
+	 * 仓库树的批量取数（loadReposSync）另走一条路，只供未选中行显示；选中行也以本值为准。
+	 */
+	const selectedSync = React.useMemo<RepoSync>(
+		() => ({ branch: state.head, upstream: state.upstream, ahead: state.ahead, behind: state.behind }),
+		[state.head, state.upstream, state.ahead, state.behind],
+	);
+
 	/* 远程相关动作：SSH 校验、发布、同步、双向覆盖与同步按钮的右键菜单。 */
 	const remoteSync = useRemoteSync({
-		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync, remotes: state.remotes, head: state.head,
+		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync: selectedSync, remotes: state.remotes, head: state.head,
 		settings, busyFlags, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks,
 		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify },
 	});
@@ -570,17 +581,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return relativeRefreshText(state.lastRefreshAt, refreshClock);
 	}, [state.lastRefreshAt, refreshClock]);
 	const syncMarkers = React.useMemo(
-		() => computeSyncMarkers(state.commits, state.head, currentSync?.upstream ?? null),
-		[state.commits, state.head, currentSync],
+		() => computeSyncMarkers(state.commits, state.head, state.upstream),
+		[state.commits, state.head, state.upstream],
 	);
 	const workAreaEmpty = state.entries.length === 0;
-	const hasRemoteDiff = currentSync !== undefined && (currentSync.ahead > 0 || currentSync.behind > 0);
+	const hasRemoteDiff = state.ahead > 0 || state.behind > 0;
 	/**
 	 * 当前分支是纯本地分支：有分支、无上游。
 	 *
-	 * `loadRepoSync` 无上游时 `upstream` 为 null，检出到游离头时 `branch` 为 null。
+	 * 无上游时 upstream 为 null；检出到游离头时分支名为 null。
 	 */
-	const isUnpublishedBranch = currentSync !== undefined && currentSync.branch !== null && currentSync.upstream === null;
+	const isUnpublishedBranch = state.head !== null && state.upstream === null;
 	/*
 	 * 主按钮的动作：待合并状态与修补期间固定为提交，其余按有无暂存改动、领先落后与是否已发布决定。
 	 */
@@ -798,7 +809,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		// ── 存储库 ──────────────────────────────────────────────
 		React.createElement(RepoSection, {
 			open: layout.repoSecOpen, height: layout.repoHeight, busy: busyFlags,
-			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, headHash: headCommitHash,
+			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById,
+			// 未选中节点时不覆盖：此时 state 里没有对应仓库的值。
+			selectedSync: selectedId === null ? null : selectedSync,
+			headHash: headCommitHash,
 			onToggleSection: layout.toggleRepoSec,
 			onOpenSettings: openSettingsPanel,
 			onOpenFeedback: openFeedbackPanel,
@@ -820,8 +834,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			showTranslate: composer.showTranslate, translateBusy: composer.translateBusy, onTranslate: composer.handleTranslate,
 			aiBusy: composer.aiBusy, aiWarning: composer.aiWarning, aiStats: composer.aiStats, onAiCommit: composer.handleAiCommit,
 			showSyncButton,
-			syncBehind: currentSync?.behind ?? 0,
-			syncAhead: currentSync?.ahead ?? 0,
+			syncBehind: state.behind,
+			syncAhead: state.ahead,
 			onSync: remoteSync.handleSync,
 			showPublishButton, onPublish: remoteSync.handlePublish,
 			canSubmit: composer.canSubmit, onSubmit: composer.submit, onRefresh: refreshAll,
@@ -841,7 +855,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			commits: state.commits,
 			head: state.head, selectedHash: state.selectedHash,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
-			upstream: currentSync?.upstream ?? null,
+			upstream: state.upstream,
 			moreCommitsAvailable: state.more, statsByHash, messageByHash,
 			translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit: translateCommit,
 			onCancelTranslateCommit: cancelTranslateCommit,

@@ -10,6 +10,7 @@ import { discoverRepositories, enrichRepositories, loadReposSync } from '../api/
 import { createEnrichClaims, ENRICH_FAILURE_LIMIT, type EnrichClaims } from './enrich-claims.ts';
 import { runEnrichBatch } from './enrich-run.ts';
 import { attachChildren } from './repo-tree.ts';
+import { normalizePath } from '../shared/path-key.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 一个工作区的仓库树快照。 */
@@ -437,6 +438,70 @@ async function syncAll(entry: WorkspaceEntry, controller: AbortController): Prom
 	publish(entry, { syncById: next });
 }
 
+/**
+ * 作废一个仓库的领先/落后并立即重取。
+ *
+ * 写事件（抓取、提交、推送、外部进程）会改变领先/落后，而这一份只在预加载与整棵重扫时取过，
+ * 不重取会让未选中仓库的行一直显示旧值。只重跑同步这一步：一个仓库一次 `for-each-ref`，
+ * 不重扫目录树、不重枚举工作树与子模块。
+ *
+ * @param root - 工作区根路径。
+ * @param repoPath - 发生写入的仓库路径。
+ * @returns 无。
+ */
+export function refreshRepoSync(root: string, repoPath: string): void {
+	if (root === '' || repoPath === '') return;
+	const entry = entries.get(rootKey(root));
+	if (entry === undefined) return;
+	const ids = idsAtPath(entry.snapshot.nodes, repoPath);
+	if (ids.length === 0) return;
+	for (const id of ids) entry.syncedIds.delete(id);
+	void syncPath(entry, repoPath, ids);
+}
+
+/**
+ * 收集一个路径上的全部节点 id（仓库与其工作树可能指向同一目录）。
+ *
+ * @param nodes - 节点列表。
+ * @param path - 目标路径。
+ * @returns 节点 id 列表。
+ */
+function idsAtPath(nodes: readonly RepoNode[], path: string): string[] {
+	const target = normalizePath(path);
+	const ids: string[] = [];
+	const walk = (list: readonly RepoNode[]): void => {
+		for (const node of list) {
+			if (normalizePath(node.path) === target) ids.push(node.id);
+			walk(node.children);
+		}
+	};
+	walk(nodes);
+	return ids;
+}
+
+/**
+ * 取一个路径的领先/落后并写回快照。
+ *
+ * @param entry - 预加载状态。
+ * @param path - 仓库路径。
+ * @param ids - 该路径上的节点 id。
+ * @returns 无。
+ */
+async function syncPath(entry: WorkspaceEntry, path: string, ids: readonly string[]): Promise<void> {
+	const results = await loadReposSync(entry.root, [path]);
+	if (results.length === 0) return;
+	const result = results[0];
+	const next = new Map(entry.snapshot.syncById);
+	const sync: RepoSync = {
+		branch: result.branch, upstream: result.upstream, ahead: result.ahead, behind: result.behind,
+	};
+	for (const id of ids) {
+		// 仍在树上才写入：重取期间节点可能已被移除。
+		next.set(id, sync);
+		entry.syncedIds.add(id);
+	}
+	publish(entry, { syncById: next });
+}
 /**
  * 启动一个工作区的取数。
  *
