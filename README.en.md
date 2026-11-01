@@ -17,7 +17,7 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Feedback**: submit an issue from the settings **Feedback** tab or the feedback button in the repositories header; opt in to attach logs and the tool packs a zip, creates the issue, and the user drags the zip into its comment box.
 - **Safety**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
 
-The complete description of every feature is in [Docs/功能说明.md](Docs/功能说明.md) (Chinese only).
+The complete description of every feature is in [功能说明](docs/功能/功能说明.md) (Chinese only).
 
 ## Entry points
 
@@ -36,6 +36,17 @@ Switching to another sidebar page or workspace and coming back leaves the page a
 dsh plugin --profile web add dsh-source-control
 # restart `dsh web`; the right Sidebar's `+` → guide page shows Source Control, and the session header gains an icon
 ```
+
+## Development
+
+```sh
+pnpm install
+pnpm run verify-all  # documentation gates
+pnpm lint            # static checks
+pnpm test            # build, duplication gate, and unit tests
+```
+
+Code structure and build conventions are in [代码结构](docs/实现/代码结构.md) and [构建与测试](docs/实现/构建与测试.md) (Chinese only).
 
 ## License
 
