@@ -203,21 +203,27 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		if (statsByHash.has(hash) && messageByHash.has(hash)) return;
 		const controller = new AbortController();
 		statsInFlight.current.set(hash, controller);
-		loadCommitStatsAndMessage(workingTreePath, hash, controller.signal).then(({ files, message }) => {
+		loadCommitStatsAndMessage(workingTreePath, hash, controller.signal).then(({ files, message, truncated }) => {
 			statsInFlight.current.delete(hash);
 			if (controller.signal.aborted) return;
-			let additions = 0;
-			let deletions = 0;
-			for (const file of files) {
-				additions += typeof file.additions === 'number' ? file.additions : 0;
-				deletions += typeof file.deletions === 'number' ? file.deletions : 0;
-			}
 			const now = Date.now();
-			statsStamps.current = trimOldest(new Map(statsStamps.current).set(hash, now), STATS_CACHE_LIMIT);
-			setStatsByHash((previous) => trimOldest(
-				new Map(previous).set(hash, { files: files.length, additions, deletions }),
-				STATS_CACHE_LIMIT,
-			));
+			/*
+			 * 改动文件被上限截断时不记统计：条目数与本行增删行数都只是前一部分的总和，
+			 * 报出来是错数。卡片据此不显示统计，只显示完整提交信息。
+			 */
+			if (!truncated) {
+				let additions = 0;
+				let deletions = 0;
+				for (const file of files) {
+					additions += typeof file.additions === 'number' ? file.additions : 0;
+					deletions += typeof file.deletions === 'number' ? file.deletions : 0;
+				}
+				statsStamps.current = trimOldest(new Map(statsStamps.current).set(hash, now), STATS_CACHE_LIMIT);
+				setStatsByHash((previous) => trimOldest(
+					new Map(previous).set(hash, { files: files.length, additions, deletions }),
+					STATS_CACHE_LIMIT,
+				));
+			}
 			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
 			if (message !== null) {
 				messageStamps.current = trimOldest(new Map(messageStamps.current).set(hash, now), MESSAGE_CACHE_LIMIT);

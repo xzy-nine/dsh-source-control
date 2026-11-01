@@ -21,6 +21,8 @@ import { cx } from '../../css/cx.ts';
 
 export interface ChangesSectionProps extends ChangeActions {
 	readonly entries: readonly WorkingTreeEntry[];
+	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
+	readonly entriesTruncated: boolean;
 	readonly busy: BusyFlags;
 	readonly phase: PanelPhase;
 	readonly workingTreePath: string | null;
@@ -222,7 +224,7 @@ const CommitBox = React.memo(CommitBoxView);
  */
 export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 	const {
-		entries, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
+		entries, entriesTruncated, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
 		collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 		stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
 	} = props;
@@ -268,7 +270,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 				phase === 'loading' && entries.length === 0
 					&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
 				React.createElement(ChangeLists, {
-					entries, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+					entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 					stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
 				}),
 			),
@@ -278,7 +280,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 
 /** 变更分组列表的属性：更改分区属性中与变更列表有关的部分。 */
 export type ChangeListsProps = Pick<ChangesSectionProps,
-	| 'entries' | 'busy' | 'workingTreePath' | 'collapsedByGroup' | 'groupExpanded'
+	| 'entries' | 'entriesTruncated' | 'busy' | 'workingTreePath' | 'collapsedByGroup' | 'groupExpanded'
 	| 'toggleChange' | 'toggleGroup' | 'run' | 'stagePaths' | 'unstagePaths' | 'discardPaths'
 	| 'openDiff' | 'onAddToGitignore' | 'onAddToLocalExclude'>;
 
@@ -289,7 +291,7 @@ export type ChangeListsProps = Pick<ChangesSectionProps,
  * @returns 两个分组元素。
  */
 function ChangeListsView({
-	entries, busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+	entries, entriesTruncated, busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
 }: ChangeListsProps): React.ReactElement {
 	// 已暂存一侧有条目时，未暂存分组即使为空也显示：折叠标题上的分组菜单仍需可达。
@@ -303,14 +305,14 @@ function ChangeListsView({
 		React.Fragment,
 		null,
 		React.createElement(ChangeGroup, {
-			staged: true, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
+			staged: true, truncated: entriesTruncated, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 			groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange,
 			open: groupExpanded.staged, onToggleGroup: toggleStaged,
 			run, stagePaths, unstagePaths, discardPaths, openDiff,
 			onAddToGitignore, onAddToLocalExclude,
 		}),
 		React.createElement(ChangeGroup, {
-			staged: false, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
+			staged: false, truncated: entriesTruncated, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 			groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange,
 			open: groupExpanded.unstaged, onToggleGroup: toggleUnstaged,
 			run, stagePaths, unstagePaths, discardPaths, openDiff,

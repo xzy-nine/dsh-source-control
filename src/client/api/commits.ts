@@ -28,17 +28,34 @@ function fileEntriesOf(details: unknown): CommitFileEntry[] {
 	}));
 }
 
+/** 改动文件列表与是否因上限而截断。 */
+export interface CommitFilesPayload {
+	readonly files: CommitFileEntry[];
+	/** 为 true 时 `files` 只是前一部分，调用方按计数处理、不逐条列出。 */
+	readonly truncated: boolean;
+}
+
+/**
+ * 从提交详情载荷里取截断标记。
+ *
+ * @param details - 宿主回投的 `commitDetails`。
+ * @returns 是否截断。
+ */
+function truncatedOf(details: unknown): boolean {
+	return details !== null && typeof details === 'object' && (details as { truncated?: unknown }).truncated === true;
+}
+
 /**
  * 读取某个提交的改动文件。
  *
  * @param cwd - 会话工作区路径。
  * @param hash - 提交哈希，`*` 表示工作区未提交变更。
  * @param signal - 取消信号。
- * @returns 改动文件列表。
+ * @returns 改动文件列表与截断标记。
  */
-export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFileEntry[]> {
+export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFilesPayload> {
 	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
-	return fileEntriesOf(payload.commitDetails);
+	return { files: fileEntriesOf(payload.commitDetails), truncated: truncatedOf(payload.commitDetails) };
 }
 
 /**
@@ -49,6 +66,8 @@ export interface CommitStatsAndMessage {
 	readonly files: CommitFileEntry[];
 	/** 完整提交信息；取不到时为 null。 */
 	readonly message: string | null;
+	/** 改动文件是否因上限而截断：为 true 时统计与文件列表都不完整。 */
+	readonly truncated: boolean;
 }
 
 /**
@@ -68,6 +87,7 @@ export async function loadCommitStatsAndMessage(cwd: string, hash: string, signa
 	return {
 		files: fileEntriesOf(payload.commitDetails),
 		message: typeof body === 'string' ? body : null,
+		truncated: truncatedOf(payload.commitDetails),
 	};
 }
 
@@ -83,10 +103,10 @@ export async function loadCommitStatsAndMessage(cwd: string, hash: string, signa
  * @param signal - 取消信号。
  * @returns 改动文件列表。
  */
-export async function compareCommits(cwd: string, fromHash: string, toHash: string, signal?: AbortSignal): Promise<CommitFileEntry[]> {
+export async function compareCommits(cwd: string, fromHash: string, toHash: string, signal?: AbortSignal): Promise<CommitFilesPayload> {
 	const payload = await callApi(cwd, { command: 'compareCommits', commitHash: toHash, compareWithHash: fromHash, fromHash, toHash, refresh: false }, signal);
 	const changes = Array.isArray(payload.fileChanges) ? payload.fileChanges : [];
-	return changes.map((change) => {
+	const files = changes.map((change) => {
 		const item = change as Record<string, unknown>;
 		return {
 			path: String(item.newFilePath),
@@ -95,6 +115,7 @@ export async function compareCommits(cwd: string, fromHash: string, toHash: stri
 			deletions: typeof item.deletions === 'number' ? item.deletions : null,
 		};
 	});
+	return { files, truncated: payload.truncated === true };
 }
 
 /**

@@ -119,6 +119,8 @@ export interface WorkingTreeSnapshot {
 	readonly behind: number;
 	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
 	readonly merging: boolean;
+	/** 是否因条目上限而截断：为 true 时 entries 只是前一部分。 */
+	readonly truncated: boolean;
 }
 
 /**
@@ -144,6 +146,7 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
 		behind: typeof payload.behind === 'number' ? payload.behind : 0,
 		merging: payload.merging === true,
+		truncated: payload.truncated === true,
 	};
 }
 

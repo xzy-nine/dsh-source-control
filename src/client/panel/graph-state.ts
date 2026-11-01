@@ -40,7 +40,7 @@ export function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapsho
 		? previous.commits
 		: mergeCommits(previous.commits, withUncommittedCount(previous.commits, snapshot.entries.length, parent));
 	return {
-		...previous, error: null, merging: snapshot.merging,
+		...previous, error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 		headHash: snapshot.head,
 		upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
 		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),

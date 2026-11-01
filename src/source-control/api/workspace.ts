@@ -24,6 +24,7 @@ const EMPTY_SNAPSHOT = {
 	ahead: 0,
 	behind: 0,
 	merging: false,
+	truncated: false,
 	error: null,
 };
 
@@ -81,7 +82,10 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 			await respondResult('stagePaths', async () => {
 				const paths = arr<string>('paths');
 				await stagePaths(repo, paths);
-				logInfo('repo', `已暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				// 空路径表示暂存全部：宿主走 `git add --all`，不为条目逐个下 pathspec。
+				logInfo('repo', paths.length === 0
+					? `已暂存全部变更：${repo}`
+					: `已暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
 				return { repo };
 			});
 			break;
@@ -89,7 +93,10 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 			await respondResult('unstagePaths', async () => {
 				const paths = arr<string>('paths');
 				await unstagePaths(repo, paths);
-				logInfo('repo', `已取消暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				// 空路径表示取消全部：git restore 没有 --all，宿主持有 pathspec `.` 的写法。
+				logInfo('repo', paths.length === 0
+					? `已取消暂存全部变更：${repo}`
+					: `已取消暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
 				return { repo };
 			});
 			break;

@@ -103,30 +103,31 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 			const compareWith = baseHash === undefined ? null : state.commits.find((item) => item.hash === baseHash) ?? null;
 			setState((previous) => ({
 				...previous,
-				detail: commit === undefined ? null : { commit, files: [], compareWith, loading: true },
+				detail: commit === undefined ? null : { commit, files: [], compareWith, loading: true, truncated: false },
 			}));
 			if (baseHash !== undefined) {
-				const files = await compareCommits(workingTreePath, baseHash, hash);
+				const { files, truncated } = await compareCommits(workingTreePath, baseHash, hash);
 				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false } }
+					? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
 					: previous));
 				return;
 			}
 			if (hash === '*') {
 				const files: CommitFile[] = state.entries.map((entry) => ({ path: entry.path, type: changeOf(entry).type, additions: null, deletions: null }));
+				// 工作区条目已在宿主侧按上限截断：详情列表同样只是前一部分。
 				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false } }
+					? { ...previous, detail: { ...previous.detail, files, loading: false, truncated: state.entriesTruncated } }
 					: previous));
 				return;
 			}
-			const files = await loadCommitFiles(workingTreePath, hash);
+			const { files, truncated } = await loadCommitFiles(workingTreePath, hash);
 			setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-				? { ...previous, detail: { ...previous.detail, files, loading: false } }
+				? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
 				: previous));
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
 		}
-	}, [workingTreePath, state.commits, state.entries, setState]);
+	}, [workingTreePath, state.commits, state.entries, state.entriesTruncated, setState]);
 
 	/**
 	 * 点击提交行。

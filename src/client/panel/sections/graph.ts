@@ -62,7 +62,7 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	readonly onTranslateVisible: (items: readonly { hash: string; text: string }[]) => void;
 	/** 取消图形区的批量翻译。 */
 	readonly onCancelTranslate: () => void;
-	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
+	readonly detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean; truncated: boolean } | null;
 	readonly detailCollapsed: ReadonlySet<string>;
 	readonly settings: Settings;
 	readonly onToggleSection: () => void;
@@ -151,6 +151,7 @@ function GraphSectionView({
 				files: detail.files,
 				busy: busy.read,
 				loading: detail.loading,
+				truncated: detail.truncated,
 				collapsed: detailCollapsed,
 				onToggle: handleDetailToggle,
 				onOpen: handleDetailOpen,

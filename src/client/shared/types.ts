@@ -331,6 +331,8 @@ export interface PanelState {
 	 */
 	nextSkip: number;
 	entries: WorkingTreeEntry[];
+	/** 工作区条目是否因上限而截断：为 true 时 `entries` 只是前一部分。 */
+	entriesTruncated: boolean;
 	selectedHash: string | null;
 	/**
 	 * 展开的提交详情。
@@ -338,7 +340,7 @@ export interface PanelState {
 	 * `compareWith` 非空时 `files` 是两个提交之间的改动，方向为 `compareWith → commit`。
 	 * `loading` 为 true 表示文件列表仍在读取；空提交读取完成后为 false 且 files 为空。
 	 */
-	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
+	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean; truncated: boolean } | null;
 	/** 进行中的操作；不同仓库、不同影响面之间互不阻塞。 */
 	busy: readonly BusyEntry[];
 	remotes: Remote[];

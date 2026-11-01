@@ -64,6 +64,14 @@ test('丢弃只作用于命中路径', () => {
 	assert.deepEqual(codes(result), { 'b.txt': ' M' });
 });
 
+test('目录 pathspec：命中目录下全部条目，不命中同前缀的兄弟目录', () => {
+	const entries = [entry('sub/a.txt', ' ', 'M'), entry('sub/inner/b.txt', '?', '?'), entry('subway.txt', ' ', 'M')];
+	// 目录行下发带尾斜杠的目录：git 按目录整体执行，乐观推算按同一前缀匹配。
+	assert.deepEqual(codes(stageEntries(entries, ['sub/'])), { 'sub/a.txt': 'M ', 'sub/inner/b.txt': 'A ', 'subway.txt': ' M' });
+	assert.deepEqual(codes(unstageEntries([entry('sub/a.txt', 'M', ' ')], ['sub/'])), { 'sub/a.txt': ' M' });
+	assert.deepEqual(discardEntries([entry('sub/a.txt', ' ', 'M')], ['sub/']), []);
+});
+
 test('提交后已暂存条目清除，带工作区改动的退回未暂存', () => {
 	const result = commitEntries([entry('a.txt', 'A', ' '), entry('b.txt', 'M', 'M'), entry('c.txt', ' ', 'M')]);
 	assert.deepEqual(codes(result), { 'b.txt': ' M', 'c.txt': ' M' });

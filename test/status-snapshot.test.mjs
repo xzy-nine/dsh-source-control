@@ -52,6 +52,31 @@ test('干净仓库只有分支信息', () => {
 	}
 });
 
+test('条目上限：超出上限时截断并标记，未超出时不标记', () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('a.txt', 'one\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'base');
+		write('u1.txt', '1');
+		write('u2.txt', '2');
+		write('u3.txt', '3');
+		const stdout = execFileSync('git', ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { cwd: repo, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+		const capped = parseStatusSnapshot(stdout, 2);
+		assert.equal(capped.entries.length, 2, '条目数应停在上限');
+		assert.equal(capped.truncated, true, '还有未解析的记录时必须标记截断');
+		// 上限恰好覆盖全部记录时不标记：截断与否决定界面是否给出「还有更多」的计数。
+		const exact = parseStatusSnapshot(stdout, 3);
+		assert.equal(exact.entries.length, 3);
+		assert.equal(exact.truncated, false, '记录刚好取完时不算截断');
+		const full = parseStatusSnapshot(stdout);
+		assert.equal(full.entries.length, 3);
+		assert.equal(full.truncated, false);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('未跟踪、已修改、已暂存与重命名各自的 XY 状态', () => {
 	const { repo, git, write } = makeRepo();
 	try {

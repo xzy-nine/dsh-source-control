@@ -506,6 +506,12 @@ export interface DiffParseOptions {
 	 * 前者须置为 true。
 	 */
 	readonly skipLeadingObjectName?: boolean;
+	/**
+	 * 最多解析的记录数；省略表示不限。
+	 *
+	 * 改动文件数量上万时，调用方本就只列前一部分，因此不必把全部记录都建成对象。
+	 */
+	readonly limit?: number;
 }
 
 /**
@@ -522,8 +528,9 @@ export function parseNameStatus(stdout: string, options: DiffParseOptions = {}):
 	if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
 	if (options.skipLeadingObjectName === true) parts.shift();
 	const records: DiffNameStatusRecord[] = [];
+	const limit = options.limit ?? Number.POSITIVE_INFINITY;
 	let i = 0;
-	while (i < parts.length) {
+	while (i < parts.length && records.length < limit) {
 		const status = parts[i];
 		if (status === '') break;
 		// 复制（C）在改动列表里按重命名处理，因此这里按字符判断而不收窄成 FileStatus。
@@ -559,8 +566,9 @@ export function parseNumStat(stdout: string, options: DiffParseOptions = {}): Di
 	if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
 	if (options.skipLeadingObjectName === true) parts.shift();
 	const records: DiffNumStatRecord[] = [];
+	const limit = options.limit ?? Number.POSITIVE_INFINITY;
 	let i = 0;
-	while (i < parts.length) {
+	while (i < parts.length && records.length < limit) {
 		const fields = parts[i].split('\t');
 		if (fields.length !== 3) break;
 		const additions = parseCount(fields[0]);

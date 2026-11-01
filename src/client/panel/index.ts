@@ -827,7 +827,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {
-			entries: state.entries, busy: busyFlags, phase: state.phase,
+			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.phase,
 			workingTreePath, head: state.head,
 			message: composer.message, onMessageChange: composer.setMessage, amend: composer.amend, onToggleAmend: composer.toggleAmend, onStash: handleStash,
 			// 任一类钩子存在即显示：同一个勾选项同时决定提交与推送是否带 --no-verify。

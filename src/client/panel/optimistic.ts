@@ -6,16 +6,43 @@
  */
 import type { WorkingTreeEntry } from '../shared/types.ts';
 
+/** 目标路径的两种形态：精确路径与目录 pathspec（带尾斜杠）。 */
+interface PathTargets {
+	readonly files: ReadonlySet<string>;
+	/** 目录 pathspec，带尾斜杠；命中其下全部条目。 */
+	readonly directories: readonly string[];
+}
+
 /**
- * 是否命中给定路径集合：当前路径与重命名/复制前的路径都算命中。
+ * 把路径列表拆成精确路径与目录 pathspec。
+ *
+ * 目录行下发的是带尾斜杠的目录：git 按目录整体执行，这里同样按目录匹配条目，
+ * 不把子文件逐条展开。
+ *
+ * @param paths - 目标路径。
+ * @returns 两种形态。
+ */
+function pathTargets(paths: readonly string[]): PathTargets {
+	const files = new Set<string>();
+	const directories: string[] = [];
+	for (const path of paths) {
+		if (path.endsWith('/')) directories.push(path);
+		else files.add(path);
+	}
+	return { files, directories };
+}
+
+/**
+ * 是否命中给定路径集合：当前路径、重命名/复制前的路径与所在目录 pathspec 都算命中。
  *
  * @param entry - 工作区条目。
- * @param paths - 目标路径集合。
+ * @param targets - 目标路径的两种形态。
  * @returns 命中时为 true。
  */
-function matches(entry: WorkingTreeEntry, paths: ReadonlySet<string>): boolean {
-	if (paths.has(entry.path)) return true;
-	return typeof entry.origPath === 'string' && paths.has(entry.origPath);
+function matches(entry: WorkingTreeEntry, targets: PathTargets): boolean {
+	if (targets.files.has(entry.path)) return true;
+	if (typeof entry.origPath === 'string' && targets.files.has(entry.origPath)) return true;
+	return targets.directories.some((directory) => entry.path.startsWith(directory));
 }
 
 /**
@@ -39,7 +66,7 @@ export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
  * @returns 新条目。
  */
 export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = new Set(paths);
+	const target = pathTargets(paths);
 	return entries.map((entry) => {
 		if (!matches(entry, target)) return entry;
 		if (entry.index === '?' && entry.worktree === '?') {
@@ -61,7 +88,7 @@ export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readon
  * @returns 新条目。
  */
 export function unstageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = new Set(paths);
+	const target = pathTargets(paths);
 	return entries.map((entry) => {
 		if (!matches(entry, target)) return entry;
 		if (entry.index === 'A') return { ...entry, index: '?', worktree: '?' };
@@ -84,7 +111,7 @@ export function unstageEntries(entries: readonly WorkingTreeEntry[], paths: read
  * @returns 新条目。
  */
 export function discardEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = new Set(paths);
+	const target = pathTargets(paths);
 	const kept: WorkingTreeEntry[] = [];
 	for (const entry of entries) {
 		if (!matches(entry, target)) { kept.push(entry); continue; }

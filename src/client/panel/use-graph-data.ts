@@ -178,7 +178,7 @@ export function useGraphData({
 			phase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
 			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
-			entries: [], selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
+			entries: [], entriesTruncated: false, selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
 			background: [], lastRefreshAt: 0,
 		};
 	});
@@ -411,7 +411,7 @@ export function useGraphData({
 					? endBackground(endBackground(previous, 'graph'), 'entries')
 					: previous;
 				return {
-					...settled, phase: 'ready', error: null, merging: snapshot.merging,
+					...settled, phase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
 					head: graph.head, headHash: snapshot.head,
 					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
@@ -506,7 +506,7 @@ export function useGraphData({
 				const foreignSame = branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
 				return {
 					...endBackground(endBackground(previous, 'graph'), 'entries'),
-					phase: 'ready', error: null, merging: snapshot.merging,
+					phase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
 					head: graph.head, headHash: snapshot.head,
 					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
@@ -590,7 +590,11 @@ export function useGraphData({
 		rememberPanelState(workingTreePath, { ...state, busy: [] }, maxCommits);
 	}, [workingTreePath, state, maxCommits]);
 
-	const loadedSignature = entriesSignature(state.entries);
+	/*
+	 * 已加载条目的签名：兜底轮询只按它比较。按 `entries` 引用记忆化 —— 上万条路径逐条拼接
+	 * 的结果是兆级字符串，每次渲染重算既费 CPU 又制造垃圾。
+	 */
+	const loadedSignature = React.useMemo(() => entriesSignature(state.entries), [state.entries]);
 	useGraphPolling({
 		workingTreePath, settings, busyRef, setState, loadedHeadRef, reloadGraphOnly, loadedSignature,
 	});

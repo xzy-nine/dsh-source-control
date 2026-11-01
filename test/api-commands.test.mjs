@@ -98,6 +98,39 @@ async function makeCaller(repo) {
 	});
 }
 
+test('暂存与取消暂存：空路径表示全部，走集合命令', async () => {
+	const { repo, git } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+		writeFileSync(join(repo, 'bulk-a.txt'), 'a');
+		writeFileSync(join(repo, 'bulk-b.txt'), 'b');
+		writeFileSync(join(repo, 'bulk-c.txt'), 'c');
+		const staged = await call({ command: 'stagePaths', paths: [] });
+		assert.equal(staged.error, null);
+		const indexed = git('ls-files').split('\n');
+		for (const name of ['bulk-a.txt', 'bulk-b.txt', 'bulk-c.txt']) {
+			assert.ok(indexed.includes(name), `空路径应把 ${name} 一并暂存`);
+		}
+		const unstaged = await call({ command: 'unstagePaths', paths: [] });
+		assert.equal(unstaged.error, null);
+		assert.equal(git('ls-files').includes('bulk-a.txt'), false, '空路径应取消全部暂存');
+		// 文件夹行走目录 pathspec：一条命令处理目录下全部条目，不逐条列子文件。
+		mkdirSync(join(repo, 'nested/deeper'), { recursive: true });
+		writeFileSync(join(repo, 'nested/one.txt'), '1');
+		writeFileSync(join(repo, 'nested/deeper/two.txt'), '2');
+		await call({ command: 'stagePaths', paths: ['nested/'] });
+		const nestedIndexed = git('ls-files').split('\n');
+		assert.ok(nestedIndexed.includes('nested/one.txt') && nestedIndexed.includes('nested/deeper/two.txt'), '目录 pathspec 应暂存目录下全部文件');
+		await call({ command: 'unstagePaths', paths: ['nested/'] });
+		assert.equal(git('ls-files').includes('nested/one.txt'), false, '目录 pathspec 应取消暂存目录下全部文件');
+		// 快照响应带截断标记：未超出上限时为 false，客户端据此决定是否给出计数后缀。
+		const snapshot = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
+		assert.equal(snapshot.truncated, false);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('仓库信息、提交图与配置', async () => {
 	const { repo } = makeRepo();
 	try {

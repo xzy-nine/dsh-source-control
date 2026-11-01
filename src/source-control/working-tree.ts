@@ -15,7 +15,7 @@ export {
 	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitSpawnCount, gitOrThrow,
 } from './git-exec.js';
 export type { WorkingTreeEntry, StatusRecord, WorkingTreeSnapshot } from './status-parse.js';
-export { forEachStatusRecord, parseStatus, parseStatusSnapshot } from './status-parse.js';
+export { STATUS_LIMIT, forEachStatusRecord, parseStatus, parseStatusSnapshot } from './status-parse.js';
 export { loadWorkingTree, stagePaths, unstagePaths, commitStaged } from './worktree-ops.js';
 export type { SubmoduleDiscardStatus, SubmoduleDiscardOutcome, DiscardOutcome } from './discard.js';
 export { discardPaths } from './discard.js';

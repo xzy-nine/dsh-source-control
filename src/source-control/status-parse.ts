@@ -41,6 +41,44 @@ export interface StatusRecord {
 	readonly consumed: number;
 }
 
+/** NUL 分隔记录的游标：逐条切片，不预先切出全部记录。 */
+interface NulCursor {
+	/** 取下一条记录；没有更多时为 null。 */
+	next(): string | null;
+	/** 是否还有未读的字符。 */
+	hasMore(): boolean;
+}
+
+/**
+ * 建立 NUL 分隔记录的游标。
+ *
+ * 逐条扫描而不把整段输出切成数组：几十万条记录的仓库上，整段切分会一次性造出同等数量的
+ * 临时字符串，解析本身因此成为内存负担。
+ *
+ * @param text - git 的标准输出。
+ * @returns 游标。
+ */
+function nulRecords(text: string): NulCursor {
+	let at = 0;
+	return {
+		next(): string | null {
+			if (at >= text.length) return null;
+			const end = text.indexOf('\0', at);
+			if (end === -1) {
+				const value = text.slice(at);
+				at = text.length;
+				return value;
+			}
+			const value = text.slice(at, end);
+			at = end + 1;
+			return value;
+		},
+		hasMore(): boolean {
+			return at < text.length;
+		},
+	};
+}
+
 /**
  * 逐条遍历 `git status --porcelain -z` 的输出。
  *
@@ -50,21 +88,19 @@ export interface StatusRecord {
  * @param limit - 最多解析的记录数；超出即截断。
  * @param visit - 每条记录的回调。
  * @param renameInWorktree - 工作区列出现 `R`/`C` 时是否也算重命名记录。
- * @returns 无。
+ * @returns 实际遍历的记录数；等于 `limit` 表示可能还有未遍历的记录。
  */
 export function forEachStatusRecord(
 	stdout: string,
 	limit: number,
 	visit: (record: StatusRecord) => void,
 	renameInWorktree = false,
-): void {
-	const fields: (string | undefined)[] = stdout.split('\0');
-	let index = 0;
+): number {
+	const cursor = nulRecords(stdout);
 	let count = 0;
-	while (index < fields.length && count < limit) {
-		const record = fields[index];
-		index++;
-		if (record === undefined || record.length < 4) break;
+	while (count < limit) {
+		const record = cursor.next();
+		if (record === null || record.length < 4) break;
 		const indexStatus = record.slice(0, 1);
 		const worktreeStatus = record.slice(1, 2);
 		const path = record.slice(3);
@@ -73,13 +109,13 @@ export function forEachStatusRecord(
 		let origPath: string | null = null;
 		let consumed = 1;
 		if (renamed) {
-			origPath = fields[index] ?? null;
-			index++;
+			origPath = cursor.next();
 			consumed = 2;
 		}
 		count++;
 		visit({ index: indexStatus, worktree: worktreeStatus, path, origPath, consumed });
 	}
+	return count;
 }
 
 /**
@@ -115,6 +151,8 @@ export interface WorkingTreeSnapshot {
 	readonly behind: number;
 	/** 是否处于未完成的合并：`MERGE_HEAD` 存在即为 true。 */
 	readonly merging: boolean;
+	/** 是否因条目上限而截断：为 true 时 entries 只是前一部分。 */
+	readonly truncated: boolean;
 }
 
 /** v2 的 XY 列取值：`.` 表示该侧无改动，按空列输出。 */
@@ -135,16 +173,17 @@ function column(value: string): string {
  * @returns 变更条目与分支的上游关系。
  */
 export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): WorkingTreeSnapshot {
-	const tokens = stdout.split('\0');
+	const cursor = nulRecords(stdout);
 	const entries: WorkingTreeEntry[] = [];
 	let head: string | null = null;
 	let branch: string | null = null;
 	let upstream = '';
 	let ab: { ahead: number; behind: number } | null = null;
-	let index = 0;
-	while (index < tokens.length && entries.length < limit) {
-		const token = tokens[index];
-		index++;
+	let truncated = false;
+	for (;;) {
+		if (entries.length >= limit) { truncated = cursor.hasMore(); break; }
+		const token = cursor.next();
+		if (token === null) break;
 		if (token === '') continue;
 		if (token.startsWith('# ')) {
 			const space = token.indexOf(' ', 2);
@@ -176,14 +215,13 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		const xy = parts[1] ?? '';
 		let origPath: string | null = null;
 		if (kind === '2') {
-			origPath = tokens[index] ?? null;
-			index++;
+			origPath = cursor.next();
 		}
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
 		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
 	}
 	return {
 		entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
-		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false,
+		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false, truncated,
 	};
 }
