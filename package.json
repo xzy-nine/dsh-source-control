@@ -68,10 +68,8 @@
     "verify-agent-note-format": "tsx scripts/verify-agent-note-format.ts",
     "verify-archived-agent-notes": "tsx scripts/verify-archived-agent-notes.ts",
     "verify-skill-invocation-metadata": "tsx scripts/verify-skill-invocation-metadata.ts",
-    "verify-template-placeholders": "tsx scripts/verify-template-placeholders.ts",
     "verify-all": "tsx scripts/verify-all.ts",
     "test:docs": "tsx scripts/verify-all.ts",
-    "instantiate-template": "node scripts/instantiate-template.mjs --instantiate",
     "pretest": "pnpm run build && pnpm run check:duplication",
     "test": "node --test --import ./test/setup.mjs test/*.test.mjs"
   },

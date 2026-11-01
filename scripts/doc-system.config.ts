@@ -33,6 +33,12 @@ export interface DocSystemConfig {
   readonly markdownPatterns: readonly string[]
   /** 词数上限清单的相对仓库路径。 */
   readonly budgetManifest: string
+  /**
+   * 必须逐篇出现在预算清单里的常驻文档 glob。覆盖范围由脚本强制，不靠
+   * 散文约定：清单缺其中任何一篇，预算门禁即失败。技能按场景加载、
+   * Agent Note 记录不在文档结构规则范围内，两者都不在此列。
+   */
+  readonly budgetCoveragePatterns: readonly string[]
   /** Agent Note 树布局。 */
   readonly agentNotes: AgentNoteLayout
   /**
@@ -52,6 +58,14 @@ export const docSystem: DocSystemConfig = {
     '.agents/skills/**/*.md',
   ],
   budgetManifest: 'scripts/doc-budgets.manifest.json',
+  budgetCoveragePatterns: [
+    'README.md',
+    'README.en.md',
+    'AGENTS.md',
+    'docs/**/*.md',
+    '.agents/notes/README.md',
+    '.agents/notes/**/AGENTS.md',
+  ],
   agentNotes: {
     root: '.agents/notes',
     lifecycles: ['proposed', 'implemented', 'rejected'],

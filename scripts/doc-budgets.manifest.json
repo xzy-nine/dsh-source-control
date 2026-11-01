@@ -1,5 +1,24 @@
 {
-  "AGENTS.md": 1050,
+  "AGENTS.md": 1000,
+  "README.md": 850,
+  "README.en.md": 560,
   "docs/AGENTS.md": 2000,
-  ".agents/notes/README.md": 3400
+  "docs/README.md": 750,
+  "docs/功能/功能说明.md": 3800,
+  "docs/功能/克隆.md": 320,
+  "docs/功能/忽略规则.md": 320,
+  "docs/功能/提交框.md": 1100,
+  "docs/功能/右键菜单.md": 1150,
+  "docs/功能/远程与SSH.md": 730,
+  "docs/功能/AI提交信息.md": 180,
+  "docs/实现/代码结构.md": 3200,
+  "docs/实现/性能与缓存.md": 5700,
+  "docs/实现/显示与状态.md": 1600,
+  "docs/实现/日志与反馈.md": 1400,
+  "docs/实现/构建与测试.md": 4400,
+  "docs/实现/工作约定.md": 610,
+  ".agents/notes/README.md": 3500,
+  ".agents/notes/AGENTS.md": 240,
+  ".agents/notes/implemented/AGENTS.md": 300,
+  ".agents/notes/archived/AGENTS.md": 300
 }
