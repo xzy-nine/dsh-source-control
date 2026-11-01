@@ -283,6 +283,7 @@ git 公共目录去重，主工作树、链接工作树与子模块共用一套�
 | 仓库信息只取一次 | `loadCommits` 的仓库信息批由入参 `withRepoInfo` 显式控制（默认 false），与「是否首屏」解耦；`use-graph-data.ts` 只在某仓库首次取数时传 true，之后复用已知的 remotes/stashes/branch（`panel/graph-window-cache.ts` 的模块级 `knownRepoInfo`，按仓库归一化键，写操作与换仓库时作废） |
 | 纯工作区操作不重取提交图 | `panel/index.ts` 的 `run` 第五个参数 `historyChanged`（缺省 true = 全量对账）；暂存 / 取消暂存 / 丢弃 / 忽略规则标 false，改走 `refreshEntries()`，只取工作区快照且不作废窗口缓存。`use-file-change-refresh.ts` 触发的刷新同样走 `refreshEntries()`：写入与编辑不移动 HEAD |
 | 数据未变不重渲染 | `panel/commit-diff.ts` 的 `commitsEqual` / `commitsListEqual` / `remotesListEqual` / `entriesEqual`；`reconcile` 路径下数据未变时保持数组引用不变，图形区的泳道布局与更改区的树计算因此不重算（`full` 不短路，主动刷新必须真正重建） |
+| 上限按树不按行 | 条目与改动文件的条数上限（`STATUS_LIMIT` 10000、`DETAIL_FILE_LIMIT` 1000）一律经 `source-control/depth-limit.ts` 的 `pickByDepth`：深度小于阈值的整层保留，阈值深度按父目录成组保留（一组放不下就整组不留），仓库根下的条目名额有剩时按顺序补满。解析因此先收全记录再按深度取，不边读边截 |
 
 未提交伪提交行的父提交必须已在提交列表中：提交列表与工作区快照可能读自不同时刻，HEAD 已被别的进程
 移动时该行会指向一个不在列表里的哈希，泳道图在该处断线。判据是 `commit-diff.ts` 的

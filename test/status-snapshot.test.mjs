@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
@@ -52,26 +52,34 @@ test('干净仓库只有分支信息', () => {
 	}
 });
 
-test('条目上限：超出上限时截断并标记，未超出时不标记', () => {
+test('条目上限：按完整深度截断，浅层路径优先保留', () => {
 	const { repo, git, write } = makeRepo();
 	try {
 		write('a.txt', 'one\n');
 		git('add', '-A');
 		git('commit', '-q', '-m', 'base');
-		write('u1.txt', '1');
-		write('u2.txt', '2');
-		write('u3.txt', '3');
+		// 浅层 2 条、深度 2 与深度 3 各若干：上限只够浅层 + 部分深度 2 时，深度 3 必须整层丢弃。
+		write('top1.txt', '1');
+		write('top2.txt', '2');
+		mkdirSync(join(repo, 'd1/d2'), { recursive: true });
+		write('d1/a.txt', 'a');
+		write('d1/b.txt', 'b');
+		write('d1/d2/c.txt', 'c');
+		write('d1/d2/d.txt', 'd');
 		const stdout = execFileSync('git', ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { cwd: repo, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-		const capped = parseStatusSnapshot(stdout, 2);
-		assert.equal(capped.entries.length, 2, '条目数应停在上限');
-		assert.equal(capped.truncated, true, '还有未解析的记录时必须标记截断');
-		// 上限恰好覆盖全部记录时不标记：截断与否决定界面是否给出「还有更多」的计数。
-		const exact = parseStatusSnapshot(stdout, 3);
-		assert.equal(exact.entries.length, 3);
-		assert.equal(exact.truncated, false, '记录刚好取完时不算截断');
-		const full = parseStatusSnapshot(stdout);
-		assert.equal(full.entries.length, 3);
-		assert.equal(full.truncated, false);
+		// 上限 4：浅层 2 条整层保留，剩余 2 个名额刚好放下 d1 这一组；d1/d2 那一层整层丢弃。
+		const capped = parseStatusSnapshot(stdout, 4);
+		assert.equal(capped.entries.length, 4, '条目数应停在上限');
+		assert.equal(capped.truncated, true, '还有未保留的条目时必须标记截断');
+		const paths = capped.entries.map((entry) => entry.path).sort();
+		assert.deepEqual(paths, ['d1/a.txt', 'd1/b.txt', 'top1.txt', 'top2.txt'], '按整层与整个目录保留，更深的整层丢弃');
+		// 名额不足以放下整组时不保留该组的任何一条：目录不会只显示一半。
+		const partial = parseStatusSnapshot(stdout, 3);
+		assert.deepEqual(partial.entries.map((entry) => entry.path).sort(), ['top1.txt', 'top2.txt']);
+		// 上限覆盖全部记录时不标记。
+		const exact = parseStatusSnapshot(stdout, 6);
+		assert.equal(exact.entries.length, 6);
+		assert.equal(exact.truncated, false);
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}

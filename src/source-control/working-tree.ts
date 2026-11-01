@@ -16,6 +16,7 @@ export {
 } from './git-exec.js';
 export type { WorkingTreeEntry, StatusRecord, WorkingTreeSnapshot } from './status-parse.js';
 export { STATUS_LIMIT, forEachStatusRecord, parseStatus, parseStatusSnapshot } from './status-parse.js';
+export { pickByDepth } from './depth-limit.js';
 export { loadWorkingTree, stagePaths, unstagePaths, commitStaged } from './worktree-ops.js';
 export type { SubmoduleDiscardStatus, SubmoduleDiscardOutcome, DiscardOutcome } from './discard.js';
 export { discardPaths } from './discard.js';

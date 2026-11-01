@@ -3,6 +3,7 @@
  *
  * 纯解析，不调用 git、不读写文件系统，可直接单测。
  */
+import { pickByDepth } from './depth-limit.js';
 /**
  * 工作区变更的解析上限。
  *
@@ -123,16 +124,18 @@ export function forEachStatusRecord(
  *
  * 记录格式为 `XY PATH`，重命名/复制时追加 `ORIG` 记录；`-z` 以 NUL 分隔，路径不做转义。
  *
+ * 条目超过上限时按完整深度截断，规则与 {@link parseStatusSnapshot} 相同。
+ *
  * @param stdout - git 的标准输出。
- * @param limit - 最多解析的记录数；超出即截断，避免超大仓库解析出巨量条目。
+ * @param limit - 最多保留的条目数。
  * @returns 工作区变更列表。
  */
 export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEntry[] {
 	const entries: WorkingTreeEntry[] = [];
-	forEachStatusRecord(stdout, limit, (record) => {
+	forEachStatusRecord(stdout, Number.POSITIVE_INFINITY, (record) => {
 		entries.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
 	});
-	return entries;
+	return entries.length > limit ? pickByDepth(entries, limit, (entry) => entry.path) : entries;
 }
 
 /** 工作区快照：变更条目与当前分支的上游关系。 */
@@ -168,8 +171,11 @@ function column(value: string): string {
  * 此时上游同样按无上游处理。
  * 记录以 NUL 分隔，重命名记录的新路径与旧路径分列相邻两条；路径不做转义。
  *
+ * 条目超过上限时按完整深度截断：深度更浅的路径优先保留，更深的整层丢弃，保留下来的是
+ * 一棵在每个深度上都尽量完整的树。
+ *
  * @param stdout - git 的标准输出。
- * @param limit - 最多解析的记录数；超出即截断。
+ * @param limit - 最多保留的条目数。
  * @returns 变更条目与分支的上游关系。
  */
 export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): WorkingTreeSnapshot {
@@ -179,9 +185,12 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	let branch: string | null = null;
 	let upstream = '';
 	let ab: { ahead: number; behind: number } | null = null;
-	let truncated = false;
+	/*
+	 * 记录先全部收下、解析完再按深度取：上限要按完整深度决定保留哪一层，
+	 * 边读边截会在某一层中途停下，得到的是一棵被切开的树。
+	 */
+	const collect = (entry: WorkingTreeEntry): void => { entries.push(entry); };
 	for (;;) {
-		if (entries.length >= limit) { truncated = cursor.hasMore(); break; }
 		const token = cursor.next();
 		if (token === null) break;
 		if (token === '') continue;
@@ -203,7 +212,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		}
 		const kind = token.slice(0, 1);
 		if (kind === '?') {
-			entries.push({ path: token.slice(2), origPath: null, index: '?', worktree: '?' });
+			collect({ path: token.slice(2), origPath: null, index: '?', worktree: '?' });
 			continue;
 		}
 		if (kind !== '1' && kind !== '2' && kind !== 'u') continue;
@@ -218,10 +227,12 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			origPath = cursor.next();
 		}
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
-		entries.push({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
+		collect({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
 	}
+	const truncated = entries.length > limit;
 	return {
-		entries, head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
+		entries: truncated ? pickByDepth(entries, limit, (entry) => entry.path) : entries,
+		head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
 		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false, truncated,
 	};
 }

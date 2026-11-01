@@ -6,8 +6,8 @@
  */
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
-import type { WorkingTreeSnapshot } from './working-tree.js';
+import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, pickByDepth, runGit } from './working-tree.js';
+import type { WorkingTreeEntry, WorkingTreeSnapshot } from './working-tree.js';
 import { readHeadRef } from './worktree-branches.js';
 import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -25,20 +25,20 @@ import type {
 /**
  * 一次提交详情（或提交对比）里列出的改动文件上限。
  *
- * 改动数量达到这个量级时，逐条列出会让两方都失控：两次 `git diff` 的输出、解析出的数组、
- * 响应载荷与客户端的行列表都随条目数线性增长。超出即截断，响应带 `truncated` 供界面只给计数。
+ * 改动数量达到这个量级时，响应载荷与客户端的行列表都随条目数线性增长。超出时按完整深度
+ * 保留：浅层的改动优先留下，更深的整层丢弃，因此界面看到的仍是一棵尽量完整的树。
  */
 export const DETAIL_FILE_LIMIT = 1000;
 
 /**
- * 按上限截断改动文件列表。
+ * 按上限截断改动文件列表：浅层路径优先保留。
  *
  * @param fileChanges - 完整的改动列表。
  * @returns 截断后的列表与是否截断。
  */
 function capFileChanges(fileChanges: FileChange[]): { fileChanges: FileChange[]; truncated: boolean } {
 	return fileChanges.length > DETAIL_FILE_LIMIT
-		? { fileChanges: fileChanges.slice(0, DETAIL_FILE_LIMIT), truncated: true }
+		? { fileChanges: pickByDepth(fileChanges, DETAIL_FILE_LIMIT, (change) => change.newFilePath), truncated: true }
 		: { fileChanges, truncated: false };
 }
 
@@ -384,19 +384,24 @@ export interface StatusFilesResult extends StatusFiles {
  */
 export async function getStatus(repo: string, limit = DETAIL_FILE_LIMIT): Promise<StatusFilesResult> {
 	const stdout = await gitOrThrow(['status', '-s', '--untracked-files=all', '--porcelain', '-z'], repo);
+	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
+	const matched: WorkingTreeEntry[] = [];
+	forEachStatusRecord(stdout, STATUS_LIMIT, (record) => {
+		const isDeleted = record.index === 'D' || record.worktree === 'D';
+		const isUntracked = record.index === '?' || record.worktree === '?';
+		if (!isDeleted && !isUntracked) return;
+		matched.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
+	}, true);
+	// 上限按完整深度取：浅层路径优先保留，与快照的截断规则一致。
+	const truncated = matched.length > limit;
+	const kept = truncated ? pickByDepth(matched, limit, (entry) => entry.path) : matched;
 	const deleted: string[] = [];
 	const untracked: string[] = [];
-	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
-	const visited = forEachStatusRecord(stdout, STATUS_LIMIT, (record) => {
-		if (record.index === 'D' || record.worktree === 'D') deleted.push(record.path);
-		else if (record.index === '?' || record.worktree === '?') untracked.push(record.path);
-	}, true);
-	const total = deleted.length + untracked.length;
-	// 记录扫描到上限、或匹配到的路径超过收集上限，都表示还有未列出的路径。
-	const truncated = visited >= STATUS_LIMIT || total > limit;
-	const keptDeleted = truncated ? deleted.slice(0, limit) : deleted;
-	const keptUntracked = truncated ? untracked.slice(0, Math.max(0, limit - keptDeleted.length)) : untracked;
-	return { deleted: keptDeleted, untracked: keptUntracked, truncated };
+	for (const entry of kept) {
+		if (entry.index === 'D' || entry.worktree === 'D') deleted.push(entry.path);
+		else untracked.push(entry.path);
+	}
+	return { deleted, untracked, truncated };
 }
 
 /** 工作区快照的读取结果：条目、分支与上游关系，或错误文本。 */
@@ -672,8 +677,8 @@ async function getCommitDetailsBase(repo: string, commitHash: string): Promise<C
  * @returns 改动记录。
  */
 async function getDiffNameStatus(repo: string, fromHash: string, toHash: string): Promise<DiffNameStatusRecord[]> {
-	// 多解析一条：够判定「是否还有更多」即可，详情列表本就按 `DETAIL_FILE_LIMIT` 截断。
-	return parseNameStatus(await execDiff(repo, fromHash, toHash, '--name-status'), { limit: DETAIL_FILE_LIMIT + 1 });
+	// 全部解析后再按完整深度截断：上限要按层决定保留哪一段，边解析边截会把某一层切开。
+	return parseNameStatus(await execDiff(repo, fromHash, toHash, '--name-status'));
 }
 
 /**
@@ -685,7 +690,7 @@ async function getDiffNameStatus(repo: string, fromHash: string, toHash: string)
  * @returns 增删统计记录。
  */
 async function getDiffNumStat(repo: string, fromHash: string, toHash: string): Promise<DiffNumStatRecord[]> {
-	return parseNumStat(await execDiff(repo, fromHash, toHash, '--numstat'), { limit: DETAIL_FILE_LIMIT + 1 });
+	return parseNumStat(await execDiff(repo, fromHash, toHash, '--numstat'));
 }
 
 /**

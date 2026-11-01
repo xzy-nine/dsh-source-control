@@ -20,14 +20,6 @@ import shared from '../css/shared.module.css';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 import { cx } from '../css/cx.ts';
 
-/**
- * 变更区与提交详情一次渲染的最大行数。
- *
- * 条目与改动文件可能上万：逐行建元素会让 DOM 与 JS 堆随条目数线性增长。超出部分只给汇总，
- * 需要看具体条目的场景改从右键菜单或差异页进入。
- */
-const ROW_RENDER_LIMIT = 500;
-
 /** 变更条目的展示信息：状态字符与是否已暂存。 */
 export interface ChangeInfo {
 	readonly staged: boolean;
@@ -237,9 +229,6 @@ export interface CommitDetailProps {
 function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
 	// 记忆化必须在提前返回之前：它也是 hook。
 	const rows = React.useMemo<ChangeRow<CommitFile>[]>(() => changeRowsOf(files, collapsed), [files, collapsed]);
-	// 逐行渲染同样有上限：几万个改动文件不能靠 DOM 列出。
-	const shown = rows.length > ROW_RENDER_LIMIT ? rows.slice(0, ROW_RENDER_LIMIT) : rows;
-	const omitted = rows.length - shown.length;
 	if (files.length === 0) {
 		// 读取中与「确实没有改动」必须分开：空提交（如 --allow-empty）不是加载中。
 		return React.createElement('div', { className: shared.hint },
@@ -248,7 +237,7 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 	return React.createElement(
 		'div',
 		{ className: cx(css.changes, css.detailChanges) },
-		...shown.map((row) => {
+		...rows.map((row) => {
 			if (row.kind === 'folder') {
 				return React.createElement(
 					'div',
@@ -289,11 +278,8 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 				),
 			);
 		}),
-		// 截断或超出渲染上限时只给一行汇总：逐条列出这类规模的改动没有意义。
-		(omitted > 0 || truncated) && React.createElement('div', { className: shared.hint },
-			omitted > 0
-				? `仅列出前 ${String(ROW_RENDER_LIMIT)} 个改动，其余 ${String(omitted)} 个未显示`
-				: '改动过多，仅列出前一部分'),
+		// 宿主侧按完整深度截断改动列表：保留下来的是浅层那一段，须说明。
+		truncated && React.createElement('div', { className: shared.hint }, '改动过多，仅列出较浅层的改动'),
 	);
 }
 
@@ -334,9 +320,6 @@ function ChangeGroupView({
 		[entries, staged],
 	);
 	const rows = React.useMemo<ChangeRow[]>(() => changeRowsOf(visible, collapsed), [visible, collapsed]);
-	// 渲染上限：条目上万时逐行建元素会让 DOM 与 JS 堆随条目数增长。
-	const shown = rows.length > ROW_RENDER_LIMIT ? rows.slice(0, ROW_RENDER_LIMIT) : rows;
-	const omitted = rows.length - shown.length;
 	const allPaths = React.useMemo(() => visible.map((entry) => entry.path), [visible]);
 	const title = staged ? '暂存的更改' : '更改';
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
@@ -481,16 +464,14 @@ function ChangeGroupView({
 		open && React.createElement(
 			'div',
 			{ className: css.changes },
-			...shown.map((row) => React.createElement(ChangeNodeRow, {
+			...rows.map((row) => React.createElement(ChangeNodeRow, {
 				key: row.kind === 'folder' ? 'f:' + row.path : 'e:' + row.entry.path,
 				row, busy,
 				open: row.kind === 'folder' && !collapsed.has(row.path),
 				staged, groupKey, toggleChange,
 				onStage, onUnstage, onDiscard, onOpen, menu,
 			})),
-			// 超出渲染上限的部分只给一行汇总：这类规模的条目不可能靠逐行列出使用。
-			omitted > 0 && React.createElement('div', { className: shared.hint },
-				`仅列出前 ${String(ROW_RENDER_LIMIT)} 行，其余 ${String(omitted)} 行未显示`),
+
 		),
 	);
 }
