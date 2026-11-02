@@ -53,7 +53,7 @@ export function splitLines(source: string): string[] {
  * 遍历器整体处理，不进入此函数。
  *
  * 匹配忽略大小写：同一份模式要在 Windows 与 Linux 上扫到同一批文件，而目录
- * 与文件的实际大小写随检出平台与历史重命名而变（例如 `docs/` 在磁盘上是
+ * 与文件的实际大小写随检出平台与历史重命名而变（例如 `Docs/` 在磁盘上是
  * `Docs/`）。区分大小写会让同一份配置在两种平台上覆盖不同的语料。
  */
 function segmentMatches(pattern: string, name: string): boolean {

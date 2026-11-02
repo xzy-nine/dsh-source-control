@@ -112,7 +112,7 @@ Status: <status>
 ## Consequences
 ```
 
-`## Decision` 以现在时态描述已交付的现实，整个文件按 [implemented/AGENTS.md](implemented/AGENTS.md) 的要求与之保持同步。`## Consequences` 记录权衡的代价**与**收益。提案阶段的标题在此属于规格用语，门禁会拒绝它们：`## Proposal`、`## Plan`、`## Migration plan` 和 `## Acceptance criteria` 不得出现在 implemented Agent Note 中（原因见 [slop 检查清单](../../docs/AGENTS.md)）。`## Testing`、`## Deferred` 或 `## Related` 章节在陈述现在时态的事实时是允许的。
+`## Decision` 以现在时态描述已交付的现实，整个文件按 [implemented/AGENTS.md](implemented/AGENTS.md) 的要求与之保持同步。`## Consequences` 记录权衡的代价**与**收益。提案阶段的标题在此属于规格用语，门禁会拒绝它们：`## Proposal`、`## Plan`、`## Migration plan` 和 `## Acceptance criteria` 不得出现在 implemented Agent Note 中（原因见 [slop 检查清单](../../Docs/AGENTS.md)）。`## Testing`、`## Deferred` 或 `## Related` 章节在陈述现在时态的事实时是允许的。
 
 #### `rejected/`
 

@@ -33,7 +33,7 @@ description: 审计或修复读起来像泄漏的推理记录的散文时使用�
 无辅助的引用清理在两个方向上都会失败：既删掉了持久引用，也留下了已死引用。以下保留规则按字面执行；[示例](references/examples.md)逐条校准：
 
 - **Issue 引用** —— `#1470`、`TODO(name):`、"issue #N owns the follow-up" 在 HEAD 上可解析；在任何面上都保留，包括 README。不要把它们挪进 Agent Note。
-- **Agent Note 与事故复盘中的已合并 PR 与 issue 引用** —— 按[文档标准](../../../docs/AGENTS.md)的变更故事路由，这是获准的证据。
+- **Agent Note 与事故复盘中的已合并 PR 与 issue 引用** —— 按[文档标准](../../../Docs/AGENTS.md)的变更故事路由，这是获准的证据。
 - **抑制说明** —— `oxlint-disable … -- reason`、覆盖率忽略原因、空 catch 的说明都是必需的散文；修正错误的理由，绝不删除它。
 - **现在时反事实回归钉** —— "without X, Y happens"、"a naive X would…"。
 - **实测边界** —— "(measured: 512 nests ≈ 0.15s)" 用于校准某个常量；证据词 "measured" 是承重的。
@@ -48,6 +48,6 @@ description: 审计或修复读起来像泄漏的推理记录的散文时使用�
 
 1. 范围与排除按 [source-control-prose-standard](../source-control-prose-standard/SKILL.md)：要求显式范围；绝不触碰 `vendor/` 或 `.agents/notes/archived/`。录制 fixture 与快照是派生物，不是散文目标：改动拥有它们的源或场景，并且只有授权行为变更需要新证据时才重新生成。
 2. 先做只读审计：运行[召回题库](references/recall-batteries.md)（带 `--hidden` 以便搜到 `.agents/`），用已知正例与近似负例校准每个探针，再信任其输出，然后按语义判断每个命中。题库是探针而不是定义——原清理的每一轮评审都发现了题库漏掉的案例，所以还要在没有具体模式的情况下，读范围内最密集的散文（模块 JSDoc、README、Agent Note）。
-3. 按面先修所有者：生成的目录 → 追踪每个消费方，修源 JSDoc 或生成器模板，再重新生成所有派生物；类型等价围栏 → 修源 JSDoc，再重新粘贴两个双语页（`verify-type-equiv` 钉住它们）；双语散文 → 最小化更新对侧，并经由[轻量例行流程](../../../docs/AGENTS.md#writing-rules)重新记录；双语围栏 → 把修正后的逐字块逐字节复制到两侧，再重新记录配对；面向模型或用户的字符串 → 经 [source-control-prose-standard](../source-control-prose-standard/SKILL.md) 路由，且只有拿到所属行为证据时才改动，否则保持不变并报告推迟。
+3. 按面先修所有者：生成的目录 → 追踪每个消费方，修源 JSDoc 或生成器模板，再重新生成所有派生物；类型等价围栏 → 修源 JSDoc，再重新粘贴两个双语页（`verify-type-equiv` 钉住它们）；双语散文 → 最小化更新对侧，并经由[轻量例行流程](../../../Docs/AGENTS.md#writing-rules)重新记录；双语围栏 → 把修正后的逐字块逐字节复制到两侧，再重新记录配对；面向模型或用户的字符串 → 经 [source-control-prose-standard](../source-control-prose-standard/SKILL.md) 路由，且只有拿到所属行为证据时才改动，否则保持不变并报告推迟。
 4. 删除任何内容之前，枚举该段落的命题（prose-standard 规则），并对照[过度纠正陷阱](references/examples.md#overcorrection-traps)：那些把义务翻转成认可、把假设提升为已交付特性、删掉真实事实，或丢掉证据来源的精简。
 5. 校验：重跑题库，预期只剩获准保留项、本技能自身目录，以及所属记录中被引用的证据；确认每个剩余引用在 HEAD 上可解析；对触及的面运行门禁（文档用 `verify-all`，以及 `verify-type-equiv`、`verify-translation-pairing`）。

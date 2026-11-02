@@ -53,7 +53,7 @@ export const docSystem: DocSystemConfig = {
   markdownPatterns: [
     'README.md',
     'AGENTS.md',
-    'docs/**/*.md',
+    'Docs/**/*.md',
     '.agents/notes/**/*.md',
     '.agents/skills/**/*.md',
   ],
@@ -62,7 +62,7 @@ export const docSystem: DocSystemConfig = {
     'README.md',
     'README.en.md',
     'AGENTS.md',
-    'docs/**/*.md',
+    'Docs/**/*.md',
     '.agents/notes/README.md',
     '.agents/notes/**/AGENTS.md',
   ],
