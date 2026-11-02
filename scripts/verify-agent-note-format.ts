@@ -4,6 +4,7 @@
  * 见 `.agents/notes/README.md`。
  */
 
+import { gateHint } from './gate-hint.ts'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { agentNoteRoot, walkAgentNoteTree } from './agent-note-tree.ts'
@@ -91,4 +92,5 @@ if (errors.length === 0) {
 
 console.error('verify-agent-note-format: violations found:')
 for (const e of errors) console.error(`  ${e}`)
+console.error(gateHint('verify-agent-note-format'))
 process.exit(1)

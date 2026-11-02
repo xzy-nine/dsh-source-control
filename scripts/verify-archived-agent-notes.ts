@@ -6,6 +6,7 @@
  * @module scripts/verify-archived-agent-notes
  */
 
+import { gateHint } from './gate-hint.ts'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -110,6 +111,7 @@ if (!writeMode) {
 if (errors.length > 0) {
   console.error('verify-archived-agent-notes: archive rules violated:')
   for (const error of errors) console.error(`  ${error}`)
+  console.error(gateHint('verify-archived-agent-notes'))
   process.exit(1)
 }
 

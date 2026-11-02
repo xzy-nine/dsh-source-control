@@ -1,9 +1,10 @@
 #!/bin/sh
 #
-# pre-push：推送前跑全量 oxlint 与两段类型检查。
+# pre-push：推送前跑全量 oxlint、两段类型检查与文档门禁。
 #
 # 与 pre-commit 的分工：pre-commit 只查本次提交涉及的文件（反馈快），
 # pre-push 查整个 src/ 并跑 tsc，拦住跨文件的类型问题与漏查的存量。
+# 文档门禁在这里无条件跑：提交可能绕开 pre-commit（--no-verify），推送是最后一道。
 #
 # 规则集见仓库根的 .oxlintrc.json。
 
@@ -25,5 +26,8 @@ node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
 
 echo "pre-push: 类型检查（客户端）"
 node node_modules/typescript/bin/tsc -p tsconfig.client.json --noEmit
+
+echo "pre-push: 文档门禁"
+node node_modules/tsx/dist/cli.mjs scripts/verify-all.ts
 
 echo "pre-push: 通过"

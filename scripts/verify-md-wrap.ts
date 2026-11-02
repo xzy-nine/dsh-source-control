@@ -11,6 +11,7 @@ import type { Nodes } from 'mdast'
 import { parseMarkdown, visitMarkdown } from './markdown.ts'
 import { isArchivedAgentNotePath, splitLines, uniqueRepoFiles } from './repo-files.ts'
 import { docSystem, repoRoot } from './doc-system.config.ts'
+import { gateHint } from './gate-hint.ts'
 
 const root = repoRoot
 
@@ -68,4 +69,5 @@ console.error('verify-md-wrap: hard-wrapped prose paragraphs found (write one ph
 for (const v of all) {
   console.error(`  ${v.file}:${v.line}  ${v.text.slice(0, 80)}${v.text.length > 80 ? '…' : ''}`)
 }
+console.error(gateHint('verify-md-wrap'))
 process.exit(1)

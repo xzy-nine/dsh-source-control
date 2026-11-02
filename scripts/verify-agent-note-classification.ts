@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { walkAgentNoteTree } from './agent-note-tree.ts'
 import { docSystem, repoRoot } from './doc-system.config.ts'
+import { gateHint } from './gate-hint.ts'
 
 const { notes, errors } = walkAgentNoteTree()
 
@@ -24,4 +25,5 @@ if (errors.length === 0) {
 
 console.error('verify-agent-note-classification: violations found:')
 for (const e of errors) console.error(`  ${e}`)
+console.error(gateHint('verify-agent-note-classification'))
 process.exit(1)

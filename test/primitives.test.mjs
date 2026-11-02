@@ -611,6 +611,32 @@ test('AI 生成设置的下拉按钮给出两个入口', () => {
 	assert.match(settings, /scrollSerial/, '重复请求应能重新触发滚动');
 });
 
+test('门禁失败时提示先读对应规则页', () => {
+	/*
+	 * 报错只说哪条不合规，不说该按什么规则改；照着报错改会绕开规则
+	 * （例如文档超预算时删两句了事，而不是按 Docs/AGENTS.md 先搬迁）。
+	 */
+	const hint = readFileSync(join(root, 'scripts', 'gate-hint.ts'), 'utf8');
+	assert.match(hint, /GATE_RULES/, '应登记各门禁的规则正家');
+	assert.match(hint, /Docs\/AGENTS\.md/, '文档门禁应指向 Docs/AGENTS.md');
+	assert.match(hint, /请先阅读对应规则再修改/, '提示应明确要求先读规则');
+	// 一个事实一个家：规则只在文档里，提示只给路径，不复述规则内容。
+	assert.ok(!/搬迁优先/.test(hint), '不得复述预算规则');
+	assert.ok(!/每段一个物理行/.test(hint), '不得复述换行规则');
+	assert.ok(!/what:/.test(hint), '不应保留复述规则的字段');
+
+	// 每个文档门禁都要真的用上该提示。
+	for (const gate of ['verify-doc-budgets', 'verify-md-wrap', 'verify-md-links']) {
+		const script = readFileSync(join(root, 'scripts', `${gate}.ts`), 'utf8');
+		assert.match(script, /gateHint\(/, `${gate} 应输出规则提示`);
+	}
+	// 文档门禁必须由 git 钩子执行，否则本地提交可以绕开。
+	const preCommit = readFileSync(join(root, '.githooks', 'pre-commit'), 'utf8');
+	assert.match(preCommit, /verify-all\.ts/, 'pre-commit 应跑文档门禁');
+	const prePush = readFileSync(join(root, '.githooks', 'pre-push'), 'utf8');
+	assert.match(prePush, /verify-all\.ts/, 'pre-push 应跑文档门禁');
+});
+
 test('表单勾选项的文案只由 Checkbox 渲染', () => {
 	// Checkbox 自身携带可见文案且根元素是 `<label>`：再包一层 label 或另加文案节点会让文案显示两次。
 	const dialog = readFileSync(join(clientDir, 'ui', 'dialog.ts'), 'utf8');
