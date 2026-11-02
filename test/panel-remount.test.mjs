@@ -37,8 +37,8 @@ parallel('面板重挂载', (t) => {
 		 * 写操作按仓库作废：别的仓库数据不受影响，清全表会让同时打开多个仓库的面板各自重取。
 		 * 同一仓库的主工作树与链接工作树路径不同，按 git 公共目录一并覆盖。
 		 */
-		assert.match(hostCache, /onRepositoryWrite\(\(repo\) => \{ invalidateOnWrite\(repo\); \}\)/, '成功的写操作应按仓库作废缓存');
-		assert.match(hostCache, /export function invalidateOnWrite/, '应导出按仓库作废的实现');
+		assert.match(hostCache, /onRepositoryWrite\(\(repo, surface\) => \{ invalidateOnWrite\(repo, surface\); \}\)/, '成功的写操作应按仓库与影响面作废缓存');
+		assert.match(hostCache, /export function invalidateOnWrite\(repo: string, surface: WriteSurface = 'history'\)/, '应导出按影响面作废的实现');
 		assert.match(hostCache, /noteRepoCommonDir/, '应登记 git 公共目录以覆盖链接工作树');
 	});
 

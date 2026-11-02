@@ -98,9 +98,10 @@ function flushCommandCost(): void {
  * @param ms - 本次耗时（毫秒）。
  * @param repo - 仓库路径。
  * @param refreshId - 客户端给出的轮次编号；未给出时为 null。
+ * @param spawnsAtStart - 本轮开始时的 git 子进程计数；由请求入口在命令执行前取，桶据此算差。
  * @returns 无。
  */
-function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null): void {
+function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null, spawnsAtStart: number): void {
 	if (command === '' || command === 'logEvent') return;
 	if (!exitFlushRegistered) {
 		exitFlushRegistered = true;
@@ -127,7 +128,7 @@ function recordCommandCost(command: string, ms: number, repo: string, refreshId:
 	if (current === undefined) {
 		current = {
 			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
-			repo, firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart: gitSpawnCount(repo),
+			repo, firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart,
 			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
 		};
 		costBuckets.set(key, current);

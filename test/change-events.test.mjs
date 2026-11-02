@@ -4,10 +4,11 @@
 import assert from 'node:assert/strict';
 import { parallel } from './harness.mjs';
 import {
+	AUTO_FETCH_BACKOFF_MAX_SECONDS, AUTO_FETCH_PERIOD_SECONDS_MAX,
 	AUTO_REFRESH_COOLDOWN_MS, CLEANUP_INTERVAL_MS, FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS,
 	FALLBACK_POLL_SECONDS_MAX, FALLBACK_POLL_SECONDS_MIN, FALLBACK_STABLE_OBSERVATIONS,
 	autoFetchPeriodMs, clampSeconds, fallbackPollMs, hasRepositoryChange, isAutoRefreshDue, isCacheExpired,
-	repositoryRelativePath, settledFileChanges, shouldFallbackRefresh, stableObservationsRequired,
+	nextAutoFetchPeriodMs, repositoryRelativePath, settledFileChanges, shouldFallbackRefresh, stableObservationsRequired,
 } from '../src/client/panel/change-events.ts';
 
 /** 一次工具调用事件。 */
@@ -87,6 +88,21 @@ parallel('文件改动事件判据', (t) => {
 		assert.equal(autoFetchPeriodMs(1), 10000);
 		assert.equal(autoFetchPeriodMs(999999), 3600000);
 		assert.equal(autoFetchPeriodMs(Number.NaN), 180000);
+	});
+
+	t.test('抓取退避：无新引用翻倍，封顶后不再涨，有变化复位', () => {
+		const base = autoFetchPeriodMs(180);
+		assert.equal(nextAutoFetchPeriodMs(base, base, false), base * 2, '无变化时翻倍');
+		assert.equal(nextAutoFetchPeriodMs(base * 2, base, false), base * 4, '继续翻倍');
+		assert.equal(nextAutoFetchPeriodMs(base * 8, base, false), AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '封顶到 30 分钟');
+		assert.equal(nextAutoFetchPeriodMs(base * 64, base, false), AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '超过上限不再增长');
+		assert.equal(nextAutoFetchPeriodMs(base * 8, base, true), base, '拉到新引用即复位');
+	});
+
+	t.test('抓取退避：基础周期已超过上限时按设置走，不压低', () => {
+		const longBase = autoFetchPeriodMs(AUTO_FETCH_PERIOD_SECONDS_MAX);
+		assert.ok(longBase > AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '前提：上限设置大于退避封顶');
+		assert.equal(nextAutoFetchPeriodMs(longBase, longBase, false), longBase, '不因退避把用户设置压小');
 	});
 
 	t.test('缓存未到清理周期时保留，到达后过期', () => {

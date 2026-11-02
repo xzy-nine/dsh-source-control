@@ -196,4 +196,33 @@ parallel('宿主缓存', (t) => {
 		assert.notEqual(cache.readGraph('/repo/other', graphParams()), undefined, '其它仓库不受影响');
 		cache.clearHostCache();
 	});
+
+	t.test('索引类写只清工作区快照，保留提交图与仓库信息', () => {
+		cache.clearHostCache();
+		const params = { showRemoteBranches: true, showStashes: true, hideRemotes: [] };
+		cache.writeGraph('/repo/a', graphParams(), graphValue());
+		cache.writeRepoInfo('/repo/a', params, { branches: [], head: null, remotes: [], stashes: [], error: null });
+		cache.writeSnapshot('/repo/a', snapshotValue('aaa'));
+		cache.writeHooksPath('/repo/a', '');
+		cache.invalidateOnWrite('/repo/a', 'index');
+		assert.equal(cache.readSnapshot('/repo/a', 'aaa'), undefined, '快照随索引写失效');
+		assert.notEqual(cache.readGraph('/repo/a', graphParams()), undefined, '提交图窗口与索引写无关，应保留');
+		assert.notEqual(cache.readRepoInfo('/repo/a', params), undefined, '仓库信息应保留');
+		assert.notEqual(cache.readHooksPath('/repo/a'), undefined, '钩子路径应保留');
+		cache.clearHostCache();
+	});
+
+	t.test('索引类写同样按祖先与公共目录覆盖快照', () => {
+		cache.clearHostCache();
+		cache.noteRepoCommonDir('/repo/main', '/repo/main/.git');
+		cache.noteRepoCommonDir('/repo/linked', '/repo/main/.git');
+		cache.writeSnapshot('/repo/main', snapshotValue('aaa'));
+		cache.writeSnapshot('/repo/linked', snapshotValue('aaa'));
+		cache.writeSnapshot('/repo/other', snapshotValue('aaa'));
+		cache.invalidateOnWrite('/repo/linked', 'index');
+		assert.equal(cache.readSnapshot('/repo/linked', 'aaa'), undefined, '写入路径自身应失效');
+		assert.equal(cache.readSnapshot('/repo/main', 'aaa'), undefined, '同一公共目录的主工作树应失效');
+		assert.notEqual(cache.readSnapshot('/repo/other', 'aaa'), undefined, '其它仓库不受影响');
+		cache.clearHostCache();
+	});
 });

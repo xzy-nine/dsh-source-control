@@ -5,7 +5,7 @@
  * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
  */
 import type http from 'node:http';
-import { onRepositoryWrite } from './git-exec.js';
+import { gitSpawnCount, onRepositoryWrite } from './git-exec.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { clearDiscoveryCache } from './repo-discovery.js';
 import { closeRepositoryWatchers, onRepositoryTreeChange } from './repo-watcher.js';
@@ -14,6 +14,7 @@ import { logError, logInfo, logWarn } from './logger.js';
 import { recordCommandCost } from './api/cost.js';
 import { collectDiff } from './commit-diff.js';
 import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
+import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
 import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
 import type { AiCommitDeps } from './ai-deps.js';
 import type { ApiContext } from './api/context.js';
@@ -37,15 +38,9 @@ const REPO_FREE_COMMANDS: ReadonlySet<string> = new Set(['feedbackInfo', 'submit
 /** 可以合并的只读命令。 */
 const COALESCABLE_COMMANDS: ReadonlySet<string> = new Set(['loadCommits', 'loadWorkingTreeSnapshot', 'loadRepoInfo']);
 
-/**
- * 合并等待的上限（毫秒）。
- *
- * 超过它按超时回投，不无限等待：某个请求的处理体异常退出而没回投时，后来者不能一直挂着。
- */
-const COALESCE_TIMEOUT_MS = 30_000;
-
 /** 在飞的合并项：键为命令 + 仓库 + 参数，值为最终回投的载荷。 */
 const inFlightPayloads = new Map<string, Promise<Record<string, unknown>>>();
+
 /** 仓库判定结果的缓存有效期（毫秒）。
  *
  * 判定要逐级向上找 `.git`，每次刷新对同一路径反复判会重复读盘。仓库被创建或删除属于结构变化，
@@ -80,6 +75,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	 * 0 是旧版客户端的缺省值，与真实轮次 0 无法区分，因此统一当成没有编号。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
+	/*
+	 * 本轮的子进程基线必须在执行命令之前取：命令自己的子进程在 `spawnGit` 里计数，
+	 * 等命令返回后再取基线，差值为零 —— 单命令轮次因此会一律报「0 个」。
+	 */
+	const spawnsAtStart = gitSpawnCount(repo);
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
 	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
@@ -96,10 +96,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	if (coalesceKey !== null) {
 		const inFlight = inFlightPayloads.get(coalesceKey);
 		if (inFlight !== undefined) {
-			const shared = await inFlight;
-			sendJson(res, 200, shared);
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
-			return;
+			const shared = await waitCoalesced(inFlight);
+			/*
+			 * 等到超时即自己跑一遍：并发的几条都是只读命令，重跑安全，而拿「并发合并超时」
+			 * 当结果会让面板把它当成操作失败弹给用户。发起方仍在跑，两者结果进同一份缓存。
+			 */
+			if (shared !== null) {
+				sendJson(res, 200, shared);
+				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
+				return;
+			}
 		}
 	}
 
@@ -191,12 +197,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const domains = [handleWorkspaceCommand, handleStateCommand, handleRepoCommand, handleGraphCommand, handleHistoryCommand, handleMiscCommand];
 	for (const handle of domains) {
 		if (await handle(ctx)) {
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
+			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
 			return;
 		}
 	}
 	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
-	recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
+	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
 }
 
 export interface GgRouteContext {
@@ -299,7 +305,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	logInfo('source-control', '开始登记仓库监视：写事件、结构变化与事件流');
 
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
-	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
+	// 两个影响面都要广播：面板无论哪种写都要重取工作区，影响面只决定宿主作废哪些缓存。
+	disposers.push(onRepositoryWrite((repo) => { broadcastRepositoryWrite(repo); }));
 
 	// 工作树登记、子模块目录与 `.gitmodules` 的变化推给所有面板：这类变化不经过执行层。
 	disposers.push(onRepositoryTreeChange((repo) => {

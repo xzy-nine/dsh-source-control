@@ -522,15 +522,36 @@ const inFlightGit = new Map<string, Promise<GitResult>>();
  * 判据是「写命令跑完了」，不是「退出码为 0」：冲突合并、拣选冲突与变基停下都以非零退出，
  * 但仓库已被改动（建立了待合并状态与未解决条目），此时仍必须通知。
  */
-const writeListeners = new Set<(repo: string) => void>();
+const writeListeners = new Set<(repo: string, surface: WriteSurface) => void>();
+
+/**
+ * 一次写操作的影响面。
+ *
+ * `index`：只动索引或工作区，不改变 HEAD、引用与贮藏 —— 提交图窗口与仓库信息因此仍然有效。
+ * `history`：其余一切写操作，含未知子命令。
+ */
+export type WriteSurface = 'history' | 'index';
+
+/** 只影响索引与工作区的写子命令；不在表内的一律按 `history`。 */
+const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv']);
+
+/**
+ * 判定一条写命令的影响面。
+ *
+ * @param args - 完整参数数组。
+ * @returns 影响面。
+ */
+function writeSurfaceOf(args: readonly string[]): WriteSurface {
+	return INDEX_ONLY_WRITES.has(args[subcommandIndex(args)] ?? '') ? 'index' : 'history';
+}
 
 /**
  * 订阅仓库写操作。
  *
- * @param listener - 写命令结束后调用。
+ * @param listener - 写命令结束后调用，参数为仓库路径与影响面。
  * @returns 取消订阅。
  */
-export function onRepositoryWrite(listener: (repo: string) => void): () => void {
+export function onRepositoryWrite(listener: (repo: string, surface: WriteSurface) => void): () => void {
 	writeListeners.add(listener);
 	return () => { writeListeners.delete(listener); };
 }
@@ -539,12 +560,13 @@ export function onRepositoryWrite(listener: (repo: string) => void): () => void 
  * 通知一次仓库写操作。
  *
  * @param cwd - 工作目录，调用方给出的原样写法。
+ * @param surface - 影响面。
  * @returns 无。
  */
-function notifyWrite(cwd: string): void {
+function notifyWrite(cwd: string, surface: WriteSurface): void {
 	for (const listener of writeListeners) {
 		try {
-			listener(cwd);
+			listener(cwd, surface);
 		} catch {
 			/* 观察者自身的异常不影响命令结果 */
 		}
@@ -554,13 +576,14 @@ function notifyWrite(cwd: string): void {
 /**
  * 通知一次仓库写入事件。
  *
- * 供以 {@link GitOptions.quietWrite} 执行、事后才确认确有改动的命令补发。
+ * 供以 {@link GitOptions.quietWrite} 执行、事后才确认确有改动的命令补发。补发者已确认改动了
+ * 引用或历史，因此按 `history` 通知。
  *
  * @param repo - 仓库路径。
  * @returns 无。
  */
 export function notifyRepositoryWrite(repo: string): void {
-	notifyWrite(repo);
+	notifyWrite(repo, 'history');
 }
 
 /**
@@ -639,7 +662,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (cacheable && result.code === 0) setCachedResult(key, result);
 		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
 		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
-		if (!readOnly && result.code >= 0 && options.quietWrite !== true) notifyWrite(cwd);
+		if (!readOnly && result.code >= 0 && options.quietWrite !== true) notifyWrite(cwd, writeSurfaceOf(args));
 		return result;
 	} finally {
 		if (readOnly) inFlightGit.delete(key);
