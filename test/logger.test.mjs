@@ -4,9 +4,28 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+/* 本文件的用例必须串行执行：用例逐个改动 process.env 并真实落盘 */
+
+/** 本进程启动时 setup.mjs 注入的隔离根；文件结束时还原回它。 */
+const ISOLATED_HOME = process.env.DSH_SOURCE_CONTROL_HOME;
+
+/** 本文件创建的临时 home；文件级 after 统一删除。 */
+const homes = [];
+test.after(async () => {
+	/*
+	 * 先重置日志状态再删目录：日志模块在进程退出时会 flush，而 flush 会按记录的文件路径
+	 * 重建目录——顺序反过来会把刚删掉的目录又建出来。
+	 */
+	const module = await import('../lib/src/source-control/logger.js');
+	module.resetLogStateForTests();
+	for (const home of homes) rmSync(home, { recursive: true, force: true });
+	if (ISOLATED_HOME === undefined) delete process.env.DSH_SOURCE_CONTROL_HOME;
+	else process.env.DSH_SOURCE_CONTROL_HOME = ISOLATED_HOME;
+});
 
 /** logcat threadtime 的一行。 */
 const LOGCAT_LINE = /^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\s+\d+\s+\d+ [VDIWE] [^:]+: .*$/;
@@ -18,6 +37,7 @@ const LOGCAT_LINE = /^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\s+\d+\s+\d+ [VDIWE] [
  */
 async function freshLogger() {
 	const home = mkdtempSync(join(tmpdir(), 'dsh-log-'));
+	homes.push(home);
 	process.env.DSH_SOURCE_CONTROL_HOME = home;
 	const module = await import('../lib/src/source-control/logger.js');
 	module.resetLogStateForTests();

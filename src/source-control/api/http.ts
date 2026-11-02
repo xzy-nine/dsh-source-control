@@ -9,9 +9,9 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.end(JSON.stringify(body));
 }
 
-function sendBadRequest(res: http.ServerResponse, message: string): void {
+function sendBadRequest(res: http.ServerResponse, message: string, code?: string): void {
 	logWarn('api', `请求被拒绝（400）：${message}`);
-	sendJson(res, 400, { error: message });
+	sendJson(res, 400, code === undefined ? { error: message } : { error: message, code });
 }
 
 function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {

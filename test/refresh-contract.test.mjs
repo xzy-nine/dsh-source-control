@@ -11,6 +11,8 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/* 本文件的用例必须串行执行：用例各开一个 jsdom 窗口并覆写浏览器全局与 fetch */
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** jsdom 的 JSDOM 构造；包无法加载时为 null。 */
@@ -51,6 +53,7 @@ const SNAPSHOT_PAYLOAD = {
  * @returns 状态读取器、刷新函数与请求记录。
  */
 async function mount(initialDelays = {}, overrides = {}) {
+	const restoreGlobals = snapshotGlobals();
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
 		url: 'http://localhost/', pretendToBeVisual: true,
 	});
@@ -134,8 +137,18 @@ async function mount(initialDelays = {}, overrides = {}) {
 		return null;
 	}
 	await act(async () => { reactRoot.render(React.createElement(Probe)); });
+	/**
+	 * 卸载并还原全部全局：不关闭的 jsdom 窗口会随用例数累积句柄。
+	 *
+	 * @returns 卸载完成后的 Promise。
+	 */
+	const teardown = async () => {
+		await act(async () => { reactRoot.unmount(); });
+		dom.window.close();
+		restoreGlobals();
+	};
 	return {
-		calls, bodies, delays, snapshot, graph, latest, act, reactRoot,
+		calls, bodies, delays, snapshot, graph, latest, act, reactRoot, teardown,
 		/** 换到另一个仓库并重渲染。 */
 		setPath: (path) => {
 			target.path = path;
@@ -146,6 +159,28 @@ async function mount(initialDelays = {}, overrides = {}) {
 			Object.assign(options, next);
 			return act(async () => { reactRoot.render(React.createElement(Probe)); });
 		},
+	};
+}
+
+/** mount 覆写的浏览器全局；每个用例结束后按原值还原。 */
+const MOUNTED_GLOBALS = ['window', 'document', 'navigator', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT', 'fetch'];
+
+/**
+ * 记录浏览器全局的当前值，供用例结束后还原。
+ *
+ * 这些全局是进程级单例：不还原时，同进程后续用例看到的是上一个用例留下的 jsdom 窗口与
+ * fetch 桩。
+ *
+ * @returns 还原函数。
+ */
+function snapshotGlobals() {
+	const saved = new Map();
+	for (const name of MOUNTED_GLOBALS) saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+	return () => {
+		for (const [name, descriptor] of saved) {
+			if (descriptor === undefined) delete globalThis[name];
+			else Object.defineProperty(globalThis, name, descriptor);
+		}
 	};
 }
 
@@ -173,7 +208,7 @@ test('提交图在途时触发只取快照的刷新：phase 仍收敛到 ready',
 	await settle(harness, 1500);
 	assert.equal(harness.latest.state.phase, 'ready', 'phase 必须收敛到 ready');
 	assert.ok(harness.latest.state.commits.length > 0, '提交列表不应为空');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('只取快照的刷新：更新条目、不改 phase、条目未变时保持提交列表引用', { skip }, async () => {
@@ -185,7 +220,7 @@ test('只取快照的刷新：更新条目、不改 phase、条目未变时保�
 	assert.equal(harness.latest.state.phase, 'ready', '只取快照不改 phase');
 	assert.equal(harness.latest.state.entries.length, 1);
 	assert.equal(harness.latest.state.commits, commitsBefore, '条目未变时提交列表保持原引用');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('只取快照的刷新：条目由零变正时补出未提交行', { skip }, async () => {
@@ -203,7 +238,7 @@ test('只取快照的刷新：条目由零变正时补出未提交行', { skip }
 	const row = harness.latest.state.commits.find((commit) => commit.hash === '*');
 	assert.ok(row !== undefined, '条目由零变正时必须补出未提交行');
 	assert.equal(row.message, 'Uncommitted Changes (1)');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('reconcile 刷新：后台刷新登记在取数期间非空、结束后清空', { skip }, async () => {
@@ -230,7 +265,7 @@ test('reconcile 刷新：后台刷新登记在取数期间非空、结束后清�
 	await settle(harness, 700);
 	assert.deepEqual(harness.latest.state.background, [], '刷新结束后登记应清空');
 	assert.ok(harness.latest.state.lastRefreshAt > 0, '应记下完成时刻供「上次刷新」文案使用');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('full 刷新：不走后台登记，改用 phase 呈现', { skip }, async () => {
@@ -242,7 +277,7 @@ test('full 刷新：不走后台登记，改用 phase 呈现', { skip }, async (
 	assert.deepEqual(harness.latest.state.background, [], 'full 模式不应登记后台刷新');
 	await settle(harness, 700);
 	assert.equal(harness.latest.state.phase, 'ready');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('只取快照的刷新：登记 entries 作用面', { skip }, async () => {
@@ -253,7 +288,7 @@ test('只取快照的刷新：登记 entries 作用面', { skip }, async () => {
 	assert.deepEqual(scopes, ['entries'], '只应登记 entries');
 	await settle(harness, 600);
 	assert.deepEqual(harness.latest.state.background, []);
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('换仓库：取数返回前条目与提交列表已清空', { skip }, async () => {
@@ -269,7 +304,7 @@ test('换仓库：取数返回前条目与提交列表已清空', { skip }, asyn
 	assert.deepEqual(harness.latest.state.commits, [], '取数返回前必须清空旧仓库的提交列表');
 	await settle(harness, 900);
 	assert.equal(harness.latest.state.entries.length, 1, '取数返回后应写入新仓库的条目');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 /**
  * 取最近一次提交图请求的引用起点。
@@ -287,7 +322,7 @@ test('取数起点：手选筛选把选中引用交给宿主', { skip }, async (
 	await settle(harness, 400);
 	assert.deepEqual(lastBranches(harness), ['dev'], '手选引用按短名传给 git log');
 	assert.deepEqual(harness.latest.state.commits.map((commit) => commit.hash).filter((hash) => hash !== '*'), ['c1']);
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('取数起点：自动筛选取当前分支、上游与分叉来源', { skip }, async () => {
@@ -297,7 +332,7 @@ test('取数起点：自动筛选取当前分支、上游与分叉来源', { ski
 	});
 	await settle(harness, 400);
 	assert.deepEqual(lastBranches(harness), ['main', 'origin/main', 'origin/dev']);
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 /**
@@ -335,7 +370,7 @@ test('对账刷新：窗口不随列表里的贮藏行逐轮增大', { skip }, a
 	const before = harness.latest.state.commits;
 	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
 	assert.equal(harness.latest.state.commits, before, '数据未变时提交列表保持原引用');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('对账刷新：触底加载过的分页不被收回', { skip }, async () => {
@@ -351,7 +386,7 @@ test('对账刷新：触底加载过的分页不被收回', { skip }, async () =
 	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
 	assert.equal(lastLimit(harness) >= recordsLoaded, true, '对账窗口不小于已加载的日志记录数');
 	assert.equal(harness.latest.state.commits.length, loaded, '对账不收回已加载的分页');
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });
 
 test('切换筛选会按新起点重取提交图', { skip }, async () => {
@@ -363,5 +398,5 @@ test('切换筛选会按新起点重取提交图', { skip }, async () => {
 	await settle(harness, 400);
 	assert.ok(harness.bodies.filter((body) => body.command === 'loadCommits').length > before, '换筛选应重取');
 	assert.deepEqual(lastBranches(harness), ['dev']);
-	await harness.act(async () => { harness.reactRoot.unmount(); });
+	await harness.teardown();
 });

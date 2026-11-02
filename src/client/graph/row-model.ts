@@ -29,6 +29,24 @@ const GITHUB_NOREPLY = /^(?:(\d+)\+)?([^@+]+)@users\.noreply\.github\.com$/i;
 /** 未提交伪提交的 message 形如 `Uncommitted Changes (2)`；数据层给出英文，这里译成中文。 */
 const UNCOMMITTED_MESSAGE = /^Uncommitted Changes(?: \((\d+)\))?$/;
 
+/** 提交行与引用标记的文案。文案归此处，调用方与测试都按引用取用。 */
+export const ROW_TEXT = {
+	/** 未提交伪提交的标题（无条目数）。 */
+	uncommitted: '未提交的更改',
+	/** 未提交伪提交的标题（含条目数）；`{n}` 为条目数。 */
+	uncommittedCount: '未提交的更改（{n}）',
+	/** 当前 HEAD 指向的本地分支；`{name}` 为分支名。 */
+	currentBranch: '当前分支 {name}',
+	/** 非当前的本地分支；`{name}` 为分支名。 */
+	branch: '分支 {name}',
+	/** 远程分支；`{name}` 为远程分支名。 */
+	remoteBranch: '远程分支 {name}',
+	/** 标签；`{name}` 为标签名。 */
+	tag: '标签 {name}',
+	/** 贮藏条目；`{name}` 为贮藏消息。 */
+	stash: '贮藏 {name}',
+} as const;
+
 /** 头像候选地址的缓存容量。 */
 const AVATAR_CACHE_LIMIT = 128;
 
@@ -102,7 +120,8 @@ export function displayMessage(commit: Commit): string {
 	if (commit.hash !== '*') return message;
 	const match = UNCOMMITTED_MESSAGE.exec(message);
 	if (match === null) return message;
-	return groupText(match, 1) === undefined ? '未提交的更改' : `未提交的更改（${match[1]}）`;
+	const count = groupText(match, 1);
+	return count === undefined ? ROW_TEXT.uncommitted : ROW_TEXT.uncommittedCount.replace('{n}', count);
 }
 
 /**
@@ -122,7 +141,7 @@ export function refLabels(commit: Commit, head: string | null): RefLabel[] {
 			key: `h:${name}`,
 			kind: isHead ? 'head' : 'branch',
 			text: name,
-			title: isHead ? `当前分支 ${name}` : `分支 ${name}`,
+			title: (isHead ? ROW_TEXT.currentBranch : ROW_TEXT.branch).replace('{name}', name),
 			refType: 'head',
 			refName: name,
 		});
@@ -130,13 +149,13 @@ export function refLabels(commit: Commit, head: string | null): RefLabel[] {
 	for (const remote of commit.remotes ?? []) {
 		labels.push({
 			key: `r:${remote.name}`, kind: 'remote', text: remote.name,
-			title: `远程分支 ${remote.name}`, refType: 'remote', refName: remote.name,
+			title: ROW_TEXT.remoteBranch.replace('{name}', remote.name), refType: 'remote', refName: remote.name,
 		});
 	}
 	for (const tag of commit.tags ?? []) {
 		labels.push({
 			key: `t:${tag.name}`, kind: 'tag', text: tag.name,
-			title: `标签 ${tag.name}`, refType: 'tag', refName: tag.name,
+			title: ROW_TEXT.tag.replace('{name}', tag.name), refType: 'tag', refName: tag.name,
 		});
 	}
 	if (commit.stash !== null && commit.stash !== undefined) {
@@ -144,7 +163,7 @@ export function refLabels(commit: Commit, head: string | null): RefLabel[] {
 		const message = stashMessage(commit);
 		labels.push({
 			key: 'stash', kind: 'stash', text: message,
-			title: `贮藏 ${message}`, refType: 'stash', refName: selector,
+			title: ROW_TEXT.stash.replace('{name}', message), refType: 'stash', refName: selector,
 		});
 	}
 	return labels;

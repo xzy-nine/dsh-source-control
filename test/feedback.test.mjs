@@ -3,13 +3,15 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	FEEDBACK_REPO, FEEDBACK_TYPES, buildIssueBody, feedbackIssueTitle, formatBytes,
+	FEEDBACK_REPO, FEEDBACK_TEXT, FEEDBACK_TYPES, buildIssueBody, feedbackIssueTitle, formatBytes,
 } from '../lib/src/source-control/feedback-text.js';
 import { archiveFileName, archiveLog } from '../lib/src/source-control/log-archive.js';
+
+/* 本文件的用例必须串行执行：用例改动 process.env 与真实 tar/zip 调用 */
 
 /** 正文拼装的最小事实。 */
 const facts = {
@@ -21,7 +23,7 @@ const facts = {
 
 test('标题带类型前缀', () => {
 	assert.equal(feedbackIssueTitle('bug', '差异页空白'), `${FEEDBACK_TYPES.bug.prefix} 差异页空白`);
-	assert.equal(feedbackIssueTitle('suggestion', '  加个快捷键  '), '[建议] 加个快捷键');
+	assert.equal(feedbackIssueTitle('suggestion', '  加个快捷键  '), `${FEEDBACK_TYPES.suggestion.prefix} 加个快捷键`);
 });
 
 test('正文含描述、环境、日志与脱敏四段', () => {
@@ -36,14 +38,15 @@ test('正文含描述、环境、日志与脱敏四段', () => {
 
 test('日志段落写明手动上传步骤', () => {
 	const body = buildIssueBody(facts);
-	assert.ok(body.includes('拖到本条 issue 的评论框上传'));
-	assert.ok(body.includes('不接受日志等文本类型'));
+	// 断言段落由上传步骤那段文案构成：被守护的是「日志段写明了怎么上传」，不是措辞。
+	assert.ok(body.includes(FEEDBACK_TEXT.uploadStep));
+	assert.ok(body.includes(FEEDBACK_TEXT.localPathNote));
 });
 
 test('未附带日志时正文写明未附带', () => {
 	const body = buildIssueBody({ ...facts, logFile: null, logSize: null, redaction: '' });
-	assert.ok(body.includes('未附带日志'));
-	assert.ok(body.includes('未触发脱敏替换'));
+	assert.ok(body.includes(FEEDBACK_TEXT.noLog));
+	assert.ok(body.includes(FEEDBACK_TEXT.noRedaction));
 });
 
 test('反馈目标为本插件仓库', () => {
@@ -56,8 +59,24 @@ test('字节数换算', () => {
 	assert.equal(formatBytes(3 * 1024 * 1024), '3.0 MB');
 });
 
-test('日志打包：tar 可用时给出 zip，文件名可读', async () => {
+/** 本文件创建的临时目录；文件级 after 统一删除。 */
+const temps = [];
+test.after(() => {
+	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+});
+
+/** 建一个临时目录并登记清理。 */
+function makeHome() {
 	const home = mkdtempSync(join(tmpdir(), 'dsh-archive-'));
+	temps.push(home);
+	return home;
+}
+
+/** 本进程启动时 setup.mjs 注入的隔离根；用例结束时还原回它。 */
+const ISOLATED_HOME = process.env.DSH_SOURCE_CONTROL_HOME;
+
+test('日志打包：tar 可用时给出 zip，文件名可读', async () => {
+	const home = makeHome();
 	process.env.DSH_SOURCE_CONTROL_HOME = home;
 	const { resetLogStateForTests } = await import('../lib/src/source-control/logger.js');
 	resetLogStateForTests();
@@ -71,7 +90,7 @@ test('日志打包：tar 可用时给出 zip，文件名可读', async () => {
 });
 
 test('tar 不可用时退回未压缩副本', async () => {
-	const home = mkdtempSync(join(tmpdir(), 'dsh-archive-'));
+	const home = makeHome();
 	process.env.DSH_SOURCE_CONTROL_HOME = home;
 	const { resetLogStateForTests } = await import('../lib/src/source-control/logger.js');
 	resetLogStateForTests();
@@ -84,7 +103,8 @@ test('tar 不可用时退回未压缩副本', async () => {
 		assert.equal(readFileSync(packed.path, 'utf8'), 'hello\n');
 	} finally {
 		process.env.PATH = original;
+		// 还原隔离根，避免影响后续用例。
+		if (ISOLATED_HOME === undefined) delete process.env.DSH_SOURCE_CONTROL_HOME;
+		else process.env.DSH_SOURCE_CONTROL_HOME = ISOLATED_HOME;
 	}
-	// 还原 home，避免影响后续用例。
-	delete process.env.DSH_SOURCE_CONTROL_HOME;
 });

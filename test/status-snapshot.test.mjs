@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
 const { parseStatusSnapshot } = await importHostModule('source-control/working-tree.js');
 
 /**

@@ -18,8 +18,7 @@
 
 ```sh
 pnpm install        # 安装依赖并构建（prepare 阶段同时安装 git 钩子）
-pnpm run verify-all # 全部门禁
-pnpm run test:docs  # 快速文档门禁
+pnpm run test:docs  # 全部门禁（文档同步门禁）
 pnpm test           # pretest 跑 build 与重复门禁，再跑单元测试
 ```
 

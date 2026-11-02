@@ -130,6 +130,18 @@ export function redactText(text: string, options: RedactOptions = {}): RedactRes
 	return { text: restored, counts };
 }
 
+/** 脱敏摘要的文案。文案归此处，调用方与测试都按引用取用。 */
+export const REDACT_TEXT = {
+	/** URL 账号口令的类别名；`{n}` 为次数。 */
+	credential: 'URL 凭据 ×{n}',
+	/** 令牌的类别名；`{n}` 为次数。 */
+	token: '令牌 ×{n}',
+	/** 系统用户名的类别名；`{n}` 为次数。 */
+	user: '用户名 ×{n}',
+	/** 类别之间的分隔符。 */
+	separator: '、',
+} as const;
+
 /**
  * 脱敏摘要，写进反馈正文，告知收件方本次屏蔽了什么。
  *
@@ -138,8 +150,8 @@ export function redactText(text: string, options: RedactOptions = {}): RedactRes
  */
 export function redactSummary(counts: RedactCounts): string {
 	const parts: string[] = [];
-	if (counts.credential > 0) parts.push(`URL 凭据 ×${String(counts.credential)}`);
-	if (counts.token > 0) parts.push(`令牌 ×${String(counts.token)}`);
-	if (counts.user > 0) parts.push(`用户名 ×${String(counts.user)}`);
-	return parts.join('、');
+	if (counts.credential > 0) parts.push(REDACT_TEXT.credential.replace('{n}', String(counts.credential)));
+	if (counts.token > 0) parts.push(REDACT_TEXT.token.replace('{n}', String(counts.token)));
+	if (counts.user > 0) parts.push(REDACT_TEXT.user.replace('{n}', String(counts.user)));
+	return parts.join(REDACT_TEXT.separator);
 }

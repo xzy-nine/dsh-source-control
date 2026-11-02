@@ -182,17 +182,27 @@ export function filterBranchesOf(filter: RefFilter, context: AutoFilterContext):
 	return names.length === 0 ? null : names;
 }
 
+/** 筛选按钮的摘要文案。文案归此处，调用方与测试都按引用取用。 */
+export const REF_FILTER_TEXT = {
+	/** 不筛选。 */
+	all: '全部',
+	/** 自动模式。 */
+	auto: '自动',
+	/** 手选多项时的数量摘要；`{n}` 为选中数量。 */
+	count: '{n} 个',
+} as const;
+
 /**
  * 取筛选按钮上的摘要文案。
  *
  * @param filter - 当前筛选状态。
- * @returns 「全部」「自动」、单个引用名或数量摘要。
+ * @returns 文案表里对应的摘要、单个引用名，或数量摘要。
  */
 export function filterSummaryOf(filter: RefFilter): string {
-	if (filter.mode === 'all') return '全部';
-	if (filter.mode === 'auto' || filter.ids.length === 0) return '自动';
+	if (filter.mode === 'all') return REF_FILTER_TEXT.all;
+	if (filter.mode === 'auto' || filter.ids.length === 0) return REF_FILTER_TEXT.auto;
 	if (filter.ids.length === 1) return refNameOf(filter.ids[0]);
-	return `${filter.ids.length} 个`;
+	return REF_FILTER_TEXT.count.replace('{n}', String(filter.ids.length));
 }
 
 /**

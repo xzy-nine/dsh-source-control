@@ -63,6 +63,36 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** 反馈正文的固定文案。文案归此处，调用方与测试都按引用取用。 */
+export const FEEDBACK_TEXT = {
+	/** 描述段标题。 */
+	descriptionHeading: '## 描述',
+	/** 环境段标题。 */
+	environmentHeading: '## 环境',
+	/** 日志段标题。 */
+	logHeading: '## 日志',
+	/** 脱敏段标题。 */
+	redactionHeading: '## 脱敏',
+	/** 未附带日志时该段的正文。 */
+	noLog: '未附带日志。',
+	/** 日志段正文；`{file}` 为文件名，`{size}` 为可读体积。 */
+	logPacked: '日志已打包为 `{file}`（{size}），格式为 logcat threadtime，每次启动一个文件。',
+	/** 日志段的上传步骤。 */
+	uploadStep: '> 请把该压缩包拖到本条 issue 的评论框上传（GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。',
+	/** 日志段的本地路径说明。 */
+	localPathNote: '> 本地路径已在创建反馈时告知，可直接从该目录取用。',
+	/** 未触发脱敏替换时的正文。 */
+	noRedaction: '本次提交未触发脱敏替换。',
+	/** 发生脱敏替换时的正文；`{summary}` 为脱敏摘要。 */
+	redacted: '已屏蔽：{summary}。占位符 `<url-credential>` 为 URL 里的账号口令，`<token>` 为令牌，`<user>` 为系统用户名。',
+	/** 有豁免登记时的正文；`{n}` 为豁免数量。 */
+	exemptions: '本次登记 {n} 处豁免，相关字符串按原样保留。',
+	/** 正文末尾的署名。 */
+	footer: '由 dsh-source-control 的反馈入口自动创建。',
+	/** 未知版本时的代替名。 */
+	unknownVersion: '未知',
+} as const;
+
 /**
  * 日志段落的正文：压缩包名、体积与上传步骤。
  *
@@ -70,42 +100,36 @@ export function formatBytes(bytes: number): string {
  * @returns 段落文本。
  */
 function logSection(facts: FeedbackFacts): string[] {
-	if (facts.logFile === null) return ['未附带日志。'];
+	if (facts.logFile === null) return [FEEDBACK_TEXT.noLog];
 	return [
-		`日志已打包为 \`${facts.logFile}\`（${formatBytes(facts.logSize ?? 0)}），格式为 logcat threadtime，每次启动一个文件。`,
+		FEEDBACK_TEXT.logPacked
+			.replace('{file}', facts.logFile)
+			.replace('{size}', formatBytes(facts.logSize ?? 0)),
 		'',
-		'> 请把该压缩包拖到本条 issue 的评论框上传（GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。',
-		'> 本地路径已在创建反馈时告知，可直接从该目录取用。',
+		FEEDBACK_TEXT.uploadStep,
+		FEEDBACK_TEXT.localPathNote,
 	];
 }
 
-/**
- * 拼装 issue 正文。
- *
- * @param facts - 见 {@link FeedbackFacts}。
- * @returns 正文文本。
- */
 export function buildIssueBody(facts: FeedbackFacts): string {
 	const lines: string[] = [];
-	lines.push('## 描述', '', facts.description.trim(), '');
-	lines.push('## 环境', '');
-	lines.push(`- 插件版本：${facts.pluginVersion === '' ? '未知' : facts.pluginVersion}`);
+	lines.push(FEEDBACK_TEXT.descriptionHeading, '', facts.description.trim(), '');
+	lines.push(FEEDBACK_TEXT.environmentHeading, '');
+	lines.push(`- 插件版本：${facts.pluginVersion === '' ? FEEDBACK_TEXT.unknownVersion : facts.pluginVersion}`);
 	lines.push(`- 类型：${FEEDBACK_TYPES[facts.type].label}`);
 	lines.push(`- 平台：${facts.platform}`);
 	lines.push(`- Node：${facts.node}`);
 	lines.push('');
-	lines.push('## 日志', '');
+	lines.push(FEEDBACK_TEXT.logHeading, '');
 	lines.push(...logSection(facts));
 	lines.push('');
-	lines.push('## 脱敏', '');
-	if (facts.redaction === '') {
-		lines.push('本次提交未触发脱敏替换。');
-	} else {
-		lines.push(`已屏蔽：${facts.redaction}。占位符 \`<url-credential>\` 为 URL 里的账号口令，\`<token>\` 为令牌，\`<user>\` 为系统用户名。`);
-	}
+	lines.push(FEEDBACK_TEXT.redactionHeading, '');
+	lines.push(facts.redaction === ''
+		? FEEDBACK_TEXT.noRedaction
+		: FEEDBACK_TEXT.redacted.replace('{summary}', facts.redaction));
 	if (facts.exemptionCount > 0) {
-		lines.push('', `本次登记 ${String(facts.exemptionCount)} 处豁免，相关字符串按原样保留。`);
+		lines.push('', FEEDBACK_TEXT.exemptions.replace('{n}', String(facts.exemptionCount)));
 	}
-	lines.push('', '---', '', '由 dsh-source-control 的反馈入口自动创建。');
+	lines.push('', '---', '', FEEDBACK_TEXT.footer);
 	return lines.join('\n');
 }

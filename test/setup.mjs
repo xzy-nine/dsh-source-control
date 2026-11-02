@@ -10,7 +10,7 @@
  *
  * 启动时另清一遍上次运行留下的隔离目录，兜住没跑成退出钩子的进程（被强制结束时不会跑）。
  */
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -18,10 +18,49 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 /** 隔离目录名前缀。 */
 const PREFIX = 'dsh-source-control-test-';
 
-// 先清掉上一次运行留下的隔离目录。
+/** 存活判定文件：记下创建它的进程号。 */
+const OWNER = '.owner';
+
+/** 无主目录的保留时限；超出即视为上次运行的残留。 */
+const STALE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * 判断一个残留隔离目录是否仍有进程在使用。
+ *
+ * 并行跑测试时每个文件一个进程，各自建自己的隔离根；按前缀无条件删会把兄弟进程正在用的
+ * 目录一并删掉。因此只回收「属主进程已不在」的目录：有属主且仍存活就跳过，无属主时按
+ * 修改时间兜底。进程号被复用只会让目录多留一会儿，不会误删别人在用的目录。
+ *
+ * @param dir - 待判定的隔离目录绝对路径。
+ * @returns 可以回收时为 true。
+ */
+function isReclaimable(dir) {
+	try {
+		const owner = Number.parseInt(readFileSync(join(dir, OWNER), 'utf8'), 10);
+		if (Number.isInteger(owner) && owner > 0) {
+			try {
+				process.kill(owner, 0);
+				return false;
+			} catch {
+				return true;
+			}
+		}
+	} catch {
+		/* 无属主文件：按修改时间兜底 */
+	}
+	try {
+		return Date.now() - statSync(dir).mtimeMs > STALE_MS;
+	} catch {
+		return false;
+	}
+}
+
+// 先清掉上一次运行留下、且属主已不在的隔离目录。
 try {
 	for (const name of readdirSync(tmpdir())) {
-		if (name.startsWith(PREFIX)) rmSync(join(tmpdir(), name), { recursive: true, force: true });
+		if (!name.startsWith(PREFIX)) continue;
+		const dir = join(tmpdir(), name);
+		if (isReclaimable(dir)) rmSync(dir, { recursive: true, force: true });
 	}
 } catch {
 	/* 清理失败不影响测试本身 */
@@ -29,6 +68,13 @@ try {
 
 /** 本进程的隔离根。 */
 const home = mkdtempSync(join(tmpdir(), PREFIX));
+
+// 写下属主，供后续运行的进程判断本目录仍在使用中。
+try {
+	writeFileSync(join(home, OWNER), String(process.pid));
+} catch {
+	/* 属主文件写失败只影响下次回收时机，不影响隔离本身 */
+}
 
 process.env.DSH_SOURCE_CONTROL_HOME = home;
 

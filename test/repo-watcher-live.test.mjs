@@ -3,6 +3,10 @@
  * 在工作区里新建与删除仓库，工作区级监视必须报告该工作区。
  *
  * 依赖文件系统事件，因此只在真实仓库上验证；事件合并窗口 250ms（工作区级 400ms），这里留足余量。
+ *
+ * 本文件的用例必须串行：`fs.watch` 句柄由模块级注册表承载，每个用例收尾的
+ * `closeRepositoryWatchers()` 会关掉同进程内所有句柄；事件合并又靠固定等待越过，并发执行
+ * 会互相吞掉事件。故全部用 `serial` 标注。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +15,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
+import { serial } from './harness.mjs';
+
+/* 本文件的用例必须串行执行：真实 fs.watch 句柄由模块级注册表承载，收尾会关掉同进程全部句柄 */
 
 const watcher = await importHostModule('source-control/repo-watcher.js');
 const { closeRepositoryWatchers, onRepositoryTreeChange, watchRepositories, watchWorkspace } = watcher;
@@ -50,7 +57,7 @@ function makeRepo(dir = mkdtempSync(join(tmpdir(), 'gg-watch-'))) {
 	return dir;
 }
 
-test('新建与移除链接工作树都会报告该仓库', async () => {
+serial('新建与移除链接工作树都会报告该仓库', async () => {
 	const repo = makeRepo();
 	const worktreePath = mkdtempSync(join(tmpdir(), 'gg-watch-wt-'));
 	rmSync(worktreePath, { recursive: true, force: true });
@@ -76,7 +83,7 @@ test('新建与移除链接工作树都会报告该仓库', async () => {
 	}
 });
 
-test('普通 git 操作不触发结构事件', async () => {
+serial('普通 git 操作不触发结构事件', async () => {
 	const repo = makeRepo();
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
@@ -105,7 +112,7 @@ test('普通 git 操作不触发结构事件', async () => {
 	}
 });
 
-test('新增 .gitmodules 声明会报告该仓库', async () => {
+serial('新增 .gitmodules 声明会报告该仓库', async () => {
 	const repo = makeRepo();
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
@@ -124,7 +131,7 @@ test('新增 .gitmodules 声明会报告该仓库', async () => {
 
 /* --- 工作区级监视 --- */
 
-test('工作区里新建仓库会报告该工作区', async () => {
+serial('工作区里新建仓库会报告该工作区', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'gg-watch-ws-'));
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
@@ -147,7 +154,7 @@ test('工作区里新建仓库会报告该工作区', async () => {
 	}
 });
 
-test('工作区里删除仓库会报告该工作区', async () => {
+serial('工作区里删除仓库会报告该工作区', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'gg-watch-ws-rm-'));
 	const repo = makeRepo(join(root, 'gone-repo'));
 	const seen = [];
@@ -167,7 +174,7 @@ test('工作区里删除仓库会报告该工作区', async () => {
 	}
 });
 
-test('工作区里的文件读写与普通 git 操作不触发工作区级事件', async () => {
+serial('工作区里的文件读写与普通 git 操作不触发工作区级事件', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'gg-watch-ws-quiet-'));
 	const repo = makeRepo(join(root, 'repo'));
 	const seen = [];
@@ -198,7 +205,7 @@ test('工作区里的文件读写与普通 git 操作不触发工作区级事件
 	}
 });
 
-test('同一工作区的不同路径写法只挂一套句柄', async () => {
+serial('同一工作区的不同路径写法只挂一套句柄', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'gg-watch-ws-dedupe-'));
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });

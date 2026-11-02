@@ -14,6 +14,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
 /** 用与宿主相同的形式构造 git 参数。 */
 function logWithOrdering(repo, ordering, limit = 20) {
 	const args = [

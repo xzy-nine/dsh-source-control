@@ -8,14 +8,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** jsdom 的 JSDOM 构造；包无法加载时为 null（仅样式表契约需要它）。 */
-let JSDOM = null;
-try {
-	({ JSDOM } = await import('jsdom'));
-} catch {
-	JSDOM = null;
-}
-const skipJsdom = JSDOM === null ? '未安装 jsdom，跳过产物样式表契约' : false;
+/* 本文件的用例必须串行执行：用例逐个覆写浏览器全局并求值产物 */
+
+/* jsdom 是 devDependencies 的固定依赖：装不上就让用例失败，不用 skip 掩盖。 */
+const { JSDOM } = await import('jsdom');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -36,6 +32,27 @@ function makeReact() {
 		Fragment: Symbol('Fragment'),
 	};
 	return React;
+}
+
+/** 被 loadBundle 覆写的浏览器全局；每个用例结束后按原值还原。 */
+const GLOBALS = ['window', 'document', 'sessionStorage', 'localStorage', 'navigator'];
+
+/**
+ * 记录浏览器全局的当前值，供用例结束后还原。
+ *
+ * 这些全局是进程级单例：不还原时，同进程后续用例看到的是上一个用例留下的桩。
+ *
+ * @returns 还原函数。
+ */
+function snapshotGlobals() {
+	const saved = new Map();
+	for (const name of GLOBALS) saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+	return () => {
+		for (const [name, descriptor] of saved) {
+			if (descriptor === undefined) delete globalThis[name];
+			else Object.defineProperty(globalThis, name, descriptor);
+		}
+	};
 }
 
 /**
@@ -89,19 +106,26 @@ function loadBundle() {
 }
 
 test('产物包络注册为包名并只请求外部平台模块', () => {
-	const { requested, registrations } = loadBundle();
-	assert.deepEqual(registrations, ['dsh-source-control']);
-	for (const name of requested) {
-		assert.ok(
-			['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'].includes(name),
-			`产物请求了未外部化的模块：${name}`,
-		);
+	const restore = snapshotGlobals();
+	try {
+		const { requested, registrations } = loadBundle();
+		assert.deepEqual(registrations, ['dsh-source-control']);
+		for (const name of requested) {
+			assert.ok(
+				['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'].includes(name),
+				`产物请求了未外部化的模块：${name}`,
+			);
+		}
+		assert.ok(requested.includes('react'), '产物应请求 react');
+		assert.ok(requested.includes('@deepseek-ai/dsh-client-ui-primitives'), '产物应请求 ui-primitives');
+	} finally {
+		restore();
 	}
-	assert.ok(requested.includes('react'), '产物应请求 react');
-	assert.ok(requested.includes('@deepseek-ai/dsh-client-ui-primitives'), '产物应请求 ui-primitives');
 });
 
 test('apply 注册右侧栏页类型与 header 入口', () => {
+	const restore = snapshotGlobals();
+	try {
 	const { client } = loadBundle();
 	assert.equal(typeof client.apply, 'function', '入口应导出 apply');
 	assert.deepEqual(client.inject, ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session']);
@@ -125,9 +149,12 @@ test('apply 注册右侧栏页类型与 header 入口', () => {
 	assert.ok(registered.includes('sidebar.right.pane.tab'), '应注册侧栏正文席位');
 	assert.ok(registered.includes('sidebar.right.pane.tab.title'), '应注册侧栏标题席位');
 	assert.ok(registered.includes('conversation.session.header.utilities'), '应注册 header 入口');
+	} finally {
+		restore();
+	}
 });
 
-test('产物样式表在就地替换后保留，且每次求值写入当前 CSS', { skip: skipJsdom }, () => {
+test('产物样式表在就地替换后保留，且每次求值写入当前 CSS', () => {
 	// 模块系统的就地替换顺序是「执行新脚本 → 移除 style[data-plugin=包名] → 材料化工厂」；
 	// 产物样式表不标记归属，因此不会被清理带走，且再次求值会整份替换旧表。
 	const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>');

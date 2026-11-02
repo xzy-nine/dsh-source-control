@@ -11,6 +11,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { layoutCommits } from '../src/client/graph/lanes.ts';
 
+/* 本文件的用例必须串行执行：读本仓库真实 git 历史，模块顶层执行 */
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** 读取仓库历史；没有 git 或没有提交时返回 null。 */

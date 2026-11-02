@@ -7,6 +7,35 @@
  */
 import type { BackgroundFlags, BackgroundRefresh, BackgroundScope, PanelState } from '../shared/types.ts';
 
+/** 相对时间与刷新告知的文案。文案归此处，调用方与测试都按引用取用。 */
+export const REFRESH_TEXT = {
+	/** 一分钟以内。 */
+	justNow: '刚刚',
+	/** 分钟档模板；`{n}` 为分钟数。 */
+	minutesAgo: '{n} 分钟前',
+	/** 小时档模板；`{n}` 为小时数。 */
+	hoursAgo: '{n} 小时前',
+	/** 告知前缀。 */
+	noticePrefix: '已更新：',
+	/** 工作区计数的名称与单位。 */
+	entriesLabel: '工作区',
+	entriesUnit: '个改动',
+	/** 提交图计数的名称与单位。 */
+	commitsLabel: '提交图',
+	commitsUnit: '个提交',
+} as const;
+
+/**
+ * 代入模板里的 `{n}`。
+ *
+ * @param template - 含 `{n}` 的模板。
+ * @param n - 代入的数量。
+ * @returns 代入后的文本。
+ */
+function fillCount(template: string, n: number): string {
+	return template.replace('{n}', String(n));
+}
+
 /** 一分钟的毫秒数；相对时间文案按分档给出。 */
 const MINUTE_MS = 60_000;
 
@@ -70,9 +99,9 @@ export function backgroundFlagsOf(entries: readonly BackgroundRefresh[]): Backgr
 export function lastRefreshText(at: number, now: number): string {
 	if (at <= 0) return '';
 	const diff = Math.max(0, now - at);
-	if (diff < MINUTE_MS) return '刚刚';
-	if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} 分钟前`;
-	return `${Math.floor(diff / HOUR_MS)} 小时前`;
+	if (diff < MINUTE_MS) return REFRESH_TEXT.justNow;
+	if (diff < HOUR_MS) return fillCount(REFRESH_TEXT.minutesAgo, Math.floor(diff / MINUTE_MS));
+	return fillCount(REFRESH_TEXT.hoursAgo, Math.floor(diff / HOUR_MS));
 }
 
 /** 一次刷新的前后计数：条目数与提交数。 */
@@ -90,7 +119,7 @@ export interface RefreshCounts {
  * @returns 文案。
  */
 function deltaText(label: string, unit: string, delta: number): string {
-	return `${label} ${delta > 0 ? '+' : ''}${delta} ${unit}`;
+	return `${label} ${delta > 0 ? '+' : ''}${String(delta)} ${unit}`;
 }
 
 /**
@@ -107,13 +136,13 @@ function deltaText(label: string, unit: string, delta: number): string {
 export function refreshNoticeOf(before: RefreshCounts, after: RefreshCounts): string {
 	const parts: string[] = [];
 	if (after.entries !== before.entries) {
-		parts.push(deltaText('工作区', '个改动', after.entries - before.entries));
+		parts.push(deltaText(REFRESH_TEXT.entriesLabel, REFRESH_TEXT.entriesUnit, after.entries - before.entries));
 	}
 	if (after.commits !== before.commits) {
-		parts.push(deltaText('提交图', '个提交', after.commits - before.commits));
+		parts.push(deltaText(REFRESH_TEXT.commitsLabel, REFRESH_TEXT.commitsUnit, after.commits - before.commits));
 	}
 	if (parts.length === 0) return '';
-	return `已更新：${parts.join('，')}`;
+	return `${REFRESH_TEXT.noticePrefix}${parts.join('，')}`;
 }
 
 /** 一次后台刷新完成时的基线。 */

@@ -195,7 +195,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			return;
 		}
 	}
-	sendBadRequest(res, '未知命令: ' + String(msg.command));
+	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
 	recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
 }
 

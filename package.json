@@ -68,10 +68,9 @@
     "verify-agent-note-format": "tsx scripts/verify-agent-note-format.ts",
     "verify-archived-agent-notes": "tsx scripts/verify-archived-agent-notes.ts",
     "verify-skill-invocation-metadata": "tsx scripts/verify-skill-invocation-metadata.ts",
-    "verify-all": "tsx scripts/verify-all.ts",
     "test:docs": "tsx scripts/verify-all.ts",
     "pretest": "pnpm run build && pnpm run check:duplication",
-    "test": "node --test --import ./test/setup.mjs test/*.test.mjs"
+    "test": "node --test --test-timeout=120000 --import ./test/setup.mjs test/*.test.mjs"
   },
   "dsh": {
     "bundle": {

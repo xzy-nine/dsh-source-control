@@ -704,10 +704,19 @@ export function pushStash(repo: string, message: string, includeUntracked: boole
 	return gitErrorInfo(args, repo);
 }
 
+/**
+ * 合并被自己拒绝的原因。
+ *
+ * 调用方按它分支，不按错误文本：文本是给人看的，措辞改动不该改变调用方的行为。
+ */
+export type MergeIntoBranchCode = 'detached-head' | 'same-branch' | 'no-branch' | 'not-tip';
+
 /** 合并到选中分支的结果。 */
 export interface MergeIntoBranchResult {
 	/** 失败时的错误文本；成功为 null。 */
 	readonly error: ErrorInfo;
+	/** 被自己拒绝时的原因；其余情形为 null。 */
+	readonly code: MergeIntoBranchCode | null;
 	/** 检出并合并后所在的分支名。 */
 	readonly branchName: string;
 	/** git 生成的初始合并提交信息；无待合并状态时为 null。 */
@@ -771,16 +780,16 @@ function mergeModeArgs(mode: MergeMode): readonly string[] {
  * @returns 分支名、初始合并信息与冲突标记；检出或合并失败时 `error` 为错误文本。
  */
 export async function mergeCurrentIntoBranch(repo: string, branchName: string, message: string, mode: MergeMode = 'default'): Promise<MergeIntoBranchResult> {
-	const empty: MergeIntoBranchResult = { error: null, branchName, mergeMessage: null, conflicted: false };
+	const empty: MergeIntoBranchResult = { error: null, code: null, branchName, mergeMessage: null, conflicted: false };
 
 	/* 检出前的当前分支名；分离头指针时为空，此时没有可合并回去的分支。 */
 	const current = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
 	const source = current.code === 0 ? current.stdout.trim() : '';
 	if (source === '') {
-		return { ...empty, error: '当前处于分离头指针状态，没有可合并到选中分支的分支。' };
+		return { ...empty, code: 'detached-head', error: '当前处于分离头指针状态，没有可合并到选中分支的分支。' };
 	}
 	if (source === branchName) {
-		return { ...empty, error: '选中的就是当前分支。' };
+		return { ...empty, code: 'same-branch', error: '选中的就是当前分支。' };
 	}
 
 	const checkoutError = await gitErrorInfo(['checkout', branchName], repo);
@@ -795,7 +804,7 @@ export async function mergeCurrentIntoBranch(repo: string, branchName: string, m
 	if (mergeError !== null) {
 		const mergeHead = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
 		if (mergeHead.code !== 0) return { ...empty, error: mergeError };
-		return { error: null, branchName, mergeMessage, conflicted: true };
+		return { error: null, code: null, branchName, mergeMessage, conflicted: true };
 	}
-	return { error: null, branchName, mergeMessage, conflicted: false };
+	return { error: null, code: null, branchName, mergeMessage, conflicted: false };
 }

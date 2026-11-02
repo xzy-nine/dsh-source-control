@@ -152,15 +152,29 @@ export function parseGitDiffAddress(address: unknown): GitDiffAddress | null {
 	return { sessionId, scope, legacyPath };
 }
 
+/** 差异页标题的文案。文案归此处，调用方与测试都按引用取用。 */
+export const DIFF_TITLE_TEXT = {
+	/** 工作区未暂存的改动。 */
+	worktree: '更改',
+	/** 工作区已暂存的改动。 */
+	staged: '暂存的更改',
+	/** 未提交伪提交在标题里的代替名。 */
+	worktreeHash: '工作区',
+	/** 单个提交；`{hash}` 为短哈希。 */
+	commit: '提交 {hash}',
+	/** 两个提交的对比；`{base}` 与 `{hash}` 为两侧短哈希。 */
+	compare: '对比 {base} → {hash}',
+} as const;
+
 /**
  * 差异页的页标题：比较作用域，而不是文件名。
  *
  * @param scope - 比较作用域。
- * @returns 侧栏页签上的标题。
+ * @returns 侧栏页签上的标题，模板取自 {@link DIFF_TITLE_TEXT}。
  */
 export function gitDiffTitle(scope: GitDiffScope): string {
-	const short = (hash: string): string => (hash === '*' ? '工作区' : hash.slice(0, 7));
-	if (scope.kind === 'worktree') return scope.staged ? '暂存的更改' : '更改';
-	if (scope.kind === 'commit') return `提交 ${short(scope.hash)}`;
-	return `对比 ${short(scope.baseHash)} → ${short(scope.hash)}`;
+	const short = (hash: string): string => (hash === '*' ? DIFF_TITLE_TEXT.worktreeHash : hash.slice(0, 7));
+	if (scope.kind === 'worktree') return scope.staged ? DIFF_TITLE_TEXT.staged : DIFF_TITLE_TEXT.worktree;
+	if (scope.kind === 'commit') return DIFF_TITLE_TEXT.commit.replace('{hash}', short(scope.hash));
+	return DIFF_TITLE_TEXT.compare.replace('{base}', short(scope.baseHash)).replace('{hash}', short(scope.hash));
 }

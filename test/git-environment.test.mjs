@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：用例逐个改动 process.env */
+
 const { gitEnvironment } = await importHostModule('source-control/working-tree.js');
 
 test('只读命令设 GIT_OPTIONAL_LOCKS=0，写命令不设', () => {

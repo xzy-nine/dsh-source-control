@@ -142,13 +142,16 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			const tip = await runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`], repo);
 			const tipHash = tip.code === 0 ? tip.stdout.trim() : '';
 			if (tipHash === '') {
-				respond({ command: 'mergeIntoBranch', error: '选中的分支不存在。', branchName, mergeMessage: null, conflicted: false });
+				respond({
+					command: 'mergeIntoBranch', error: '选中的分支不存在。', code: 'no-branch',
+					branchName, mergeMessage: null, conflicted: false,
+				});
 				break;
 			}
 			if (commitHash !== '' && tipHash !== commitHash) {
 				respond({
 					command: 'mergeIntoBranch', branchName, mergeMessage: null, conflicted: false,
-					error: '该提交不是选中分支的尖端，无法执行合并。',
+					error: '该提交不是选中分支的尖端，无法执行合并。', code: 'not-tip',
 				});
 				break;
 			}

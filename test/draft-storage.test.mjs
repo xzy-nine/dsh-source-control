@@ -3,6 +3,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+/* 本文件的用例必须串行执行：用例逐个替换 globalThis.sessionStorage/localStorage */
 import {
 	clearSessionValue, draftKeyOf, loadSessionValue, migrateLegacyDrafts, saveSessionValue,
 } from '../src/client/panel/storage.ts';
@@ -25,16 +27,37 @@ function makeStore() {
 	};
 }
 
+/**
+ * 把一个全局装成桩，返回按原值还原的卸载函数。
+ *
+ * 还原而不是 delete：全局可能本来就有值，抹掉会让同进程后续用例看到与启动时不同的环境。
+ *
+ * @param name - 全局名。
+ * @param store - 桩对象。
+ * @returns 还原函数。
+ */
+function installGlobal(name, store) {
+	const saved = Object.getOwnPropertyDescriptor(globalThis, name);
+	globalThis[name] = store;
+	return () => {
+		if (saved === undefined) delete globalThis[name];
+		else Object.defineProperty(globalThis, name, saved);
+	};
+}
+
 /** 装上 sessionStorage 桩，返回卸载函数。 */
 function install(store) {
-	globalThis.sessionStorage = store;
-	return () => { delete globalThis.sessionStorage; };
+	return installGlobal('sessionStorage', store);
 }
 
 /** 装上 localStorage 桩，返回卸载函数。 */
 function installLocal(store) {
-	globalThis.localStorage = store;
-	return () => { delete globalThis.localStorage; };
+	return installGlobal('localStorage', store);
+}
+
+/** 把 sessionStorage 暂时摘掉，返回还原函数。 */
+function withoutSessionStorage() {
+	return installGlobal('sessionStorage', undefined);
 }
 
 test('字符串读写往返', () => {
@@ -101,10 +124,15 @@ test('clearSessionValue 删除键', () => {
 });
 
 test('sessionStorage 缺失时读写清都不抛错', () => {
+	const restore = withoutSessionStorage();
 	delete globalThis.sessionStorage;
-	assert.equal(loadSessionValue('k', 'fallback'), 'fallback');
-	assert.doesNotThrow(() => saveSessionValue('k', 'v'));
-	assert.doesNotThrow(() => clearSessionValue('k'));
+	try {
+		assert.equal(loadSessionValue('k', 'fallback'), 'fallback');
+		assert.doesNotThrow(() => saveSessionValue('k', 'v'));
+		assert.doesNotThrow(() => clearSessionValue('k'));
+	} finally {
+		restore();
+	}
 });
 
 test('sessionStorage 抛错时读给回退、写清静默', () => {
@@ -207,12 +235,14 @@ test('migrateLegacyDrafts 把两个 store 里的旧草稿转入会话键并清�
 test('migrateLegacyDrafts 在 sessionStorage 缺失时保留旧键', () => {
 	const local = makeStore();
 	const uninstallLocal = installLocal(local);
+	const restoreSession = withoutSessionStorage();
 	delete globalThis.sessionStorage;
 	try {
 		local.setItem(draftKeyOf('E:\\a'), 'local-draft');
 		assert.doesNotThrow(() => migrateLegacyDrafts());
 		assert.equal(local.getItem(draftKeyOf('E:\\a')), 'local-draft');
 	} finally {
+		restoreSession();
 		uninstallLocal();
 	}
 });

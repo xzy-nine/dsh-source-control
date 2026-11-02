@@ -7,6 +7,12 @@ import { callApi, callApiRaw, commandError, firstError } from './http.ts';
 export interface MergeIntoBranchResult {
 	/** 错误文本，无错误时为 null。 */
 	readonly error: string | null;
+	/**
+	 * 被宿主自己拒绝时的原因，其余情形为 null。
+	 *
+	 * 调用方按它分支，不按错误文本：文本是给人看的。
+	 */
+	readonly code: string | null;
 	/** 检出并合并后所在的分支名。 */
 	readonly branchName: string;
 	/** git 生成的初始合并提交信息；无待合并状态时为 null。 */
@@ -208,6 +214,7 @@ export async function mergeIntoBranch(cwd: string, branchName: string, commitHas
 	const payload = await callApiRaw(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message, mode });
 	return {
 		error: commandError(payload),
+		code: typeof payload.code === 'string' ? payload.code : null,
 		branchName: typeof payload.branchName === 'string' ? payload.branchName : branchName,
 		mergeMessage: typeof payload.mergeMessage === 'string' ? payload.mergeMessage : null,
 		conflicted: payload.conflicted === true,

@@ -5,8 +5,16 @@
  * 本模块无任何导入，供面板与单元测试直接使用。
  */
 
+/** 一条拒绝原因：匹配 git 措辞的正则与该原因的展示文案。 */
+export interface OverwritePattern {
+	/** 匹配 git 原文的正则。 */
+	readonly pattern: RegExp
+	/** 命中时展示的说明。 */
+	readonly text: string
+}
+
 /** 检出、合并、变基这类会改写工作区的操作。 */
-const OVERWRITE_PATTERNS: ReadonlyArray<{ readonly pattern: RegExp; readonly text: string }> = [
+export const OVERWRITE_PATTERNS: ReadonlyArray<OverwritePattern> = [
 	{
 		pattern: /Your local changes to the following files would be overwritten by (?:checkout|merge|rebase)/i,
 		text: '本地未提交的改动会被该操作覆盖：请先提交或贮藏这些改动，再重试。',

@@ -6,6 +6,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+/* 本文件的用例必须串行执行：用例逐个替换 globalThis.fetch */
 import {
 	activeWorkspaceOf, chunkPaths, dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace,
 	retryDelayMs, setRetryDelay,
