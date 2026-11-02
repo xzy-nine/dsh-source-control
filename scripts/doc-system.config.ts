@@ -41,11 +41,6 @@ export interface DocSystemConfig {
   readonly budgetCoveragePatterns: readonly string[]
   /** Agent Note 树布局。 */
   readonly agentNotes: AgentNoteLayout
-  /**
-   * 仓库是否维护英文/中文三元组。为 false 时，配对门禁不启用，归档笔记
-   * 以无对侧的方式封印。
-   */
-  readonly bilingual: boolean
 }
 
 /** 文档系统配置的范围。 */
@@ -72,5 +67,4 @@ export const docSystem: DocSystemConfig = {
     classes: ['feature', 'bug-fix', 'simplification', 'architecture', 'process', 'testing'],
     archived: 'archived',
   },
-  bilingual: false,
 }

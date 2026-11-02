@@ -7,12 +7,11 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { walkAgentNoteTree } from './agent-note-tree.ts'
 import { docSystem, repoRoot } from './doc-system.config.ts'
-import { gateHint } from './gate-hint.ts'
 
 const { notes, errors } = walkAgentNoteTree()
 
 // 让旧位置保持不可用，使新笔记无法静默脱离此树。
-for (const legacyRoot of ['Docs/rfc', 'Docs/rfcs']) {
+for (const legacyRoot of ['docs/rfc', 'docs/rfcs']) {
   if (existsSync(resolve(repoRoot, legacyRoot))) {
     errors.push(`legacy-path: ${legacyRoot}/ is forbidden — put Agent Notes under ${docSystem.agentNotes.root}/`)
   }
@@ -25,5 +24,4 @@ if (errors.length === 0) {
 
 console.error('verify-agent-note-classification: violations found:')
 for (const e of errors) console.error(`  ${e}`)
-console.error(gateHint('verify-agent-note-classification'))
 process.exit(1)
