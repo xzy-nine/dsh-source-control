@@ -12,7 +12,7 @@ import { gateHint } from './gate-hint.ts'
 const { notes, errors } = walkAgentNoteTree()
 
 // 让旧位置保持不可用，使新笔记无法静默脱离此树。
-for (const legacyRoot of ['docs/rfc', 'docs/rfcs']) {
+for (const legacyRoot of ['Docs/rfc', 'Docs/rfcs']) {
   if (existsSync(resolve(repoRoot, legacyRoot))) {
     errors.push(`legacy-path: ${legacyRoot}/ is forbidden — put Agent Notes under ${docSystem.agentNotes.root}/`)
   }

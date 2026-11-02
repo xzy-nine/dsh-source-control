@@ -17,7 +17,7 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Feedback**: submit an issue from the settings **Feedback** tab or the feedback button in the repositories header; opt in to attach logs and the tool packs a zip, creates the issue, and the user drags the zip into its comment box.
 - **Safety**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
 
-The complete description of every feature is in [功能说明](docs/功能/功能说明.md) (Chinese only).
+The complete description of every feature is in [功能说明](Docs/功能/功能说明.md) (Chinese only).
 
 ## Entry points
 
@@ -46,7 +46,7 @@ pnpm lint            # static checks
 pnpm test            # build, duplication gate, and unit tests
 ```
 
-Code structure and build conventions are in [代码结构](docs/实现/代码结构.md) and [构建与测试](docs/实现/构建与测试.md) (Chinese only).
+Code structure and build conventions are in [代码结构](Docs/实现/代码结构.md) and [构建与测试](Docs/实现/构建与测试.md) (Chinese only).
 
 ## License
 

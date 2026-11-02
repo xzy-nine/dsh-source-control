@@ -1,6 +1,6 @@
 # AGENTS.md — 已实施 Agent Note
 
-这些 Agent Note 描述已交付的决策。遵循根指令、[文档标准](../../../docs/AGENTS.md)与 [Agent Note 格式](../README.md#the-file-format)；`verify-agent-note-format` 门禁校验各生命周期专属的结构。
+这些 Agent Note 描述已交付的决策。遵循根指令、[文档标准](../../../Docs/AGENTS.md)与 [Agent Note 格式](../README.md#the-file-format)；`verify-agent-note-format` 门禁校验各生命周期专属的结构。
 
 <a id="keep-an-implemented-agent-note-current-with-what-actually-shipped"></a>
 
