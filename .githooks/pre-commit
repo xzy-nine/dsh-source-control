@@ -3,6 +3,7 @@
 # pre-commit：对本次提交涉及的 TypeScript 文件跑 oxlint。
 #
 # 只查暂存的 .ts/.tsx（含新增、修改、重命名），存量文件不重复检查。
+# 另外：本次提交涉及 Markdown 时跑文档门禁（换行、链接、预算），它们的规则见 Docs/AGENTS.md。
 # oxlint 只能检查磁盘上的文件，没有从标准输入读源码的入口：先确认暂存内容与工作区副本一致，
 # 不一致即拒绝提交，避免检查到的不是即将提交的那一版。
 # 规则集见仓库根的 .oxlintrc.json；type-aware 规则需要安装依赖。
@@ -23,9 +24,6 @@ staged_ts_paths() {
 }
 
 staged_count=$(staged_ts_paths | tr -cd '\000' | wc -c | tr -d ' ')
-if [ "$staged_count" -eq 0 ]; then
-	exit 0
-fi
 
 # 暂存内容与工作区副本不一致的路径。一次 git diff 覆盖全部路径，避免逐文件起子进程；
 # GIT_LITERAL_PATHSPECS 让路径里的 * 与 ? 按字面匹配。上面的计数保证此处输入非空，
@@ -43,5 +41,15 @@ if [ -n "$mismatched" ]; then
 	exit 1
 fi
 
-echo "pre-commit: oxlint 检查 $staged_count 个文件"
-staged_ts_paths | xargs -0 node node_modules/oxlint/dist/cli.js --type-aware
+if [ "$staged_count" -gt 0 ]; then
+	echo "pre-commit: oxlint 检查 $staged_count 个文件"
+	staged_ts_paths | xargs -0 node node_modules/oxlint/dist/cli.js --type-aware
+fi
+
+# 文档门禁只在本次提交涉及 Markdown 时跑：规则页见 Docs/AGENTS.md。
+# 用 git 的 pathspec 过滤而不是 grep：路径大小写随平台变化，pathspec 按 git 自身规则匹配。
+staged_md=$(git diff --cached --name-only --diff-filter=ACMR -- 'Docs/**/*.md')
+if [ -n "$staged_md" ]; then
+	echo "pre-commit: 文档门禁"
+	node node_modules/tsx/dist/cli.mjs scripts/verify-all.ts
+fi

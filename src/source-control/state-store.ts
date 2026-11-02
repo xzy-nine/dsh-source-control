@@ -8,7 +8,8 @@
  * home 解析与 DSH 的 `dsh-home-paths` 同序：`DSH_SOURCE_CONTROL_HOME`（单测隔离）
  * → `DSH_HOME` → `~/.dsh`。
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { logWarn } from './logger.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -74,11 +75,16 @@ function load(): StateDocument {
 	if (path === null) { document = { version: STATE_VERSION, entries: {}, repos: {} }; return document; }
 	try {
 		const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<StateDocument>;
-		document = parsed.version === STATE_VERSION && parsed.entries !== undefined && parsed.repos !== undefined
+		const usable = parsed.version === STATE_VERSION && parsed.entries !== undefined && parsed.repos !== undefined;
+		document = usable
 			? { version: STATE_VERSION, entries: parsed.entries, repos: parsed.repos }
 			: { version: STATE_VERSION, entries: {}, repos: {} };
-	} catch {
+		// 结构版本不符时旧内容会被丢弃：用户会看到设置与布局回到默认，必须留痕。
+		if (!usable) logWarn('state', `状态文档结构版本不符（期望 ${String(STATE_VERSION)}，读到 ${String(parsed.version)}），已按空文档处理：${path}`);
+	} catch (error) {
 		document = { version: STATE_VERSION, entries: {}, repos: {} };
+		// 首次运行没有该文件属正常，只有确实存在却读不出来时才记。
+		if (existsSync(path)) logWarn('state', `状态文档读取失败，已按空文档处理：${path}：${error instanceof Error ? error.message : String(error)}`);
 	}
 	return document;
 }
@@ -98,8 +104,9 @@ function save(next: StateDocument): void {
 		const tmp = path + '.tmp';
 		writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
 		renameSync(tmp, path);
-	} catch {
-		/* 写盘失败时保留内存态，不打断面板 */
+	} catch (error) {
+		// 写盘失败时保留内存态，不打断面板；但设置与布局改动会因此丢失，需要留下记录。
+		logWarn('state', `插件状态写盘失败，本次改动只留在内存里：${path}：${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 

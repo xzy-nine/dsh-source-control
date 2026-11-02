@@ -138,6 +138,8 @@ export interface CommitDetails {
 	readonly body: string;
 	/** 改动文件。 */
 	readonly fileChanges: readonly FileChange[];
+	/** 改动文件是否因上限而截断：为 true 时 `fileChanges` 只是前一部分。 */
+	readonly truncated: boolean;
 }
 
 /** 提交详情读取结果。 */
@@ -149,6 +151,8 @@ export interface CommitDetailsData {
 /** 提交对比结果。 */
 export interface CommitComparisonData {
 	readonly fileChanges: FileChange[];
+	/** 改动文件是否因上限而截断。 */
+	readonly truncated: boolean;
 	readonly error: ErrorInfo;
 }
 

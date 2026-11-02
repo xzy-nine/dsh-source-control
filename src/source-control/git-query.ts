@@ -6,8 +6,8 @@
  */
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { forEachStatusRecord, gitOrThrow, parseStatusSnapshot, runGit } from './working-tree.js';
-import type { WorkingTreeSnapshot } from './working-tree.js';
+import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, pickByDepth, runGit } from './working-tree.js';
+import type { WorkingTreeEntry, WorkingTreeSnapshot } from './working-tree.js';
 import { readHeadRef } from './worktree-branches.js';
 import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -19,11 +19,45 @@ import {
 import type { DiffNameStatusRecord, DiffNumStatRecord, LogRecord, RefData, RefsAndBranches, StatusFiles } from './git-parse.js';
 import type {
 	BranchBase, CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
-	RefSummary, RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
+	FileChange, RefSummary, RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
 } from './git-types.js';
 
+/**
+ * 一次提交详情（或提交对比）里列出的改动文件上限。
+ *
+ * 改动数量达到这个量级时，响应载荷与客户端的行列表都随条目数线性增长。超出时按完整深度
+ * 保留：浅层的改动优先留下，更深的整层丢弃，因此界面看到的仍是一棵尽量完整的树。
+ */
+export const DETAIL_FILE_LIMIT = 1000;
+
+/**
+ * 按上限截断改动文件列表：浅层路径优先保留。
+ *
+ * @param fileChanges - 完整的改动列表。
+ * @returns 截断后的列表与是否截断。
+ */
+function capFileChanges(fileChanges: FileChange[]): { fileChanges: FileChange[]; truncated: boolean } {
+	return fileChanges.length > DETAIL_FILE_LIMIT
+		? { fileChanges: pickByDepth(fileChanges, DETAIL_FILE_LIMIT, (change) => change.newFilePath), truncated: true }
+		: { fileChanges, truncated: false };
+}
+
+/**
+ * 把未跟踪 / 已删除路径的截断标记并入改动列表的截断标记。
+ *
+ * @param capped - 改动列表与它自身的截断标记。
+ * @param status - 本轮用于叠加未跟踪 / 已删除路径的读取结果；不需要时为 null。
+ * @returns 合并后的改动列表与截断标记。
+ */
+function withStatusTruncation(
+	capped: { fileChanges: FileChange[]; truncated: boolean },
+	status: StatusFilesResult | null,
+): { fileChanges: FileChange[]; truncated: boolean } {
+	return capped.truncated || status?.truncated === true ? { ...capped, truncated: true } : capped;
+}
+
 /** 提交详情中除改动列表以外的字段。 */
-type CommitDetailsBase = Omit<CommitDetails, 'fileChanges'>;
+type CommitDetailsBase = Omit<CommitDetails, 'fileChanges' | 'truncated'>;
 
 /** 差异记录的类型过滤集。 */
 const DIFF_FILTER = 'AMDR';
@@ -207,7 +241,7 @@ export async function getCommitDetails(repo: string, commitHash: string, hasPare
 			getDiffNumStat(repo, fromCommit, commitHash),
 		]);
 		if (base === null) throw new Error('无法解析提交详情');
-		return { commitDetails: { ...base, fileChanges: generateFileChanges(nameStatus, numStat, null) }, error: null };
+		return { commitDetails: { ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) }, error: null };
 	} catch (error) {
 		return { commitDetails: null, error: errorText(error) };
 	}
@@ -242,7 +276,7 @@ export async function getStashDetails(repo: string, commitHash: string, stash: C
 				if (change.type === 'A') fileChanges.push({ ...change, type: 'U' });
 			}
 		}
-		return { commitDetails: { ...base, fileChanges }, error: null };
+		return { commitDetails: { ...base, ...capFileChanges(fileChanges) }, error: null };
 	} catch (error) {
 		return { commitDetails: null, error: errorText(error) };
 	}
@@ -268,7 +302,7 @@ export async function getUncommittedDetails(repo: string): Promise<CommitDetails
 				hash: UNCOMMITTED, parents: [],
 				author: '', authorEmail: '', authorDate: 0,
 				committer: '', committerEmail: '', committerDate: 0, signature: null,
-				body: '', fileChanges: generateFileChanges(nameStatus, numStat, status),
+				body: '', ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status),
 			},
 			error: null,
 		};
@@ -293,9 +327,9 @@ export async function getCommitComparison(repo: string, fromHash: string, toHash
 			getDiffNumStat(repo, fromHash, target),
 			toHash === UNCOMMITTED ? getStatus(repo) : Promise.resolve(null),
 		]);
-		return { fileChanges: generateFileChanges(nameStatus, numStat, status), error: null };
+		return { ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status), error: null };
 	} catch (error) {
-		return { fileChanges: [], error: errorText(error) };
+		return { fileChanges: [], truncated: false, error: errorText(error) };
 	}
 }
 
@@ -332,22 +366,42 @@ async function stashLogExists(commonDir: string): Promise<boolean> {
 	}
 }
 
+/** 工作区中已删除与未跟踪的路径，以及是否因上限而截断。 */
+export interface StatusFilesResult extends StatusFiles {
+	/** 是否还有未列出的已删除 / 未跟踪路径。 */
+	readonly truncated: boolean;
+}
+
 /**
  * 读取工作区中已删除与未跟踪的路径。
  *
+ * 只收集 `limit` 条：详情列表本就按上限截断，超大工作区因此不必先攒出几十万条路径。
+ * 记录扫描另有上限（同快照的条目上限），到上限即按截断处理。
+ *
  * @param repo - 仓库路径。
- * @returns 已删除与未跟踪的路径列表。
+ * @param limit - 最多收集的路径数。
+ * @returns 已删除与未跟踪的路径列表与截断标记。
  */
-export async function getStatus(repo: string): Promise<StatusFiles> {
+export async function getStatus(repo: string, limit = DETAIL_FILE_LIMIT): Promise<StatusFilesResult> {
 	const stdout = await gitOrThrow(['status', '-s', '--untracked-files=all', '--porcelain', '-z'], repo);
+	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
+	const matched: WorkingTreeEntry[] = [];
+	forEachStatusRecord(stdout, STATUS_LIMIT, (record) => {
+		const isDeleted = record.index === 'D' || record.worktree === 'D';
+		const isUntracked = record.index === '?' || record.worktree === '?';
+		if (!isDeleted && !isUntracked) return;
+		matched.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
+	}, true);
+	// 上限按完整深度取：浅层路径优先保留，与快照的截断规则一致。
+	const truncated = matched.length > limit;
+	const kept = truncated ? pickByDepth(matched, limit, (entry) => entry.path) : matched;
 	const deleted: string[] = [];
 	const untracked: string[] = [];
-	// 这里两列都要看 R/C：与 `parseStatus` 的判据不同，故显式打开工作区列。
-	forEachStatusRecord(stdout, Number.POSITIVE_INFINITY, (record) => {
-		if (record.index === 'D' || record.worktree === 'D') deleted.push(record.path);
-		else if (record.index === '?' || record.worktree === '?') untracked.push(record.path);
-	}, true);
-	return { deleted, untracked };
+	for (const entry of kept) {
+		if (entry.index === 'D' || entry.worktree === 'D') deleted.push(entry.path);
+		else untracked.push(entry.path);
+	}
+	return { deleted, untracked, truncated };
 }
 
 /** 工作区快照的读取结果：条目、分支与上游关系，或错误文本。 */
@@ -404,11 +458,12 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			ahead: snapshot.ahead,
 			behind: snapshot.behind,
 			merging,
+			truncated: snapshot.truncated,
 			error: null,
 		};
 	} catch (error) {
 		return {
-			entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, merging: false,
+			entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, merging: false, truncated: false,
 			error: errorText(error),
 		};
 	}
@@ -622,6 +677,7 @@ async function getCommitDetailsBase(repo: string, commitHash: string): Promise<C
  * @returns 改动记录。
  */
 async function getDiffNameStatus(repo: string, fromHash: string, toHash: string): Promise<DiffNameStatusRecord[]> {
+	// 全部解析后再按完整深度截断：上限要按层决定保留哪一段，边解析边截会把某一层切开。
 	return parseNameStatus(await execDiff(repo, fromHash, toHash, '--name-status'));
 }
 

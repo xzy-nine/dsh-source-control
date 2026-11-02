@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
 const mod = await importHostModule('source-control/diff-hunks.js');
 const { parseUnifiedDiffHunks } = mod;
 
@@ -185,4 +187,13 @@ test('多个 hunk 按出现顺序返回', () => {
 	].join('\n'));
 	assert.deepEqual(hunks.map((hunk) => sideLines(hunk, '+')), [['A'], ['B'], ['C']]);
 	assert.deepEqual(hunks.map((hunk) => hunk.newStart), [1, 10, 20]);
+});
+test('二进制差异输出没有可解析的 hunk', () => {
+	const text = [
+		'diff --git a/logo.png b/logo.png',
+		'index 1111111..2222222 100644',
+		'Binary files a/logo.png and b/logo.png differ',
+		'',
+	].join('\n');
+	assert.deepEqual(parseUnifiedDiffHunks(text), []);
 });

@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：用例替换 fs 读接口并靠真实时钟越过 TTL */
+
 /** 文件读取与 stat 的调用记录。 */
 const readPaths = [];
 const statPaths = [];
@@ -26,10 +28,14 @@ syncBuiltinESMExports();
 const facts = await importHostModule('source-control/repo-facts.js');
 const { runGit } = await importHostModule('source-control/working-tree.js');
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 临时目录登记表；文件级 after 统一删除并还原 fs 桩。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+	// 还原模块级 fs 桩，避免同进程后续用例看到本文件的调用记录包装。
+	fs.readFile = originalReadFile;
+	fs.stat = originalStat;
+	syncBuiltinESMExports();
 });
 
 /** 清空调用记录。 */

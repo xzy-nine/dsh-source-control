@@ -10,10 +10,12 @@ import { callApi, callApiRaw, commandError, errorList } from './http.ts';
  * @param name - 远程名；null 表示全部远程。
  * @param prune - 是否修剪已删除的远程分支。
  * @param pruneTags - 是否修剪远程标签。
- * @returns 无。
+ * @returns 引用是否发生变化；无变化时调用方不必重取。
  */
-export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false): Promise<void> {
-	await callApi(cwd, { command: 'fetch', name, prune, pruneTags });
+export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false): Promise<boolean> {
+	const payload = await callApi(cwd, { command: 'fetch', name, prune, pruneTags });
+	// 宿主编比较了抓取前后的引用：无变化时重取一遍拿到的还是旧数据。
+	return payload.changed === true;
 }
 
 /**

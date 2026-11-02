@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
 const { BRANCH_SYNC_FORMAT, parseBranchSync } = await importHostModule('source-control/git-parse.js');

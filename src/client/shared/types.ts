@@ -66,6 +66,9 @@ export interface CommitFile {
 	readonly deletions: number | null;
 }
 
+/** 合并方式：默认交给 git 决定是否快进，强制建立合并提交，或压缩为一次待提交的改动。 */
+export type MergeMode = 'default' | 'no-ff' | 'squash';
+
 /** 仓库树的节点种类。 */
 export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
 
@@ -177,7 +180,12 @@ export type RunOperation = (
 	operation: () => Promise<void>,
 	repo?: string,
 	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: { readonly historyChanged?: boolean },
+	options?: {
+		/** 是否可能改动引用与提交历史；false 表示只改工作区条目。 */
+		readonly historyChanged?: boolean;
+		/** 用户意图描述，供日志记录用户点了什么；省略时按影响面记一条。 */
+		readonly intent?: string;
+	},
 ) => Promise<void>;
 
 /** 一个子模块条目的丢弃结局。 */
@@ -212,7 +220,7 @@ export interface ChangeActions {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<DiscardReport>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
 	/** 把路径加入 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;
 	/** 把路径加入本地排除文件。 */
@@ -248,6 +256,20 @@ export type PanelPhase = 'loading' | 'ready' | 'no-workspace';
  * - network：与远端或 gh 的往返（抓取、推送、拉取、发布、创建 Pull Request）。
  */
 export type BusyScope = 'read' | 'commit' | 'history' | 'network';
+
+/**
+ * 执行一次仓库操作并刷新面板。
+ *
+ * `repo` 省略时用当前选中的工作树；`optimistic` 给出时按它的推算就地更新条目；
+ * `historyChanged` 缺省为 true，即按可能改动引用与提交历史处理。
+ */
+export type PanelRun = (
+	scope: BusyScope,
+	operation: () => Promise<void>,
+	repo?: string,
+	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
+	options?: { readonly historyChanged?: boolean; readonly intent?: string },
+) => Promise<void>;
 
 /** 一条进行中的操作：目标仓库路径与影响面。 */
 export interface BusyEntry {
@@ -293,6 +315,15 @@ export interface PanelState {
 	headHash: string | null;
 	/** 上游远程跟踪分支名；无上游时为 null。 */
 	upstream: string | null;
+	/**
+	 * 相对上游领先的提交数。
+	 *
+	 * 与 `upstream` 同源（宿主一次 `git status --branch`），因此图形区、更改区与提交框读的是
+	 * 同一份值；仓库树另有自己的取数（`loadReposSync`），两者互不覆盖。
+	 */
+	ahead: number;
+	/** 相对上游落后的提交数。 */
+	behind: number;
 	/** 是否还有更多提交未加载。 */
 	more: boolean;
 	/**
@@ -303,6 +334,8 @@ export interface PanelState {
 	 */
 	nextSkip: number;
 	entries: WorkingTreeEntry[];
+	/** 工作区条目是否因上限而截断：为 true 时 `entries` 只是前一部分。 */
+	entriesTruncated: boolean;
 	selectedHash: string | null;
 	/**
 	 * 展开的提交详情。
@@ -310,7 +343,7 @@ export interface PanelState {
 	 * `compareWith` 非空时 `files` 是两个提交之间的改动，方向为 `compareWith → commit`。
 	 * `loading` 为 true 表示文件列表仍在读取；空提交读取完成后为 false 且 files 为空。
 	 */
-	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean } | null;
+	detail: { commit: Commit; files: CommitFile[]; compareWith: Commit | null; loading: boolean; truncated: boolean } | null;
 	/** 进行中的操作；不同仓库、不同影响面之间互不阻塞。 */
 	busy: readonly BusyEntry[];
 	remotes: Remote[];

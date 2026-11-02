@@ -22,8 +22,8 @@ export interface UseAutoFetchOptions {
 	readonly periodSeconds: number;
 	/** 进行中的操作记录；目标仓库忙时等待。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
-	/** 执行一次抓取。 */
-	readonly fetch: (path: string) => Promise<void>;
+	/** 执行一次抓取；返回引用是否发生变化。 */
+	readonly fetch: (path: string) => Promise<boolean>;
 	/**
 	 * 抓取成功后的回调。
 	 *
@@ -75,16 +75,15 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 			while (!isCancelled()) {
 				await whenIdleAndFocused();
 				if (isCancelled()) return;
-				let fetched = false;
+				let changed = false;
 				try {
-					await fetchRef.current(workingTreePath);
-					fetched = true;
+					changed = await fetchRef.current(workingTreePath);
 				} catch {
 					/* 抓取失败不改设置；下一次周期重试 */
 				}
 				if (isCancelled()) return;
-				// 抓取成功才回调：失败时引用没变，重载没有意义。
-				if (fetched) onFetchedRef.current?.(workingTreePath);
+				// 只有引用确实变化才回调：失败或远端没有新提交时重载拿到的还是旧数据。
+				if (changed) onFetchedRef.current?.(workingTreePath);
 				// 周期下限另有兜底：设置值异常时也不会退化成密集抓取。
 				await sleep(Math.max(AUTO_REFRESH_COOLDOWN_MS, autoFetchPeriodMs(periodSeconds)));
 			}

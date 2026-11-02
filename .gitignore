@@ -4,3 +4,4 @@ node_modules/
 *.tsbuildinfo
 lib/
 /.dsh-ops/
+.negtest.sh

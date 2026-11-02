@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importHostModule } from './lib-import.mjs';
 
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
 const { getBranchBase, getRefSummaries } = await importHostModule('source-control/git-query.js');
 
 /** 临时目录登记表；文件级 after 统一删除。 */

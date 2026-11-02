@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
 
-const { collectDiff, splitDiffBlocks, fitSingleDiff, SINGLE_DIFF_MAX, DIFF_TOTAL_MAX } = await importHostModule('source-control/commit-diff.js');
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+
+const { collectDiff, splitDiffBlocks, fitSingleDiff, SINGLE_DIFF_MAX, DIFF_TOTAL_MAX, TRUNCATED_NOTE } = await importHostModule('source-control/commit-diff.js');
 
 /**
  * 建一个已配置身份的临时仓库。
@@ -84,7 +86,7 @@ test('单文件差异按上限截断并追加标记', () => {
 	const long = 'a'.repeat(SINGLE_DIFF_MAX + 100);
 	const fitted = fitSingleDiff(long, SINGLE_DIFF_MAX);
 	assert.ok(fitted.length <= SINGLE_DIFF_MAX);
-	assert.ok(fitted.endsWith('差异过长，以下内容已截断 ...\n'));
+	assert.ok(fitted.endsWith(TRUNCATED_NOTE), '截断标记应取自同一个常量');
 });
 
 test('普通路径：暂存区为空时退回工作区与未跟踪文件', async () => {

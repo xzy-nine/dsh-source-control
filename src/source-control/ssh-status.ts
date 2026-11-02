@@ -89,27 +89,55 @@ export function sshKeyNames(entries: readonly string[]): string[] {
 		.sort();
 }
 
+/** 探测结论的种类；界面据此选图标与后续动作，测试按它断言而不是按文案。 */
+export type SshProbeKind = 'authenticated' | 'host-key' | 'publickey' | 'network' | 'other';
+
+/** 一次探测的结论。 */
+export interface SshProbeVerdict {
+	/** 是否认证通过。 */
+	readonly authenticated: boolean
+	/** 结论种类。 */
+	readonly kind: SshProbeKind
+	/** 未通过时的原因说明；通过时为 null。 */
+	readonly message: string | null
+}
+
+/** 认证探测的结论说明。文案归此处，调用方与测试都按引用取用。 */
+export const SSH_TEXT = {
+	/** 主机指纹未确认；`{host}` 为目标主机。 */
+	hostKey: '目标主机 {host} 的指纹尚未确认：请先在终端执行 ssh -T git@{host} 并确认指纹。',
+	/** 公钥未被接受；`{host}` 为目标主机。 */
+	publickey: 'SSH 公钥未被 {host} 接受：请确认公钥已添加到该主机的账号或部署密钥，或先用 ssh-add 加载私钥。',
+	/** 网络不可达；`{host}` 为目标主机。 */
+	network: '无法连接 {host}：请检查网络、代理或 SSH 配置。',
+	/** 无匹配规则且输出为空时的兜底；`{host}` 为目标主机。 */
+	fallback: 'SSH 认证未通过（{host}）。',
+} as const;
+
 /**
  * 归类认证探测的输出。
  *
  * @param stdout - 探测的标准输出。
  * @param stderr - 探测的标准错误。
  * @param host - 探测的目标主机名。
- * @returns 是否认证通过，以及未通过时的原因说明。
+ * @returns 是否认证通过、结论种类，以及未通过时的原因说明。
  */
-export function classifySshProbe(stdout: string, stderr: string, host: string): { authenticated: boolean; message: string | null } {
+export function classifySshProbe(stdout: string, stderr: string, host: string): SshProbeVerdict {
 	const text = `${stdout}\n${stderr}`.trim();
-	if (/successfully authenticated/i.test(text)) return { authenticated: true, message: null };
+	if (/successfully authenticated/i.test(text)) return { authenticated: true, kind: 'authenticated', message: null };
 	if (/host key verification failed|no .* host key is known|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(text)) {
-		return { authenticated: false, message: `目标主机 ${host} 的指纹尚未确认：请先在终端执行 ssh -T git@${host} 并确认指纹。` };
+		return { authenticated: false, kind: 'host-key', message: SSH_TEXT.hostKey.replaceAll('{host}', host) };
 	}
 	if (/permission denied|no supported authentication methods|publickey/i.test(text)) {
-		return { authenticated: false, message: `SSH 公钥未被 ${host} 接受：请确认公钥已添加到该主机的账号或部署密钥，或先用 ssh-add 加载私钥。` };
+		return { authenticated: false, kind: 'publickey', message: SSH_TEXT.publickey.replaceAll('{host}', host) };
 	}
 	if (/could not resolve hostname|connection timed out|connection refused|network is unreachable|operation timed out/i.test(text)) {
-		return { authenticated: false, message: `无法连接 ${host}：请检查网络、代理或 SSH 配置。` };
+		return { authenticated: false, kind: 'network', message: SSH_TEXT.network.replaceAll('{host}', host) };
 	}
-	return { authenticated: false, message: text === '' ? `SSH 认证未通过（${host}）。` : text };
+	return {
+		authenticated: false, kind: 'other',
+		message: text === '' ? SSH_TEXT.fallback.replaceAll('{host}', host) : text,
+	};
 }
 
 /**

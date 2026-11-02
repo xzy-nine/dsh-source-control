@@ -52,5 +52,9 @@ jobs:
       - name: 测试
         run: pnpm test
 
+      # 文档门禁在钩子里执行，可用 --no-verify 绕开；CI 再跑一次作为最后一道。
+      - name: 文档门禁
+        run: pnpm run test:docs
+
       - name: 校验发布包
         run: pnpm pack

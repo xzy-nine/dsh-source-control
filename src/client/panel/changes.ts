@@ -13,7 +13,7 @@ import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
-import { forKey } from '../shared/cache.ts';
+import { guidesOf } from './tree-rows.tsx';
 import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
@@ -48,13 +48,6 @@ export function splitPath(path: string): { dir: string; name: string } {
 	const at = path.lastIndexOf('/');
 	return at === -1 ? { dir: '', name: path } : { dir: path.slice(0, at + 1), name: path.slice(at + 1) };
 }
-
-/** 按 depth 生成的竖线层级占位；元素数组按 depth 缓存，同一深度复用同一份元素。 */
-const guidesOf = forKey((depth: number): React.ReactElement[] => {
-	const guides: React.ReactElement[] = [];
-	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
-	return guides;
-}, { limit: 64 });
 
 /**
  * 在指针位置弹出某个目标的右键菜单，并在关闭时撤下高亮类。
@@ -121,30 +114,32 @@ export interface ChangeNodeRowProps {
 	readonly onDiscard: (paths: readonly string[], untracked: boolean) => void;
 	/** 打开文件：isNew 为 true 时按普通文件打开（新文件没有可比差异）。 */
 	readonly onOpen: (entry: WorkingTreeEntry, isNew: boolean) => void;
-	readonly descendantsOf: (folderPath: string) => string[];
 	/** 右键菜单的依赖面；文件夹行与文件行共用同一份注册表。 */
 	readonly menu: ChangeMenuDeps;
 }
 
 /**
- * 是否是新增文件：已暂存的新增（`A`）与未跟踪（`?`）都没有旧侧内容。
+ * 是否只能按整文件打开：未跟踪（`?`）的文件不在索引里，没有可比差异。
+ *
+ * 已暂存的新增（`A`）不在此列：它已进索引，`git diff --cached` 能给出完整的新增差异。
  *
  * @param entry - 工作区条目。
- * @returns 是新增文件时为 true。
+ * @returns 没有可比差异、只能按整文件打开时为 true。
  */
-export function isNewFile(entry: WorkingTreeEntry): boolean {
-	return entry.index === 'A' || (entry.index === '?' && entry.worktree === '?');
+export function isUntrackedFile(entry: WorkingTreeEntry): boolean {
+	return entry.index === '?' && entry.worktree === '?';
 }
 
 /** 文件夹行或文件行（变更树内）。 */
 function ChangeNodeRowView({
-	row, busy, open, staged, groupKey, toggleChange, onStage, onUnstage, onDiscard, onOpen, descendantsOf, menu,
+	row, busy, open, staged, groupKey, toggleChange, onStage, onUnstage, onDiscard, onOpen, menu,
 }: ChangeNodeRowProps): React.ReactElement {
 	if (row.kind === 'folder') {
 		const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 			event.stopPropagation();
 			openTargetMenu(event, () => changeMenuItems({
-				target: 'folder', deps: menu, path: row.path, paths: descendantsOf(row.path),
+				// 文件夹行按目录整体执行：带尾斜杠的目录 pathspec 命中其下全部条目。
+				target: 'folder', deps: menu, path: row.path, paths: [row.path + '/'], count: row.count,
 				entry: null, untracked: false,
 			}));
 		};
@@ -167,12 +162,12 @@ function ChangeNodeRowView({
 	const fileStaged = staged;
 	const type = staged ? entry.index : (entry.worktree === '?' ? 'U' : entry.worktree);
 	const untracked = entry.index === '?' && entry.worktree === '?';
-	// 新增文件（A 或未跟踪）没有旧侧内容，按普通文件打开。
-	const isNew = isNewFile(entry);
+	// 未跟踪文件没有可比差异，按普通文件打开；已暂存的新增 A 仍走差异视图。
+	const isNew = isUntrackedFile(entry);
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		openTargetMenu(event, () => changeMenuItems({
-			target: 'file', deps: menu, path: entry.path, paths: [entry.path],
+			target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1,
 			entry, untracked,
 		}));
 	};
@@ -219,6 +214,8 @@ export interface CommitDetailProps {
 	readonly busy: boolean;
 	/** 是否仍在读取文件列表；false 时 files 为空即该提交确实没有改动。 */
 	readonly loading: boolean;
+	/** 改动文件是否因上限而截断：为 true 时 files 只是前一部分。 */
+	readonly truncated: boolean;
 	readonly collapsed: ReadonlySet<string>;
 	readonly onToggle: (path: string) => void;
 	/** 打开文件：isNew 为 true 时按普通文件打开（新增文件没有可比差异）。 */
@@ -231,7 +228,7 @@ export interface CommitDetailProps {
  * @param props - 见 {@link CommitDetailProps}。
  * @returns 文件列表元素。
  */
-function CommitDetailView({ files, busy, loading, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
+function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle, onOpen }: CommitDetailProps): React.ReactElement {
 	// 记忆化必须在提前返回之前：它也是 hook。
 	const rows = React.useMemo<ChangeRow<CommitFile>[]>(() => changeRowsOf(files, collapsed), [files, collapsed]);
 	if (files.length === 0) {
@@ -262,8 +259,8 @@ function CommitDetailView({ files, busy, loading, collapsed, onToggle, onOpen }:
 			const entry = row.entry;
 			const { name } = splitPath(entry.path);
 			const stat = entry.additions !== null;
-			// 提交里的 `A` 与工作区伪提交里的 `A`/`U` 都没有旧侧内容。
-			const isNew = entry.type === 'A' || entry.type === 'U';
+			// 提交里的 `A` 有旧侧（空文件），差异可算：只有未跟踪的 `U` 没有可比内容。
+			const isNew = entry.type === 'U';
 			return React.createElement(
 				'div',
 				{
@@ -283,6 +280,8 @@ function CommitDetailView({ files, busy, loading, collapsed, onToggle, onOpen }:
 				),
 			);
 		}),
+		// 宿主侧按完整深度截断改动列表：保留下来的是浅层那一段，须说明。
+		truncated && React.createElement('div', { className: shared.hint }, '改动过多，仅列出较浅层的改动'),
 	);
 }
 
@@ -291,6 +290,8 @@ export const CommitDetail = React.memo(CommitDetailView);
 /** 一个变更分组：暂存的更改 / 更改。 */
 export interface ChangeGroupProps extends ChangeActions {
 	readonly staged: boolean;
+	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
+	readonly truncated: boolean;
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: boolean;
 	readonly workingTreePath: string;
@@ -311,7 +312,7 @@ export interface ChangeGroupProps extends ChangeActions {
  * @returns 分组元素；无对应条目时返回空数组。
  */
 function ChangeGroupView({
-	staged, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
+	staged, truncated, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude, forceShow,
 }: ChangeGroupProps): React.ReactElement | [] {
 	const visible = React.useMemo(
@@ -325,11 +326,28 @@ function ChangeGroupView({
 	const title = staged ? '暂存的更改' : '更改';
 	// 暂存与取消暂存只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 	const onStage = React.useCallback((paths: readonly string[]): void => {
-		void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false });
+		void run('commit', async () => { await stagePaths(workingTreePath, paths); }, undefined, (entries) => stageEntries(entries, paths), { historyChanged: false, intent: `暂存 ${String(paths.length)} 个路径` });
 	}, [run, stagePaths, workingTreePath]);
 	const onUnstage = React.useCallback((paths: readonly string[]): void => {
-		void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false });
+		void run('commit', async () => { await unstagePaths(workingTreePath, paths); }, undefined, (entries) => unstageEntries(entries, paths), { historyChanged: false, intent: `取消暂存 ${String(paths.length)} 个路径` });
 	}, [run, unstagePaths, workingTreePath]);
+	/**
+	 * 暂存该分组内的全部改动。
+	 *
+	 * 下发空路径而不是把成千上万个路径逐个传下去：宿主据此走 `git add --all`，一条命令完成。
+	 * 乐观更新仍按可见条目推算，界面立刻反映结果。
+	 */
+	const onStageAll = React.useCallback((): void => {
+		void run('commit', async () => { await stagePaths(workingTreePath, []); }, undefined, (entries) => stageEntries(entries, allPaths), { historyChanged: false, intent: '暂存全部' });
+	}, [run, stagePaths, workingTreePath, allPaths]);
+	/**
+	 * 取消暂存该分组内的全部改动。
+	 *
+	 * 与 {@link onStageAll} 同理：空路径表示全部，宿主按 `git restore --staged -- .` 执行。
+	 */
+	const onUnstageAll = React.useCallback((): void => {
+		void run('commit', async () => { await unstagePaths(workingTreePath, []); }, undefined, (entries) => unstageEntries(entries, allPaths), { historyChanged: false, intent: '取消暂存全部' });
+	}, [run, unstagePaths, workingTreePath, allPaths]);
 	/**
 	 * 丢弃一批路径的改动；未跟踪与已跟踪分两条命令下发。
 	 *
@@ -347,7 +365,7 @@ function ChangeGroupView({
 		await run('commit', async () => {
 			if (tracked.length > 0) discarded.push(...(await discardPaths(workingTreePath, tracked, false)).discarded);
 			if (untrackedPaths.length > 0) discarded.push(...(await discardPaths(workingTreePath, untrackedPaths, true)).discarded);
-		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
+		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(tracked.length)} 个已跟踪、${String(untrackedPaths.length)} 个未跟踪）` });
 	}, [run, discardPaths, workingTreePath]);
 	/**
 	 * 丢弃某个文件夹下的全部改动。
@@ -388,7 +406,7 @@ function ChangeGroupView({
 			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 			await run('commit', async () => {
 				discarded.push(...(await discardPaths(workingTreePath, paths, untracked)).discarded);
-			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false });
+			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(paths.length)} 个${untracked ? '未跟踪' : '已跟踪'}路径）` });
 		})();
 	}, [run, discardPaths, workingTreePath]);
 	/**
@@ -408,25 +426,23 @@ function ChangeGroupView({
 			await discardBoth(tracked, untrackedPaths);
 		})();
 	}, [visible, allPaths, discardBoth]);
-	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); }, [openDiff, staged]);
+	// 点击文件行时把本分组的文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
+	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
-	const onOpenFile = React.useCallback((item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true); }, [openDiff, staged]);
-	const descendantsOf = React.useCallback((folderPath: string): string[] => {
-		const prefix = folderPath + '/';
-		return visible.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path);
-	}, [visible]);
+	const onOpenFile = React.useCallback((item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键菜单的依赖面；文件夹行、文件行与分组标题行共用同一份注册表。 */
 	const menu = React.useMemo<ChangeMenuDeps>(() => ({
-		busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder,
+		busy, staged, truncated, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard, onDiscardFolder,
 		onDiscardGroup: onDiscardAll,
 		onOpenFile, onAddToGitignore, onAddToLocalExclude,
 		// 菜单里的路径相对仓库根；复制时给出绝对路径，便于直接粘进终端或编辑器。
 		onCopyPath: (path: string) => { void copyText(absolutePathOf(workingTreePath, path)); },
-	}), [busy, staged, onStage, onUnstage, onDiscard, onDiscardFolder, onDiscardAll, onOpenFile, onAddToGitignore, onAddToLocalExclude, workingTreePath]);
+	}), [busy, staged, truncated, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard, onDiscardFolder, onDiscardAll, onOpenFile, onAddToGitignore, onAddToLocalExclude, workingTreePath]);
 	const handleHeadContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
 		event.stopPropagation();
 		openTargetMenu(event, () => changeMenuItems({
-			target: 'group', deps: menu, path: null, paths: allPaths,
+			// 分组走集合命令：pathspec 为空数组表示全部，数量按组内条目数给出。
+			target: 'group', deps: menu, path: null, paths: [], count: allPaths.length,
 			entry: null, untracked: false,
 		}));
 	}, [menu, allPaths]);
@@ -445,7 +461,8 @@ function ChangeGroupView({
 				className: cx(shared.repoChevron, !open && shared.isCollapsed),
 			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
 			React.createElement('span', { className: css.groupTitle }, title),
-			React.createElement('span', { className: css.count }, String(visible.length)),
+			// 截断时计数只是下限，加号表明还有未列出的条目。
+			React.createElement('span', { className: css.count }, String(visible.length) + (truncated ? '+' : '')),
 		),
 		open && React.createElement(
 			'div',
@@ -455,9 +472,9 @@ function ChangeGroupView({
 				row, busy,
 				open: row.kind === 'folder' && !collapsed.has(row.path),
 				staged, groupKey, toggleChange,
-				onStage, onUnstage, onDiscard, onOpen,
-				descendantsOf, menu,
+				onStage, onUnstage, onDiscard, onOpen, menu,
 			})),
+
 		),
 	);
 }

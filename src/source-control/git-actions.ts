@@ -27,10 +27,10 @@ function stripTrailingNewlines(text: string): string {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 成功为 null；失败为 stderr 文本（去掉末尾换行），stderr 为空时退回 stdout，两者皆空时返回通用失败文本。
  */
-async function gitErrorInfo(args: readonly string[], cwd: string): Promise<ErrorInfo> {
+async function gitErrorInfo(args: readonly string[], cwd: string, options: { readonly quietWrite?: boolean } = {}): Promise<ErrorInfo> {
 	let result: GitResult;
 	try {
-		result = await runGit(args, cwd);
+		result = await runGit(args, cwd, options);
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
 	}
@@ -98,7 +98,7 @@ export async function addRemote(repo: string, name: string, url: string, pushUrl
 		if (pushUrlError !== null) return pushUrlError;
 	}
 
-	return fetch ? fetchRemote(repo, name, false, false) : null;
+	return fetch ? fetchRemote(repo, name, false, false, false) : null;
 }
 
 /**
@@ -211,7 +211,7 @@ export async function deleteTag(repo: string, tagName: string, deleteOnRemote: s
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean): Promise<ErrorInfo> {
+async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet: boolean): Promise<ErrorInfo> {
 	if (pruneTags && !prune) {
 		return '要清理标签，从' + (remote !== null ? '某个远程仓库' : '远程仓库') + '抓取时也必须同时启用清理。';
 	}
@@ -219,7 +219,7 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
 	const args = ['fetch', remote === null ? '--all' : remote];
 	if (prune) args.push('--prune');
 	if (pruneTags) args.push('--prune-tags');
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(args, repo, { quietWrite: quiet });
 }
 
 /**
@@ -231,8 +231,8 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean): Promise<ErrorInfo> {
-	return fetchRemote(repo, remote, prune, pruneTags);
+export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet = false): Promise<ErrorInfo> {
+	return fetchRemote(repo, remote, prune, pruneTags, quiet);
 }
 
 /**
@@ -704,10 +704,19 @@ export function pushStash(repo: string, message: string, includeUntracked: boole
 	return gitErrorInfo(args, repo);
 }
 
+/**
+ * 合并被自己拒绝的原因。
+ *
+ * 调用方按它分支，不按错误文本：文本是给人看的，措辞改动不该改变调用方的行为。
+ */
+export type MergeIntoBranchCode = 'detached-head' | 'same-branch' | 'no-branch' | 'not-tip';
+
 /** 合并到选中分支的结果。 */
 export interface MergeIntoBranchResult {
 	/** 失败时的错误文本；成功为 null。 */
 	readonly error: ErrorInfo;
+	/** 被自己拒绝时的原因；其余情形为 null。 */
+	readonly code: MergeIntoBranchCode | null;
 	/** 检出并合并后所在的分支名。 */
 	readonly branchName: string;
 	/** git 生成的初始合并提交信息；无待合并状态时为 null。 */
@@ -739,35 +748,54 @@ async function readMergeMessage(repo: string): Promise<string | null> {
 	}
 }
 
+/** 合并方式。 */
+export type MergeMode = 'default' | 'no-ff' | 'squash';
+
+/**
+ * 合并方式对应的 `git merge` 选项。
+ *
+ * `default` 交给 git 自行决定是否快进；`no-ff` 强制建立合并提交；
+ * `squash` 只把改动写进索引，不建立合并关系。
+ *
+ * @param mode - 合并方式。
+ * @returns 要追加的选项。
+ */
+function mergeModeArgs(mode: MergeMode): readonly string[] {
+	if (mode === 'no-ff') return ['--no-ff'];
+	if (mode === 'squash') return ['--squash'];
+	return [];
+}
+
 /**
  * 检出选中的分支，并把检出前的当前分支合并过去，停在未提交状态。
  *
- * 合并固定带 `--no-ff`：目标分支若是当前分支的祖先，不加该选项会直接快进、不产生
- * 待合并状态与提交信息。合并成功与冲突都保留 `MERGE_HEAD`，冲突时 git 以非零退出，
- * 但初始提交信息仍已写入 `MERGE_MSG`，因此两种情况都回传该信息。
+ * 三种合并方式都带 `--no-commit`：合并结果停在待提交状态，由用户确认后再提交。
+ * 成功与冲突都保留待合并状态，冲突时 git 以非零退出，但初始提交信息仍已写入
+ * `MERGE_MSG`，因此两种情况都回传该信息。`squash` 不写 `MERGE_MSG`，此时回传 null。
  *
  * @param repo - 仓库路径。
  * @param branchName - 要检出并合并到的分支名。
  * @param message - 合并提交信息；空串表示使用 git 生成的初始信息。
+ * @param mode - 合并方式；缺省为 `default`。
  * @returns 分支名、初始合并信息与冲突标记；检出或合并失败时 `error` 为错误文本。
  */
-export async function mergeCurrentIntoBranch(repo: string, branchName: string, message: string): Promise<MergeIntoBranchResult> {
-	const empty: MergeIntoBranchResult = { error: null, branchName, mergeMessage: null, conflicted: false };
+export async function mergeCurrentIntoBranch(repo: string, branchName: string, message: string, mode: MergeMode = 'default'): Promise<MergeIntoBranchResult> {
+	const empty: MergeIntoBranchResult = { error: null, code: null, branchName, mergeMessage: null, conflicted: false };
 
 	/* 检出前的当前分支名；分离头指针时为空，此时没有可合并回去的分支。 */
 	const current = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
 	const source = current.code === 0 ? current.stdout.trim() : '';
 	if (source === '') {
-		return { ...empty, error: '当前处于分离头指针状态，没有可合并到选中分支的分支。' };
+		return { ...empty, code: 'detached-head', error: '当前处于分离头指针状态，没有可合并到选中分支的分支。' };
 	}
 	if (source === branchName) {
-		return { ...empty, error: '选中的就是当前分支。' };
+		return { ...empty, code: 'same-branch', error: '选中的就是当前分支。' };
 	}
 
 	const checkoutError = await gitErrorInfo(['checkout', branchName], repo);
 	if (checkoutError !== null) return { ...empty, error: checkoutError };
 
-	const args = ['merge', '--no-ff', '--no-commit'];
+	const args = ['merge', ...mergeModeArgs(mode), '--no-commit'];
 	if (message !== '') args.push('--message', message);
 	args.push(source);
 	const mergeError = await gitErrorInfo(args, repo);
@@ -776,7 +804,7 @@ export async function mergeCurrentIntoBranch(repo: string, branchName: string, m
 	if (mergeError !== null) {
 		const mergeHead = await runGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repo);
 		if (mergeHead.code !== 0) return { ...empty, error: mergeError };
-		return { error: null, branchName, mergeMessage, conflicted: true };
+		return { error: null, code: null, branchName, mergeMessage, conflicted: true };
 	}
-	return { error: null, branchName, mergeMessage, conflicted: false };
+	return { error: null, code: null, branchName, mergeMessage, conflicted: false };
 }

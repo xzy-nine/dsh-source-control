@@ -13,13 +13,15 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Diff page**: side-by-side or unified views, word wrap, and git-hunk-only rendering.
 - **GitHub integration**: create and push a repository, and create pull requests, through the `gh` CLI, degrading gracefully when it is missing, logged out, or short of scopes.
 - **Remote protocols**: a remote address can be switched between HTTPS and SSH in both directions, checking the local SSH status before switching to SSH.
-- **Safety and feedback**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
+- **Text logs**: Android logcat threadtime format, one file per startup, grouped by day, kept 15 days with a 15 MB daily cap.
+- **Feedback**: submit an issue from the settings **Feedback** tab or the feedback button in the repositories header; opt in to attach logs and the tool packs a zip, creates the issue, and the user drags the zip into its comment box.
+- **Safety**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
 
-The complete description of every feature is in [Docs/功能说明.md](Docs/功能说明.md) (Chinese only).
+The complete description of every feature is in [功能说明](docs/功能/功能说明.md) (Chinese only).
 
 ## Entry points
 
-Both entries come from this plugin and open the same page; no third-party sidebar plugin is required:
+Both entries come from this plugin and open the same page:
 
 | Entry | Behaviour |
 |---|---|
@@ -28,18 +30,23 @@ Both entries come from this plugin and open the same page; no third-party sideba
 
 Switching to another sidebar page or workspace and coming back leaves the page as it was — it neither reloads nor loses its expanded state.
 
-## Working with dsh-better-sidebar
-
-When [dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) is installed, its capabilities are preferred; when it is absent or the relevant type is turned off, this plugin falls back automatically. Neither case needs configuration.
-
-An optional dependency — this plugin works on its own.
-
 ## Install
 
 ```sh
 dsh plugin --profile web add dsh-source-control
 # restart `dsh web`; the right Sidebar's `+` → guide page shows Source Control, and the session header gains an icon
 ```
+
+## Development
+
+```sh
+pnpm install
+pnpm run verify-all  # documentation gates
+pnpm lint            # static checks
+pnpm test            # build, duplication gate, and unit tests
+```
+
+Code structure and build conventions are in [代码结构](docs/实现/代码结构.md) and [构建与测试](docs/实现/构建与测试.md) (Chinese only).
 
 ## License
 

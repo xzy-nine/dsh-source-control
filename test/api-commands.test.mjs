@@ -1,5 +1,5 @@
 /**
- * 宿主命令集回归：经真实路由 handler 逐条发 API 请求，校验响应形状与关键取值。
+ * 宿主命令集回归（工作区与提交）：暂存、快照、提交详情、写操作、钩子探测与提交推送。
  *
  * 被测模块有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入；
  * `pretest` 会先重建宿主与客户端产物。
@@ -11,6 +11,9 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync,
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tempPath } from './harness.mjs';
+
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
@@ -97,6 +100,39 @@ async function makeCaller(repo) {
 		Promise.resolve(handler(req, res)).catch(reject);
 	});
 }
+
+test('暂存与取消暂存：空路径表示全部，走集合命令', async () => {
+	const { repo, git } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+		writeFileSync(join(repo, 'bulk-a.txt'), 'a');
+		writeFileSync(join(repo, 'bulk-b.txt'), 'b');
+		writeFileSync(join(repo, 'bulk-c.txt'), 'c');
+		const staged = await call({ command: 'stagePaths', paths: [] });
+		assert.equal(staged.error, null);
+		const indexed = git('ls-files').split('\n');
+		for (const name of ['bulk-a.txt', 'bulk-b.txt', 'bulk-c.txt']) {
+			assert.ok(indexed.includes(name), `空路径应把 ${name} 一并暂存`);
+		}
+		const unstaged = await call({ command: 'unstagePaths', paths: [] });
+		assert.equal(unstaged.error, null);
+		assert.equal(git('ls-files').includes('bulk-a.txt'), false, '空路径应取消全部暂存');
+		// 文件夹行走目录 pathspec：一条命令处理目录下全部条目，不逐条列子文件。
+		mkdirSync(join(repo, 'nested/deeper'), { recursive: true });
+		writeFileSync(join(repo, 'nested/one.txt'), '1');
+		writeFileSync(join(repo, 'nested/deeper/two.txt'), '2');
+		await call({ command: 'stagePaths', paths: ['nested/'] });
+		const nestedIndexed = git('ls-files').split('\n');
+		assert.ok(nestedIndexed.includes('nested/one.txt') && nestedIndexed.includes('nested/deeper/two.txt'), '目录 pathspec 应暂存目录下全部文件');
+		await call({ command: 'unstagePaths', paths: ['nested/'] });
+		assert.equal(git('ls-files').includes('nested/one.txt'), false, '目录 pathspec 应取消暂存目录下全部文件');
+		// 快照响应带截断标记：未超出上限时为 false，客户端据此决定是否给出计数后缀。
+		const snapshot = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
+		assert.equal(snapshot.truncated, false);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
 
 test('仓库信息、提交图与配置', async () => {
 	const { repo } = makeRepo();
@@ -263,526 +299,6 @@ test('提交与推送：skipHooks 传 --no-verify，未传时照常运行钩子'
 		} finally {
 			rmSync(remote, { recursive: true, force: true });
 		}
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('合并到选中分支：检出、待合并、初始提交信息', async () => {
-	const { repo, git } = makeRepo();
-	try {
-		/* 旧分支停在公共基础，新分支在其上多出提交：这是「合并到选中分支」的典型场景。 */
-		git('branch', 'target-branch');
-		git('checkout', '-q', '-b', 'work-branch');
-		for (const name of ['w1', 'w2']) {
-			writeFileSync(join(repo, `${name}.txt`), name);
-			git('add', '-A');
-			git('commit', '-q', '-m', `work ${name}`);
-		}
-		const targetTip = git('rev-parse', 'target-branch').trim();
-
-		const call = await makeCaller(repo);
-		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
-		assert.equal(result.error, null);
-		assert.equal(result.branchName, 'target-branch');
-		assert.equal(result.conflicted, false);
-		assert.match(result.mergeMessage, /^Merge branch 'work-branch' into target-branch$/);
-
-		// 已检出到目标分支，且停在待合并状态：目标分支尖端未移动。
-		assert.equal(git('branch', '--show-current').trim(), 'target-branch');
-		assert.equal(git('rev-parse', 'target-branch').trim(), targetTip);
-		assert.notEqual(git('rev-parse', '-q', '--verify', 'MERGE_HEAD').trim(), '');
-
-		// 合并改动进入暂存区，提交按钮因此可用。
-		const staged = git('status', '--short');
-		assert.match(staged, /^A  w1\.txt$/m);
-		assert.match(staged, /^A  w2\.txt$/m);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('合并到选中分支：冲突仍保持待合并并给出信息', async () => {
-	const { repo, git } = makeRepo();
-	try {
-		writeFileSync(join(repo, 'conflict.txt'), 'base');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'conflict base');
-		git('branch', 'target-branch');
-		git('checkout', '-q', '-b', 'work-branch');
-		writeFileSync(join(repo, 'conflict.txt'), 'from work');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'work side');
-		git('checkout', '-q', 'target-branch');
-		writeFileSync(join(repo, 'conflict.txt'), 'from target');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'target side');
-		git('checkout', '-q', 'work-branch');
-		const targetTip = git('rev-parse', 'target-branch').trim();
-
-		const call = await makeCaller(repo);
-		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
-		// 冲突不是失败：检出与待合并状态都已建立。
-		assert.equal(result.error, null);
-		assert.equal(result.conflicted, true);
-		assert.match(result.mergeMessage, /# Conflicts:/);
-		assert.equal(git('branch', '--show-current').trim(), 'target-branch');
-		assert.notEqual(git('rev-parse', '-q', '--verify', 'MERGE_HEAD').trim(), '');
-		assert.match(git('status', '--short'), /^UU conflict\.txt$/m);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('合并到选中分支：非尖端与不存在的分支被拒绝且不检出', async () => {
-	const { repo, git } = makeRepo();
-	try {
-		git('branch', 'target-branch');
-		git('checkout', '-q', '-b', 'work-branch');
-		writeFileSync(join(repo, 'w.txt'), 'w');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'work');
-		const targetTip = git('rev-parse', 'target-branch').trim();
-		// work 分支的尖端不在 target-branch 上，用它触发尖端校验失败。
-		const notTip = git('rev-parse', 'HEAD').trim();
-		assert.notEqual(notTip, targetTip);
-
-		const call = await makeCaller(repo);
-		const mismatch = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: notTip, message: '' });
-		assert.match(mismatch.error, /尖端/);
-		assert.equal(git('branch', '--show-current').trim(), 'work-branch', '校验失败不得检出');
-
-		const absent = await call({ command: 'mergeIntoBranch', branchName: 'no-such-branch', commitHash: targetTip, message: '' });
-		assert.match(absent.error, /不存在/);
-
-		const same = await call({ command: 'mergeIntoBranch', branchName: 'work-branch', commitHash: git('rev-parse', 'HEAD').trim(), message: '' });
-		assert.match(same.error, /当前分支/);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('合并到选中分支：空合并可用空提交信息结束，沿用 git 生成的合并信息', async () => {
-	/*
-	 * 无冲突合并停下后索引与 HEAD 可能没有差异：两个分支加了同样的内容时，合并结果与任一侧一致。
-	 * 此时提交仍然必须成立 —— 它是结束合并的唯一动作，信息留空表示沿用 MERGE_MSG。
-	 */
-	const { repo, git } = makeRepo();
-	try {
-		writeFileSync(join(repo, 'base.txt'), 'base\n');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'base');
-		git('branch', 'target-branch');
-		git('checkout', '-q', '-b', 'work-branch');
-		writeFileSync(join(repo, 'same.txt'), 'same\n');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'work side');
-		git('checkout', '-q', 'target-branch');
-		writeFileSync(join(repo, 'same.txt'), 'same\n');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'target side');
-		// 合并方向是「当前分支合并到选中分支」，因此由 work-branch 发起。
-		git('checkout', '-q', 'work-branch');
-		const targetTip = git('rev-parse', 'target-branch').trim();
-
-		const call = await makeCaller(repo);
-		const merged = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
-		assert.equal(merged.error, null);
-		assert.equal(merged.conflicted, false);
-
-		const snapshot = await call({ command: 'loadWorkingTreeSnapshot' });
-		assert.equal(snapshot.merging, true, '应处于待合并状态');
-		assert.deepEqual(snapshot.entries, [], '两侧内容一致时索引没有改动');
-
-		const commit = await call({ command: 'commitStaged', message: '', amend: false });
-		assert.equal(commit.error, null, '空提交信息应沿用 git 生成的合并信息');
-		assert.equal(typeof commit.hash, 'string');
-		assert.equal(existsSync(join(repo, '.git', 'MERGE_HEAD')), false, '合并应已结束');
-		assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length, 3, '合并提交应有两个父提交');
-
-		const after = await call({ command: 'loadWorkingTreeSnapshot' });
-		assert.equal(after.merging, false, '提交后不再处于合并中');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('用户身份读写与文件差异内容', async () => {
-	const { repo } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		assert.deepEqual((await call({ command: 'editUserDetails', name: 'Api2', email: 'api2@example.com', location: 'local', deleteLocalName: false, deleteLocalEmail: false })).errors, []);
-		assert.equal((await call({ command: 'loadConfig', remotes: [] })).config.user.name.local, 'Api2');
-		assert.deepEqual((await call({ command: 'deleteUserDetails', name: true, email: true, location: 'local' })).errors, []);
-
-		// HEAD 是重命名提交，此时 a.txt 只在父提交存在；取改动 a.txt 的那次提交。
-		const target = execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: repo, encoding: 'utf8' }).trim();
-		const diff = await call({ command: 'fileDiffContent', commitHash: target, filePath: 'a.txt', staged: false });
-		assert.equal(typeof diff.oldText, 'string');
-		assert.equal(typeof diff.newText, 'string');
-		assert.ok(diff.hunks.length > 0, '应返回逐块差异');
-
-		const archivePath = join(repo, 'archive.zip');
-		assert.equal((await call({ command: 'createArchive', ref: 'HEAD', format: 'zip', outputPath: archivePath })).error, null);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('远程分支标注与 hideRemotes', async () => {
-	const { repo, git } = makeRepo();
-	try {
-		const head = git('rev-parse', 'HEAD').trim();
-		git('update-ref', 'refs/remotes/origin/main', head);
-		git('update-ref', 'refs/remotes/upstream/main', head);
-		git('remote', 'add', 'origin', 'https://github.com/o/r.git');
-		git('remote', 'add', 'upstream', 'https://github.com/u/r.git');
-
-		const call = await makeCaller(repo);
-		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: false, hideRemotes: [] });
-		assert.ok(info.branches.includes('origin/main') && info.branches.includes('upstream/main'));
-		assert.ok(!info.branches.some((name) => name.endsWith('/HEAD')), '远程 HEAD 符号引用不应出现');
-
-		const commits = await call({
-			command: 'loadCommits', branches: null, maxCommits: 50, showTags: true, showRemoteBranches: true,
-			includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
-			remotes: info.remotes, hideRemotes: [], stashes: [],
-		});
-		const node = commits.commits.find((commit) => commit.hash !== '*');
-		assert.deepEqual(node.remotes, [
-			{ name: 'origin/main', remote: 'origin' },
-			{ name: 'upstream/main', remote: 'upstream' },
-		]);
-
-		const hidden = await call({
-			command: 'loadCommits', branches: null, maxCommits: 50, showTags: true, showRemoteBranches: true,
-			includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
-			remotes: info.remotes, hideRemotes: ['upstream'], stashes: [],
-		});
-		assert.deepEqual(hidden.commits.find((commit) => commit.hash !== '*').remotes, [{ name: 'origin/main', remote: 'origin' }]);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('重置三种模式与丢弃全部', async () => {
-	const { repo, git } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		const head = git('rev-parse', 'HEAD').trim();
-		const reset = async (mode) => {
-			const result = await call({ command: 'resetToCommit', commit: head, resetMode: mode });
-			assert.equal(result.error, null);
-		};
-		const restore = () => {
-			git('checkout', '-q', '--', '.');
-			git('clean', '-qfd');
-			writeFileSync(join(repo, 'renamed.txt'), 'changed');
-			writeFileSync(join(repo, 'fresh.txt'), 'fresh');
-		};
-		/** 改动进入暂存区后再重置，用于区分三种模式对暂存区的处理。 */
-		const restoreStaged = () => {
-			restore();
-			git('add', 'renamed.txt');
-		};
-
-		// 软重置保留暂存区：已暂存的改动仍是已暂存。
-		restoreStaged();
-		await reset('soft');
-		assert.match(git('status', '--short'), /^M  renamed\.txt$/m, '软重置应保留暂存区');
-
-		// 混合重置清空暂存区但保留改动内容。
-		restoreStaged();
-		await reset('mixed');
-		assert.match(git('status', '--short'), /^ M renamed\.txt$/m, '混合重置应把改动移出暂存区');
-
-		// 硬重置丢弃已跟踪文件的改动，未跟踪文件不受影响。
-		restoreStaged();
-		await reset('hard');
-		const afterHard = git('status', '--short');
-		assert.ok(!afterHard.includes('renamed.txt'), '硬重置应丢弃已跟踪改动');
-		assert.match(afterHard, /\?\? fresh\.txt/, '硬重置不应删除未跟踪文件');
-
-		// 丢弃全部：已跟踪与未跟踪分开下发，两者都应生效。
-		restore();
-		const entries = (await call({ command: 'loadWorkingTree' })).entries;
-		const tracked = entries.filter((entry) => !(entry.index === '?' && entry.worktree === '?')).map((entry) => entry.path);
-		const untracked = entries.filter((entry) => entry.index === '?' && entry.worktree === '?').map((entry) => entry.path);
-		assert.ok(tracked.length > 0 && untracked.length > 0, '应同时存在已跟踪与未跟踪改动');
-		await call({ command: 'discardPaths', paths: tracked, untracked: false });
-		await call({ command: 'discardPaths', paths: untracked, untracked: true });
-		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, [], '丢弃全部后工作区应干净');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('贮藏改动与推送上游', async () => {
-	const { repo, git } = makeRepo();
-	const remote = mkdtempSync(join(tmpdir(), 'gg-remote-'));
-	try {
-		const call = await makeCaller(repo);
-		writeFileSync(join(repo, 'renamed.txt'), 'changed');
-		writeFileSync(join(repo, 'fresh.txt'), 'fresh');
-
-		// 贮藏应把全部改动（含未跟踪文件）移出工作区。
-		const before = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
-		const stashed = await call({ command: 'pushStash', message: 'wip', includeUntracked: true });
-		assert.equal(stashed.error, null);
-		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, []);
-		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
-		assert.equal(info.stashes.length, before.stashes.length + 1, '应新增一条贮藏');
-		// 贮藏按时间倒序，新建的排在最前。
-		assert.match(info.stashes[0].message, /wip/);
-
-		// 未设上游时推送给出可读错误，而不是静默成功。
-		const noUpstream = await call({ command: 'pushUpstream' });
-		assert.equal(typeof noUpstream.error, 'string');
-		assert.ok(noUpstream.error.length > 0, '未设上游时推送应报错而非静默成功');
-
-		// 设上游后推送成功，远程出现该分支。
-		execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
-		git('remote', 'add', 'origin', remote);
-		git('push', '-q', '--set-upstream', 'origin', 'main');
-		assert.equal((await call({ command: 'pushUpstream' })).error, null);
-		const remoteBranches = execFileSync('git', ['--git-dir', remote, 'branch', '--list', 'main'], { encoding: 'utf8' });
-		assert.match(remoteBranches, /main/);
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-		rmSync(remote, { recursive: true, force: true });
-	}
-});
-
-test('提交对比与两提交文件差异', async () => {
-	const { repo, git, write } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		const first = git('rev-parse', 'HEAD~1').trim();
-		const head = git('rev-parse', 'HEAD').trim();
-
-		// 对比跨过一个提交：改动文件含该区间的全部结果。
-		const comparison = await call({ command: 'compareCommits', commitHash: head, compareWithHash: first, fromHash: first, toHash: head, refresh: false });
-		assert.equal(comparison.error, null);
-		const paths = comparison.fileChanges.map((change) => change.newFilePath);
-		assert.ok(paths.includes('renamed.txt'), '对比应含重命名后的路径');
-		const renamed = comparison.fileChanges.find((change) => change.newFilePath === 'renamed.txt');
-		assert.equal(typeof renamed.additions, 'number');
-
-		// 两提交模式的单文件差异取 `baseHash → commitHash`，而非父提交。
-		const diff = await call({ command: 'fileDiffContent', commitHash: head, filePath: 'renamed.txt', staged: false, baseHash: first });
-		assert.ok(Array.isArray(diff.hunks) && diff.hunks.length > 0, '两提交差异应有 hunk');
-		const added = diff.hunks.flatMap((hunk) => hunk.lines).filter((line) => line.startsWith('+')).join('\n');
-		assert.match(added, /three/, '新侧应含区间内新增的行');
-
-		// 中文路径在对比模式下同样可读。
-		write('中文文件.md', 'cn\n');
-		git('add', '-A');
-		git('commit', '-q', '-m', 'add chinese file');
-		const chineseHead = git('rev-parse', 'HEAD').trim();
-		const chinese = await call({ command: 'fileDiffContent', commitHash: chineseHead, filePath: '中文文件.md', staged: false, baseHash: head });
-		assert.equal(chinese.oldText, null, '新增文件的旧侧应为空');
-		assert.match(chinese.newText, /cn/, '新增文件的新侧应有内容');
-
-		// 单提交模式不受影响：仍与父提交比较。
-		const single = await call({ command: 'fileDiffContent', commitHash: head, filePath: 'renamed.txt', staged: false });
-		assert.ok(Array.isArray(single.hunks) && single.hunks.length > 0, '单提交差异应仍可用');
-	} finally {
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('被别的工作树检出的分支照常出现在提交图上，并回投占用名单', async () => {
-	const { repo, git } = makeRepo();
-	const worktreePath = mkdtempSync(join(tmpdir(), 'gg-api-wt-'));
-	try {
-		git('branch', 'linked');
-		git('worktree', 'add', '-q', worktreePath, 'linked');
-
-		const call = await makeCaller(repo);
-		const info = await call({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: false, hideRemotes: [] });
-		const commits = await call({
-			command: 'loadCommits', branches: null, maxCommits: 50, showTags: true, showRemoteBranches: true,
-			includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
-			remotes: info.remotes, hideRemotes: [], stashes: [],
-		});
-		const heads = commits.commits.flatMap((commit) => commit.heads ?? []);
-		assert.ok(heads.includes('main'), '当前分支照常显示');
-		assert.ok(heads.includes('linked'), '被别的工作树检出的分支照常显示');
-		assert.deepEqual(commits.foreignBranches, ['linked'], '占用名单随响应回投，供客户端禁用操作');
-
-		const containing = await call({ command: 'branchesContaining', commitHash: git('rev-parse', 'HEAD').trim() });
-		assert.ok(!containing.local.includes('linked'), '删除候选中排除占用分支');
-		assert.deepEqual(containing.foreign, ['linked'], 'branchesContaining 同样回投占用名单');
-	} finally {
-		rmSync(worktreePath, { recursive: true, force: true });
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
-
-test('初始化未检出的子模块：路径可给相对仓库根，也可给绝对路径', async () => {
-	const parent = mkdtempSync(join(tmpdir(), 'gg-api-sub-'));
-	const source = mkdtempSync(join(tmpdir(), 'gg-api-subsrc-'));
-	const bare = mkdtempSync(join(tmpdir(), 'gg-api-subbare-'));
-	const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-	try {
-		gitIn(source, 'init', '-q', '-b', 'main');
-		gitIn(source, 'config', 'user.email', 'sub@example.com');
-		gitIn(source, 'config', 'user.name', 'Sub');
-		writeFileSync(join(source, 'dep.txt'), 'dep');
-		gitIn(source, 'add', '-A');
-		gitIn(source, 'commit', '-q', '-m', 'dep');
-		gitIn(tmpdir(), 'clone', '-q', '--bare', source, bare);
-
-		gitIn(parent, 'init', '-q', '-b', 'main');
-		gitIn(parent, 'config', 'user.email', 'api@example.com');
-		gitIn(parent, 'config', 'user.name', 'Api');
-		writeFileSync(join(parent, 'a.txt'), 'a');
-		gitIn(parent, 'add', '-A');
-		gitIn(parent, 'commit', '-q', '-m', 'first');
-		gitIn(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', bare, 'lib/dep');
-		gitIn(parent, 'commit', '-q', '-m', 'add submodule');
-
-		// 模拟未检出的子模块：删掉工作区目录，登记项仍在索引里。
-		rmSync(join(parent, 'lib', 'dep'), { recursive: true, force: true });
-
-		const call = await makeCaller(parent);
-		assert.equal((await call({ command: 'initSubmodule', submodulePath: 'lib/dep' })).error, null);
-		assert.ok(existsSync(join(parent, 'lib', 'dep', 'dep.txt')), '相对路径初始化出工作区');
-
-		// 再删一次，按绝对路径初始化：宿主向上找到声明它的父仓库。
-		rmSync(join(parent, 'lib', 'dep'), { recursive: true, force: true });
-		const absolute = await makeCaller(join(parent, 'lib', 'dep'));
-		assert.equal((await absolute({ command: 'initSubmodule', submodulePath: join(parent, 'lib', 'dep') })).error, null);
-		assert.ok(existsSync(join(parent, 'lib', 'dep', 'dep.txt')), '绝对路径初始化出工作区');
-	} finally {
-		for (const dir of [parent, source, bare]) rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test('丢弃子模块条目：只移动其指向的提交，不清理内部改动', async () => {
-	const source = mkdtempSync(join(tmpdir(), 'gg-api-subdiscard-src-'));
-	const parent = mkdtempSync(join(tmpdir(), 'gg-api-subdiscard-'));
-	const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-	const read = (path) => readFileSync(path, 'utf8');
-	try {
-		gitIn(source, 'init', '-q', '-b', 'main');
-		gitIn(source, 'config', 'user.email', 'sub@example.com');
-		gitIn(source, 'config', 'user.name', 'Sub');
-		writeFileSync(join(source, 'dep.txt'), 'one');
-		writeFileSync(join(source, 'other.txt'), 'stable');
-		gitIn(source, 'add', '-A');
-		gitIn(source, 'commit', '-q', '-m', 'first');
-		const older = gitIn(source, 'rev-parse', 'HEAD').trim();
-		writeFileSync(join(source, 'dep.txt'), 'two');
-		gitIn(source, 'add', '-A');
-		gitIn(source, 'commit', '-q', '-m', 'second');
-		const recorded = gitIn(source, 'rev-parse', 'HEAD').trim();
-
-		gitIn(parent, 'init', '-q', '-b', 'main');
-		gitIn(parent, 'config', 'user.email', 'api@example.com');
-		gitIn(parent, 'config', 'user.name', 'Api');
-		writeFileSync(join(parent, 'a.txt'), 'a');
-		gitIn(parent, 'add', '-A');
-		gitIn(parent, 'commit', '-q', '-m', 'first');
-		gitIn(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'lib/dep');
-		gitIn(parent, 'commit', '-q', '-m', 'add submodule');
-
-		const sub = join(parent, 'lib', 'dep');
-		const subHead = () => gitIn(sub, 'rev-parse', 'HEAD').trim();
-		const call = await makeCaller(parent);
-		const discard = (paths) => call({ command: 'discardPaths', paths, untracked: false });
-
-		// 1. 子模块 HEAD 被移动到别的提交：丢弃后应回到索引记录的提交。
-		gitIn(sub, 'checkout', '-q', older);
-		assert.notEqual(subHead(), recorded, '前置条件：子模块 HEAD 已偏离');
-		const moved = await discard(['lib/dep']);
-		assert.equal(moved.error, null);
-		assert.equal(subHead(), recorded, '子模块 HEAD 应回到索引记录的提交');
-		assert.deepEqual(moved.discarded, ['lib/dep'], '该条目应随后消失');
-		assert.equal(moved.submodules[0].status, 'moved');
-		assert.equal(moved.submodules[0].dirty, false);
-		assert.deepEqual((await call({ command: 'loadWorkingTree' })).entries, [], '工作区应干净');
-
-		// 2. 只有内部未提交改动（HEAD 未动）：不清理，条目保留。
-		writeFileSync(join(sub, 'other.txt'), 'local edit');
-		const unchanged = await discard(['lib/dep']);
-		assert.equal(read(join(sub, 'other.txt')), 'local edit', '子模块内部的改动不得被清理');
-		assert.equal(unchanged.submodules[0].status, 'unchanged');
-		assert.equal(unchanged.submodules[0].dirty, true);
-		assert.deepEqual(unchanged.discarded, [], '条目应留在列表里');
-		assert.equal((await call({ command: 'loadWorkingTree' })).entries.length, 1, '子模块条目仍在变更列表');
-
-		// 3. HEAD 需要移动且内部改动不冲突：移动成功，改动保留。
-		gitIn(sub, 'checkout', '-q', older);
-		writeFileSync(join(sub, 'other.txt'), 'kept');
-		const kept = await discard(['lib/dep']);
-		assert.equal(subHead(), recorded, '不冲突时仍应移动 HEAD');
-		assert.equal(read(join(sub, 'other.txt')), 'kept', '内部改动应原样保留');
-		assert.equal(kept.submodules[0].status, 'moved');
-		assert.equal(kept.submodules[0].dirty, true);
-		assert.deepEqual(kept.discarded, [], '仍有内部改动时条目保留');
-
-		// 4. 内部改动会被覆盖：git 拒绝移动，按 blocked 回报原文。
-		writeFileSync(join(sub, 'dep.txt'), 'conflict');
-		const blocked = await discard(['lib/dep']);
-		assert.equal(subHead(), recorded, '前置条件：HEAD 已与索引一致');
-		assert.equal(blocked.submodules[0].status, 'unchanged');
-		assert.equal(blocked.submodules[0].dirty, true);
-		// 先清掉本地改动再退到旧提交，随后在旧提交上制造会被覆盖的改动。
-		gitIn(sub, 'checkout', '-q', '--', '.');
-		gitIn(sub, 'checkout', '-q', older);
-		writeFileSync(join(sub, 'dep.txt'), 'conflict');
-		const conflict = await discard(['lib/dep']);
-		assert.equal(subHead(), older, '被拒绝时 HEAD 不得移动');
-		assert.equal(conflict.submodules[0].status, 'blocked');
-		assert.match(conflict.submodules[0].reason, /would be overwritten|local changes/i, '应回报 git 原文');
-		assert.deepEqual(conflict.discarded, []);
-
-		// 5. 文件夹路径：同目录普通文件照常还原，子模块 HEAD 一并移动。
-		gitIn(sub, 'checkout', '-q', '--', '.');
-		gitIn(sub, 'checkout', '-q', older);
-		writeFileSync(join(parent, 'a.txt'), 'changed');
-		const folder = await discard(['a.txt', 'lib/dep']);
-		assert.equal(read(join(parent, 'a.txt')), 'a', '普通文件应还原');
-		assert.equal(subHead(), recorded, '文件夹丢弃同样移动子模块 HEAD');
-		assert.deepEqual(folder.discarded.sort(), ['a.txt', 'lib/dep']);
-
-		// 5b. 目录型 pathspec：命中的子模块同样处置，不留静默残留。
-		gitIn(sub, 'checkout', '-q', older);
-		const directory = await discard(['lib']);
-		assert.equal(subHead(), recorded, '目录型 pathspec 命中的子模块也要移动 HEAD');
-		assert.deepEqual(directory.discarded, ['lib/dep']);
-
-		// 6. 未初始化（工作区目录不存在）：不动，也不隐式初始化。
-		rmSync(sub, { recursive: true, force: true });
-		const uninitialized = await discard(['lib/dep']);
-		assert.equal(uninitialized.submodules[0].status, 'uninitialized');
-		assert.equal(existsSync(sub), false, '未初始化的子模块不得被隐式检出');
-		assert.deepEqual(uninitialized.discarded, []);
-
-		// 7. 未跟踪的嵌套仓库：git clean 会跳过，回报为未删除。
-		const nested = mkdtempSync(join(parent, 'nested-repo-'));
-		gitIn(nested, 'init', '-q', '-b', 'main');
-		writeFileSync(join(nested, 'inner.txt'), 'inner');
-		const nestedName = nested.slice(parent.length + 1);
-		const untracked = await call({ command: 'discardPaths', paths: [nestedName], untracked: true });
-		assert.ok(untracked.skippedRepositories.includes(nestedName), '嵌套仓库应回报为未删除');
-		assert.ok(existsSync(nested), '嵌套仓库不得被删除');
-		assert.deepEqual(untracked.discarded, []);
-	} finally {
-		for (const dir of [parent, source]) rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test('未知命令被拒绝且非仓库路径不抛错', async () => {	const { repo } = makeRepo();
-	try {
-		const call = await makeCaller(repo);
-		const unknown = await call({ command: 'no-such-command' });
-		assert.match(unknown.error, /未知命令/);
-
-		const outside = await makeCaller(join(tmpdir(), `gg-absent-${Date.now()}`));
-		const info = await outside({ command: 'loadRepoInfo', showRemoteBranches: true, showStashes: true, hideRemotes: [] });
-		assert.equal(info.isRepo, false);
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}

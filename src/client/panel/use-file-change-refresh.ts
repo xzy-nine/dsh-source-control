@@ -1,5 +1,8 @@
 /**
- * 事件驱动的自动刷新：订阅当前会话的事件窗口，工具写入/编辑落地且目标在仓库内时重载面板。
+ * 事件驱动的自动刷新：订阅当前会话的事件窗口，工具写入/编辑落地且目标在仓库内时重取工作区快照。
+ *
+ * 只重取工作区快照：写入与编辑只改文件内容，不移动 HEAD、不改引用，提交图必然不变；走整页刷新
+ * 会让图形区跟着重取一次提交窗口。
  *
  * 连续变更受冷却时间节流；面板正忙时挂起到空闲再执行，避免与用户操作抢同一份数据。
  * 定时轮询不在此处：刷新完全由事件触发。
@@ -55,12 +58,12 @@ export interface UseFileChangeRefreshOptions {
 	readonly enabled: boolean;
 	/** 进行中的操作记录；目标仓库忙时挂起刷新。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
-	/** 重载选中仓库的提交图与工作区。 */
+	/** 只重取选中仓库的工作区快照。 */
 	readonly refresh: () => Promise<void>;
 }
 
 /**
- * 订阅会话事件并按落地的写入/编辑重载面板。
+ * 订阅会话事件并按落地的写入/编辑重取工作区快照。
  *
  * @param options - 见 {@link UseFileChangeRefreshOptions}。
  * @returns 无。

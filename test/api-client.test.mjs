@@ -8,6 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { callApi, callApiRaw, discoverRepositories, enrichRepositories, pushUpstream, resetToCommit } from '../src/client/api/index.ts';
 
+/* 本文件的用例必须串行执行：用例逐个替换 globalThis.fetch，进程级单例无法并发共享 */
+
 /**
  * 以给定的响应替换全局 fetch 跑一次调用。
  *

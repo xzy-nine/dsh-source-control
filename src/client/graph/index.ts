@@ -27,28 +27,13 @@ import { interfaceLanguage, showTranslateEntry, translatedTitle } from '../panel
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
-import { shouldLoadMore } from './auto-load.ts';
 import {
 	avatarUrlsOf, groupText, labelsOf, titleOf,
 } from './row-model.ts';
-import { topIndexOf, visibleRange } from './window-range.ts';
+import { useGraphWindowing } from './use-graph-windowing.ts';
 
 /** MarkdownText 所需的本地化标签。 */
 const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
-
-/** 可视区之外额外渲染的行数：滚动时留出缓冲，避免边缘出现空白。 */
-const OVERSCAN_ROWS = 12;
-
-/**
- * 滚动停止判定的静默时长。
- *
- * 悬浮卡片的改动统计与完整提交信息按哈希单独取回，滚动期间行在变、取了也多半用不上；
- * 因此滚动停止这段时间之后才真正发起请求。
- */
-const SCROLL_SETTLE_MS = 160;
-
-/** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
-const LOAD_MORE_SETTLE_MS = 10000;
 
 /**
  * 画作者头像：依次尝试候选地址，全部失败时回退到用户图标。
@@ -551,190 +536,10 @@ function CommitGraphView({
 		() => layoutCommits(commits, { head, upstream, baseTip, localTip, remoteTip }),
 		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
-	const graphRef = React.useRef<HTMLDivElement | null>(null);
-	/** 可视区高度；窗口化渲染据此决定渲染哪一段。 */
-	const [viewportHeight, setViewportHeight] = React.useState(0);
-	/** 可视窗口的起始行下标；滚动按帧合并后才更新。 */
-	const [topIndex, setTopIndex] = React.useState(0);
-	/** 最近一次算出的行偏移表；滚动处理按它换算起始行。 */
-	const offsetsRef = React.useRef<Float64Array>(new Float64Array(0));
-	/** 已排队但尚未执行的一帧；卸载时取消。 */
-	const cancelFrameRef = React.useRef<(() => void) | null>(null);
-	/** 展开详情的实测高度；没有展开时为 0。 */
-	const [detailHeight, setDetailHeight] = React.useState(0);
-	/** 详情块的尺寸观察者。 */
-	const detailObserverRef = React.useRef<ResizeObserver | null>(null);
-	/** 一次加载完成前不重复请求下一页。 */
-	const loadPendingRef = React.useRef(false);
-	/** 兜底解除占用的定时器：失败时提交列表不变，靠它恢复可重试。 */
-	const settleTimerRef = React.useRef<number | null>(null);
-	/** 上一次触发取数时的滚动位置：同一位置只触发一次，避免惯性滚动连锁取数。 */
-	const lastLoadedAtRef = React.useRef<number | null>(null);
-	/** 上次请求时的提交列表：引用变化说明确实取回了新数据。 */
-	const requestedForRef = React.useRef(commits);
-	const [loadingMore, setLoadingMore] = React.useState(false);
-	// 回调与标志经 ref 读取：调用方每次渲染都会传新的函数，直接进依赖会让下方 effect 每帧重跑。
-	const moreRef = React.useRef(moreCommitsAvailable);
-	moreRef.current = moreCommitsAvailable;
-	const onLoadMoreRef = React.useRef(onLoadMore);
-	onLoadMoreRef.current = onLoadMore;
-	/** 一次取更早完成前不重复请求；取回后按 commits 变化复位。 */
-	/** 悬停回调：滚动期间只记住哈希，停止后由 handleScroll 补取。 */
-	const hoverOrDefer = React.useCallback((hash: string | null) => {
-		pendingHoverRef.current = hash;
-		if (scrollSettleRef.current !== null) return;
-		onHoverCommit?.(hash);
-	}, [onHoverCommit]);
-
+	const rows = layout.rows;
 	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
 
-	/**
-	 * 解除占用，允许下一次滚动再取。
-	 *
-	 * @param allowRetry - 是否清掉「上次触发位置」。成功取回时不清：位置未变说明用户还停在原处，
-	 * 惯性滚动的后续事件不该再触发一页。超时兜底时清，让同一位置在失败后仍能重试。
-	 * @returns 无。
-	 */
-	const releasePending = React.useCallback((allowRetry: boolean) => {
-		if (settleTimerRef.current !== null) {
-			clearTimeout(settleTimerRef.current);
-			settleTimerRef.current = null;
-		}
-		loadPendingRef.current = false;
-		if (allowRetry) lastLoadedAtRef.current = null;
-		setLoadingMore(false);
-	}, []);
-
-	/**
-	 * 滚动到距底部 `AUTO_LOAD_THRESHOLD` 以内时取下一页。
-	 *
-	 * 判定见 `auto-load.ts` 的 `shouldLoadMore`。
-	 *
-	 * @param chain - 是否为「上一页刚取回」之后的自动续取。
-	 * @returns 无。
-	 */
-	const maybeLoadMore = React.useCallback((chain: boolean) => {
-		const element = graphRef.current;
-		const metrics = element === null
-			? null
-			: { scrollHeight: element.scrollHeight, scrollTop: element.scrollTop, clientHeight: element.clientHeight };
-		if (!shouldLoadMore({
-			hasMore: moreRef.current, pending: loadPendingRef.current, metrics, chain,
-			lastLoadedAt: lastLoadedAtRef.current,
-		})) return;
-		lastLoadedAtRef.current = metrics === null ? null : metrics.scrollTop;
-		loadPendingRef.current = true;
-		setLoadingMore(true);
-		// 失败时提交列表不变，超时兜底解除，避免一次失败后自动加载永久停摆。
-		settleTimerRef.current = setTimeout(() => { releasePending(true); }, LOAD_MORE_SETTLE_MS);
-		onLoadMoreRef.current();
-	}, [releasePending]);
-
-	/** 记录展开详情的实测高度，供行偏移计算使用。 */
-	const measureDetail = React.useCallback((node) => {
-		if (detailObserverRef.current !== null) {
-			detailObserverRef.current.disconnect();
-			detailObserverRef.current = null;
-		}
-		if (node === null) { setDetailHeight(0); return; }
-		setDetailHeight(node.clientHeight);
-		if (typeof ResizeObserver === 'undefined') return;
-		const observer = new ResizeObserver(() => { setDetailHeight(node.clientHeight); });
-		observer.observe(node);
-		detailObserverRef.current = observer;
-	}, []);
-
-	React.useEffect(() => () => {
-		if (detailObserverRef.current !== null) detailObserverRef.current.disconnect();
-	}, []);
-
-	/*
-	 * 滚动期间的悬停请求推迟到停止之后。
-	 *
-	 * 滚动时行在快速更替，按当时指针下的行取回数据多半用不上；记录最近一次悬停的哈希，
-	 * 静默 SCROLL_SETTLE_MS 后再补取。
-	 */
-	const pendingHoverRef = React.useRef<string | null>(null);
-	const scrollSettleRef = React.useRef<number | null>(null);
-
-	/**
-	 * 按当前滚动位置重算起始行。
-	 *
-	 * @returns 无。
-	 */
-	const syncTopIndex = React.useCallback(() => {
-		const element = graphRef.current;
-		const offsets = offsetsRef.current;
-		const next = element === null ? 0 : topIndexOf(offsets, element.scrollTop, offsets.length - 1);
-		setTopIndex((previous) => (previous === next ? previous : next));
-	}, []);
-
-	/** 把滚动引起的重算合并到下一帧；同一帧内只排队一次。 */
-	const scheduleTopIndex = React.useCallback(() => {
-		if (cancelFrameRef.current !== null) return;
-		const run = (): void => {
-			cancelFrameRef.current = null;
-			syncTopIndex();
-		};
-		if (typeof requestAnimationFrame === 'function') {
-			const handle = requestAnimationFrame(run);
-			cancelFrameRef.current = () => { cancelAnimationFrame(handle); };
-			return;
-		}
-		const timer = window.setTimeout(run, 0);
-		cancelFrameRef.current = () => { clearTimeout(timer); };
-	}, [syncTopIndex]);
-
-	/** 记录滚动位置、触发窗口重算，并推迟滚动期间的悬停请求。 */
-	const handleScroll = React.useCallback(() => {
-		const element = graphRef.current;
-		if (element === null) return;
-		// 用户滚动：不限制续取，只要到了底部就取。
-		maybeLoadMore(false);
-		scheduleTopIndex();
-		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
-		scrollSettleRef.current = window.setTimeout(() => {
-			scrollSettleRef.current = null;
-			const hash = pendingHoverRef.current;
-			if (hash !== null) onHoverCommit?.(hash);
-		}, SCROLL_SETTLE_MS);
-	}, [maybeLoadMore, onHoverCommit, scheduleTopIndex]);
-
-	React.useEffect(() => () => {
-		if (scrollSettleRef.current !== null) clearTimeout(scrollSettleRef.current);
-		if (cancelFrameRef.current !== null) cancelFrameRef.current();
-	}, []);
-
-	// 记录可视高度：窗口化渲染据此决定渲染哪一段；容器尺寸变化时重算。
-	React.useEffect(() => {
-		const element = graphRef.current;
-		if (element === null) return undefined;
-		const update = (): void => { setViewportHeight(element.clientHeight); };
-		update();
-		if (typeof ResizeObserver === 'undefined') return undefined;
-		const observer = new ResizeObserver(update);
-		observer.observe(element);
-		return () => { observer.disconnect(); };
-	}, []);
-
-	/*
-	 * 取回新数据后解除占用，并在内容仍未填满容器时续取下一页。
-	 *
-	 * 续取只补「首屏填不满」这一种情形：容器已可滚动时不续取，等用户再滚动触发，
-	 * 否则停在底部会一页接一页地连锁加载。
-	 */
-	React.useEffect(() => {
-		if (commits === requestedForRef.current) return;
-		requestedForRef.current = commits;
-		// 成功取回：保留「上次触发位置」，让惯性滚动的后续事件不再触发一页。
-		releasePending(false);
-		maybeLoadMore(true);
-	}, [commits, moreCommitsAvailable, releasePending, maybeLoadMore]);
-
-	React.useEffect(() => () => { if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current); }, []);
-
-	const rows = layout.rows;
 	/*
 	 * 提交按哈希索引与选中行下标都记忆化：两者都是 O(提交数)，而滚动会逐帧重渲染，
 	 * 放在渲染体内会让每次滚动都重建一份（上万条时每帧约 1MB，持续滚动即上百 MB 垃圾）。
@@ -748,33 +553,9 @@ function CommitGraphView({
 		() => (selectedHash === null ? -1 : rows.findIndex((row) => row.hash === selectedHash)),
 		[rows, selectedHash],
 	);
-	/*
-	 * 窗口化渲染：只挂载可视区附近的行，未渲染部分用等高空占位撑起滚动条。
-	 *
-	 * 不这样做时每条提交都是一个真实 DOM 行（含泳道 SVG 与引用标记），翻到几百条就是几百个节点常驻。
-	 * 行偏移按 ROW_HEIGHT 累加，展开详情的那一行额外加上它的实测高度，下方各行因此不会错位。
-	 */
-	const offsets = React.useMemo(() => {
-		const out = new Float64Array(rows.length + 1);
-		for (let index = 0; index < rows.length; index++) {
-			out[index + 1] = out[index] + ROW_HEIGHT + (index === selectedIndex ? detailHeight : 0);
-		}
-		return out;
-	}, [rows, selectedIndex, detailHeight]);
-	offsetsRef.current = offsets;
-	/*
-	 * 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。
-	 *
-	 * 同一区间也作为「当前可见窗口」上报：图形区标题栏的批量翻译只译这一段内的提交。
-	 */
-	const range = React.useMemo(
-		() => visibleRange(offsets, topIndex, viewportHeight, OVERSCAN_ROWS, rows.length),
-		[offsets, topIndex, viewportHeight, rows.length],
-	);
-	/*
-	 * 行偏移或可视高度变化后按当前滚动位置重算起始行：展开详情会改变行高，只靠滚动事件会对不上。
-	 */
-	React.useEffect(() => { syncTopIndex(); }, [offsets, viewportHeight, syncTopIndex]);
+	const { graphRef, offsets, range, loadingMore, handleScroll, measureDetail, hoverOrDefer } = useGraphWindowing({
+		rows, selectedIndex, commits, moreCommitsAvailable, onLoadMore, onHoverCommit,
+	});
 
 	// 上报可见窗口内的提交：标题栏的批量翻译按这一批下发。
 	const visibleCommits = React.useMemo(() => {

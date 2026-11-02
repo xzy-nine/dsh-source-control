@@ -3,7 +3,24 @@
  */
 
 /** API 路由，与宿主注册的路径一致。 */
-const API_PATH = '/dsh-source-control/gg/api';
+export const API_PATH = '/dsh-source-control/gg/api';
+
+/** 命令失败的转报钩子；由 ./log.ts 安装，未安装时不做任何事。 */
+type ApiFailureReporter = (level: 'W' | 'E', tag: string, message: string) => void;
+
+/** 当前安装的转报钩子。 */
+let reportApiFailure: ApiFailureReporter | undefined;
+
+/**
+ * 安装命令失败的转报钩子。
+ *
+ * 钩子由 ./log.ts 安装：transport 不依赖日志模块，避免两者互相导入。
+ *
+ * @param reporter - 转报函数；传 undefined 卸载。
+ */
+export function setApiFailureReporter(reporter: ApiFailureReporter | undefined): void {
+	reportApiFailure = reporter;
+}
 
 /**
  * 调用一条宿主命令。
@@ -35,12 +52,22 @@ export async function callApi(cwd: string, message: Record<string, unknown>, sig
  * @returns 宿主响应，含可能的 `error` 字段。
  */
 export async function callApiRaw(cwd: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
-	const response = await fetch(API_PATH, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ repo: cwd, ...message }),
-		signal,
-	});
+	// 日志上报自身失败不再上报：否则一次失败会引出下一次上报。
+	const command = typeof message.command === 'string' ? message.command : '';
+	const report = command === 'logEvent' ? undefined : reportApiFailure;
+	let response: Response;
+	try {
+		response = await fetch(API_PATH, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ repo: cwd, ...message }),
+			signal,
+		});
+	} catch (error) {
+		// 取消不是失败：面板中止在途请求是常规操作。
+		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${error instanceof Error ? error.message : String(error)}`);
+		throw error;
+	}
 	const text = await response.text();
 	let payload: Record<string, unknown> = {};
 	try {
@@ -51,8 +78,14 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 	}
 	// 宿主在非 2xx（如未知命令）时同样带 `error` 文本，状态码只在没有该文本时兜底。
 	const { error } = payload;
-	if (typeof error === 'string' && error !== '') return payload;
-	if (!response.ok) return { ...payload, error: `宿主返回 ${response.status}` };
+	if (typeof error === 'string' && error !== '') {
+		report?.('W', 'api', `宿主命令 ${command} 返回失败：${error}`);
+		return payload;
+	}
+	if (!response.ok) {
+		report?.('E', 'api', `宿主命令 ${command} 的 HTTP 响应异常，状态码 ${String(response.status)}`);
+		return { ...payload, error: `宿主返回 ${response.status}` };
+	}
 	return payload;
 }
 

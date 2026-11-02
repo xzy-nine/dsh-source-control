@@ -12,6 +12,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tempPath } from './harness.mjs';
+
+/* 本文件的用例必须串行执行：用例逐个替换 globalThis.sessionStorage 与 fetch */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
@@ -281,9 +284,27 @@ function makeSessionStorage() {
  */
 let moduleGeneration = 0;
 
+/** 本文件首次改动 sessionStorage 前的原值描述符。 */
+const savedSessionStorage = new Map();
+
+/** 本文件经 tempPath 建的目录；文件级 after 统一删除。 */
+const tempDirs = [];
+
+/** 文件级还原：sessionStorage 恢复成启动时的样子，并清掉临时目录。 */
+test.after(() => {
+	const descriptor = savedSessionStorage.get('descriptor');
+	if (descriptor === undefined) delete globalThis.sessionStorage;
+	else Object.defineProperty(globalThis, 'sessionStorage', descriptor);
+	for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 async function loadDraftModules() {
 	moduleGeneration += 1;
 	const sessionStorage = makeSessionStorage();
+	// 记录原值，供用例结束后按原样还原；直接 delete 会抹掉启动时存在的全局。
+	if (!savedSessionStorage.has('descriptor')) {
+		savedSessionStorage.set('descriptor', Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage'));
+	}
 	globalThis.sessionStorage = sessionStorage;
 	// 带查询串导入：每次取独立模块实例，避免模块缓存让上一次的桩继续生效。
 	const storage = await import(pathToFileURL(join(root, 'src', 'client', 'panel', 'storage.ts')).href + '?v=' + moduleGeneration);
@@ -320,7 +341,8 @@ function installFetchStub(hostEntries) {
 
 test('草稿按仓库根绑定：同一工作区两个仓库各写各的', async () => {
 	const { storage, sessionStorage } = await loadDraftModules();
-	const cwd = join(tmpdir(), 'gg-refresh-workspace');
+	const cwd = tempPath('gg-refresh-workspace-');
+	tempDirs.push(cwd);
 	const repoA = join(cwd, 'repo-a');
 	const repoB = join(cwd, 'repo-b');
 
@@ -350,7 +372,8 @@ test('草稿按仓库根绑定：同一工作区两个仓库各写各的', async
 
 test('切换仓库：上一个仓库的草稿写回它自己的键', async () => {
 	const { storage } = await loadDraftModules();
-	const cwd = join(tmpdir(), 'gg-refresh-switch');
+	const cwd = tempPath('gg-refresh-switch-');
+	tempDirs.push(cwd);
 	const repoA = join(cwd, 'repo-a');
 	const repoB = join(cwd, 'repo-b');
 	const keyA = storage.draftKeyOf(repoA);
@@ -375,7 +398,8 @@ test('切换仓库：上一个仓库的草稿写回它自己的键', async () =>
 
 test('草稿不落宿主：宿主 entries 不出现 ggg-commit-msg:* 新写入', async () => {
 	const { storage, state, sessionStorage } = await loadDraftModules();
-	const cwd = join(tmpdir(), 'gg-refresh-host');
+	const cwd = tempPath('gg-refresh-host-');
+	tempDirs.push(cwd);
 	const repoA = join(cwd, 'repo-a');
 	const keyA = storage.draftKeyOf(repoA);
 

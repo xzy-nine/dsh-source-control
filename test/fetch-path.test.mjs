@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/* 本文件的用例必须串行执行：用例靠真实时钟越过缓存 TTL，且计数子进程数 */
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
@@ -26,10 +28,13 @@ cp.spawn = (command, args, options) => {
 };
 syncBuiltinESMExports();
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 临时目录登记表；文件级 after 统一删除并还原 spawn 桩。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+	// 还原模块级 spawn 桩，避免同进程后续用例看到本文件的计数包装。
+	cp.spawn = originalSpawn;
+	syncBuiltinESMExports();
 });
 
 /** 清空子进程记录。 */

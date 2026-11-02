@@ -36,6 +36,8 @@ const bundled = await build({
 	minifyWhitespace: true,
 	minifySyntax: true,
 	legalComments: 'none',
+	// 版本号由 package.json 注入：反馈正文据此报告插件版本。
+	define: { __DSH_PLUGIN_VERSION__: JSON.stringify(pkg.version) },
 });
 
 const outputs = bundled.outputFiles ?? [];

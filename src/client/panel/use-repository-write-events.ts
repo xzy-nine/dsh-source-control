@@ -11,7 +11,8 @@
  * 与文件改动刷新同样的门控：面板正忙时挂起，连续变更按冷却节流。
  */
 import React from 'react';
-import { matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
+import { logClient, matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
+import { refreshRepoSync } from './repo-preload.ts';
 import { dropGraphWindows } from './use-graph-data.ts';
 import { createRefreshScheduler } from './refresh-scheduler.ts';
 import { isRepoBusy } from './busy.ts';
@@ -73,9 +74,19 @@ export function useRepositoryWriteEvents({
 
 		const unsubscribe = subscribeRepositoryWrites({
 			onWrite: (event) => {
+				/*
+				 * 仓库树里该仓库的领先/落后同样要更新：那一份只在预加载与整棵重扫时取过，
+				 * 不随写事件重取的话，抓取或推送之后未选中仓库的行会一直显示旧值。
+				 * 这一项与选中仓库无关，因此不参与下面的过滤。
+				 */
+				const root = cwdRef.current;
+				if (root !== null && root !== '' && matchesRepository(root, event.repo)) {
+					refreshRepoSync(root, event.repo);
+				}
 				const target = targetRef.current;
 				if (target === null) return;
 				if (!matchesRepository(target, event.repo)) return;
+				logClient('D', 'events', `收到仓库写事件，安排刷新：${event.repo}`);
 				scheduler.scheduleRefresh();
 			},
 			onTree: (event) => {
@@ -83,13 +94,16 @@ export function useRepositoryWriteEvents({
 				if (root === null || root === '') return;
 				// 结构事件可能来自工作区内的任一仓库：命中即按最新结构重取整棵树。
 				if (!matchesRepository(root, event.repo) && !matchesRepository(event.repo, root)) return;
+				logClient('D', 'events', `收到仓库结构事件，重取仓库树：${event.repo}`);
 				refreshTreeRef.current();
 			},
 		});
+		logClient('I', 'events', '已订阅宿主事件流（仓库写事件与仓库结构事件）');
 
 		return () => {
 			scheduler.dispose();
 			unsubscribe();
+			logClient('I', 'events', '已取消订阅宿主事件流');
 		};
 	}, [enabled, busyRef]);
 }

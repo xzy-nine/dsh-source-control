@@ -70,9 +70,10 @@ function buildChangeTree<Entry extends TreeEntry>(entries: readonly Entry[]): Ch
 
 /** 把文件夹树拍平成可见行；出现在 collapsed 里的文件夹不展开其子节点。 */
 function flattenChangeTree<Entry extends TreeEntry>(
-	node: ChangeTreeNode<Entry>, prefix: string, depth: number, collapsed: ReadonlySet<string>, out: ChangeRow<Entry>[],
+	node: ChangeTreeNode<Entry>, prefix: string, depth: number, collapsed: ReadonlySet<string>, out: ChangeRow<Entry>[], descending: boolean,
 ): void {
 	const folderNames = [...node.folders.keys()].sort();
+	if (descending) folderNames.reverse();
 	for (const name of folderNames) {
 		// 单链合并：目录下只有一个子目录、自身又没有文件时，逐级并入同一行。
 		// 否则每级都只含一个子目录，会得到一串没有信息量的层级。
@@ -89,9 +90,10 @@ function flattenChangeTree<Entry extends TreeEntry>(
 		}
 		const open = !collapsed.has(path);
 		out.push({ kind: 'folder', name: label, path, depth, open, count: child.count });
-		if (open) flattenChangeTree(child, path, depth + 1, collapsed, out);
+		if (open) flattenChangeTree(child, path, depth + 1, collapsed, out, descending);
 	}
 	const files = node.files.slice().sort((a, b) => a.path.localeCompare(b.path));
+	if (descending) files.reverse();
 	for (const entry of files) out.push({ kind: 'file', entry, depth });
 }
 
@@ -101,14 +103,18 @@ function flattenChangeTree<Entry extends TreeEntry>(
  * 从最早出现分叉的公共目录开始显示，而不是从根逐级展开：根到该目录之间每级都只有一个
  * 子目录，逐级展示只会得到一串没有信息量的层级。
  *
+ * 同层的文件夹与文件默认按路径升序排列，与更改区一致；`descending` 为 true 时倒序，
+ * 供日志这类「最新的在最前」的列表使用。
+ *
  * @param entries - 条目列表，路径以 `/` 分隔且相对仓库根。
  * @param collapsed - 已折叠的目录路径集合。
+ * @param descending - 同层是否按路径倒序。
  * @returns 可见行序列。
  */
 export function changeRowsOf<Entry extends TreeEntry>(
-	entries: readonly Entry[], collapsed: ReadonlySet<string>,
+	entries: readonly Entry[], collapsed: ReadonlySet<string>, descending = false,
 ): ChangeRow<Entry>[] {
 	const rows: ChangeRow<Entry>[] = [];
-	flattenChangeTree(buildChangeTree(entries), '', 1, collapsed, rows);
+	flattenChangeTree(buildChangeTree(entries), '', 1, collapsed, rows, descending);
 	return rows;
 }

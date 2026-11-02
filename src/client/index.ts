@@ -9,15 +9,24 @@
  * 带行号的差异视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
  */
 import React from 'react';
+import {
+	IconChevronDownOutlineRegular, IconCompareSplitOutlineRegular, IconInspectOutlineRegular,
+	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
+} from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
-import { diffFileAddress, gitDiffAddress, parseGitDiffAddress } from './diff/resource-path.ts';
-import { openDiffInBetterSidebar, resolveBetterSidebarDiff } from './diff/better-sidebar-diff.ts';
-import { fileDiffContent, type FileDiffContent } from './api/index.ts';
+import { diffStats } from './diff/diff-stats.ts';
+import { readDiffView, writeDiffView } from './diff/diff-view.ts';
+import {
+	diffFileAddress, gitDiffAddress, gitDiffRequest, gitDiffTitle, parseGitDiffAddress, type GitDiffScope,
+} from './diff/resource-path.ts';
+import { NativeOpenControl } from './ui/native-open.ts';
+import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
 import css from './css/index.module.css';
+import diffCss from './css/file-diff.module.css';
 import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-source-control/panel';
@@ -65,6 +74,15 @@ function GitGraphTab(props) {
 			{ sidebarRight: props.sidebarRightService, terminals: props.terminals }, targetSessionId, command,
 		);
 	}, [props.terminals, props.sidebarRightService]);
+	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
+	const revealPath = React.useCallback((path: string): void => {
+		if (typeof props.revealPath !== 'function') return;
+		try {
+			void Promise.resolve(props.revealPath(path)).catch(() => { /* 定位失败不影响面板 */ });
+		} catch {
+			/* 同上报错忽略 */
+		}
+	}, [props.revealPath]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
 	const onOpenDiff = React.useCallback((tab) => {
@@ -73,7 +91,7 @@ function GitGraphTab(props) {
 		const path = String(diff.path ?? '');
 		// 未跟踪的新文件没有可比差异：交给普通文件页打开，地址为 dsh-resource://file/…。
 		if (diff.kind === 'file') {
-			const address = diffFileAddress(sessionId, cwd, String(diff.repoRoot ?? cwd ?? ''), path);
+			const address = diffFileAddress(sessionId, String(diff.repoRoot ?? cwd ?? ''), path);
 			if (address === null) return;
 			try {
 				tabActions.openResource(address);
@@ -82,27 +100,30 @@ function GitGraphTab(props) {
 			}
 			return;
 		}
-		// 打开这一刻才探测：设置页的启用开关要等设置 RPC 返回，提前判定会把「暂不可用」记成可用，
-		// 而该插件对已关闭的类型是静默 no-op，届时点击会毫无反应。
-		const betterSidebar = resolveBetterSidebarDiff(props.getBetterSidebar?.());
-		// 换算不出的差异（两提交区间对比、缺哈希）同样返回 false，一并回退。
-		if (openDiffInBetterSidebar(betterSidebar, diff, { sessionId, ...(typeof cwd === 'string' ? { cwd } : {}) })) return;
 		const hash = diff.kind === 'worktree' ? '*' : (diff.hashFull ?? diff.hash ?? '*');
-		const address = gitDiffAddress(sessionId, hash, path);
 		const staged = diff.kind === 'worktree' && diff.staged === true;
 		const repoRoot = typeof diff.repoRoot === 'string' ? diff.repoRoot : null;
 		// 两提交对比：旧侧哈希随参数传递，差异页据此取 `baseHash → hash` 的内容。
 		const baseHash = typeof diff.baseHash === 'string' && diff.baseHash !== '' ? diff.baseHash : undefined;
+		// 作用域进地址，文件与文件列表进参数：同一作用域共用一个页，下拉框就地切换。
+		const scope: GitDiffScope = baseHash !== undefined
+			? { kind: 'compare', baseHash, hash }
+			: hash === '*'
+				? { kind: 'worktree', staged }
+				: { kind: 'commit', hash };
+		const address = gitDiffAddress(sessionId, scope);
+		const files = Array.isArray(diff.files) ? diff.files.filter((item): item is string => typeof item === 'string') : [];
 		try {
-			tabActions.openResource(address, { params: { staged, repoRoot, baseHash } });
+			tabActions.openResource(address, { params: { path, files, repoRoot } });
 		} catch (error) {
 			void error;
 		}
-	}, [tabActions, sessionId, cwd, props.getBetterSidebar]);
+	}, [tabActions, sessionId, cwd]);
 	return React.createElement(GitGraphPanel, {
 		sessionId,
 		cwd: typeof cwd === 'string' ? cwd : null,
 		onOpenDiff,
+		onRevealPath: revealPath,
 		pickDirectory,
 		runInTerminal,
 		getSessions: props.getSessions,
@@ -143,71 +164,169 @@ function GitGraphHeaderAction(props) {
  * @returns 差异视图元素。
  */
 function GitDiffTab(props) {
-	const { useSessions, useTabInfo } = props;
+	const { sessionId, useSessions, useTabInfo, clientContext } = props;
 	const hook = typeof useSessions === 'function' ? useSessions : EMPTY_SESSIONS;
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
+	const tabActions = tabInfo?.tab?.actions;
 	const address = tabInfo?.tab?.navigation?.address ?? '';
 	const navParams = tabInfo?.tab?.navigation?.params;
 	const parsed = React.useMemo(() => parseGitDiffAddress(address), [address]);
-	const staged = navParams?.staged === true;
+	// 作用域来自地址；当前文件与文件列表来自导航参数，下拉框就地切换文件而不换页。
+	const scope = parsed?.scope ?? null;
+	const request = scope === null ? null : gitDiffRequest(scope);
+	// 取数坐标拆成原始值：依赖里出现每次渲染新建的对象会让加载反复重跑。
+	const commitHash = request?.commitHash ?? '*';
+	const staged = request?.staged === true;
+	const baseHash = request?.baseHash ?? '';
+	const files = React.useMemo<readonly string[]>(
+		() => (Array.isArray(navParams?.files) ? navParams.files.filter((item): item is string => typeof item === 'string') : []),
+		[navParams],
+	);
+	const currentPath = typeof navParams?.path === 'string' && navParams.path !== ''
+		? navParams.path
+		: (parsed?.legacyPath ?? '');
 	const repoRoot = typeof navParams?.repoRoot === 'string' ? navParams.repoRoot : null;
-	// 两提交对比的旧侧哈希；无此项时按单提交（与其父提交）差异处理。
-	const baseHash = typeof navParams?.baseHash === 'string' ? navParams.baseHash : '';
 	const cwd = hook((sessions) => {
 		if (parsed === null) return null;
 		const entry = sessions?.byId?.[parsed.sessionId];
 		return entry?.cwd ?? null;
 	});
 	const gitCwd = repoRoot ?? cwd;
+	const [menuOpen, setMenuOpen] = React.useState(false);
 	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
-	const [wrap, setWrap] = React.useState(true);
+	const [wrap, setWrap] = React.useState(() => readDiffView(address).wrap);
 	// 默认左右并排：FileDiff 的 split 模式（单侧改动时它会自动退回单列）。
-	const [split, setSplit] = React.useState(true);
+	const [split, setSplit] = React.useState(() => readDiffView(address).split);
+	/** 在同一页里切到另一个文件：只改导航参数，页身份不变。 */
+	const switchFile = React.useCallback((path: string) => {
+		if (tabActions === undefined || path === currentPath) return;
+		try {
+			tabActions.openResource(address, { params: { path, files, repoRoot } });
+		} catch (error) {
+			void error;
+		}
+	}, [tabActions, address, currentPath, files, repoRoot]);
 	const load = React.useCallback(() => {
-		if (parsed === null || typeof gitCwd !== 'string') return;
+		if (parsed === null || currentPath === '' || typeof gitCwd !== 'string') return;
 		setLoading(true);
 		setDiffData(null);
-		fileDiffContent(gitCwd, parsed.hash, parsed.path, staged, baseHash)
+		fileDiffContent(gitCwd, commitHash, currentPath, staged, baseHash)
 			.then((data) => { setDiffData(data); setLoading(false); })
-			.catch(() => { setDiffData(null); setLoading(false); });
-	}, [parsed, gitCwd, staged, baseHash]);
+			.catch((error: unknown) => {
+				setDiffData(null);
+				setLoading(false);
+				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${staged ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+			});
+	}, [parsed, commitHash, currentPath, gitCwd, staged, baseHash]);
 	React.useEffect(() => {
 		load();
 	}, [load]);
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
-	// 比较状态：加载中、无法读取，或可绘制的文本比较。
+	// 比较状态：加载中、无法读取、二进制，或可绘制的文本比较。
 	const state: ChangesDiffState = loading
 		? 'loading'
 		: diffData === null
 			? 'error'
-			: {
-				kind: 'text', path: parsed.path,
-				before: diffData.oldText !== null, after: diffData.newText !== null,
-				hunks: diffData.hunks, coarse: false,
-			};
+			: diffData.binary
+				? { kind: 'binary', path: currentPath }
+				: {
+					kind: 'text', path: currentPath,
+					before: diffData.oldText !== null, after: diffData.newText !== null,
+					hunks: diffData.hunks, coarse: false,
+				};
+	const counts = diffData !== null && !diffData.binary ? diffStats(diffData.hunks) : null;
+	/** 原生打开使用的绝对路径：仓库根（或会话工作区根）加仓库相对路径。 */
+	const absoluteDiffPath = (() => {
+		const root = (repoRoot ?? (typeof cwd === 'string' ? cwd : '')).replace(/\\/g, '/').replace(/\/+$/, '');
+		if (root === '') return currentPath;
+		return currentPath.startsWith('/') || /^[a-zA-Z]:\//.test(currentPath) ? currentPath : `${root}/${currentPath}`;
+	})();
+	/** 在侧边栏打开整个文件：地址按仓库根换算，交给宿主右侧栏认领。 */
+	const openWholeFile = () => {
+		if (tabActions === undefined) return;
+		const address = diffFileAddress(sessionId, repoRoot ?? (typeof cwd === 'string' ? cwd : ''), currentPath);
+		if (address === null) return;
+		try {
+			tabActions.openResource(address);
+		} catch (error) {
+			void error;
+		}
+	};
 	return React.createElement(
 		'div',
 		{ className: css.diffTab },
-		React.createElement('div', { className: css.diffTabHead },
-			React.createElement('span', { className: css.diffTabPath }, parsed.path),
-			React.createElement('span', { className: css.diffTabHash },
-				baseHash !== ''
-					? `${baseHash.slice(0, 7)} → ${parsed.hash.slice(0, 7)}`
-					: parsed.hash === '*' ? (staged ? '暂存区' : '工作区') : parsed.hash.slice(0, 7)),
-			React.createElement('button', {
-				type: 'button', className: css.diffTabToggle, 'aria-pressed': split,
-				title: split ? '切换为统一视图' : '切换为左右并排',
-				onClick: () => { setSplit((value) => !value); },
-			}, split ? '并排' : '统一'),
-			React.createElement('button', {
-				type: 'button', className: css.diffTabToggle, 'aria-pressed': wrap,
-				title: wrap ? '不换行' : '换行',
-				onClick: () => { setWrap((value) => !value); },
-			}, wrap ? '不换行' : '换行'),
+		React.createElement('div', { className: diffCss.header },
+			// 左侧是文件下拉：列出本次比较涉及的同类文件，选中即在同一页里切换。
+			files.length > 1
+				? React.createElement(Menu, {
+					className: css.fileMenu,
+					open: menuOpen, autoFocus: true, portal: true, dense: true, align: 'start',
+					onClose: () => { setMenuOpen(false); },
+					items: files.map((item) => ({ id: item, label: item })),
+					selectedId: currentPath,
+					onSelect: (id: string) => { setMenuOpen(false); switchFile(id); },
+					anchor: React.createElement('button', {
+						type: 'button', className: css.fileButton, 'aria-haspopup': 'menu',
+						'aria-expanded': menuOpen, 'aria-label': '选择要查看的文件', title: currentPath,
+						'data-diff-file': currentPath,
+						onClick: () => { setMenuOpen((value) => !value); },
+					},
+					React.createElement(PathLabel, { path: currentPath }),
+					React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
+				})
+				: React.createElement('span', { className: css.fileButton, 'data-diff-file': currentPath, title: currentPath },
+					React.createElement(PathLabel, { path: currentPath })),
+			React.createElement('span', { className: css.diffTabHash }, gitDiffTitle(scope ?? { kind: 'worktree', staged: false })),
+			counts !== null && React.createElement('span', { className: css.counts },
+				diffData?.binary === true
+					? React.createElement('span', { className: css.label }, '二进制')
+					: React.createElement(React.Fragment, null,
+						React.createElement('span', { className: css.added }, `+${counts.added}`),
+						React.createElement('span', { className: css.deleted }, `-${counts.deleted}`))),
+			React.createElement('span', { className: css.tools },
+				React.createElement(Tooltip, {
+					label: split ? '切换为单栏对比' : '切换为左右对比', side: 'bottom', delayMs: 500,
+					children: React.createElement('button', {
+						type: 'button', className: css.tool, 'aria-pressed': split, 'aria-label': '左右对比',
+						'data-review-tool': 'split',
+						onClick: () => {
+							setSplit((value) => {
+								writeDiffView(address, { split: !value, wrap: readDiffView(address).wrap });
+								return !value;
+							});
+						},
+					}, React.createElement(IconCompareSplitOutlineRegular, { className: css.compareIcon })),
+				}),
+				React.createElement(Tooltip, {
+					label: wrap ? '关闭自动换行' : '开启自动换行', side: 'bottom', delayMs: 500,
+					children: React.createElement('button', {
+						type: 'button', className: css.tool, 'aria-pressed': wrap, 'aria-label': '自动换行',
+						'data-review-tool': 'wrap',
+						onClick: () => {
+							setWrap((value) => {
+								writeDiffView(address, { split: readDiffView(address).split, wrap: !value });
+								return !value;
+							});
+						},
+					}, wrap ? React.createElement(IconNowrapFillRegular) : React.createElement(IconWrapFillRegular)),
+				}),
+				React.createElement(Tooltip, {
+					label: '在侧边栏打开整个文件', side: 'bottom', delayMs: 500,
+					children: React.createElement('button', {
+						type: 'button', className: css.tool, 'aria-label': `在侧边栏打开 ${currentPath}`,
+						'data-review-tool': 'open-file',
+						onClick: openWholeFile,
+					}, React.createElement(IconInspectOutlineRegular)),
+				}),
+				React.createElement(NativeOpenControl, {
+					ctx: clientContext,
+					path: absoluteDiffPath,
+				}),
+			),
 		),
 		React.createElement(
 			'div',
@@ -222,7 +341,8 @@ function GitDiffTitle(props) {
 	const tabInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo() : null;
 	const address = tabInfo?.tab?.navigation?.address ?? '';
 	const parsed = parseGitDiffAddress(address);
-	const name = parsed !== null ? (parsed.path.split('/').pop() ?? 'Diff') : 'Diff';
+	// 页标题给比较作用域；文件名在正文的下一行单独给出。
+	const name = parsed !== null ? gitDiffTitle(parsed.scope) : 'Diff';
 	return React.createElement('span', { className: css.chip }, name);
 }
 
@@ -269,6 +389,9 @@ function startWorkspacePreload(ctx) {
  * @returns 无。
  */
 export function apply(ctx) {
+	// 浏览器半边的日志走宿主：装上失败转报钩子，并把装载记进日志。
+	installClientLog();
+	logClient('I', 'panel', `源代码管理面板已装载，命令地址 ${API_PATH}`);
 	// ── 后台预加载仓库树 ───────────────────────────────────────
 	// 与页签是否打开无关：页签打开时直接呈现已取回的树。
 	if (typeof ctx.effect === 'function') ctx.effect(() => startWorkspacePreload(ctx));
@@ -300,22 +423,37 @@ export function apply(ctx) {
 			patterns: ['dsh-resource://git-diff/**'],
 			title: (address) => {
 				const parsed = parseGitDiffAddress(address);
-				return parsed !== null ? (parsed.path.split('/').pop() ?? 'Diff') : 'Diff';
+				return parsed !== null ? gitDiffTitle(parsed.scope) : 'Diff';
 			},
 		}));
 	}
 
 	// 目录选择器来自 ui-workspace、终端来自 ui-sidebar-terminal；都可能未装载，
 	// 因此在渲染期按需读取，缺失时由面板提示。
+	/** 在系统文件管理器中定位一个路径；宿主不具备桌面能力时返回 false。 */
+	const revealPath = async (path: string): Promise<boolean> => {
+		try {
+			const remote = ctx.get?.('remote') as { session?: { openWorkspacePath?: (request: { path: string; action?: string }) => Promise<{ ok?: boolean }> } } | undefined;
+			const session = remote?.session;
+			if (session === undefined || typeof session.openWorkspacePath !== 'function') {
+				logClient('W', 'open-in-app', `宿主未提供文件管理器能力，无法定位路径 ${path}`);
+				return false;
+			}
+			const result = await session.openWorkspacePath({ path, action: 'reveal' });
+			if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝在文件管理器中打开路径 ${path}`);
+			return result.ok === true;
+		} catch (error) {
+			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+	};
 	const gitGraphTab = (props) => React.createElement(GitGraphTab, {
 		...props,
 		getSessions: () => ctx.get?.('sessions'),
+		revealPath,
 		uiWorkspace: ctx.get?.('uiWorkspace'),
 		terminals: ctx.get?.('webTerminals'),
 		sidebarRightService: ctx.get?.('sidebarRight'),
-		// better-sidebar 未装载时为 undefined，面板据此回退到本插件自己的差异页。
-		// 传取值函数而不是取值：该插件的客户端半边可能晚于本插件激活，且服务本身要等设置就绪。
-		getBetterSidebar: () => ctx.get?.('betterSidebar'),
 	});
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: TAB_ID },
@@ -327,7 +465,7 @@ export function apply(ctx) {
 	)));
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
 		{ name: 'sidebar.right.pane.tab', key: DIFF_TAB_ID },
-		GitDiffTab,
+		(props) => React.createElement(GitDiffTab, { ...props, clientContext: ctx }),
 	)));
 	ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
 		{ name: 'sidebar.right.pane.tab.title', key: DIFF_TAB_ID },
@@ -358,4 +496,9 @@ export function apply(ctx) {
 	}
 }
 
-export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs'];
+/*
+ * `remote` 与 `remote.session` 是宿主 Remote 命名空间，"在文件管理器中打开"走它。
+ * 两项都要：Cordis 会按 inject 列表校验嵌套属性访问（`ctx.get('remote').session`），
+ * 缺一项会抛 `cannot get property "remote.session" without inject`。
+ */
+export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];

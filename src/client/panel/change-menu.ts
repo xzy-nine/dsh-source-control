@@ -20,10 +20,16 @@ export interface ChangeMenuDeps {
 	readonly busy: boolean;
 	/** 该行是否属于「已暂存的更改」分组。 */
 	readonly staged: boolean;
+	/** 条目是否已在上限处截断：为 true 时路径数量只是下限。 */
+	readonly truncated: boolean;
 	/** 暂存路径。 */
 	readonly onStage: (paths: readonly string[]) => void;
 	/** 取消暂存路径。 */
 	readonly onUnstage: (paths: readonly string[]) => void;
+	/** 暂存该分组内的全部改动：下发集合命令，不逐个传路径。 */
+	readonly onStageAll: () => void;
+	/** 取消暂存该分组内的全部改动。 */
+	readonly onUnstageAll: () => void;
 	/** 丢弃一个文件行的改动。 */
 	readonly onDiscard: (paths: readonly string[], untracked: boolean) => void;
 	/** 丢弃某个文件夹下的全部改动。 */
@@ -48,8 +54,15 @@ export interface ChangeMenuContext {
 	readonly deps: ChangeMenuDeps;
 	/** 文件夹行或文件行的路径；分组菜单为 null。 */
 	readonly path: string | null;
-	/** 文件夹行下的路径集合、文件行的单一路径、分组内的全部路径。 */
+	/**
+	 * 下发给命令的 pathspec。
+	 *
+	 * 文件行是自身路径；文件夹行是带尾斜杠的目录（目录行按目录整体执行，不逐条列子文件）；
+	 * 分组为空数组，由集合命令代表「全部」。
+	 */
 	readonly paths: readonly string[];
+	/** 菜单名称里的数量：文件夹行是子树内的文件数，文件行为 1，分组为组内条目数。 */
+	readonly count: number;
 	/** 文件行的条目；文件夹行与分组菜单为 null。 */
 	readonly entry: WorkingTreeEntry | null;
 	/** 文件行是否是未跟踪文件。 */
@@ -64,12 +77,13 @@ export interface ChangeMenuContext {
  * @returns 菜单名称；已代入路径数量。
  */
 function labelOf(meta: ChangeMenuActionMeta, ctx: ChangeMenuContext): string {
-	return titleOf(meta, ctx.target).replace('{count}', String(ctx.paths.length));
+	const suffix = ctx.deps.truncated ? '+' : '';
+	return titleOf(meta, ctx.target).replace('{count}', String(ctx.count) + suffix);
 }
 
-/** 是否禁用：忙碌或没有可操作的路径。 */
+/** 是否禁用：忙碌或没有可操作的目标。 */
 function disabledFor(ctx: ChangeMenuContext): boolean {
-	return ctx.deps.busy || ctx.paths.length === 0;
+	return ctx.deps.busy || ctx.count === 0;
 }
 
 /** 各操作的处理函数；键为 JSON 里给出的 id，缺一个会编译报错。 */
@@ -79,7 +93,11 @@ const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMen
 		: { title: labelOf(meta, ctx), onClick: () => { ctx.deps.onOpenFile(ctx.entry as WorkingTreeEntry); } }),
 	stage: (ctx, meta) => (ctx.deps.staged
 		? null
-		: { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => { ctx.deps.onStage(ctx.paths); } }),
+		: {
+			title: labelOf(meta, ctx), disabled: disabledFor(ctx),
+			// 分组标题的「暂存全部」走集合命令：几十万个路径逐个下发既慢又超出请求体量级。
+			onClick: () => { if (ctx.target === 'group') ctx.deps.onStageAll(); else ctx.deps.onStage(ctx.paths); },
+		}),
 	discard: (ctx, meta) => {
 		if (ctx.deps.staged) return null;
 		const base = { title: labelOf(meta, ctx), danger: meta.danger, disabled: disabledFor(ctx) };
@@ -88,7 +106,10 @@ const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMen
 		return { ...base, onClick: () => { ctx.deps.onDiscard(ctx.paths, ctx.untracked); } };
 	},
 	unstage: (ctx, meta) => (ctx.deps.staged
-		? { title: labelOf(meta, ctx), disabled: disabledFor(ctx), onClick: () => { ctx.deps.onUnstage(ctx.paths); } }
+		? {
+			title: labelOf(meta, ctx), disabled: disabledFor(ctx),
+			onClick: () => { if (ctx.target === 'group') ctx.deps.onUnstageAll(); else ctx.deps.onUnstage(ctx.paths); },
+		}
 		: null),
 	// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
 	addToGitignore: (ctx, meta) => (ctx.deps.staged || ctx.path === null
