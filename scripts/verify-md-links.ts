@@ -156,17 +156,18 @@ export interface MarkdownLinkCache {
  * @returns 每一段都精确匹配时为 true；某段不存在时为 false。
  */
 function isCaseExact(absPath: string): boolean {
-  const parts = resolve(absPath).split(/[\\/]/).filter((part) => part !== '')
-  let current = resolve(absPath).startsWith('/') ? '/' : ''
+  const absolute = resolve(absPath)
+  const parts = absolute.split(/[\\/]/).filter((part) => part !== '')
+  let current = absolute.startsWith('/') ? '/' : ''
   for (const part of parts) {
-    // 盘符段（`C:`）本身没有大小写变体，按原样拼接。
+    // 盘符段（`C:`）没有大小写变体，按原样拼接。
     if (/^[A-Za-z]:$/.test(part)) {
       current = part + sep
       continue
     }
     let entries: string[]
     try {
-      entries = readdirSync(current === '' ? part : current)
+      entries = readdirSync(current === '' ? '.' : current)
     } catch {
       return false
     }
