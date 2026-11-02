@@ -18,18 +18,42 @@
 
 .diffTab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
 
-.diffTabHead{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+/* 头部沿用 FileDiff 的 38px 行高与下边框；左侧文件下拉占剩余宽度。 */
+.fileMenu{flex:0 1 auto;min-width:0}
 
-.diffTabPath{font-size:12px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-alias-font-mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fileButton{display:inline-flex;gap:4px;align-items:center;box-sizing:border-box;max-width:100%;height:28px;padding:0 6px 0 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:12px;line-height:20px;min-width:0}
 
-.diffTabHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);margin-left:auto;flex:none}
+.fileButton svg{display:block;flex:none}
+
+@media (hover: hover) {
+.fileButton:hover{background:var(--dsw-alias-interactive-bg-hover)}
+}
+
+.fileButton[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover)}
+
+.diffTabHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);flex:none}
 
 /* 差异页正文：作为复制来的 FileDiff 的弹性父容器，滚动由后者自己承担。 */
-
 .diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 
-.diffTabToggle{flex:none;margin-left:8px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
+/* 增减行数：与评审视图同色同字号。 */
+.counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}
 
-.diffTabToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.added{color:var(--dsw-alias-state-success-primary)}
 
-.diffTabToggle[aria-pressed='true']{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}
+.deleted{color:var(--dsw-alias-state-error-primary)}
+
+.label{color:var(--dsw-alias-label-tertiary)}
+
+/* 工具按钮：28px 方形、15px 图标；按下态由 aria-pressed 驱动。 */
+.tools{display:inline-flex;flex:none;gap:2px;align-items:center;margin-left:auto}
+
+.tool{display:inline-flex;flex:none;align-items:center;justify-content:center;width:28px;height:28px;padding:6px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+
+.tool svg{width:15px;height:15px}
+
+@media (hover: hover) {
+.tool:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+}
+
+.tool[aria-pressed='true'] .compareIcon{transform:rotate(90deg)}

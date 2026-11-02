@@ -1,0 +1,20 @@
+/*
+ * 原生打开控件：主按钮 + 下拉箭头。
+ */
+
+.menuAnchor{display:inline-flex;flex:none}
+
+.split{display:inline-flex;flex:none;align-items:center;border-radius:var(--dsw-radius-sm)}
+
+.main{display:inline-flex;flex:none;align-items:center;justify-content:center;width:28px;height:28px;padding:6px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
+
+.chevron{display:inline-flex;flex:none;align-items:center;justify-content:center;width:14px;height:28px;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+
+@media (hover: hover) {
+.main:hover:not(:disabled),.chevron:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+}
+
+
+.main:disabled,.chevron:disabled{cursor:progress;opacity:0.5}
+
+.appIcon{display:block;flex:none;border-radius:2px}

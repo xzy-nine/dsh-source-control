@@ -181,20 +181,25 @@ test('文件行整行点击即打开', () => {
 	assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
 });
 
-test('新增文件走普通文件地址', () => {
-	// 新增文件没有旧侧内容，必须走 dsh-resource://file/… 而不是 git-diff 地址。
+test('未跟踪文件走普通文件地址，已暂存的新增走差异', () => {
+	// 未跟踪文件不在索引里，没有可比差异，必须走 dsh-resource://file/… 而不是 git-diff 地址。
 	const indexPath = join(clientDir, 'index.ts');
 	const source = readFileSync(indexPath, 'utf8');
 	assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
 	assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
 	const panelSource = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
-	assert.match(panelSource, /isNew \? 'file'/, '新增文件应生成 file 类型目标');
-	// 已暂存的 A 与未跟踪的 ? 都算新增：只看 ? 会漏掉 A。
+	assert.match(panelSource, /isNew \? 'file'/, '未跟踪文件应生成 file 类型目标');
+	/*
+	 * 已暂存的新增 A 已进索引，git diff --cached 能给出完整的新增差异，
+	 * 因此只有未跟踪的 ? 才按整文件打开；把 A 一并算进去会让它错开普通文件页。
+	 */
 	const changesSource = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
-	const judge = /export function isNewFile\(entry: WorkingTreeEntry\): boolean \{([^}]*)\}/.exec(changesSource);
-	assert.ok(judge !== null, '应有 isNewFile 判据');
-	assert.match(judge[1], /index === 'A'/, '已暂存的新增 A 也算新增文件');
-	assert.match(judge[1], /index === '\?'/, '未跟踪的 ? 也算新增文件');
+	const judge = /export function isUntrackedFile\(entry: WorkingTreeEntry\): boolean \{([^}]*)\}/.exec(changesSource);
+	assert.ok(judge !== null, '应有 isUntrackedFile 判据');
+	assert.match(judge[1], /index === '\?'/, '未跟踪的 ? 按整文件打开');
+	assert.match(judge[1], /worktree === '\?'/, '未跟踪需两列都是 ?');
+	assert.ok(!/index === 'A'/.test(judge[1]), '已暂存的新增 A 不得按整文件打开');
+	assert.ok(!/isNewFile/.test(changesSource), '旧的合并判据应已移除');
 });
 
 test('差异页默认并排且可切换', () => {
@@ -395,12 +400,35 @@ test('卡片正文更紧凑且不留空行', () => {
 	assert.match(styles, /data-markdown-variant='compact'\]\s*:is\(p, ul, ol, blockquote\)\{margin:0\}/, 'markdown 段距应压到 0');
 });
 
+test('差异加载的依赖只含原始值', () => {
+	/*
+	 * 取数坐标若以对象形式进依赖，每次渲染都是新引用，加载会反复重跑、永远停在「正在读取改动」。
+	 * 这里锁住：load 的依赖列表里不得出现 request 这类每次新建的对象。
+	 */
+	const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+	const deps = /\}, \[(parsed, [^\]]*)\]\);\n\tReact\.useEffect/.exec(source);
+	assert.ok(deps !== null, '未找到差异加载的依赖列表');
+	const names = deps[1].split(',').map((item) => item.trim());
+	assert.ok(!names.includes('request'), '依赖不得含每次新建的 request 对象');
+	assert.ok(!names.includes('scope'), '依赖不得含每次新建的 scope 对象');
+	for (const name of names) {
+		assert.match(name, /^(parsed|[a-z][A-Za-z]*)$/, `依赖名异常：${name}`);
+	}
+	assert.ok(names.includes('commitHash'), '取数坐标应以原始值入依赖');
+	assert.ok(names.includes('currentPath'), '当前文件应以原始值入依赖');
+});
+
 test('差异面板默认自动换行', () => {
 	// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
+	const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
+	const choice = /const DEFAULT_CHOICE: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
+	assert.ok(choice !== null, '未找到默认视图选择');
+	assert.equal(choice[1], 'true', '并排应默认开启');
+	assert.equal(choice[2], 'true', '换行应默认开启');
+	// 面板从记录里读初值，因此切页再回来仍是上次的选择。
 	const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-	const wrap = /const \[wrap, setWrap\] = React\.useState\((true|false)\)/.exec(source);
-	assert.ok(wrap !== null, '未找到 wrap 初始值');
-	assert.equal(wrap[1], 'true', '换行应默认开启');
+	assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.wrap\)/, 'wrap 初值应取自记录');
+	assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.split\)/, 'split 初值应取自记录');
 });
 
 test('删除分支只列以该提交为尖端的分支', () => {

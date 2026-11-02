@@ -158,6 +158,8 @@ export interface FileDiffContent {
 	readonly path?: string;
 	readonly oldText: string | null;
 	readonly newText: string | null;
+	/** 该差异是否为二进制文件；为 true 时 `hunks` 为空。 */
+	readonly binary: boolean;
 	/** 由 git 算出的逐块差异（形状同 DSH 的 WorkspaceDiffHunk）。 */
 	readonly hunks: Array<{
 		readonly oldStart: number;
@@ -200,6 +202,7 @@ export async function fileDiffContent(cwd: string, hash: string, path: string, s
 		path: typeof payload.path === 'string' ? payload.path : path,
 		oldText: typeof payload.oldText === 'string' ? payload.oldText : null,
 		newText: typeof payload.newText === 'string' ? payload.newText : null,
+		binary: payload.binary === true,
 		hunks,
 	};
 }

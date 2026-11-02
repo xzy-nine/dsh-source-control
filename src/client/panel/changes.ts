@@ -119,13 +119,15 @@ export interface ChangeNodeRowProps {
 }
 
 /**
- * 是否是新增文件：已暂存的新增（`A`）与未跟踪（`?`）都没有旧侧内容。
+ * 是否只能按整文件打开：未跟踪（`?`）的文件不在索引里，没有可比差异。
+ *
+ * 已暂存的新增（`A`）不在此列：它已进索引，`git diff --cached` 能给出完整的新增差异。
  *
  * @param entry - 工作区条目。
- * @returns 是新增文件时为 true。
+ * @returns 没有可比差异、只能按整文件打开时为 true。
  */
-export function isNewFile(entry: WorkingTreeEntry): boolean {
-	return entry.index === 'A' || (entry.index === '?' && entry.worktree === '?');
+export function isUntrackedFile(entry: WorkingTreeEntry): boolean {
+	return entry.index === '?' && entry.worktree === '?';
 }
 
 /** 文件夹行或文件行（变更树内）。 */
@@ -160,8 +162,8 @@ function ChangeNodeRowView({
 	const fileStaged = staged;
 	const type = staged ? entry.index : (entry.worktree === '?' ? 'U' : entry.worktree);
 	const untracked = entry.index === '?' && entry.worktree === '?';
-	// 新增文件（A 或未跟踪）没有旧侧内容，按普通文件打开。
-	const isNew = isNewFile(entry);
+	// 未跟踪文件没有可比差异，按普通文件打开；已暂存的新增 A 仍走差异视图。
+	const isNew = isUntrackedFile(entry);
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
 		openTargetMenu(event, () => changeMenuItems({
@@ -257,8 +259,8 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 			const entry = row.entry;
 			const { name } = splitPath(entry.path);
 			const stat = entry.additions !== null;
-			// 提交里的 `A` 与工作区伪提交里的 `A`/`U` 都没有旧侧内容。
-			const isNew = entry.type === 'A' || entry.type === 'U';
+			// 提交里的 `A` 有旧侧（空文件），差异可算：只有未跟踪的 `U` 没有可比内容。
+			const isNew = entry.type === 'U';
 			return React.createElement(
 				'div',
 				{
@@ -424,9 +426,10 @@ function ChangeGroupView({
 			await discardBoth(tracked, untrackedPaths);
 		})();
 	}, [visible, allPaths, discardBoth]);
-	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew); }, [openDiff, staged]);
+	// 点击文件行时把本分组的文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
+	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
-	const onOpenFile = React.useCallback((item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true); }, [openDiff, staged]);
+	const onOpenFile = React.useCallback((item: WorkingTreeEntry): void => { void openDiff('*', item.path, staged, true, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键菜单的依赖面；文件夹行、文件行与分组标题行共用同一份注册表。 */
 	const menu = React.useMemo<ChangeMenuDeps>(() => ({
 		busy, staged, truncated, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard, onDiscardFolder,

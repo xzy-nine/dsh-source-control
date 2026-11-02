@@ -67,7 +67,7 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	readonly settings: Settings;
 	readonly onToggleSection: () => void;
 	readonly onToggleChange: (key: string, path: string) => void;
-	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string) => Promise<void>;
+	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
 	readonly onToggleCommit: (hash: string, additive?: boolean) => void;
 	readonly onLoadMore: () => void;
 	/** 取回更早的一段（窗口头部之前）。 */
@@ -133,7 +133,9 @@ function GraphSectionView({
 	const handleDetailOpen = React.useCallback((path: string, isNew: boolean) => {
 		if (detail === null) return;
 		// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
-		void onOpenDiff(detail.commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash);
+		// 本次提交的改动文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
+		void onOpenDiff(detail.commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash,
+			detail.files.map((file) => file.path));
 	}, [detail, onOpenDiff]);
 	/** 展开块内容：只随选中提交与详情数据变化。 */
 	const renderDetail = React.useCallback(({ commit }: { commit: Commit }) => (detail !== null && detail.commit.hash === commit.hash

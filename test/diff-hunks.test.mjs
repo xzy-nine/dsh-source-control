@@ -186,3 +186,12 @@ test('多个 hunk 按出现顺序返回', () => {
 	assert.deepEqual(hunks.map((hunk) => sideLines(hunk, '+')), [['A'], ['B'], ['C']]);
 	assert.deepEqual(hunks.map((hunk) => hunk.newStart), [1, 10, 20]);
 });
+test('二进制差异输出没有可解析的 hunk', () => {
+	const text = [
+		'diff --git a/logo.png b/logo.png',
+		'index 1111111..2222222 100644',
+		'Binary files a/logo.png and b/logo.png differ',
+		'',
+	].join('\n');
+	assert.deepEqual(parseUnifiedDiffHunks(text), []);
+});

@@ -65,6 +65,19 @@ function clientLogLevel(value: unknown): LogLevel {
 	return level === 'D' || level === 'W' || level === 'E' ? level : 'I';
 }
 
+/** git 对二进制文件给出的差异标记。 */
+const BINARY_DIFF_MARKERS = ['Binary files ', 'GIT binary patch'];
+
+/**
+ * 判断 git 差异输出是否表示二进制文件。
+ *
+ * @param diffText - `git diff --no-color` 的输出。
+ * @returns 命中二进制标记时为 true。
+ */
+function isBinaryDiff(diffText: string): boolean {
+	return BINARY_DIFF_MARKERS.some((marker) => diffText.includes(marker));
+}
+
 /**
  * 取某个文件差异的逐块内容。
  *
@@ -72,9 +85,10 @@ function clientLogLevel(value: unknown): LogLevel {
  * @param commitHash - 提交哈希；`*` 表示工作区。
  * @param filePath - 文件路径（相对仓库根）。
  * @param staged - 工作区时是否比较暂存区。
- * @returns 逐块的新旧内容。
+ * @param baseHash - 旧侧提交哈希；非空时按 `baseHash → commitHash` 对比。
+ * @returns 逐块的新旧内容，以及该差异是否为二进制。
  */
-async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean, baseHash = ''): Promise<DiffHunkText[]> {
+async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean, baseHash = ''): Promise<{ hunks: DiffHunkText[]; binary: boolean }> {
 	const args = baseHash !== ''
 		? ['diff', '--no-color', '--unified=3', baseHash, commitHash === '*' ? '' : commitHash, '--', filePath].filter((part) => part !== '')
 		: commitHash === '*'
@@ -83,9 +97,10 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 				: ['diff', '--no-color', '--unified=3', '--', filePath])
 			: ['diff', '--no-color', '--unified=3', `${commitHash}~1`, commitHash, '--', filePath];
 	try {
-		return parseUnifiedDiffHunks(await gitOrThrow(args, repo));
+		const diffText = await gitOrThrow(args, repo);
+		return { hunks: parseUnifiedDiffHunks(diffText), binary: isBinaryDiff(diffText) };
 	} catch {
-		return [];
+		return { hunks: [], binary: false };
 	}
 }
 
@@ -242,10 +257,10 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
-				const hunks = await diffHunksOf(repo, commitHash, filePath, staged, baseHash);
-				respond({ command: 'fileDiffContent', path: filePath, oldText, newText, hunks });
+				const { hunks, binary } = await diffHunksOf(repo, commitHash, filePath, staged, baseHash);
+				respond({ command: 'fileDiffContent', path: filePath, oldText, newText, hunks, binary });
 			} catch (e) {
-				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], error: e instanceof Error ? e.message : String(e) });
+				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], binary: false, error: e instanceof Error ? e.message : String(e) });
 			}
 			break;
 		}

@@ -30,7 +30,7 @@ export interface CommitSelectionDeps {
 /** 提交选择与详情。 */
 export interface CommitSelection {
 	/** 打开某个提交或工作区文件的差异。 */
-	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
 	/** 打开一个日志文件。 */
 	readonly openLogFile: (path: string) => void;
 	/** 选中一个提交并加载其改动。 */
@@ -71,16 +71,17 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 	 * @param baseHash - 旧侧提交哈希；非空时按两提交对比打开。
 	 * @returns 无。
 	 */
-	const openDiff = React.useCallback((hash: string, path: string, staged: boolean, isNew = false, baseHash?: string): Promise<void> => {
+	const openDiff = React.useCallback((hash: string, path: string, staged: boolean, isNew = false, baseHash?: string, files?: readonly string[]): Promise<void> => {
 		const kind = isNew ? 'file' : (hash === '*' ? 'worktree' : 'commit');
+		// 地址只带作用域：同一作用域下的文件共用一个页，切换文件走导航参数。
 		const diff = kind === 'file'
 			? { kind, path, repoRoot: workingTreePath }
 			: kind === 'worktree'
-				? { kind, path, staged, untracked: false, repoRoot: workingTreePath }
-				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath, baseHash: baseHash ?? null };
+				? { kind, path, staged, untracked: false, repoRoot: workingTreePath, files: files ?? [] }
+				: { kind, hash: hash.slice(0, 8), hashFull: hash, subject: `${hash.slice(0, 7)} ${path}`, path, repoRoot: workingTreePath, baseHash: baseHash ?? null, files: files ?? [] };
 		if (typeof onOpenDiff === 'function') {
-			// 对比时 id 带上旧侧哈希：同一文件的不同对比组合各自成页。
-			onOpenDiff({ id: `gg-diff:${baseHash ?? ''}:${hash}:${path}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
+			// 对比时 id 带上旧侧哈希：同一作用域的不同对比组合各自成页。
+			onOpenDiff({ id: `gg-diff:${baseHash ?? ''}:${hash}:${staged ? 's' : 'u'}`, type: 'diff', title: path.split('/').pop() ?? 'Diff', diff });
 		}
 		return Promise.resolve();
 	}, [onOpenDiff, workingTreePath]);

@@ -217,7 +217,7 @@ export interface ChangeActions {
 	readonly stagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<DiscardReport>;
-	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean) => Promise<void>;
+	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
 	/** 把路径加入 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;
 	/** 把路径加入本地排除文件。 */

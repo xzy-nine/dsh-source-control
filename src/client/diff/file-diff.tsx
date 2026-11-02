@@ -32,17 +32,17 @@ export type ChangesDiffState =
 
 /** 文案：原实现的 t('…') 键改为直接给出中文。 */
 const LABELS: Record<string, string> = {
-  'diff.loading': '正在加载差异…',
+  'diff.loading': '正在读取改动…',
   'diff.missing': '文件不存在',
-  'diff.error': '读取差异失败',
+  'diff.error': '无法读取改动',
   'presented.retry': '重试',
-  'diff.binary': '二进制文件无法比较',
-  'diff.oversized': '文件过大，无法比较',
-  'diff.created': '新增文件',
-  'diff.deleted': '删除文件',
-  'diff.unchanged': '内容没有变化',
-  'diff.coarse': '改动过大，差异为粗略结果',
-  'diff.truncated': '差异过长，仅显示前 {count} 行',
+  'diff.binary': '二进制文件，无法显示改动',
+  'diff.oversized': '文件过大，无法显示改动',
+  'diff.created': '新建的文件',
+  'diff.deleted': '删除的文件',
+  'diff.unchanged': '两侧内容相同',
+  'diff.coarse': '逐行对比超时，按整个文件替换显示',
+  'diff.truncated': '只显示前 {count} 行',
 }
 
 /**
