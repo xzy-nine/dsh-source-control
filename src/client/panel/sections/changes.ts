@@ -6,7 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, StateDot,
+	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { PublishIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { ChangeGroup } from '../changes.ts';
@@ -50,6 +50,8 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly aiWarning: string;
 	readonly aiStats: AiStats | null;
 	readonly onAiCommit: () => void;
+	/** 打开全局设置并滚动到 AI 提交信息分区。 */
+	readonly onOpenAiSettings: () => void;
 	readonly showSyncButton: boolean;
 	readonly syncBehind: number;
 	readonly syncAhead: number;
@@ -85,7 +87,7 @@ export interface ChangesSectionProps extends ChangeActions {
 export type CommitBoxProps = Pick<ChangesSectionProps,
 	| 'entries' | 'busy' | 'phase' | 'head' | 'message' | 'onMessageChange' | 'amend' | 'onToggleAmend'
 	| 'hooksActive' | 'runHooks' | 'onToggleRunHooks' | 'onStash' | 'onAbortMerge'
-	| 'showTranslate' | 'translateBusy' | 'onTranslate' | 'aiBusy' | 'aiWarning' | 'aiStats' | 'onAiCommit'
+	| 'showTranslate' | 'translateBusy' | 'onTranslate' | 'aiBusy' | 'aiWarning' | 'aiStats' | 'onAiCommit' | 'onOpenAiSettings'
 	| 'showSyncButton' | 'syncBehind' | 'syncAhead' | 'onSync' | 'showPublishButton' | 'onPublish'
 	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging' | 'onSyncContextMenu'>;
 
@@ -98,9 +100,11 @@ export type CommitBoxProps = Pick<ChangesSectionProps,
 function CommitBoxView({
 	entries, busy, phase, head, message, onMessageChange, amend, onToggleAmend, hooksActive, runHooks, onToggleRunHooks,
 	onStash, onAbortMerge, showTranslate, translateBusy, onTranslate, aiBusy, aiWarning, aiStats, onAiCommit,
-	showSyncButton, syncBehind, syncAhead, onSync, showPublishButton, onPublish, canSubmit, onSubmit,
+	onOpenAiSettings, showSyncButton, syncBehind, syncAhead, onSync, showPublishButton, onPublish, canSubmit, onSubmit,
 	hasLocalExclude, onShowLocalExclude, merging, onSyncContextMenu,
 }: CommitBoxProps): React.ReactElement {
+	/** AI 生成设置菜单的展开状态；两项都跳到全局设置里的同一分区。 */
+	const [aiMenuOpen, setAiMenuOpen] = React.useState(false);
 	/*
 	 * 右侧动作组：贮藏固定在最右端，其余按出现顺序追加，不占固定位置。
 	 *
@@ -162,9 +166,24 @@ function CommitBoxView({
 					disabled: aiBusy || busy.commit,
 					onClick: onAiCommit,
 				}, React.createElement(IconSparkleRegular, { size: 14 })),
-				React.createElement('button', {
-					type: 'button', className: css.commitInputBtn, title: '选择提交方式',
-				}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+				React.createElement(Menu, {
+					open: aiMenuOpen,
+					align: 'end', side: 'bottom', dense: true, portal: true, autoFocus: true,
+					onClose: () => { setAiMenuOpen(false); },
+					items: [
+						{ id: 'rules', label: '配置自定义规则' },
+						{ id: 'model', label: '选择生成模型' },
+					],
+					onSelect: () => {
+						setAiMenuOpen(false);
+						onOpenAiSettings();
+					},
+					anchor: React.createElement('button', {
+						type: 'button', className: css.commitInputBtn, title: 'AI 生成设置',
+						'aria-haspopup': 'menu', 'aria-expanded': aiMenuOpen, 'aria-label': 'AI 生成设置',
+						onClick: () => { setAiMenuOpen((value) => !value); },
+					}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+				}),
 			),
 		),
 		aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
@@ -253,6 +272,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 				onStash: props.onStash, onAbortMerge: props.onAbortMerge,
 				showTranslate: props.showTranslate, translateBusy: props.translateBusy, onTranslate: props.onTranslate,
 				aiBusy: props.aiBusy, aiWarning: props.aiWarning, aiStats: props.aiStats, onAiCommit: props.onAiCommit,
+				onOpenAiSettings: props.onOpenAiSettings,
 				showSyncButton: props.showSyncButton, syncBehind: props.syncBehind, syncAhead: props.syncAhead, onSync: props.onSync,
 				showPublishButton: props.showPublishButton, onPublish: props.onPublish,
 				canSubmit: props.canSubmit, onSubmit: props.onSubmit,

@@ -585,6 +585,32 @@ test('合并到分支给出三种方式的二级菜单', () => {
 	assert.match(actions, /\['merge', \.\.\.mergeModeArgs\(mode\), '--no-commit'\]/, '三种方式都停在待提交状态');
 });
 
+test('AI 生成设置的下拉按钮给出两个入口', () => {
+	/*
+	 * 该按钮原先没有任何行为。两个入口指向同一处：全局设置里的「AI 提交信息」分区。
+	 */
+	const section = readFileSync(join(panelDir, 'sections', 'changes.ts'), 'utf8');
+	assert.match(section, /'配置自定义规则'/, '应给出配置自定义规则的入口');
+	assert.match(section, /'选择生成模型'/, '应给出选择生成模型的入口');
+	assert.match(section, /onOpenAiSettings\(\)/, '两个入口都应跳到设置');
+	// 菜单必须真的挂上展开状态与关闭回调，不能再是无行为的按钮。
+	assert.match(section, /open: aiMenuOpen/, '菜单应受展开状态控制');
+	assert.match(section, /onClose: \(\) => \{ setAiMenuOpen\(false\); \}/, '菜单应能关闭');
+
+	// 落点是全局设置页签的 AI 分区，并带上滚动锚点。
+	const panel = readFileSync(join(panelDir, 'index.ts'), 'utf8');
+	assert.match(panel, /setSettingsTab\('global'\)/, '应落在全局设置页签');
+	assert.match(panel, /setSettingsAnchor/, '应请求滚动定位');
+	assert.match(panel, /AI_SECTION_ANCHOR/, '应使用 AI 分区的锚点');
+
+	const settings = readFileSync(join(panelDir, 'settings.ts'), 'utf8');
+	assert.match(settings, /export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit'/, '应导出 AI 分区锚点');
+	assert.match(settings, /anchor: AI_SECTION_ANCHOR/, 'AI 分区应挂上该锚点');
+	assert.match(settings, /scrollIntoView/, '应滚动到锚点分区');
+	// 同一锚点再次请求时也要重新滚动。
+	assert.match(settings, /scrollSerial/, '重复请求应能重新触发滚动');
+});
+
 test('表单勾选项的文案只由 Checkbox 渲染', () => {
 	// Checkbox 自身携带可见文案且根元素是 `<label>`：再包一层 label 或另加文案节点会让文案显示两次。
 	const dialog = readFileSync(join(clientDir, 'ui', 'dialog.ts'), 'utf8');

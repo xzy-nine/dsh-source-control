@@ -38,7 +38,7 @@ import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
 import { primaryActionOf } from './submit-state.ts';
-import { formatDate, loadSettings, SettingsPanel } from './settings.ts';
+import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { useRemoteSync } from './use-remote-sync.ts';
@@ -88,6 +88,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
 	const [settingsTab, setSettingsTab] = React.useState<'repo' | 'global' | 'feedback'>('repo');
+	/** 设置面板打开后要滚动到的分区锚点；重复请求时用序号触发再次滚动。 */
+	const [settingsAnchor, setSettingsAnchor] = React.useState<{ id: string; serial: number } | null>(null);
 	/**
 	 * 待重扫标志：命令写进终端后置位，窗口重新获得焦点时重扫一次。
 	 *
@@ -705,6 +707,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const openSettingsPanel = React.useCallback(() => { setSettingsTab('repo'); setSettingsOpen(true); }, []);
 	/** 打开设置并直接落在反馈页签。 */
 	const openFeedbackPanel = React.useCallback(() => { setSettingsTab('feedback'); setSettingsOpen(true); }, []);
+	/** 打开全局设置并滚动到 AI 提交信息分区：生成入口的两个菜单项都走这里。 */
+	const openAiSettings = React.useCallback(() => {
+		setSettingsTab('global');
+		setSettingsOpen(true);
+		setSettingsAnchor((previous) => ({ id: AI_SECTION_ANCHOR, serial: (previous?.serial ?? 0) + 1 }));
+	}, []);
 	/** 打开引用筛选弹窗。 */
 	const openFilterDialog = React.useCallback(() => { setFilterOpen(true); }, []);
 
@@ -775,6 +783,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		React.createElement(SettingsPanel, {
 			open: settingsOpen, onClose: () => { setSettingsOpen(false); }, initialTab: settingsTab,
+		scrollTo: settingsAnchor?.id ?? null, scrollSerial: settingsAnchor?.serial ?? 0,
 			cwd: workingTreePath, pluginVersion: PLUGIN_VERSION,
 			onOpenFile: openLogFile, onRevealPath,
 			settings, onChange: repoCommands.changeSettings, remotes: state.remotes, onDeleteRemote: repoCommands.deleteRemoteByName,
@@ -834,6 +843,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			hooksActive: composer.hooksActive, runHooks: composer.runHooks, onToggleRunHooks: composer.setRunHooks,
 			showTranslate: composer.showTranslate, translateBusy: composer.translateBusy, onTranslate: composer.handleTranslate,
 			aiBusy: composer.aiBusy, aiWarning: composer.aiWarning, aiStats: composer.aiStats, onAiCommit: composer.handleAiCommit,
+			onOpenAiSettings: openAiSettings,
 			showSyncButton,
 			syncBehind: state.behind,
 			syncAhead: state.ahead,

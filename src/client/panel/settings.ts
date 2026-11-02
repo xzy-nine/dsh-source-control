@@ -55,6 +55,10 @@ export interface SettingsPanelProps {
 	readonly pluginVersion?: string;
 	/** 打开设置时直接落在反馈页签。 */
 	readonly initialTab?: SettingsTab;
+	/** 打开后滚动到的分区锚点；换页签或重复请求时都会重新滚动。 */
+	readonly scrollTo?: string | null;
+	/** 定位请求序号：同一锚点再次请求时递增，用来重新触发滚动。 */
+	readonly scrollSerial?: number;
 	/** 按绝对路径打开一个文件（复用更改区的文件打开接线）。 */
 	readonly onOpenFile?: ((path: string) => void) | undefined;
 	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
@@ -70,14 +74,29 @@ export interface SettingsPanelProps {
  * @param props - 见 {@link SettingsPanelProps}。
  * @returns 面板元素，未展开时返回 null。
  */
+/** 「AI 提交信息」分区的锚点 id：生成入口据此把设置面板滚动到该分区。 */
+export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit';
+
 export function SettingsPanel({
 	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, onCheckSsh,
 	userDetails, onEditUserDetails, onDeleteUserDetails, cwd = null, pluginVersion = '', initialTab = 'repo',
-	onOpenFile, onRevealPath,
+	onOpenFile, onRevealPath, scrollTo = null, scrollSerial = 0,
 }: SettingsPanelProps): React.ReactElement | null {
 	const [tab, setTab] = React.useState<SettingsTab>(initialTab);
+	const bodyRef = React.useRef<HTMLDivElement | null>(null);
 	// 外部指定页签时跟随：面板打开前先设好目标页签，打开即落位。
 	React.useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
+	/*
+	 * 滚动定位：分区在本次渲染后才挂到正文里，因此在渲染提交之后按 id 找元素。
+	 * 页签切换会换掉正文内容，定位因此依赖 tab：目标分区在别的页签时先落页签再滚动。
+	 */
+	React.useEffect(() => {
+		if (!open || scrollTo === null) return;
+		const body = bodyRef.current;
+		if (body === null) return;
+		const target = body.querySelector(`[data-set-anchor="${scrollTo}"]`);
+		if (target instanceof HTMLElement) target.scrollIntoView({ block: 'start' });
+	}, [open, scrollTo, scrollSerial, tab]);
 	if (!open) return null;
 	const patch = (partial: Partial<Settings>): void => { onChange({ ...settings, ...partial }); };
 	const userSection = (scope: SettingsTab): React.ReactElement => React.createElement(Section, { title: 'User Details' },
@@ -207,7 +226,7 @@ export function SettingsPanel({
 				onChange: (issueLinkingConfig) => { patch({ issueLinkingConfig }); },
 			}),
 		),
-		React.createElement(Section, { title: 'AI 提交信息', key: 'ai' },
+		React.createElement(Section, { title: 'AI 提交信息', key: 'ai', anchor: AI_SECTION_ANCHOR },
 			React.createElement(AiModelConfigSection, {
 				provider: settings.aiCommitProvider,
 				model: settings.aiCommitModel,
@@ -260,6 +279,7 @@ export function SettingsPanel({
 				],
 			}),
 			React.createElement('div', {
+				ref: bodyRef,
 				className: css.settingsBody,
 				id: PANEL_ID_OF[tab],
 				role: 'tabpanel',

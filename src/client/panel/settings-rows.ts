@@ -11,12 +11,17 @@ import { cx } from '../css/cx.ts';
  * 一个分区标题。
  *
  * @param props.title - 标题。
+ * @param props.anchor - 分区锚点 id；给出后设置面板可滚动定位到此分区。
  * @returns 分区元素。
  */
-export function Section({ title, children }: { title: string; children?: React.ReactNode }): React.ReactElement {
+export function Section({ title, anchor, children }: {
+	title: string;
+	anchor?: string;
+	children?: React.ReactNode;
+}): React.ReactElement {
 	return React.createElement(
 		'div',
-		{ className: css.setSection },
+		{ className: css.setSection, id: anchor, 'data-set-anchor': anchor },
 		React.createElement('div', { className: css.setSectionTitle }, title),
 		children,
 	);
