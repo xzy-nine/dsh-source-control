@@ -8,9 +8,23 @@ import {
 	applyStash, branchFromStash, dropStash, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash, pruneRemote, pullBranch, pushBranchToMultipleRemotes,
 	pushStash, pushTag, pushUpstream, rebase, renameBranch, resetToCommit, revertCommit,
 } from '../git-actions.js';
+import type { MergeMode } from '../git-actions.js';
 import { notifyRepositoryWrite, runGit } from '../git-exec.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
+
+/** 合并方式的取值集合。 */
+const MERGE_MODES: ReadonlySet<string> = new Set(['default', 'no-ff', 'squash']);
+
+/**
+ * 把命令参数里的合并方式归一化。
+ *
+ * @param value - 客户端给出的合并方式。
+ * @returns 合法取值；未知或缺省时为 `default`。
+ */
+function mergeModeOf(value: string): MergeMode {
+	return MERGE_MODES.has(value) ? value as MergeMode : 'default';
+}
 
 /**
  * 读全部引用的签名。
@@ -138,7 +152,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				});
 				break;
 			}
-			respond({ command: 'mergeIntoBranch', ...(await mergeCurrentIntoBranch(repo, branchName, str('message'))) });
+			respond({ command: 'mergeIntoBranch', ...(await mergeCurrentIntoBranch(repo, branchName, str('message'), mergeModeOf(str('mode')))) });
 			break;
 		}
 		case 'rebase': {

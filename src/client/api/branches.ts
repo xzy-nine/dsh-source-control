@@ -194,17 +194,18 @@ export async function abortMerge(cwd: string): Promise<void> {
 /**
  * 检出选中分支，并把检出前的当前分支合并过去，停在未提交状态。
  *
- * 宿主固定使用 `--no-ff --no-commit`，因此目标分支即使是当前分支的祖先也会建立待合并
- * 状态并生成提交信息。冲突时同样保持待合并状态，`mergeMessage` 仍会给出。
+ * 三种合并方式都停在待提交状态；冲突时同样保持待合并状态，`mergeMessage` 仍会给出
+ * （`squash` 除外，它不写合并信息）。
  *
  * @param cwd - 会话工作区路径。
  * @param branchName - 要检出并合并到的分支名。
  * @param commitHash - 该分支的尖端提交哈希；宿主据此校验合并目标。
  * @param message - 合并提交信息；空串表示使用 git 生成的初始信息。
+ * @param mode - 合并方式：`default` 交给 git 决定是否快进，`no-ff` 强制建立合并提交，`squash` 压缩为一次待提交的改动。
  * @returns 分支名、初始合并信息、冲突标记与错误文本。
  */
-export async function mergeIntoBranch(cwd: string, branchName: string, commitHash: string, message = ''): Promise<MergeIntoBranchResult> {
-	const payload = await callApiRaw(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message });
+export async function mergeIntoBranch(cwd: string, branchName: string, commitHash: string, message = '', mode = 'default'): Promise<MergeIntoBranchResult> {
+	const payload = await callApiRaw(cwd, { command: 'mergeIntoBranch', branchName, commitHash, message, mode });
 	return {
 		error: commandError(payload),
 		branchName: typeof payload.branchName === 'string' ? payload.branchName : branchName,

@@ -4,6 +4,7 @@
 import {
 	checkoutBranch, createBranch, deleteBranch, deleteRemoteBranch, mergeIntoBranch, rebase, renameBranch, throwIfError,
 } from '../../api/index.ts';
+import type { MergeMode } from '../../shared/types.ts';
 import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
@@ -12,6 +13,23 @@ import { remoteNameOfBranch } from '../github.ts';
 import {
 	copyRefNameItem, isUnmergedRefusal, localBranchItem, shortBranchName, type MenuContext,
 } from './shared.ts';
+
+/** 合并方式，按菜单里的排列顺序。 */
+const MERGE_MODES: readonly MergeMode[] = ['default', 'no-ff', 'squash'];
+
+/** 每种合并方式的菜单项文案。 */
+const MERGE_MODE_TITLES: Readonly<Record<MergeMode, string>> = {
+	default: '默认合并',
+	'no-ff': '强制合并提交',
+	squash: '压缩为一次改动',
+};
+
+/** 每种合并方式在确认框里的动作描述。 */
+const MERGE_MODE_ACTIONS: Readonly<Record<MergeMode, string>> = {
+	default: '合并过去',
+	'no-ff': '以合并提交的方式合并过去',
+	squash: '压缩合并过去',
+};
 
 export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null>> = {
 	checkoutBranch: (ctx, meta) => {
@@ -74,40 +92,48 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 	mergeIntoBranch: (ctx, meta) => {
 		const { deps } = ctx;
 		/* 目标必须是该提交所在的分支尖端：非尖端时合并位置无法确定。 */
-		const mergeInto = (name: string) => (): void => {
+		const mergeInto = (name: string, mode: MergeMode) => (): void => {
 			void (async () => {
 				const ok = await showConfirmation({
-					title: '合并到选中分支',
-					message: `检出 ${name}，并把当前分支合并过去，保持未提交状态？`,
+					title: MERGE_MODE_TITLES[mode],
+					message: `检出 ${name}，把当前分支${MERGE_MODE_ACTIONS[mode]}，保持未提交状态？`,
 					confirmLabel: '合并', danger: true,
 				});
 				if (!ok) return;
 				// 冲突提示放在刷新之后：run 内部先刷新面板，提示框不应挡住刷新。
 				const conflicted = { current: false };
 				await deps.run('history', async () => {
-					const result = await mergeIntoBranch(ctx.repo, name, ctx.commit.hash);
+					const result = await mergeIntoBranch(ctx.repo, name, ctx.commit.hash, '', mode);
 					if (result.error !== null) throw new Error(result.error);
 					if (result.mergeMessage !== null) deps.setCommitMessage(result.mergeMessage);
 					conflicted.current = result.conflicted;
-				});
+				}, `${MERGE_MODE_TITLES[mode]} ${name}`);
 				if (conflicted.current) {
 					await deps.notify('已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。');
 				}
 			})();
 		};
+		/* 同一目标分支的三种合并方式做成二级菜单，默认方式排在最前。 */
+		const modeItems = (name: string): ContextMenuItem[] => MERGE_MODES.map((mode) => ({
+			title: MERGE_MODE_TITLES[mode],
+			onClick: mergeInto(name, mode),
+		}));
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;
 			if (name === deps.head || !ctx.tipBranches.includes(name)) return null;
-			return localBranchItem(ctx, name, { title: meta.title, onClick: mergeInto(name) });
+			return localBranchItem(ctx, name, { title: meta.title, children: modeItems(name) });
 		}
 		const tips = ctx.tipBranches.filter((name) => name !== deps.head);
 		if (tips.length === 0) return null;
 		if (tips.length === 1) {
-			return localBranchItem(ctx, tips[0], { title: fillText(meta.commitItemTitle, { name: tips[0] }), onClick: mergeInto(tips[0]) });
+			return localBranchItem(ctx, tips[0], {
+				title: fillText(meta.commitItemTitle, { name: tips[0] }),
+				children: modeItems(tips[0]),
+			});
 		}
 		return {
 			title: meta.commitTitle,
-			children: tips.map((name) => localBranchItem(ctx, name, { title: name, onClick: mergeInto(name) })),
+			children: tips.map((name) => localBranchItem(ctx, name, { title: name, children: modeItems(name) })),
 		};
 	},
 	rebaseOnto: (ctx, meta) => {

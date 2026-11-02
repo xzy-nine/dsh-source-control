@@ -66,6 +66,9 @@ export interface CommitFile {
 	readonly deletions: number | null;
 }
 
+/** 合并方式：默认交给 git 决定是否快进，强制建立合并提交，或压缩为一次待提交的改动。 */
+export type MergeMode = 'default' | 'no-ff' | 'squash';
+
 /** 仓库树的节点种类。 */
 export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
 

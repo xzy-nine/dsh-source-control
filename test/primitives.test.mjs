@@ -558,9 +558,31 @@ test('提交菜单与引用菜单共用同一份操作注册表', () => {
 	assert.ok(!existsSync(join(panelDir, 'ref-menu.ts')), '不应再保留独立的 ref-menu 模块');
 	// 提交行右键应能直接发起「合并到选中分支」，无需命中分支标签。
 	assert.match(menu, /ctx\.tipBranches/, '提交菜单应依据分支尖端列出合并目标');
-	assert.match(menu, /mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash\)/, '提交菜单应能直接合并到分支');
+	assert.match(menu, /mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash, '', mode\)/, '提交菜单应能直接合并到分支');
 	// 作用于当前分支的操作在提交行右键也要有入口，不能只挂在分支标签的引用菜单上。
 	assert.match(menu, /push\(items, byId\('createPullRequest'\)\)/, '提交菜单应列出创建 Pull Request 入口');
+});
+
+test('合并到分支给出三种方式的二级菜单', () => {
+	/*
+	 * 合并方式影响是否产生合并提交与是否保留分支历史，必须由用户在点击时选定，
+	 * 而不是写死在实现里。三种方式列在同一个二级菜单里。
+	 */
+	const menu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
+	assert.match(menu, /const MERGE_MODES: readonly MergeMode\[\] = \['default', 'no-ff', 'squash'\]/, '应列出三种合并方式');
+	assert.match(menu, /'no-ff': '强制合并提交'/, '强制合并提交应有明确名称');
+	assert.match(menu, /squash: '压缩为一次改动'/, '压缩合并应有明确名称');
+	// 三种方式都挂在目标分支之下，成为二级菜单。
+	assert.match(menu, /const modeItems = \(name: string\): ContextMenuItem\[\]/, '应把三种方式聚成一个子菜单');
+	assert.match(menu, /children: modeItems\(name\)/, '分支标签右键应展开二级菜单');
+	assert.match(menu, /children: modeItems\(tips\[0\]\)/, '提交行右键应展开二级菜单');
+	assert.ok(!/mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash\)/.test(menu), '不得再有不带方式的合并调用');
+
+	// 后端按方式追加选项，且三种都停在待提交状态。
+	const actions = readFileSync(join(root, 'src', 'source-control', 'git-actions.ts'), 'utf8');
+	assert.match(actions, /if \(mode === 'no-ff'\) return \['--no-ff'\]/, '强制合并提交用 --no-ff');
+	assert.match(actions, /if \(mode === 'squash'\) return \['--squash'\]/, '压缩合并用 --squash');
+	assert.match(actions, /\['merge', \.\.\.mergeModeArgs\(mode\), '--no-commit'\]/, '三种方式都停在待提交状态');
 });
 
 test('表单勾选项的文案只由 Checkbox 渲染', () => {

@@ -315,7 +315,7 @@ test('合并到选中分支：检出、待合并、初始提交信息', async ()
 		const targetTip = git('rev-parse', 'target-branch').trim();
 
 		const call = await makeCaller(repo);
-		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '' });
+		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '', mode: 'no-ff' });
 		assert.equal(result.error, null);
 		assert.equal(result.branchName, 'target-branch');
 		assert.equal(result.conflicted, false);
@@ -327,6 +327,59 @@ test('合并到选中分支：检出、待合并、初始提交信息', async ()
 		assert.notEqual(git('rev-parse', '-q', '--verify', 'MERGE_HEAD').trim(), '');
 
 		// 合并改动进入暂存区，提交按钮因此可用。
+		const staged = git('status', '--short');
+		assert.match(staged, /^A  w1\.txt$/m);
+		assert.match(staged, /^A  w2\.txt$/m);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并到选中分支：默认方式允许快进，不留待合并状态', async () => {
+	const { repo, git } = makeRepo();
+	try {
+		// 目标分支停在公共基础、工作分支在其之上：git 会直接快进。
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		writeFileSync(join(repo, 'w1.txt'), 'w1');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'work w1');
+		const targetTip = git('rev-parse', 'target-branch').trim();
+
+		const call = await makeCaller(repo);
+		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '', mode: 'default' });
+		assert.equal(result.error, null);
+		// 快进不留 MERGE_HEAD，也没有合并提交信息。
+		assert.equal(result.mergeMessage, null);
+		assert.equal(git('branch', '--show-current').trim(), 'target-branch');
+		assert.equal(git('rev-parse', 'target-branch').trim(), git('rev-parse', 'work-branch').trim(), '快进后目标分支移到工作分支');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('合并到选中分支：压缩方式只进暂存区，不建立合并关系', async () => {
+	const { repo, git } = makeRepo();
+	try {
+		git('branch', 'target-branch');
+		git('checkout', '-q', '-b', 'work-branch');
+		for (const name of ['w1', 'w2']) {
+			writeFileSync(join(repo, `${name}.txt`), name);
+			git('add', '-A');
+			git('commit', '-q', '-m', `work ${name}`);
+		}
+		const targetTip = git('rev-parse', 'target-branch').trim();
+		const workTip = git('rev-parse', 'work-branch').trim();
+
+		const call = await makeCaller(repo);
+		const result = await call({ command: 'mergeIntoBranch', branchName: 'target-branch', commitHash: targetTip, message: '', mode: 'squash' });
+		assert.equal(result.error, null);
+		assert.equal(result.conflicted, false);
+		// 压缩不写 MERGE_MSG，也不移动目标分支：改动只落在索引里等提交。
+		assert.equal(result.mergeMessage, null);
+		assert.equal(git('rev-parse', 'target-branch').trim(), targetTip, '目标分支不移动');
+		assert.notEqual(git('rev-parse', 'work-branch').trim(), '', '工作分支仍在');
+		assert.equal(git('rev-parse', 'work-branch').trim(), workTip);
 		const staged = git('status', '--short');
 		assert.match(staged, /^A  w1\.txt$/m);
 		assert.match(staged, /^A  w2\.txt$/m);
