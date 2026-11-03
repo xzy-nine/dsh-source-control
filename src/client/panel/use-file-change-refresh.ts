@@ -10,7 +10,7 @@
 import React from 'react';
 import { hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
 import { createRefreshScheduler } from './refresh-scheduler.ts';
-import { isRepoBusy } from './busy.ts';
+import { isReadBlocked } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
 
 /** 事件窗口保留的事件数：一次写入的结果可能晚于调用到达。 */
@@ -87,7 +87,7 @@ export function useFileChangeRefresh({
 		let events: SessionEventLike[] = [];
 		const scheduler = createRefreshScheduler({
 			canRefresh: () => targetRef.current.path !== null,
-			isBusy: () => isRepoBusy(busyRef.current, targetRef.current.path),
+			isBusy: () => isReadBlocked(busyRef.current, targetRef.current.path),
 			refresh: () => refreshRef.current(),
 		});
 

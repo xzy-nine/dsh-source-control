@@ -247,6 +247,9 @@ export interface RefInfo {
 /** 面板加载阶段。 */
 export type PanelPhase = 'loading' | 'ready' | 'no-workspace';
 
+/** 单个分区的就绪阶段。 */
+export type SectionPhase = 'loading' | 'ready';
+
 /**
  * 忙碌范围：按操作的影响面分级。
  *
@@ -307,6 +310,13 @@ export interface BackgroundFlags {
 /** 面板状态。 */
 export interface PanelState {
 	phase: PanelPhase;
+	/**
+	 * 变更列表那一路的就绪阶段。
+	 *
+	 * 与 `phase` 分开：一次刷新里提交图与工作区快照并行发出，快照通常先回。共用一个阶段会让
+	 * 更改区陪着提交图一起显示占位 —— 提交图被慢操作挡住时，已经取到的变更列表也画不出来。
+	 */
+	entriesPhase: SectionPhase;
 	error: string | null;
 	commits: Commit[];
 	/** 当前分支名；分离头指针时为 null。 */

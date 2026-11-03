@@ -8,7 +8,7 @@ import React from 'react';
 import { invalidateHostCache, loadWorkingTreeSnapshot, type WorkingTreeSnapshot } from '../api/index.ts';
 import { entriesSignature } from './optimistic.ts';
 import { fallbackPollMs, shouldFallbackRefresh, stableObservationsRequired } from './change-events.ts';
-import { isRepoBusy } from './busy.ts';
+import { isReadBlocked } from './busy.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
 import { nextRefreshId } from './graph-window-cache.ts';
@@ -63,7 +63,8 @@ export function useGraphPolling({
 		const loadedHead = (): string | null => loadedHeadRef.current;
 
 		const poll = (): void => {
-			if (cancelled.current || polling || document.visibilityState !== 'visible' || isRepoBusy(busyRef.current, workingTreePath)) return;
+			// 联网操作不算阻塞：推送与抓取期间轮询照常读，读到的是本地一致状态。
+			if (cancelled.current || polling || document.visibilityState !== 'visible' || isReadBlocked(busyRef.current, workingTreePath)) return;
 			polling = true;
 			// 轮询读的也是工作区快照：与其它后台刷新同一套指示，取数期间给出反馈。
 			setState((previous) => beginBackground(previous, 'entries'));

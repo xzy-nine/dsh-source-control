@@ -15,7 +15,7 @@ import { logClient, matchesRepository, subscribeRepositoryWrites } from '../api/
 import { refreshRepoSync } from './repo-preload.ts';
 import { dropGraphWindows } from './use-graph-data.ts';
 import { createRefreshScheduler } from './refresh-scheduler.ts';
-import { isRepoBusy } from './busy.ts';
+import { isReadBlocked } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
 
 /** 仓库写事件订阅的入参。 */
@@ -63,7 +63,8 @@ export function useRepositoryWriteEvents({
 		if (!enabled) return undefined;
 		const scheduler = createRefreshScheduler({
 			canRefresh: () => targetRef.current !== null,
-			isBusy: () => isRepoBusy(busyRef.current, targetRef.current),
+			// 联网操作不改写本地状态：推送期间照常刷新，否则一次推送会让面板停更整段网络时间。
+			isBusy: () => isReadBlocked(busyRef.current, targetRef.current),
 			// 写操作已改动该仓库：作废其提交图窗口与已知仓库信息，避免复用陈旧的一页。
 			beforeRefresh: () => {
 				const target = targetRef.current;

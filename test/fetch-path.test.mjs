@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -80,6 +80,20 @@ function makeRepo(prefix) {
 }
 
 /**
+ * 写入一个可执行的 git 钩子文件。
+ *
+ * 钩子必须带执行位才会被 git 运行；umask 会影响创建时的权限，写入后再显式补一次。
+ *
+ * @param path - 钩子文件绝对路径。
+ * @param content - 文件内容。
+ * @returns 无。
+ */
+function writeHook(path, content) {
+	writeFileSync(path, content, { mode: 0o755 });
+	chmodSync(path, 0o755);
+}
+
+/**
  * 取一条经真实路由 handler 发请求的调用函数。
  *
  * @param repo - 仓库路径。
@@ -143,6 +157,42 @@ test('常规刷新恰起 2 个 git 子进程', async () => {
 		['log', 'status'],
 	);
 	assert.equal(countAllGit(), 2, '刷新路径的 git 子进程数');
+});
+
+test('远程操作进行中，提交图与工作区快照照常返回', async () => {
+	const { repo, git } = makeRepo('gg-fetch-netgate-');
+	const call = await makeCaller(repo);
+	await call({ ...REFRESH, withRepoInfo: true });
+	await cooldown();
+
+	/*
+	 * 造一个确实会挂住的网络操作：推送到一个裸仓库，其 pre-receive 钩子睡若干秒。
+	 * 不可达地址不行 —— 连接被立即拒绝时操作秒回，门控根本来不及生效。
+	 */
+	const bare = mkdtempSync(join(tmpdir(), 'gg-netgate-bare-'));
+	temps.push(bare);
+	execFileSync('git', ['init', '--bare', '-q', bare], { encoding: 'utf8' });
+	const hookDir = join(bare, 'hooks');
+	// 必须带 shebang：裸仓库的钩子由 git 直接 exec，没有解释器行就起不来，push 会秒回。
+	writeHook(join(hookDir, 'pre-receive'), '#!/bin/sh\nsleep 6\n');
+	git('remote', 'add', 'slow', bare);
+	await call({ command: 'invalidateCache' });
+
+	resetSpawns();
+	const networkCall = call({ command: 'pushBranch', branchName: 'main', remotes: ['slow'], setUpstream: false, mode: '', skipHooks: false });
+	// 等它真正进入执行层（子进程已启动、钩子在睡），再发读取请求。
+	await new Promise((resolve) => setTimeout(resolve, 1200));
+	const startedAt = Date.now();
+	const [page, snapshot] = await Promise.all([
+		call({ ...REFRESH, refreshId: 555000111 }),
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 555000111 }),
+	]);
+	const elapsed = Date.now() - startedAt;
+	assert.equal(page.error, null, '提交图不应因远程操作失败');
+	assert.equal(snapshot.error, null, '快照不应因远程操作失败');
+	assert.ok(Array.isArray(page.commits) && page.commits.length > 0, '应返回提交列表');
+	assert.ok(elapsed < 4000, '读取不应等到远程操作结束（实际 ' + elapsed + ' ms）');
+	await networkCall;
 });
 
 test('空信息仓库二次刷新不再起 config --list 与 remote', async () => {
@@ -253,4 +303,84 @@ test('仓库树批量取数的并发上限为 5', async () => {
 		syncBuiltinESMExports();
 	}
 	assert.equal(peak, 5, '同时进行的仓库树取数恰为上限 5 个');
+});
+
+test('耗时汇总的 git 子进程数与实际 spawn 一致', async () => {
+	const { repo } = makeRepo('gg-fetch-perf-');
+	const call = await makeCaller(repo);
+	await cooldown();
+	await call({ command: 'invalidateCache' });
+
+	// 一次只有一条命令的刷新：旧实现在「首条命令完成后」才取基线，差值为零，会记成 0 个。
+	resetSpawns();
+	await call({ command: 'loadWorkingTreeSnapshot', refreshId: 987654321 });
+	const spawned = countAllGit();
+	assert.ok(spawned >= 1, '这次调用确实起了子进程');
+
+	/*
+	 * 汇总是异步冲刷（空闲 3 秒后写出）：先 flush 日志模块，让缓冲落盘，再读这一轮的 perf 行。
+	 * 日志根由 test/setup.mjs 隔离到临时目录，因此这里读的是本次测试自己的文件。
+	 */
+	const { flushSync, currentLogFile } = await import(pathToFileURL(join(root, 'lib', 'src', 'source-control', 'logger.js')).href);
+	await new Promise((resolve) => setTimeout(resolve, 3300));
+	flushSync();
+	const logFile = currentLogFile();
+	assert.ok(typeof logFile === 'string' && logFile !== '', '日志文件应已创建');
+	const line = readFileSync(logFile, 'utf8').split('\n').find((entry) => entry.includes('第 987654321 轮刷新'));
+	assert.ok(line !== undefined, '应写出该轮的耗时汇总行');
+	const reported = Number(/git 子进程 (\d+) 个/.exec(line)?.[1]);
+	assert.equal(reported, spawned, '汇总里的子进程数应与实际 spawn 数一致');
+});
+
+test('并发两轮各自只记自己的子进程', async () => {
+	const { repo } = makeRepo('gg-fetch-perf-concurrent-');
+	const call = await makeCaller(repo);
+	await cooldown();
+	await call({ command: 'invalidateCache' });
+
+	/*
+	 * 两轮同时发出、都要真起子进程：按仓库取计数器再算差值时，后收尾的一轮会把先收尾那一轮的
+	 * 子进程也计入自己的差值，汇总因此偏大。
+	 */
+	resetSpawns();
+	await Promise.all([
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 111222333 }),
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 111222334, noCache: true }),
+	]);
+	const spawned = countAllGit();
+	assert.ok(spawned >= 1, '两轮确实起了子进程');
+
+	const { flushSync, currentLogFile } = await import(pathToFileURL(join(root, 'lib', 'src', 'source-control', 'logger.js')).href);
+	await new Promise((resolve) => setTimeout(resolve, 3300));
+	flushSync();
+	const lines = readFileSync(currentLogFile(), 'utf8').split('\n');
+	const reported = ['111222333', '111222334'].map((id) => {
+		const entry = lines.find((line) => line.includes(`第 ${id} 轮刷新`));
+		assert.ok(entry !== undefined, `应写出第 ${id} 轮的汇总行`);
+		return Number(/git 子进程 (\d+) 个/.exec(entry)?.[1]);
+	});
+	assert.equal(reported.reduce((sum, value) => sum + value, 0), spawned, '两轮之和应等于实际 spawn 数');
+});
+
+test('仅索引写之后提交图窗口仍然命中', async () => {
+	const { repo } = makeRepo('gg-fetch-index-');
+	const call = await makeCaller(repo);
+	await call({ ...REFRESH, withRepoInfo: true });
+	await cooldown();
+
+	// 先取一次窗口页面把它写进缓存，再做一次只改索引的 `git add`。
+	await call(REFRESH);
+	await cooldown();
+	await call({ command: 'stagePaths', paths: [] });
+
+	resetSpawns();
+	const afterWrite = await call(REFRESH);
+	assert.equal(afterWrite.error, null);
+	assert.ok(Array.isArray(afterWrite.commits) && afterWrite.commits.length > 0, '仍返回完整窗口');
+	assert.equal(countGit('log'), 0, '索引类写不改变引用，提交图窗口应命中缓存');
+
+	// 工作区快照仍必须重取：条目与暂存状态确实变了。
+	const snapshot = await call({ command: 'loadWorkingTreeSnapshot' });
+	assert.equal(snapshot.error, null);
+	assert.equal(countGit('status'), 1, '索引类写作废快照，下一次读取重跑一次 status');
 });

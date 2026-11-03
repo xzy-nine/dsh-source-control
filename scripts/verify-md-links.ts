@@ -9,9 +9,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { Nodes } from 'mdast'
 import { markdownHeadingLines, parseMarkdown, visitMarkdown } from './markdown.ts'
+import { gateHint } from './gate-hint.ts'
 import { isArchivedAgentNotePath, uniqueRepoFiles } from './repo-files.ts'
 import { docSystem, repoRoot } from './doc-system.config.ts'
-import { gateHint } from './gate-hint.ts'
 
 const root = repoRoot
 
@@ -26,7 +26,7 @@ export function markdownLinkSourcePaths(scanRoot: string = root): string[] {
     .map(file => relative(scanRoot, file.abs).replaceAll('\\', '/'))
 }
 
-/** 一处失效的相对链接：目标路径缺失，或目标上缺少锚点。 */
+/** 一处失效的相对链接：目标路径缺失（或大小写与实际名字不符），或目标上缺少锚点。 */
 interface Violation {
   file: string
   /** 链接/图片/定义节点起始处的 1 基行号。 */
@@ -143,8 +143,9 @@ export interface MarkdownLinkCache {
   /**
    * 该路径的每一段是否与磁盘上的实际名字逐字符同大小写。
    *
-   * 不区分大小写的文件系统（Windows、macOS 默认）让大小写写错的链接照常打开，同一份
-   * 文档在区分大小写的 Linux 上却是断链。因此本门禁不依赖文件系统的宽容度，自己核对。
+   * 不区分大小写的文件系统（Windows、macOS 默认）让大小写写错的链接照常打开，
+   * 同一份文档在区分大小写的 Linux 上却是断链。因此本门禁不依赖文件系统的宽容度，
+   * 自己逐段核对。缓存按绝对路径记忆，每条路径至多枚举一次目录。
    */
   caseExact: (absPath: string) => boolean
 }
@@ -152,8 +153,11 @@ export interface MarkdownLinkCache {
 /**
  * 逐段核对路径与磁盘上的实际名字是否同大小写。
  *
+ * 从根开始逐段枚举父目录，要求每一段都精确出现在条目里；任一段不存在即返回
+ * false。盘符段（`C:`）没有大小写变体，按原样拼接。
+ *
  * @param absPath - 待核对的绝对路径。
- * @returns 每一段都精确匹配时为 true；某段不存在时为 false。
+ * @returns 每一段都精确匹配时为 true；某一级目录无法枚举或某段不存在时为 false。
  */
 function isCaseExact(absPath: string): boolean {
   const absolute = resolve(absPath)

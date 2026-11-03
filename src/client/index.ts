@@ -24,7 +24,7 @@ import { NativeOpenControl } from './ui/native-open.ts';
 import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
-import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
+import { activeWorkspaceOf, getWorkspaceSnapshot, isSessionDisplayed, preloadWorkspace } from './panel/repo-preload.ts';
 import css from './css/index.module.css';
 import diffCss from './css/file-diff.module.css';
 import shared from './css/shared.module.css';
@@ -60,6 +60,21 @@ function GitGraphTab(props) {
 		const entry = sessions?.byId?.[sessionId];
 		return entry?.cwd;
 	});
+	/*
+	 * 本面板是否在屏幕上：所在会话是当前会话，且本侧栏页可见。
+	 *
+	 * 两个条件都要：会话被切走时侧栏可能仍记住这一页，页签被切走时会话仍在。只有同时成立
+	 * 才算「用户看得见提交框」，异步结果才写进去。会话判定复用 `activeWorkspaceOf` 的同一判据
+	 * （`retainedBy.mainView` 是引用计数，不是布尔），侧栏页可见性取宿主算好的 `tab.visible`。
+	 */
+	const sessionDisplayed = hook((sessions) => isSessionDisplayed(sessions, sessionId));
+	const tabInfoForVisibility = typeof useTabInfo === 'function' ? useTabInfo() : null;
+	const tabVisible = tabInfoForVisibility?.tab?.visible === true;
+	const onScreen = sessionDisplayed === true && tabVisible;
+	// 上屏条件变化记一条：生成结果不上屏时，日志里要能看出是哪一半不成立。
+	React.useEffect(() => {
+		logClient('D', 'panel', `上屏条件：会话显示=${String(sessionDisplayed === true)}、侧栏页可见=${String(tabVisible)}、合计=${String(onScreen)}`);
+	}, [sessionDisplayed, tabVisible, onScreen]);
 	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
 	const pickDirectory = React.useMemo(() => {
 		const service = props.uiWorkspace;
@@ -127,6 +142,7 @@ function GitGraphTab(props) {
 		pickDirectory,
 		runInTerminal,
 		getSessions: props.getSessions,
+		onScreen,
 	});
 }
 

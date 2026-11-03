@@ -12,8 +12,11 @@ import { closeRepositoryWatchers, onRepositoryTreeChange } from './repo-watcher.
 import { resolveGitDir } from './worktree-branches.js';
 import { logError, logInfo, logWarn } from './logger.js';
 import { recordCommandCost } from './api/cost.js';
+import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
 import { collectDiff } from './commit-diff.js';
+import { buildCommitRequest, droppedNotice } from './ai-commit-request.js';
 import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
+import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
 import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
 import type { AiCommitDeps } from './ai-deps.js';
 import type { ApiContext } from './api/context.js';
@@ -37,15 +40,9 @@ const REPO_FREE_COMMANDS: ReadonlySet<string> = new Set(['feedbackInfo', 'submit
 /** 可以合并的只读命令。 */
 const COALESCABLE_COMMANDS: ReadonlySet<string> = new Set(['loadCommits', 'loadWorkingTreeSnapshot', 'loadRepoInfo']);
 
-/**
- * 合并等待的上限（毫秒）。
- *
- * 超过它按超时回投，不无限等待：某个请求的处理体异常退出而没回投时，后来者不能一直挂着。
- */
-const COALESCE_TIMEOUT_MS = 30_000;
-
 /** 在飞的合并项：键为命令 + 仓库 + 参数，值为最终回投的载荷。 */
 const inFlightPayloads = new Map<string, Promise<Record<string, unknown>>>();
+
 /** 仓库判定结果的缓存有效期（毫秒）。
  *
  * 判定要逐级向上找 `.git`，每次刷新对同一路径反复判会重复读盘。仓库被创建或删除属于结构变化，
@@ -55,14 +52,34 @@ const REPO_PATH_TTL_MS = 5000;
 
 /** 仓库判定缓存：规范化路径 → 结果与过期时刻。 */
 const repoPathChecks = new Map<string, { value: boolean; expiresAt: number }>();
+
 /**
  * 处理一条 API 命令。
+ *
+ * 每条命令在自己的轮次登记里执行：执行层在 `spawnGit` 里把它加一，汇总直接读它。不用
+ * 「按仓库取计数器再算差值」—— 并发轮次的时间窗重叠时会互相把对方的子进程算进来，而单命令
+ * 轮次在收尾后才取基线，差值恒为零。
  *
  * @param req - 请求。
  * @param res - 响应。
  * @param aiDeps - AI 与翻译依赖面；翻译服务可选装载，缺失时相关命令降级。
+ * @returns 无。
  */
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, aiDeps?: AiCommitDeps): Promise<void> {
+	const scope = createRefreshScope();
+	await runInRefreshScope(scope, () => handleApiInScope(req, res, aiDeps, scope));
+}
+
+/**
+ * 在给定的轮次登记里处理一条 API 命令。
+ *
+ * @param req - 请求。
+ * @param res - 响应。
+ * @param aiDeps - AI 与翻译依赖面。
+ * @param scope - 本轮的子进程登记。
+ * @returns 无。
+ */
+async function handleApiInScope(req: http.IncomingMessage, res: http.ServerResponse, aiDeps: AiCommitDeps | undefined, scope: RefreshScope): Promise<void> {
 	let msg: Record<string, unknown>;
 	try {
 		msg = await readBody(req);
@@ -96,10 +113,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	if (coalesceKey !== null) {
 		const inFlight = inFlightPayloads.get(coalesceKey);
 		if (inFlight !== undefined) {
-			const shared = await inFlight;
-			sendJson(res, 200, shared);
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
-			return;
+			const shared = await waitCoalesced(inFlight);
+			/*
+			 * 等到超时即自己跑一遍：并发的几条都是只读命令，重跑安全，而拿「并发合并超时」
+			 * 当结果会让面板把它当成操作失败弹给用户。发起方仍在跑，两者结果进同一份缓存。
+			 */
+			if (shared !== null) {
+				sendJson(res, 200, shared);
+				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+				return;
+			}
 		}
 	}
 
@@ -191,12 +214,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const domains = [handleWorkspaceCommand, handleStateCommand, handleRepoCommand, handleGraphCommand, handleHistoryCommand, handleMiscCommand];
 	for (const handle of domains) {
 		if (await handle(ctx)) {
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
+			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
 			return;
 		}
 	}
 	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
-	recordCommandCost(command, Date.now() - started, repo, refreshIdParam);
+	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
 }
 
 export interface GgRouteContext {
@@ -221,7 +244,6 @@ function languageDirective(language: string): string {
 	if (language === '') return '';
 	return '\n\n' + fillPrompt(AI_COMMIT_PROMPTS.language, { language });
 }
-
 
 /**
  * 查模型是否声明了 `off` 推理档位。
@@ -299,7 +321,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	logInfo('source-control', '开始登记仓库监视：写事件、结构变化与事件流');
 
 	// 仓库写操作（含别的会话、别的工作区与外部进程触发的）推给所有面板。
-	disposers.push(onRepositoryWrite(broadcastRepositoryWrite));
+	// 两个影响面都要广播：面板无论哪种写都要重取工作区，影响面只决定宿主作废哪些缓存。
+	disposers.push(onRepositoryWrite((repo) => { broadcastRepositoryWrite(repo); }));
 
 	// 工作树登记、子模块目录与 `.gitmodules` 的变化推给所有面板：这类变化不经过执行层。
 	disposers.push(onRepositoryTreeChange((repo) => {
@@ -375,13 +398,17 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 
 			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
 			const amend = body.amend === true;
-			const diff = await collectDiff(repo, amend);
-			if (diff.trim() === '') {
+			const collected = await collectDiff(repo, amend);
+			/*
+			 * 只有二进制改动时 diff 为空，但仍可生成：文件名已进入提示词，
+			 * 这类提交（换图、换资源）同样需要一条提交信息。
+			 */
+			if (collected.diff.trim() === '' && collected.binary.length === 0) {
 				sendJson(res, 400, { error: amend ? '无 diff 可生成提交信息（上一次提交与工作区均无改动）' : '无 diff 可生成提交信息（暂存区与工作区均为空）' });
 				return;
 			}
 
-			logInfo('ai', `开始生成提交信息：${provider}/${model}${amend ? '（修补）' : ''}，diff ${String(diff.length)} 字符`);
+			logInfo('ai', `开始生成提交信息：${provider}/${model}${amend ? '（修补）' : ''}，diff ${String(collected.diff.length)} 字符，二进制 ${String(collected.binary.length)} 个，合并入 ${String(collected.merged.length)} 个提交，丢弃 ${String(collected.dropped.length)} 个文件`);
 			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
 			const language = typeof body.language === 'string' ? body.language.trim() : '';
@@ -389,7 +416,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				+ languageDirective(language)
 				+ (rules.length > 0 ? '\n\n' + rules : '');
 			const off = await canDisableReasoning(llm, provider, model);
-			const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
+			const request = buildCommitRequest(collected, amend);
 			const streamOpts: Record<string, unknown> = {
 				provider,
 				model,
@@ -407,6 +434,11 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			});
 			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
 			if (warning !== '') sse('warning', warning);
+			const dropped = droppedNotice(collected.dropped);
+			if (dropped !== '') {
+				sse('warning', dropped);
+				logWarn('ai', dropped);
+			}
 
 			const startTime = Date.now();
 			/*

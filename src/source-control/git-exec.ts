@@ -6,6 +6,7 @@
  */
 import { spawn } from 'node:child_process';
 import { collectProcess } from './child-process.js';
+import { countSpawnInScope } from './api/refresh-scope.js';
 import { logDebug, logInfo, logWarn } from './logger.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
@@ -233,10 +234,13 @@ function endOperation(repo: string, operation: GitOperation): void {
 }
 
 /**
- * 是否没有写操作在跑。
+ * 是否没有写操作在跑（含联网命令）。
  *
  * 只读操作（status / log / diff / refs / config）不算忙：它们之间互不冲突，
  * 让它们参与判定会让刷新在只读查询期间一直等待。
+ *
+ * 读取视图不用它 —— 见 {@link isLocalSettled}：联网命令不改写本地状态，等它们会让两个分区
+ * 在一次推送的整段时间里空白。
  *
  * @param repo - 限定仓库；省略时检查所有仓库。
  * @returns 没有写操作在跑时为 true。
@@ -252,18 +256,18 @@ export function isGitIdle(repo?: string): boolean {
 }
 
 /**
- * 是否没有会改动工作区的操作在跑。
+ * 是否没有会改写本地状态的操作在跑。
  *
- * 与 {@link isGitIdle} 的区别是联网命令不算阻塞：抓取与推送期间工作区与索引都不会被改写，
- * 读工作区的命令（status / diff / ls-files）可以照常读。抓取通常要几秒，等它会让面板明显卡顿，
- * 而读到的内容与抓取无关。
+ * 本地状态指工作区、索引与引用。与 {@link isGitIdle} 的区别是联网命令不算阻塞：推送与抓取期间
+ * 本地对象库与工作区都不被改写，引用由 git 逐个原子更新（先写临时文件再重命名），读到的要么是
+ * 命令前、要么是命令后的一致状态。一次推送可能挂几十秒到几分钟，等它会让变更列表与提交图整段空白。
  *
- * 写操作（提交、合并、检出等）仍要等：它们会改写索引或工作区，读到的可能是写了一半的状态。
+ * 写操作（提交、合并、检出、重置等）仍要等：它们会连续改写多个引用与索引，中途读到的组合不一致。
  *
  * @param repo - 限定仓库；省略时检查所有仓库。
- * @returns 没有会改写工作区的操作在跑时为 true。
+ * @returns 没有会改写本地状态的操作在跑时为 true。
  */
-export function isWorktreeIdle(repo?: string): boolean {
+export function isLocalSettled(repo?: string): boolean {
 	for (const [key, set] of runningOperations) {
 		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
 		for (const operation of set) {
@@ -304,14 +308,17 @@ export async function whenGitIdle(repo?: string, signal?: AbortSignal): Promise<
 }
 
 /**
- * 等到没有会改动工作区的操作在跑（联网命令不算）。
+ * 等到没有会改写本地状态的操作在跑（联网命令不算）。
+ *
+ * 读工作区与读提交图都用它：推送与抓取期间本地状态不被改写，等它们会让两个分区在整段网络
+ * 操作里空白。
  *
  * @param repo - 限定仓库；省略时等待所有仓库。
  * @param signal - 取消信号。
  * @returns 无。
  */
-export async function whenWorktreeIdle(repo?: string, signal?: AbortSignal): Promise<void> {
-	await waitUntil(() => isWorktreeIdle(repo), signal);
+export async function whenLocalSettled(repo?: string, signal?: AbortSignal): Promise<void> {
+	await waitUntil(() => isLocalSettled(repo), signal);
 }
 
 /**
@@ -522,15 +529,36 @@ const inFlightGit = new Map<string, Promise<GitResult>>();
  * 判据是「写命令跑完了」，不是「退出码为 0」：冲突合并、拣选冲突与变基停下都以非零退出，
  * 但仓库已被改动（建立了待合并状态与未解决条目），此时仍必须通知。
  */
-const writeListeners = new Set<(repo: string) => void>();
+const writeListeners = new Set<(repo: string, surface: WriteSurface) => void>();
+
+/**
+ * 一次写操作的影响面。
+ *
+ * `index`：只动索引或工作区，不改变 HEAD、引用与贮藏 —— 提交图窗口与仓库信息因此仍然有效。
+ * `history`：其余一切写操作，含未知子命令。
+ */
+export type WriteSurface = 'history' | 'index';
+
+/** 只影响索引与工作区的写子命令；不在表内的一律按 `history`。 */
+const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv']);
+
+/**
+ * 判定一条写命令的影响面。
+ *
+ * @param args - 完整参数数组。
+ * @returns 影响面。
+ */
+function writeSurfaceOf(args: readonly string[]): WriteSurface {
+	return INDEX_ONLY_WRITES.has(args[subcommandIndex(args)] ?? '') ? 'index' : 'history';
+}
 
 /**
  * 订阅仓库写操作。
  *
- * @param listener - 写命令结束后调用。
+ * @param listener - 写命令结束后调用，参数为仓库路径与影响面。
  * @returns 取消订阅。
  */
-export function onRepositoryWrite(listener: (repo: string) => void): () => void {
+export function onRepositoryWrite(listener: (repo: string, surface: WriteSurface) => void): () => void {
 	writeListeners.add(listener);
 	return () => { writeListeners.delete(listener); };
 }
@@ -539,12 +567,13 @@ export function onRepositoryWrite(listener: (repo: string) => void): () => void 
  * 通知一次仓库写操作。
  *
  * @param cwd - 工作目录，调用方给出的原样写法。
+ * @param surface - 影响面。
  * @returns 无。
  */
-function notifyWrite(cwd: string): void {
+function notifyWrite(cwd: string, surface: WriteSurface): void {
 	for (const listener of writeListeners) {
 		try {
-			listener(cwd);
+			listener(cwd, surface);
 		} catch {
 			/* 观察者自身的异常不影响命令结果 */
 		}
@@ -554,13 +583,14 @@ function notifyWrite(cwd: string): void {
 /**
  * 通知一次仓库写入事件。
  *
- * 供以 {@link GitOptions.quietWrite} 执行、事后才确认确有改动的命令补发。
+ * 供以 {@link GitOptions.quietWrite} 执行、事后才确认确有改动的命令补发。补发者已确认改动了
+ * 引用或历史，因此按 `history` 通知。
  *
  * @param repo - 仓库路径。
  * @returns 无。
  */
 export function notifyRepositoryWrite(repo: string): void {
-	notifyWrite(repo);
+	notifyWrite(repo, 'history');
 }
 
 /**
@@ -604,7 +634,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	const operation = startOperation(repo, kindOf(args));
 	const task = (async (): Promise<GitResult> => {
 		try {
-			return await spawnGit(args, cwd, repo);
+			return await spawnGit(args, cwd);
 		} finally {
 			endOperation(repo, operation);
 		}
@@ -639,7 +669,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (cacheable && result.code === 0) setCachedResult(key, result);
 		// 写命令跑完即通知：非零退出也可能是冲突合并这类已改动仓库的情形。
 		// 负退出码表示子进程未能启动，仓库没有被改动，不通知。
-		if (!readOnly && result.code >= 0 && options.quietWrite !== true) notifyWrite(cwd);
+		if (!readOnly && result.code >= 0 && options.quietWrite !== true) notifyWrite(cwd, writeSurfaceOf(args));
 		return result;
 	} finally {
 		if (readOnly) inFlightGit.delete(key);
@@ -686,31 +716,16 @@ export function isProbeCommand(args: readonly string[]): boolean {
 	return false;
 }
 
-/** 各仓库已启动的 git 子进程数；供耗时汇总按仓库统计一轮刷新起了几个子进程。 */
-const gitSpawnsByRepo = new Map<string, number>();
-
-/**
- * 取一个仓库已启动的 git 子进程数。
- *
- * 按仓库分别计数：并发轮次各按自己的起点算差值，共用一个全局计数会把别的轮次的子进程算进来。
- *
- * @param repo - 仓库路径。
- * @returns 该仓库自进程启动以来的子进程数。
- */
-export function gitSpawnCount(repo: string): number {
-	return gitSpawnsByRepo.get(normalizeRepo(repo)) ?? 0;
-}
 
 /**
  * 启动一个 git 子进程。
  *
  * @param args - 参数数组。
  * @param cwd - 工作目录。
- * @param repo - 规范化后的仓库路径，用于计数。
  * @returns 子进程结果。
  */
-function spawnGit(args: readonly string[], cwd: string, repo: string): Promise<GitResult> {
-	gitSpawnsByRepo.set(repo, (gitSpawnsByRepo.get(repo) ?? 0) + 1);
+function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
+	countSpawnInScope();
 	return collectProcess({
 		command: 'git',
 		args,

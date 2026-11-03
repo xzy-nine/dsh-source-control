@@ -8,7 +8,7 @@ import {
 import { branchesOfOtherWorktrees } from '../repo-discovery.js';
 import { graphKey, readGraph, readRepoInfo, writeGraph, writeRepoInfo } from '../host-cache.js';
 import { repoHead } from '../repo-facts.js';
-import { whenGitIdle, whenWorktreeIdle } from '../git-exec.js';
+import { whenLocalSettled } from '../git-exec.js';
 import { logDebug } from '../logger.js';
 import type { StashEntry } from '../git-types.js';
 import type { ApiContext } from './context.js';
@@ -52,7 +52,7 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 	switch (ctx.command) {
 		case 'loadRepoInfo': {
 			// 读远程与贮藏列表：不碰工作区，抓取期间照常读。
-			await whenWorktreeIdle(repo);
+			await whenLocalSettled(repo);
 			/*
 			 * 非仓库路径直接回空信息，不起子进程。原先靠 getRepoInfo 失败后再启一次
 			 * `git rev-parse` 反判，等于先失败一遍再确认。
@@ -84,8 +84,12 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'loadCommits':
-			// 提交图同样等写操作结束：写操作可能正在改写引用。
-			await whenGitIdle(repo);
+			/*
+			 * 只等会改写引用的操作，不等联网命令：推送与抓取期间本地对象库与工作区都不被改写，
+			 * 引用由 git 逐个原子更新，读到的是一致的状态。一次推送可能挂几十秒，等它会让提交图
+			 * 整段空白。提交、检出、合并这类连续改写多个引用的操作仍要等。
+			 */
+			await whenLocalSettled(repo);
 			/*
 			 * 非仓库路径直接回空窗口：对工作区根取提交图必然失败，且每次要起 git log、
 			 * for-each-ref 与 config 三条子进程。

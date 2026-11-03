@@ -117,6 +117,27 @@ function rootKey(root: string): string {
  * @param list - 会话列表快照（形状同 `SessionListState`）。
  * @returns 会话 id 与其工作区根；没有正在显示的会话时为 null。
  */
+/**
+ * 判断一个会话是否正被主视图显示。
+ *
+ * 判据是会话行上的 `retainedBy.mainView` —— 它是**引用计数**（数字），大于 0 即表示主视图
+ * 持有该会话。旧宿主没有该标记时回退 `current`。
+ *
+ * @param list - 会话列表快照（形状同 `SessionListState`）。
+ * @param sessionId - 要判定的会话 id。
+ * @returns 该会话正被显示时为 true。
+ */
+export function isSessionDisplayed(list: unknown, sessionId: string): boolean {
+	const state = list as { readonly current?: unknown; readonly byId?: unknown } | null;
+	if (state === null || typeof state !== 'object') return false;
+	if (typeof state.current === 'string' && state.current !== '') return state.current === sessionId;
+	const byId = (state.byId ?? {}) as Record<string, unknown>;
+	const row = byId[sessionId] as { readonly retainedBy?: unknown } | undefined;
+	if (row === undefined || row.retainedBy === null || typeof row.retainedBy !== 'object') return false;
+	const count = (row.retainedBy as Record<string, unknown>).mainView;
+	return typeof count === 'number' && count > 0;
+}
+
 export function activeWorkspaceOf(list: unknown): { readonly sessionId: string; readonly cwd: string } | null {
 	const state = list as {
 		readonly ids?: unknown;
@@ -133,12 +154,7 @@ export function activeWorkspaceOf(list: unknown): { readonly sessionId: string; 
 		if (row.origin === 'subagent') return null;
 		return { sessionId: id, cwd: row.cwd };
 	};
-	const isMain = (id: string): boolean => {
-		const row = byId[id] as { readonly retainedBy?: unknown } | undefined;
-		if (row === undefined || row.retainedBy === null || typeof row.retainedBy !== 'object') return false;
-		const count = (row.retainedBy as Record<string, unknown>).mainView;
-		return typeof count === 'number' && count > 0;
-	};
+	const isMain = (id: string): boolean => isSessionDisplayed(state, id);
 
 	// 旧宿主用 current 标出当前会话；有值时以它为准。
 	const current = state.current;

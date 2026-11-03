@@ -10,7 +10,7 @@ import { addToGitignore, addToLocalExclude, localExcludeState } from '../ignore.
 import { readHooksPath, readSnapshot, writeHooksPath, writeSnapshot } from '../host-cache.js';
 import { getWorkingTreeSnapshot } from '../git-query.js';
 import { branchesOfOtherWorktrees } from '../repo-discovery.js';
-import { gitOrThrow, runGit, whenWorktreeIdle } from '../git-exec.js';
+import { gitOrThrow, runGit, whenLocalSettled } from '../git-exec.js';
 import { repoHeadHash } from '../repo-facts.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
@@ -42,14 +42,14 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 			await respondResult('loadWorkingTree', async () => {
 				// 写操作（暂存/提交/检出等）未结束时先等它结束：否则会读到写了一半的工作区。
 				// 抓取不算：它不改工作区，等它会让面板在抓取期间白等几秒。
-				await whenWorktreeIdle(repo);
+				await whenLocalSettled(repo);
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
 			break;
 		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			// 只读工作区：抓取期间照常读，不必等它结束。
-			await whenWorktreeIdle(repo);
+			await whenLocalSettled(repo);
 			/*
 			 * 非仓库路径直接回空快照，不起子进程：工作区根常常只是一层目录，对它取数会让
 			 * 每条 git 命令都以 `not a git repository` 失败。

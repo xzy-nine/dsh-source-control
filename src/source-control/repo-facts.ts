@@ -259,5 +259,11 @@ export function setRepoFactsTtlForTest(ms: number): void {
 	clearRepoFacts();
 }
 
-/* 写命令结束后作废目标仓库的布局：仓库可能被换成工作树、被移除或重新初始化。 */
-onRepositoryWrite(invalidateRepoFacts);
+/*
+ * 写命令结束后作废目标仓库的布局：仓库可能被换成工作树、被移除或重新初始化。
+ *
+ * 只索引或工作区的写不改变 git 目录与引用，布局与打包引用因此仍然有效。
+ */
+onRepositoryWrite((repo, surface) => {
+	if (surface === 'history') invalidateRepoFacts(repo);
+});

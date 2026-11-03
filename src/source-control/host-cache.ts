@@ -12,7 +12,8 @@
  * - 仓库信息：分支、远程、贮藏，变化频率低。
  * - 工作区快照：一次 `git status`，是三者中最慢的一条，有效期最短。
  */
-import { onRepositoryWrite, type WorkingTreeSnapshot } from './working-tree.js';
+import { onRepositoryWrite, type WriteSurface } from './working-tree.js';
+import type { WorkingTreeSnapshot } from './working-tree.js';
 import type { CommitNode, RepoInfo } from './git-types.js';
 
 /** 缓存值：提交图窗口。 */
@@ -336,6 +337,23 @@ export function writeHooksPath(repo: string, value: string): void {
 }
 
 /**
+ * 删掉一个缓存里受目标仓库影响的条目。
+ *
+ * 键形如 `<仓库>\0<其余>`：取仓库部分与各祖先前缀比对；不含分隔符的键整体就是仓库路径。
+ *
+ * @param store - 目标缓存。
+ * @param key - 目标仓库的规范化路径。
+ * @returns 无。
+ */
+function dropAffected<T>(store: Map<string, CacheEntry<T>>, key: string): void {
+	for (const entryKey of store.keys()) {
+		const separator = entryKey.indexOf('\0');
+		const cached = separator === -1 ? entryKey : entryKey.slice(0, separator);
+		if (affectedBy(cached, key)) store.delete(entryKey);
+	}
+}
+
+/**
  * 判定一条缓存键所属的仓库是否受目标仓库影响。
  *
  * 三类关系都要覆盖：同一路径；目标仓库的祖先（子模块的写会改变父仓库 `status` 的结果，
@@ -362,24 +380,10 @@ function affectedBy(cachedRepo: string, key: string): boolean {
  */
 export function invalidateRepo(repo: string): void {
 	const key = keyOf(repo);
-	for (const snapshotKeyName of snapshots.keys()) {
-		const separator = snapshotKeyName.indexOf('\0');
-		const cached = separator === -1 ? snapshotKeyName : snapshotKeyName.slice(0, separator);
-		if (affectedBy(cached, key)) snapshots.delete(snapshotKeyName);
-	}
-	for (const infoKey of repoInfos.keys()) {
-		const separator = infoKey.indexOf('\0');
-		const cached = separator === -1 ? infoKey : infoKey.slice(0, separator);
-		if (affectedBy(cached, key)) repoInfos.delete(infoKey);
-	}
-	for (const graphKeyName of graphs.keys()) {
-		const separator = graphKeyName.indexOf('\0');
-		const cached = separator === -1 ? graphKeyName : graphKeyName.slice(0, separator);
-		if (affectedBy(cached, key)) graphs.delete(graphKeyName);
-	}
-	for (const hooksKey of hooksPaths.keys()) {
-		if (affectedBy(hooksKey, key)) hooksPaths.delete(hooksKey);
-	}
+	dropAffected(snapshots, key);
+	dropAffected(repoInfos, key);
+	dropAffected(graphs, key);
+	dropAffected(hooksPaths, key);
 }
 
 /**
@@ -417,16 +421,38 @@ export function noteRepoCommonDir(repo: string, commonDir: string): void {
 }
 
 /**
- * 作废一条写命令影响到的全部缓存。
+ * 作废一个仓库及其共享公共目录的其它工作树的工作区快照。
  *
- * 覆盖三类影响：该仓库自身及其祖先与后代（子模块的写会改变父仓库 `status` 的结果），
- * 以及与它共享同一 git 公共目录的其它工作树（主工作树与链接工作树是不同路径）。
- * 其余仓库的缓存不受影响。
+ * 只索引或工作区的写不会移动 HEAD、不会改引用与贮藏，因此提交图窗口、仓库信息与钩子路径
+ * 仍然有效；清掉它们会让紧接着的全量刷新重跑一次 `git log` 与仓库信息批。
  *
  * @param repo - 发生写入的仓库路径。
  * @returns 无。
  */
-export function invalidateOnWrite(repo: string): void {
+function invalidateSnapshotsOnWrite(repo: string): void {
+	const key = keyOf(repo);
+	dropAffected(snapshots, key);
+	const commonDir = commonDirByRepo.get(key);
+	if (commonDir === undefined) return;
+	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
+		if (cachedCommonDir !== commonDir || cachedRepo === key) continue;
+		dropAffected(snapshots, cachedRepo);
+	}
+}
+
+/**
+ * 作废一条写命令影响到的全部缓存。
+ *
+ * 影响面为 `history` 时覆盖三类影响：该仓库自身及其祖先与后代（子模块的写会改变父仓库
+ * `status` 的结果），以及与它共享同一 git 公共目录的其它工作树（主工作树与链接工作树是
+ * 不同路径）。影响面为 `index` 时只清工作区快照，范围同上。
+ *
+ * @param repo - 发生写入的仓库路径。
+ * @param surface - 影响面；省略时按 `history` 处理。
+ * @returns 无。
+ */
+export function invalidateOnWrite(repo: string, surface: WriteSurface = 'history'): void {
+	if (surface === 'index') { invalidateSnapshotsOnWrite(repo); return; }
 	invalidateRepo(repo);
 	const commonDir = commonDirByRepo.get(keyOf(repo));
 	if (commonDir === undefined) return;
@@ -444,4 +470,4 @@ export function invalidateOnWrite(repo: string): void {
  * 同一仓库的主工作树与链接工作树是两个不同路径，但共享同一 git 公共目录，
  * 由 {@link invalidateOnWrite} 一并覆盖。
  */
-onRepositoryWrite((repo) => { invalidateOnWrite(repo); });
+onRepositoryWrite((repo, surface) => { invalidateOnWrite(repo, surface); });

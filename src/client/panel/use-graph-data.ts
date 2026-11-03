@@ -175,7 +175,7 @@ export function useGraphData({
 		};
 		}
 		return {
-			phase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
+			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
 			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
 			entries: [], entriesTruncated: false, selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
@@ -260,7 +260,7 @@ export function useGraphData({
 	const refresh = React.useCallback(async (mode: 'full' | 'reconcile' = 'reconcile') => {
 		if (workingTreePath === null) {
 			setState((previous) => ({
-				...previous, phase: hasWorkspace ? 'loading' : 'no-workspace', error: null,
+				...previous, phase: hasWorkspace ? 'loading' : 'no-workspace', entriesPhase: hasWorkspace ? 'loading' : 'ready', error: null,
 			}));
 			return;
 		}
@@ -311,7 +311,7 @@ export function useGraphData({
 		if (background) setState((previous) => beginBackground(beginBackground(previous, 'graph'), 'entries'));
 		if (mode === 'full') {
 			setState((previous) => ({
-				...previous, phase: 'loading', error: null, commits: [], entries: [], detail: null, selectedHash: null,
+				...previous, phase: 'loading', entriesPhase: 'loading', error: null, commits: [], entries: [], detail: null, selectedHash: null,
 			}));
 		} else if (repoChanged) {
 			/*
@@ -324,7 +324,7 @@ export function useGraphData({
 			 */
 			setState((previous) => ({
 				...previous,
-				phase: 'loading', error: null,
+				phase: 'loading', entriesPhase: 'loading', error: null,
 				commits: [], entries: [], head: null, headHash: null, upstream: null, more: false, nextSkip: 0,
 				detail: null, selectedHash: null,
 			}));
@@ -371,9 +371,12 @@ export function useGraphData({
 				/*
 				 * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。用户主动刷新不做短路，
 				 * 它必须真正重建。
+				 *
+				 * 快照先回即把变更列表那一路置为就绪：提交图被慢操作挡住时，已经取到的变更列表
+				 * 不该继续显示占位。
 				 */
 				setState((previous) => ({
-					...previous, error: null,
+					...previous, error: null, entriesPhase: 'ready',
 					entries: mode === 'reconcile' && entriesEqual(previous.entries, snapshot.entries)
 						? previous.entries
 						: mergeEntries(previous.entries, snapshot.entries),
@@ -411,7 +414,7 @@ export function useGraphData({
 					? endBackground(endBackground(previous, 'graph'), 'entries')
 					: previous;
 				return {
-					...settled, phase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
+					...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
 					head: graph.head, headHash: snapshot.head,
 					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
@@ -506,7 +509,7 @@ export function useGraphData({
 				const foreignSame = branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
 				return {
 					...endBackground(endBackground(previous, 'graph'), 'entries'),
-					phase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
+					phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
 					head: graph.head, headHash: snapshot.head,
 					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,

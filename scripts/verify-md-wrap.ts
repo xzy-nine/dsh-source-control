@@ -9,9 +9,9 @@ import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Nodes } from 'mdast'
 import { parseMarkdown, visitMarkdown } from './markdown.ts'
+import { gateHint } from './gate-hint.ts'
 import { isArchivedAgentNotePath, splitLines, uniqueRepoFiles } from './repo-files.ts'
 import { docSystem, repoRoot } from './doc-system.config.ts'
-import { gateHint } from './gate-hint.ts'
 
 const root = repoRoot
 

@@ -6,7 +6,6 @@
  * @module scripts/verify-archived-agent-notes
  */
 
-import { gateHint } from './gate-hint.ts'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -59,7 +58,7 @@ for (const entry of readdirSync(archiveRoot, { withFileTypes: true })) {
       continue
     }
     // 版本控制占位文件让空的 kind 目录留在树中；它们不是归档产物，永不封印。
-    if (!child.name.endsWith('.md') && !child.name.endsWith('.i18n.yaml')) continue
+    if (!child.name.endsWith('.md')) continue
     artifacts.set(rel, readFileSync(resolve(archiveRoot, rel)))
   }
 }
@@ -111,7 +110,6 @@ if (!writeMode) {
 if (errors.length > 0) {
   console.error('verify-archived-agent-notes: archive rules violated:')
   for (const error of errors) console.error(`  ${error}`)
-  console.error(gateHint('verify-archived-agent-notes'))
   process.exit(1)
 }
 
