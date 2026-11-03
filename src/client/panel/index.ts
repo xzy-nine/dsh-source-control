@@ -70,6 +70,12 @@ export interface GitGraphPanelProps {
 	readonly runInTerminal?: ((sessionId: string, command: string) => Promise<boolean>) | undefined;
 	/** 取会话服务；未装载时为 null。 */
 	readonly getSessions?: (() => unknown) | undefined;
+	/**
+	 * 本面板当前是否在屏幕上：所在会话是当前会话，且源代码管理侧栏页可见。
+	 *
+	 * 异步结果（AI 生成的提交信息）只在它为真时写进提交框，否则暂存到所属仓库。
+	 */
+	readonly onScreen?: boolean | undefined;
 }
 
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
@@ -83,7 +89,7 @@ function issueLinkingConfigOf(settings: Settings): unknown {
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions, onScreen = true }: GitGraphPanelProps): React.ReactElement {
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
@@ -445,7 +451,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/* 提交框：草稿、钩子勾选、AI 生成、翻译与提交。 */
 	const composer = useCommitComposer({
 		workingTreePath, settings, commits: state.commits, merging: state.merging,
-		entries: state.entries, translateReady, commitBusy: busyFlags.commit, run,
+		entries: state.entries, translateReady, commitBusy: busyFlags.commit, onScreen, run,
 		notify: (message: string) => { showToast(message); return Promise.resolve(); },
 	});
 
