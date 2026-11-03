@@ -12,7 +12,7 @@
 export type { GitResult, GitOptions, GitOperationKind, WriteSurface } from './git-exec.js';
 export {
 	gitEnvironment, killRunningGit, isGitIdle, isWorktreeIdle, whenGitIdle, whenWorktreeIdle,
-	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitSpawnCount, gitOrThrow,
+	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitOrThrow,
 } from './git-exec.js';
 export type { WorkingTreeEntry, StatusRecord, WorkingTreeSnapshot } from './status-parse.js';
 export { STATUS_LIMIT, forEachStatusRecord, parseStatus, parseStatusSnapshot } from './status-parse.js';

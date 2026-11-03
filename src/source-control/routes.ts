@@ -5,13 +5,14 @@
  * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
  */
 import type http from 'node:http';
-import { gitSpawnCount, onRepositoryWrite } from './git-exec.js';
+import { onRepositoryWrite } from './git-exec.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { clearDiscoveryCache } from './repo-discovery.js';
 import { closeRepositoryWatchers, onRepositoryTreeChange } from './repo-watcher.js';
 import { resolveGitDir } from './worktree-branches.js';
 import { logError, logInfo, logWarn } from './logger.js';
 import { recordCommandCost } from './api/cost.js';
+import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
 import { collectDiff } from './commit-diff.js';
 import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
 import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
@@ -50,14 +51,34 @@ const REPO_PATH_TTL_MS = 5000;
 
 /** 仓库判定缓存：规范化路径 → 结果与过期时刻。 */
 const repoPathChecks = new Map<string, { value: boolean; expiresAt: number }>();
+
 /**
  * 处理一条 API 命令。
+ *
+ * 每条命令在自己的轮次登记里执行：执行层在 `spawnGit` 里把它加一，汇总直接读它。不用
+ * 「按仓库取计数器再算差值」—— 并发轮次的时间窗重叠时会互相把对方的子进程算进来，而单命令
+ * 轮次在收尾后才取基线，差值恒为零。
  *
  * @param req - 请求。
  * @param res - 响应。
  * @param aiDeps - AI 与翻译依赖面；翻译服务可选装载，缺失时相关命令降级。
+ * @returns 无。
  */
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, aiDeps?: AiCommitDeps): Promise<void> {
+	const scope = createRefreshScope();
+	await runInRefreshScope(scope, () => handleApiInScope(req, res, aiDeps, scope));
+}
+
+/**
+ * 在给定的轮次登记里处理一条 API 命令。
+ *
+ * @param req - 请求。
+ * @param res - 响应。
+ * @param aiDeps - AI 与翻译依赖面。
+ * @param scope - 本轮的子进程登记。
+ * @returns 无。
+ */
+async function handleApiInScope(req: http.IncomingMessage, res: http.ServerResponse, aiDeps: AiCommitDeps | undefined, scope: RefreshScope): Promise<void> {
 	let msg: Record<string, unknown>;
 	try {
 		msg = await readBody(req);
@@ -75,11 +96,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	 * 0 是旧版客户端的缺省值，与真实轮次 0 无法区分，因此统一当成没有编号。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
-	/*
-	 * 本轮的子进程基线必须在执行命令之前取：命令自己的子进程在 `spawnGit` 里计数，
-	 * 等命令返回后再取基线，差值为零 —— 单命令轮次因此会一律报「0 个」。
-	 */
-	const spawnsAtStart = gitSpawnCount(repo);
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
 	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
@@ -103,7 +119,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 			 */
 			if (shared !== null) {
 				sendJson(res, 200, shared);
-				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
+				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
 				return;
 			}
 		}
@@ -197,12 +213,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ai
 	const domains = [handleWorkspaceCommand, handleStateCommand, handleRepoCommand, handleGraphCommand, handleHistoryCommand, handleMiscCommand];
 	for (const handle of domains) {
 		if (await handle(ctx)) {
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
+			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
 			return;
 		}
 	}
 	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
-	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, spawnsAtStart);
+	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
 }
 
 export interface GgRouteContext {

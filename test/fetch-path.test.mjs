@@ -282,6 +282,36 @@ test('耗时汇总的 git 子进程数与实际 spawn 一致', async () => {
 	assert.equal(reported, spawned, '汇总里的子进程数应与实际 spawn 数一致');
 });
 
+test('并发两轮各自只记自己的子进程', async () => {
+	const { repo } = makeRepo('gg-fetch-perf-concurrent-');
+	const call = await makeCaller(repo);
+	await cooldown();
+	await call({ command: 'invalidateCache' });
+
+	/*
+	 * 两轮同时发出、都要真起子进程：按仓库取计数器再算差值时，后收尾的一轮会把先收尾那一轮的
+	 * 子进程也计入自己的差值，汇总因此偏大。
+	 */
+	resetSpawns();
+	await Promise.all([
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 111222333 }),
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 111222334, noCache: true }),
+	]);
+	const spawned = countAllGit();
+	assert.ok(spawned >= 1, '两轮确实起了子进程');
+
+	const { flushSync, currentLogFile } = await import(pathToFileURL(join(root, 'lib', 'src', 'source-control', 'logger.js')).href);
+	await new Promise((resolve) => setTimeout(resolve, 3300));
+	flushSync();
+	const lines = readFileSync(currentLogFile(), 'utf8').split('\n');
+	const reported = ['111222333', '111222334'].map((id) => {
+		const entry = lines.find((line) => line.includes(`第 ${id} 轮刷新`));
+		assert.ok(entry !== undefined, `应写出第 ${id} 轮的汇总行`);
+		return Number(/git 子进程 (\d+) 个/.exec(entry)?.[1]);
+	});
+	assert.equal(reported.reduce((sum, value) => sum + value, 0), spawned, '两轮之和应等于实际 spawn 数');
+});
+
 test('仅索引写之后提交图窗口仍然命中', async () => {
 	const { repo } = makeRepo('gg-fetch-index-');
 	const call = await makeCaller(repo);

@@ -8,7 +8,6 @@
  * 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的、或旧版客户端）按仓库与时间窗口归组。
  */
 import { flushSync, logInfo } from '../logger.js';
-import { gitSpawnCount } from '../git-exec.js';
 
 /** 无轮次编号时一轮的合并窗口（毫秒）。 */
 const COST_WINDOW_MS = 3000;
@@ -26,8 +25,8 @@ interface CostBucket {
 	firstStartedAt: number;
 	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
 	lastEndedAt: number;
-	/** 本轮开始时的 git 子进程计数。 */
-	spawnsAtStart: number;
+	/** 本轮已启动的 git 子进程数，由各条命令的轮次登记累加。 */
+	spawns: number;
 	/** 各命令的执行次数。 */
 	readonly counts: Map<string, number>;
 	/** 各命令累计耗时（毫秒）。 */
@@ -77,9 +76,7 @@ function flushCostBucket(key: string): void {
 	 * 命令之和是工作量。git 子进程数是这套取数的主要成本来源（一次约 80ms 固定开销）。
 	 */
 	const wall = Math.max(0, current.lastEndedAt - current.firstStartedAt);
-	// 按仓库计数：并发轮次各自算差值，共用全局计数会把别的轮次的子进程算进来。
-	const spawns = gitSpawnCount(current.repo) - current.spawnsAtStart;
-	logInfo('perf', `${current.label}墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，git 子进程 ${String(spawns)} 个，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
+	logInfo('perf', `${current.label}墙钟 ${String(wall)} ms，命令耗时合计 ${String(current.totalMs)} ms，git 子进程 ${String(current.spawns)} 个，共 ${String(current.counts.size)} 种命令${slowest}：${breakdown}`);
 }
 
 /**
@@ -98,10 +95,10 @@ function flushCommandCost(): void {
  * @param ms - 本次耗时（毫秒）。
  * @param repo - 仓库路径。
  * @param refreshId - 客户端给出的轮次编号；未给出时为 null。
- * @param spawnsAtStart - 本轮开始时的 git 子进程计数；由请求入口在命令执行前取，桶据此算差。
+ * @param spawns - 本轮已启动的 git 子进程数；取自该命令所在轮次的登记。
  * @returns 无。
  */
-function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null, spawnsAtStart: number): void {
+function recordCommandCost(command: string, ms: number, repo: string, refreshId: number | null, spawns: number): void {
 	if (command === '' || command === 'logEvent') return;
 	if (!exitFlushRegistered) {
 		exitFlushRegistered = true;
@@ -128,12 +125,17 @@ function recordCommandCost(command: string, ms: number, repo: string, refreshId:
 	if (current === undefined) {
 		current = {
 			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
-			repo, firstStartedAt: now - ms, lastEndedAt: now, spawnsAtStart,
+			repo, firstStartedAt: now - ms, lastEndedAt: now, spawns: 0,
 			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
 		};
 		costBuckets.set(key, current);
 	}
 	current.lastEndedAt = now;
+	/*
+	 * 每条命令各有自己的轮次登记，只统计它自己起的子进程；一轮由多条命令组成，因此累加。
+	 * 命中缓存或走了并发合并的命令登记为 0，累加不会多算。
+	 */
+	current.spawns += spawns;
 	current.counts.set(command, (current.counts.get(command) ?? 0) + 1);
 	current.msByCommand.set(command, (current.msByCommand.get(command) ?? 0) + ms);
 	current.totalMs += ms;

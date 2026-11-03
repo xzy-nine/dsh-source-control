@@ -6,6 +6,7 @@
  */
 import { spawn } from 'node:child_process';
 import { collectProcess } from './child-process.js';
+import { countSpawnInScope } from './api/refresh-scope.js';
 import { logDebug, logInfo, logWarn } from './logger.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
@@ -627,7 +628,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	const operation = startOperation(repo, kindOf(args));
 	const task = (async (): Promise<GitResult> => {
 		try {
-			return await spawnGit(args, cwd, repo);
+			return await spawnGit(args, cwd);
 		} finally {
 			endOperation(repo, operation);
 		}
@@ -709,31 +710,16 @@ export function isProbeCommand(args: readonly string[]): boolean {
 	return false;
 }
 
-/** 各仓库已启动的 git 子进程数；供耗时汇总按仓库统计一轮刷新起了几个子进程。 */
-const gitSpawnsByRepo = new Map<string, number>();
-
-/**
- * 取一个仓库已启动的 git 子进程数。
- *
- * 按仓库分别计数：并发轮次各按自己的起点算差值，共用一个全局计数会把别的轮次的子进程算进来。
- *
- * @param repo - 仓库路径。
- * @returns 该仓库自进程启动以来的子进程数。
- */
-export function gitSpawnCount(repo: string): number {
-	return gitSpawnsByRepo.get(normalizeRepo(repo)) ?? 0;
-}
 
 /**
  * 启动一个 git 子进程。
  *
  * @param args - 参数数组。
  * @param cwd - 工作目录。
- * @param repo - 规范化后的仓库路径，用于计数。
  * @returns 子进程结果。
  */
-function spawnGit(args: readonly string[], cwd: string, repo: string): Promise<GitResult> {
-	gitSpawnsByRepo.set(repo, (gitSpawnsByRepo.get(repo) ?? 0) + 1);
+function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
+	countSpawnInScope();
 	return collectProcess({
 		command: 'git',
 		args,
