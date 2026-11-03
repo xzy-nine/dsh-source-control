@@ -3,7 +3,7 @@
  */
 import { discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from '../repo-discovery.js';
 import { watchRepositories, watchWorkspace } from '../repo-watcher.js';
-import { whenWorktreeIdle } from '../git-exec.js';
+import { whenLocalSettled } from '../git-exec.js';
 import type { RepoNode } from '../repo-discovery.js';
 import type { ApiContext } from './context.js';
 
@@ -68,7 +68,7 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 		case 'loadRepoSync':
 			await respondResult('loadRepoSync', async () => {
 				// 读引用，不碰工作区：抓取期间照常读。
-				await whenWorktreeIdle(repo);
+				await whenLocalSettled(repo);
 				const sync = await loadRepoSync(repo);
 				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
 			});
@@ -79,7 +79,7 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 				const repos = arr<string>('repos').filter((path) => typeof path === 'string' && path !== '');
 				// 空列表不读仓库：results 为空数组。
 				if (repos.length === 0) return { repo, results: [] };
-				await whenWorktreeIdle(repo);
+				await whenLocalSettled(repo);
 				return { repo, results: await loadReposSync(repos) };
 			});
 			break;

@@ -11,7 +11,7 @@
  */
 export type { GitResult, GitOptions, GitOperationKind, WriteSurface } from './git-exec.js';
 export {
-	gitEnvironment, killRunningGit, isGitIdle, isWorktreeIdle, whenGitIdle, whenWorktreeIdle,
+	gitEnvironment, killRunningGit, isGitIdle, isLocalSettled, whenGitIdle, whenLocalSettled,
 	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitOrThrow,
 } from './git-exec.js';
 export type { WorkingTreeEntry, StatusRecord, WorkingTreeSnapshot } from './status-parse.js';

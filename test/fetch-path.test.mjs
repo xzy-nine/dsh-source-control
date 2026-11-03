@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -80,6 +80,20 @@ function makeRepo(prefix) {
 }
 
 /**
+ * 写入一个可执行的 git 钩子文件。
+ *
+ * 钩子必须带执行位才会被 git 运行；umask 会影响创建时的权限，写入后再显式补一次。
+ *
+ * @param path - 钩子文件绝对路径。
+ * @param content - 文件内容。
+ * @returns 无。
+ */
+function writeHook(path, content) {
+	writeFileSync(path, content, { mode: 0o755 });
+	chmodSync(path, 0o755);
+}
+
+/**
  * 取一条经真实路由 handler 发请求的调用函数。
  *
  * @param repo - 仓库路径。
@@ -143,6 +157,42 @@ test('常规刷新恰起 2 个 git 子进程', async () => {
 		['log', 'status'],
 	);
 	assert.equal(countAllGit(), 2, '刷新路径的 git 子进程数');
+});
+
+test('远程操作进行中，提交图与工作区快照照常返回', async () => {
+	const { repo, git } = makeRepo('gg-fetch-netgate-');
+	const call = await makeCaller(repo);
+	await call({ ...REFRESH, withRepoInfo: true });
+	await cooldown();
+
+	/*
+	 * 造一个确实会挂住的网络操作：推送到一个裸仓库，其 pre-receive 钩子睡若干秒。
+	 * 不可达地址不行 —— 连接被立即拒绝时操作秒回，门控根本来不及生效。
+	 */
+	const bare = mkdtempSync(join(tmpdir(), 'gg-netgate-bare-'));
+	temps.push(bare);
+	execFileSync('git', ['init', '--bare', '-q', bare], { encoding: 'utf8' });
+	const hookDir = join(bare, 'hooks');
+	// 必须带 shebang：裸仓库的钩子由 git 直接 exec，没有解释器行就起不来，push 会秒回。
+	writeHook(join(hookDir, 'pre-receive'), '#!/bin/sh\nsleep 6\n');
+	git('remote', 'add', 'slow', bare);
+	await call({ command: 'invalidateCache' });
+
+	resetSpawns();
+	const networkCall = call({ command: 'pushBranch', branchName: 'main', remotes: ['slow'], setUpstream: false, mode: '', skipHooks: false });
+	// 等它真正进入执行层（子进程已启动、钩子在睡），再发读取请求。
+	await new Promise((resolve) => setTimeout(resolve, 1200));
+	const startedAt = Date.now();
+	const [page, snapshot] = await Promise.all([
+		call({ ...REFRESH, refreshId: 555000111 }),
+		call({ command: 'loadWorkingTreeSnapshot', refreshId: 555000111 }),
+	]);
+	const elapsed = Date.now() - startedAt;
+	assert.equal(page.error, null, '提交图不应因远程操作失败');
+	assert.equal(snapshot.error, null, '快照不应因远程操作失败');
+	assert.ok(Array.isArray(page.commits) && page.commits.length > 0, '应返回提交列表');
+	assert.ok(elapsed < 4000, '读取不应等到远程操作结束（实际 ' + elapsed + ' ms）');
+	await networkCall;
 });
 
 test('空信息仓库二次刷新不再起 config --list 与 remote', async () => {

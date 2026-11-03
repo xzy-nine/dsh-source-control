@@ -364,7 +364,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		if (node.id === selectedId) return;
 		selectNode(node);
 		setState((previous) => ({
-			...previous, phase: 'loading', commits: [], entries: [],
+			...previous, phase: 'loading', entriesPhase: 'loading', commits: [], entries: [],
 			detail: null, selectedHash: null, error: null,
 		}));
 	}, [selectedId, selectNode, setState]);
@@ -836,7 +836,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {
-			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.phase,
+			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.entriesPhase,
 			workingTreePath, head: state.head,
 			message: composer.message, onMessageChange: composer.setMessage, amend: composer.amend, onToggleAmend: composer.toggleAmend, onStash: handleStash,
 			// 任一类钩子存在即显示：同一个勾选项同时决定提交与推送是否带 --no-verify。

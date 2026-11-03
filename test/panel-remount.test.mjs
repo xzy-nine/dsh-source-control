@@ -90,6 +90,14 @@ parallel('面板重挂载', (t) => {
 		);
 	});
 
+	t.test('变更列表与提交图各有自己的就绪阶段', () => {
+		/*
+		 * 两路并行取数、快照通常先回：共用一个阶段会让更改区陪着提交图显示占位。
+		 */
+		assert.match(panel, /phase: state\.entriesPhase/, '更改区应读变更列表那一路的阶段');
+		assert.match(panel, /busy: busyFlags, phase: state\.phase/, '图形区应读提交图那一路的阶段');
+	});
+
 	t.test('客户端不缓存提交数据，只保留取数参数', () => {
 		// 提交图窗口与工作区快照只在宿主缓存，客户端不复制一份。
 		for (const gone of ['createCommitGraphCache', 'graphWindows']) {

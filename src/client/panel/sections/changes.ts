@@ -12,7 +12,7 @@ import { PublishIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { ChangeGroup } from '../changes.ts';
 import { anyBusy } from '../busy.ts';
 import { commitButtonDisabledOf } from '../submit-state.ts';
-import type { AiStats, BusyFlags, ChangeActions, PanelPhase, WorkingTreeEntry } from '../../shared/types.ts';
+import type { AiStats, BusyFlags, ChangeActions, SectionPhase, WorkingTreeEntry } from '../../shared/types.ts';
 import { refreshButton } from './refresh-button.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
@@ -24,7 +24,8 @@ export interface ChangesSectionProps extends ChangeActions {
 	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
 	readonly entriesTruncated: boolean;
 	readonly busy: BusyFlags;
-	readonly phase: PanelPhase;
+	/** 变更列表那一路的就绪阶段；与提交图分开，快照先回即就绪。 */
+	readonly phase: SectionPhase;
 	readonly workingTreePath: string | null;
 	readonly head: string | null;
 	readonly message: string;
