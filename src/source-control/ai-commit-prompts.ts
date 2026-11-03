@@ -11,6 +11,10 @@ export interface AiCommitPromptTexts {
 	readonly system: string;
 	/** 指定语言时追加到系统提示词末尾，占位符 `{language}`；未指定语言时不追加。 */
 	readonly language: string;
+	/** 被合并入的提交段，占位符 `{commits}`；非合并提交时不追加。 */
+	readonly merged: string;
+	/** 二进制文件清单段，占位符 `{paths}`；无二进制文件时不追加。 */
+	readonly binary: string;
 	/** 普通生成的用户请求模板，占位符 `{diff}`。 */
 	readonly request: string;
 	/** 修补上一次提交时的用户请求模板，占位符 `{diff}`。 */

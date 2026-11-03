@@ -14,6 +14,7 @@ import { logError, logInfo, logWarn } from './logger.js';
 import { recordCommandCost } from './api/cost.js';
 import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
 import { collectDiff } from './commit-diff.js';
+import { buildCommitRequest, droppedNotice } from './ai-commit-request.js';
 import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
 import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
 import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
@@ -244,7 +245,6 @@ function languageDirective(language: string): string {
 	return '\n\n' + fillPrompt(AI_COMMIT_PROMPTS.language, { language });
 }
 
-
 /**
  * 查模型是否声明了 `off` 推理档位。
  * @param llm - llm 服务。
@@ -398,13 +398,17 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 
 			// 修补上一次提交时，把上一提交的改动一并纳入 diff。
 			const amend = body.amend === true;
-			const diff = await collectDiff(repo, amend);
-			if (diff.trim() === '') {
+			const collected = await collectDiff(repo, amend);
+			/*
+			 * 只有二进制改动时 diff 为空，但仍可生成：文件名已进入提示词，
+			 * 这类提交（换图、换资源）同样需要一条提交信息。
+			 */
+			if (collected.diff.trim() === '' && collected.binary.length === 0) {
 				sendJson(res, 400, { error: amend ? '无 diff 可生成提交信息（上一次提交与工作区均无改动）' : '无 diff 可生成提交信息（暂存区与工作区均为空）' });
 				return;
 			}
 
-			logInfo('ai', `开始生成提交信息：${provider}/${model}${amend ? '（修补）' : ''}，diff ${String(diff.length)} 字符`);
+			logInfo('ai', `开始生成提交信息：${provider}/${model}${amend ? '（修补）' : ''}，diff ${String(collected.diff.length)} 字符，二进制 ${String(collected.binary.length)} 个，合并入 ${String(collected.merged.length)} 个提交，丢弃 ${String(collected.dropped.length)} 个文件`);
 			const rules = typeof body.rules === 'string' ? body.rules.trim() : '';
 			// 语言由前端给出（取自 DSH 当前界面语言）；空串时提示词与以往一致。
 			const language = typeof body.language === 'string' ? body.language.trim() : '';
@@ -412,7 +416,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				+ languageDirective(language)
 				+ (rules.length > 0 ? '\n\n' + rules : '');
 			const off = await canDisableReasoning(llm, provider, model);
-			const request = fillPrompt(amend ? AI_COMMIT_PROMPTS.requestAmend : AI_COMMIT_PROMPTS.request, { diff });
+			const request = buildCommitRequest(collected, amend);
 			const streamOpts: Record<string, unknown> = {
 				provider,
 				model,
@@ -430,6 +434,11 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			});
 			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
 			if (warning !== '') sse('warning', warning);
+			const dropped = droppedNotice(collected.dropped);
+			if (dropped !== '') {
+				sse('warning', dropped);
+				logWarn('ai', dropped);
+			}
 
 			const startTime = Date.now();
 			/*
