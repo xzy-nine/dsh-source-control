@@ -56,6 +56,7 @@ export function useGraphPolling({
 		let polling = false;
 		let lastSeen = '';
 		let seenCount = 0;
+		let skipCounter = 0;
 		let timerId: number | undefined;
 		let timerInterval = 0;
 
@@ -65,6 +66,14 @@ export function useGraphPolling({
 		const poll = (): void => {
 			// 联网操作不算阻塞：推送与抓取期间轮询照常读，读到的是本地一致状态。
 			if (cancelled.current || polling || document.visibilityState !== 'visible' || isReadBlocked(busyRef.current, workingTreePath)) return;
+			/*
+			 * 自适应跳过：连续读到同一签名时逐步跳过轮询，减少无变化的 git status 调用。
+			 * 签名一变即复位到全速。事件流仍是发现改动的主路径，跳过只影响兜底轮询。
+			 */
+			const skipRate = seenCount < 6 ? 1 : seenCount < 18 ? 2 : 3;
+			skipCounter += 1;
+			if (skipCounter < skipRate) return;
+			skipCounter = 0;
 			polling = true;
 			// 轮询读的也是工作区快照：与其它后台刷新同一套指示，取数期间给出反馈。
 			setState((previous) => beginBackground(previous, 'entries'));

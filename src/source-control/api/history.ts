@@ -40,6 +40,9 @@ async function refsSignature(repo: string): Promise<string> {
 	return result.code === 0 ? result.stdout : '';
 }
 
+/** 在途的抓取：同仓库并发请求共享一次 git fetch，避免多面板各起一遍。 */
+const inFlightFetches = new Map<string, Promise<{ repo: string; changed: boolean }>>();
+
 /**
  * 处理分支、提交、标签与远程写操作的一条命令。
  *
@@ -190,21 +193,27 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				break;
 			}
 			await respondResult('fetch', async () => {
-				/*
-				 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
-				 *
-				 * 不比较的话，自动抓取（默认每 180s 一轮）会让所有面板每轮都重取一次提交图
-				 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
-				 */
-				const before = await refsSignature(repo);
-				const error = await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true);
-				if (error !== null) throw new Error(error);
-				const after = await refsSignature(repo);
-				const changed = before !== after;
-				// 抓取以 quietWrite 执行：确有改动才补发写事件，否则面板不会白刷新。
-				if (changed) notifyRepositoryWrite(repo);
-				logInfo('repo', `已抓取远程${remoteName === null ? '（全部）' : `：${remoteName}`}${changed ? '，引用有更新' : '，引用无变化'}`);
-				return { repo, changed };
+				const existing = inFlightFetches.get(repo);
+				if (existing !== undefined) return existing;
+				const promise = (async () => {
+					/*
+					 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
+					 *
+					 * 不比较的话，自动抓取（默认每 180s 一轮）会让所有面板每轮都重取一次提交图
+					 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
+					 */
+					const before = await refsSignature(repo);
+					const error = await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true);
+					if (error !== null) throw new Error(error);
+					const after = await refsSignature(repo);
+					const changed = before !== after;
+					// 抓取以 quietWrite 执行：确有改动才补发写事件，否则面板不会白刷新。
+					if (changed) notifyRepositoryWrite(repo);
+					logInfo('repo', `已抓取远程${remoteName === null ? '（全部）' : `：${remoteName}`}${changed ? '，引用有更新' : '，引用无变化'}`);
+					return { repo, changed };
+				})().finally(() => { inFlightFetches.delete(repo); });
+				inFlightFetches.set(repo, promise);
+				return promise;
 			});
 			break;
 		}

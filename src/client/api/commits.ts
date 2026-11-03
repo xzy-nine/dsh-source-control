@@ -54,7 +54,7 @@ function truncatedOf(details: unknown): boolean {
  * @returns 改动文件列表与截断标记。
  */
 export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFilesPayload> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
+	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
 	return { files: fileEntriesOf(payload.commitDetails), truncated: truncatedOf(payload.commitDetails) };
 }
 
@@ -82,7 +82,7 @@ export interface CommitStatsAndMessage {
  * @returns 改动文件与完整提交信息。
  */
 export async function loadCommitStatsAndMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitStatsAndMessage> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, hasParents: true, stash: null }, signal);
+	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
 	const body = (payload.commitDetails as { body?: unknown } | null | undefined)?.body;
 	return {
 		files: fileEntriesOf(payload.commitDetails),

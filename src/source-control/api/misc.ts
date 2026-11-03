@@ -380,7 +380,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				const tag = typeof entry.tag === 'string' && entry.tag !== '' ? entry.tag : 'panel';
 				const message = typeof entry.message === 'string' ? entry.message : '';
 				if (message === '') continue;
-				log(clientLogLevel(entry.level), `client/${tag}`, message);
+				const entryTime = typeof entry.time === 'number' ? new Date(entry.time) : undefined;
+				log(clientLogLevel(entry.level), `client/${tag}`, message, entryTime);
 			}
 			respondResultSync('logEvent', { accepted: entries.length });
 			// 客户端上报是插件唯一看不到落盘结果的一环：收几条就记一条，便于确认上报通路是否通。

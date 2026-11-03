@@ -124,7 +124,7 @@ function recordCommandCost(command: string, ms: number, repo: string, refreshId:
 	let current = costBuckets.get(key);
 	if (current === undefined) {
 		current = {
-			label: refreshId === null ? `一轮刷新（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
+			label: refreshId === null ? `一次后台操作（${repoLabel}）` : `第 ${String(refreshId)} 轮刷新（${repoLabel}）`,
 			repo, firstStartedAt: now - ms, lastEndedAt: now, spawns: 0,
 			counts: new Map(), msByCommand: new Map(), cachedCounts: new Map(), slowest: null, totalMs: 0,
 		};

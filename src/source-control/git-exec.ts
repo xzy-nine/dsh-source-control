@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process';
 import { collectProcess } from './child-process.js';
 import { countSpawnInScope } from './api/refresh-scope.js';
-import { logDebug, logInfo, logWarn } from './logger.js';
+import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
 const MAX_GIT_LOG_CHARS = 2000;
@@ -660,7 +660,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 			const detail = result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS);
 			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${detail === '' ? '' : `\n${detail}`}`);
 		} else if (readOnly) {
-			logDebug('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
+			logTrace('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else {
 			logInfo('git', `执行写操作 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		}
