@@ -2,14 +2,14 @@
  * 宿主侧文本日志：logcat 格式、每次启动一个文件、按日归档、按体积与保留期清理。
  *
  * 目录布局见 `./log-retention.ts`：`<root>/<YYYY-MM-DD>/logcat-<date>-<time>-<pid>.log`。
- * 根目录解析与状态文档同序：`DSH_SOURCE_CONTROL_HOME`（单测隔离）→ `DSH_HOME` → `~/.dsh`。
+ * 根目录是插件数据目录下的 `logs`，解析见 `./dsh-home.ts`。
  *
  * 写入策略：行先入缓冲，按 `FLUSH_DELAY_MS` 合并为一次追加写；进程退出时同步收尾。
  * 体积与保留期清理在写入前按当日与全部日文件夹各判一次，判据见 log-retention.ts。
  */
 import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pluginHome } from './dsh-home.js';
 import { formatLogLines, type LogLevel } from './log-format.js';
 
 export type { LogLevel };
@@ -53,11 +53,7 @@ let exitHookInstalled = false;
  * @returns 绝对路径。
  */
 function resolveRootDir(): string {
-	const override = process.env.DSH_SOURCE_CONTROL_HOME;
-	if (override !== undefined && override.trim().length > 0) return join(override.trim(), 'logs');
-	const envHome = process.env.DSH_HOME;
-	if (envHome !== undefined && envHome.trim().length > 0) return join(envHome.trim(), 'dsh-source-control', 'logs');
-	return join(homedir(), '.dsh', 'dsh-source-control', 'logs');
+	return join(pluginHome(), 'logs');
 }
 
 /**

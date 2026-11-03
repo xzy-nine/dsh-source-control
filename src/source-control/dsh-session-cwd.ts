@@ -6,21 +6,19 @@
  * 这是唯一能把旧会话键还原成工作区根的来源。只在迁移时按需读取单个文件。
  */
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { dshHome } from './dsh-home.js';
 
 /**
  * 解析 DSH home。
  *
- * 与 \`dsh-home-paths\` 同序，但不认 \`DSH_SOURCE_CONTROL_HOME\`：那是插件状态的测试隔离变量，
- * 会话存储属于 DSH 自身。
+ * 走 \`./dsh-home.ts\` 的同一入口，但不认 \`DSH_SOURCE_CONTROL_HOME\`：那是插件数据的测试
+ * 隔离变量，会话存储属于 DSH 自身。
  *
  * @returns DSH home 绝对路径。
  */
 export function resolveDshHome(): string {
-	const env = process.env.DSH_HOME;
-	if (env !== undefined && env.trim().length > 0) return env.trim();
-	return join(homedir(), '.dsh');
+	return dshHome();
 }
 
 /**

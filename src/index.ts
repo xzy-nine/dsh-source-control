@@ -13,8 +13,8 @@ import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 import { registerGgRoutes } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
-import { pruneWorkspaces } from './source-control/state-store.js';
-import { initLog, logError, logInfo, logRoot } from './source-control/logger.js';
+import { openStateStore, pruneWorkspaces, stateDomainFailure } from './source-control/state-store.js';
+import { initLog, logError, logInfo, logRoot, logWarn } from './source-control/logger.js';
 
 export const name = 'source-control';
 export const inject = ['webServer'];
@@ -27,6 +27,30 @@ interface WebServerLike {
 		path: string;
 		handler: (req: http.IncomingMessage, res: http.ServerResponse) => void;
 	}): () => void;
+}
+
+/** 域注册的等待上限：插件加载顺序不保证 storageDomain 先就位。 */
+const DOMAIN_WAIT_ATTEMPTS = 20;
+
+/** 两次尝试的间隔（毫秒）。 */
+const DOMAIN_WAIT_INTERVAL_MS = 100;
+
+/**
+ * 等 storageDomain 就位后再打开状态文档。
+ *
+ * 插件加载顺序不保证 `storageDomain` 在本次 `apply` 里已就位；有界重试后仍取不到时按「未装载」
+ * 处理，状态文档回退到旧版文件。
+ *
+ * @param read - 取 `ctx.storageDomain`。
+ * @returns 是否接上了域。
+ */
+async function openStateStoreWhenReady(read: () => unknown): Promise<boolean> {
+	for (let attempt = 0; attempt < DOMAIN_WAIT_ATTEMPTS; attempt += 1) {
+		if (await openStateStore(read())) return true;
+		if (attempt + 1 < DOMAIN_WAIT_ATTEMPTS) await new Promise((resolve) => { setTimeout(resolve, DOMAIN_WAIT_INTERVAL_MS); });
+	}
+	logWarn('state', `storage domain 始终未就位（${stateDomainFailure() ?? '原因未知'}），状态文档回退到旧版 state.json`);
+	return false;
 }
 
 export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {}): void {
@@ -42,15 +66,23 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 
 	ctx.inject(['webServer'], (host) => {
 		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
+		/*
+		 * 状态文档接进 DSH 的 storage domain；未装载时回退到旧版 state.json，路由照常可用。
+		 *
+		 * 域打开是异步的，而预扫与清理要读已持久化的工作区根，因此串在同一个异步链上：
+		 * 先接域、再清理、最后预扫。
+		 */
+		const ready = openStateStoreWhenReady(() => (ctx as unknown as { get(name: string): unknown }).get('storageDomain'));
 		const getLlm = () => (ctx as unknown as { get(name: string): unknown }).get('llm');
 		const getAgentDefaultModel = () => (ctx as unknown as { get(name: string): unknown }).get('agentDefaultModel');
 		// 翻译走官方 translator 服务；未装载时该服务取不到，翻译入口据此提示降级。
 		const getTranslator = () => (ctx as unknown as { get(name: string): unknown }).get('translator');
 		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel, getTranslator });
-		// 启动即清理过期与超量工作区：fire-and-forget，失败不影响路由。
-		try { pruneWorkspaces(); } catch { /* 清理失败时下次启动重试 */ }
-		// 预扫不 await：不阻塞 apply 返回，失败也不影响路由。
-		void primeCachedWorkspaces().catch((error: unknown) => {
+		// 清理与预扫都依赖已持久化的工作区根，因此排在域打开之后；不 await，失败也不影响路由。
+		void ready.then(() => {
+			try { pruneWorkspaces(); } catch { /* 清理失败时下次启动重试 */ }
+			return primeCachedWorkspaces();
+		}).catch((error: unknown) => {
 			logInfo('repo', `启动预扫仓库树失败，不影响路由与面板取数：${error instanceof Error ? error.message : String(error)}`);
 		});
 		logInfo('source-control', `已注册 ${String(disposers.length)} 条 web 路由，面板命令可用`);

@@ -1,7 +1,7 @@
 /**
  * 右键菜单的构建上下文与共用构件：分支项置灰、远程分支弹名、复制引用名、确认后执行、标签二级菜单。
  */
-import { copyText } from '../../ui/context-menu.ts';
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ConfirmationOptions } from '../../ui/dialog.ts';
@@ -175,7 +175,7 @@ export function branchFromRemoteItem(
 export function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): ContextMenuItem | null {
 	const ref = ctx.ref;
 	if (ref === null) return null;
-	return { title: meta.title, onClick: () => { void copyText(ref.name); } };
+	return { title: meta.title, onClick: () => { void writeClipboard(ref.name); } };
 }
 
 /**

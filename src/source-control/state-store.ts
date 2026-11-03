@@ -1,20 +1,23 @@
 /**
- * 宿主侧持久化：插件状态文档落在 \`$DSH_HOME/dsh-source-control/\` 下。
+ * 宿主侧持久化：状态文档存进 DSH 的 storage domain（\`ctx.storageDomain\`）。
  *
- * 文档按类型分区（设置、布局、引用筛选、工作区、草稿），单一 schemaVersion 驱动迁移。
- * 持久化的归属维度是**工作区与仓库**，不是对话：\`workspaces[normCwd]\` 一个键承载该工作区根的
- * 选中仓库、展开集合、已知仓库位置与更新时刻，同一工作区下的多个会话共享同一份树状态。
- * 浏览器端不承担持久化：换浏览器、换标签页、清缓存都不会丢。写入用 tmp + rename 原子替换，
- * 避免半截文件；所有访问器经 load()/save() 单一调度。
+ * 文档按类型分区（设置、布局、引用筛选、工作区、草稿）。持久化的归属维度是**工作区与仓库**，
+ * 不是对话：\`workspaces[normCwd]\` 一个键承载该工作区根的选中仓库、展开集合、已知仓库位置与
+ * 更新时刻，同一工作区下的多个会话共享同一份树状态。浏览器端不承担持久化。
  *
- * home 解析与 DSH 的 \`dsh-home-paths\` 同序：\`DSH_SOURCE_CONTROL_HOME\`（单测隔离）
- * → \`DSH_HOME\` → \`~/.dsh\`。
+ * 内存文档是权威读面：域打开时由域载入，每次写先落内存再交给域；域不可用（profile 未挂载
+ * \`storageDomain\`）时回退到旧版 \`$DSH_HOME/dsh-source-control/state.json\`。
+ *
+ * 旧格式只作为导入来源读取一次：v1（平铺 entries + 顶层 repos）与 v3（\`schemaVersion: 3\`）
+ * 都经同一分类器还原成当前文档，随后写进域。文件本身不改不删，便于回滚。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { logWarn } from './logger.js';
-import { readSessionCwd } from './dsh-session-cwd.js';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
+import { defineDomain } from '@deepseek-ai/dsh-storage-domain';
+import { pluginHome } from './dsh-home.js';
+import { logInfo, logWarn } from './logger.js';
+import { readSessionCwd } from './dsh-session-cwd.js';
 
 /** 状态文档文件名。 */
 const STATE_FILE = 'state.json';
@@ -44,7 +47,7 @@ export interface WorkspaceState {
 /** 引用筛选持久化表：仓库键到「全部」或手选 id 列表；自动模式不落盘。 */
 export type RefFilterMap = Record<string, 'all' | string[]>;
 
-/** 文档的各分区内容；schemaVersion 由 {@link makeDocument} 单点补上。 */
+/** 文档的各分区内容。 */
 interface DocumentParts {
 	readonly settings: Record<string, unknown> | null;
 	readonly layout: PanelLayout | null;
@@ -53,13 +56,17 @@ interface DocumentParts {
 	readonly drafts: { readonly commitMessages: Record<string, string> } | null;
 }
 
-/** 持久化的文档形状（schemaVersion 3）。 */
+/** 落进 storage domain 的文档：分区内容加一个写入时刻。 */
 interface StateDocument extends DocumentParts {
-	readonly schemaVersion: 3;
+	/** 最后一次写入的时刻（毫秒）；导入时据此判断新旧。 */
+	readonly writtenAt: number;
 }
 
-/** 当前结构版本。 */
-const SCHEMA_VERSION = 3 as const;
+/** 旧版文件文档的结构版本；只用于识别导入来源。 */
+const LEGACY_SCHEMA_VERSION = 3 as const;
+
+/** storage domain 的单元名。 */
+const DOMAIN_NAME = 'source_control';
 
 /** 工作区清理：超过该毫秒数未更新的工作区视为过期。 */
 const WORKSPACE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -69,11 +76,48 @@ const WORKSPACE_CAP = 200;
 /** 布局缺省值，与客户端 use-panel-layout.ts 对齐。 */
 const DEFAULT_LAYOUT: PanelLayout = { repoOpen: true, graphOpen: true, graphHeight: 320, repoHeight: 200 };
 
-/** 内存态文档；首次读取时从磁盘载入。 */
+/** 域全局槽的 schema：与 {@link StateDocument} 一一对应。 */
+const DocumentSchema = z.object({
+	writtenAt: z.number().default(0),
+	settings: z.record(z.string(), z.unknown()).nullable().default(null),
+	layout: z.object({
+		repoOpen: z.boolean().default(DEFAULT_LAYOUT.repoOpen),
+		graphOpen: z.boolean().default(DEFAULT_LAYOUT.graphOpen),
+		graphHeight: z.number().default(DEFAULT_LAYOUT.graphHeight),
+		repoHeight: z.number().default(DEFAULT_LAYOUT.repoHeight),
+	}).nullable().default(null),
+	refFilters: z.record(z.string(), z.union([z.literal('all'), z.array(z.string())])).default({}),
+	workspaces: z.record(z.string(), z.object({
+		selectedRepo: z.string().nullable().default(null),
+		expandedRepos: z.array(z.string()).default([]),
+		repos: z.array(z.object({ path: z.string(), name: z.string() })).default([]),
+		updatedAt: z.number().default(0),
+	})).default({}),
+	drafts: z.object({ commitMessages: z.record(z.string(), z.string()) }).nullable().default(null),
+});
+
+/** 域声明；版本随文档形状变化递增。 */
+const DOMAIN_SPEC = defineDomain({
+	name: DOMAIN_NAME,
+	version: 1,
+	global: { schema: DocumentSchema, initial: emptyDocument() },
+	tables: {},
+});
+
+/** 已打开的域全局句柄；未挂载 storage domain 时为 null。 */
+let domainGlobal: { get(): StateDocument; set(value: StateDocument): Promise<void> } | null = null;
+
+/** 域打开完成前到达的写请求：打开后按顺序补写。 */
+let pendingWrites: Array<() => void> = [];
+
+/** 域打开失败时的说明；未尝试或成功时为 null。 */
+let domainFailure: string | null = null;
+
+/** 内存态文档；首次读取时从域或旧文件载入。 */
 let stateDoc: StateDocument | null = null;
 
-/** 状态文档的绝对路径；home 不可用时为 null。 */
-let statePath: string | null = null;
+/** 旧版状态文档的绝对路径；只在导入时读。 */
+let legacyPath: string | null = null;
 
 /**
  * 路径键归一化：统一 \`/\` 分隔、去尾斜杠、盘符路径小写。
@@ -91,74 +135,130 @@ export function normalizePath(path: string | null | undefined): string {
 }
 
 /**
- * 解析插件状态目录。
+ * 旧版状态文档路径；只作导入来源，不再写入新数据。
  *
- * @returns 状态文档路径；无法定位 home 时为 null。
+ * @returns 绝对路径。
  */
-function resolveStatePath(): string | null {
-	const override = process.env.DSH_SOURCE_CONTROL_HOME;
-	if (override !== undefined && override.trim().length > 0) return join(override.trim(), STATE_FILE);
-	const envHome = process.env.DSH_HOME;
-	if (envHome !== undefined && envHome.trim().length > 0) return join(envHome.trim(), 'dsh-source-control', STATE_FILE);
-	return join(homedir(), '.dsh', 'dsh-source-control', STATE_FILE);
-}
-
-/**
- * 取状态文档路径。
- *
- * @returns 路径；无法定位时为 null。
- */
-function pathOf(): string | null {
-	if (statePath === null) statePath = resolveStatePath();
-	return statePath;
+function legacyFilePath(): string {
+	if (legacyPath === null) legacyPath = join(pluginHome(), STATE_FILE);
+	return legacyPath;
 }
 
 /** 空文档。 */
-function emptyDoc(): StateDocument {
-	return { schemaVersion: SCHEMA_VERSION, settings: null, layout: null, refFilters: {}, workspaces: {}, drafts: null };
+function emptyDocument(): StateDocument {
+	return { writtenAt: 0, settings: null, layout: null, refFilters: {}, workspaces: {}, drafts: null };
 }
 
 /**
- * 从磁盘载入文档；旧版文档自动迁移到当前结构并落盘，结构不符或读取失败时给空文档。
+ * 打开 storage domain 并载入文档。
+ *
+ * 域不可用（profile 未挂载 `storageDomain`、打开失败）时回退到旧版文件，数据仍可读写，只是
+ * 不再享有域的结构校验与原子发布。调用方在宿主 `apply` 里等待本函数，之后访问器即可同步读。
+ *
+ * @param storageDomain - `ctx.storageDomain`；缺失时为 undefined。
+ * @returns 是否已接上域。
+ */
+export async function openStateStore(storageDomain: unknown): Promise<boolean> {
+	const facility = storageDomain as { open?: (spec: unknown) => Promise<{ global: { get(): unknown; set(value: unknown): Promise<void> } }> } | undefined;
+	if (typeof facility?.open !== 'function') {
+		// 静默：调用方可能在等域就位，逐次记日志会刷屏。
+		domainFailure = '宿主未装载 storageDomain';
+		return false;
+	}
+	try {
+		const domain = await facility.open(DOMAIN_SPEC);
+		const global = domain.global as unknown as { get(): StateDocument; set(value: StateDocument): Promise<void> };
+		const stored = coerceDocument(global.get());
+		// 域里从未写入过（writtenAt 为 0）时先导入旧版文件：升级用户的数据在这里接过来。
+		const imported = stored.writtenAt === 0 ? importLegacyFile() : null;
+		domainGlobal = global;
+		stateDoc = imported ?? stored;
+		domainFailure = null;
+		// 补写域打开期间到达的改动，或把导入结果写进域。
+		const queued = pendingWrites;
+		pendingWrites = [];
+		if (queued.length > 0 || imported !== null) await persist();
+		logInfo('state', imported === null
+			? `状态文档已接入 storage domain（单元 ${DOMAIN_NAME}）`
+			: `旧版状态文档已导入 storage domain（单元 ${DOMAIN_NAME}）`);
+		return true;
+	} catch (error) {
+		domainFailure = error instanceof Error ? error.message : String(error);
+		return false;
+	}
+}
+
+/**
+ * 读文档：优先域，其次旧版文件，都没有时给空文档。
+ *
+ * 旧版文件在这里一次性迁移到当前结构并写进域；文件本身不改不删，便于回滚。
  *
  * @returns 文档。
  */
 function load(): StateDocument {
 	if (stateDoc !== null) return stateDoc;
-	const path = pathOf();
-	if (path === null) { stateDoc = emptyDoc(); return stateDoc; }
-	try {
-		const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-		if (raw.schemaVersion === SCHEMA_VERSION) {
-			stateDoc = coerceV3(raw);
-		} else if (raw.schemaVersion === 2) {
-			stateDoc = migrateV2ToV3(raw);
-			save(stateDoc);
-		} else if (raw.version === 1 || raw.schemaVersion === undefined) {
-			const mtime = existsSync(path) ? statSync(path).mtimeMs : Date.now();
-			stateDoc = migrateV1ToV3(raw, mtime, readSessionCwd);
-			save(stateDoc);
-		} else {
-			stateDoc = emptyDoc();
-			logWarn('state', `状态文档结构版本不符（期望 ${String(SCHEMA_VERSION)}，读到 ${String(raw.schemaVersion ?? raw.version)}），已按空文档处理：${path}`);
-		}
-	} catch (error) {
-		stateDoc = emptyDoc();
-		// 首次运行没有该文件属正常，只有确实存在却读不出来时才记。
-		if (existsSync(path)) logWarn('state', `状态文档读取失败，已按空文档处理：${path}：${error instanceof Error ? error.message : String(error)}`);
+	if (domainGlobal !== null) {
+		stateDoc = coerceDocument(domainGlobal.get());
+		return stateDoc;
 	}
+	stateDoc = importLegacyFile() ?? emptyDocument();
 	return stateDoc;
 }
 
 /**
- * 把已是当前形状的原始对象收敛成 StateDocument，补缺字段。
+ * 从旧版文件导入文档。
  *
- * @param raw - 已带 schemaVersion===3 的对象。
+ * 支持三种来源：v1（平铺 entries + 顶层 repos）、v2（按会话分区）、v3（`schemaVersion: 3`）。
+ * 文件缺失、JSON 非法或结构不符时给空文档。
+ *
  * @returns 文档。
  */
-function coerceV3(raw: Record<string, unknown>): StateDocument {
+function importLegacyFile(): StateDocument | null {
+	const path = legacyFilePath();
+	if (!existsSync(path)) return null;
+	try {
+		const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+		const parts = raw.schemaVersion === LEGACY_SCHEMA_VERSION
+			? coerceLegacyV3(raw)
+			: raw.schemaVersion === 2
+				? migrateV2ToV3(raw)
+				: raw.version === 1 || raw.schemaVersion === undefined
+					? migrateV1ToV3(raw, statSync(path).mtimeMs, readSessionCwd)
+					: null;
+		if (parts === null) {
+			logWarn('state', `旧版状态文档结构版本不符（读到 ${String(raw.schemaVersion ?? raw.version)}），已忽略：${path}`);
+			return null;
+		}
+		return makeDocument(parts);
+	} catch (error) {
+		logWarn('state', `旧版状态文档读取失败，已忽略：${path}：${error instanceof Error ? error.message : String(error)}`);
+		return null;
+	}
+}
+
+/**
+ * 把域的全局值收敛成文档。
+ *
+ * @param value - 域里的值。
+ * @returns 文档。
+ */
+function coerceDocument(value: unknown): StateDocument {
+	const parsed = DocumentSchema.safeParse(value);
+	if (!parsed.success) {
+		logWarn('state', `状态文档形状不符，已按空文档处理：${parsed.error.message}`);
+		return emptyDocument();
+	}
+	return parsed.data;
+}
+
+/**
+ * 把旧版 v3 文件（`schemaVersion: 3`）的各分区收敛成文档内容。
+ *
+ * @param raw - 旧版文件原始对象。
+ * @returns 分区内容。
+ */
+function coerceLegacyV3(raw: Record<string, unknown>): DocumentParts {
 	return {
-		schemaVersion: SCHEMA_VERSION,
 		settings: raw.settings !== null && typeof raw.settings === 'object' ? raw.settings as Record<string, unknown> : null,
 		layout: coerceLayout(raw.layout),
 		refFilters: coerceRefFilters(raw.refFilters),
@@ -506,13 +606,13 @@ function classifyRepos(repos: Record<string, unknown>): Record<string, CachedRep
 /**
  * 按当前结构组装文档。
  *
- * schemaVersion 单点给出，各迁移与合并路径只提供分区内容。
+ * 写入时刻单点给出，各迁移与合并路径只提供分区内容。
  *
  * @param parts - 各分区内容。
  * @returns 文档。
  */
 function makeDocument(parts: DocumentParts): StateDocument {
-	return { schemaVersion: SCHEMA_VERSION, ...parts };
+	return { writtenAt: Date.now(), ...parts };
 }
 
 /**
@@ -524,9 +624,9 @@ function makeDocument(parts: DocumentParts): StateDocument {
  * @param raw - v1 原始对象。
  * @param fallbackUpdatedAt - 会话 updatedAt 缺省时刻（磁盘 mtime）。
  * @param resolveCwd - sessionId 到工作区根路径的解析器。
- * @returns 文档。
+ * @returns 各分区内容。
  */
-export function migrateV1ToV3(raw: Record<string, unknown>, fallbackUpdatedAt: number, resolveCwd: SessionCwdResolver): StateDocument {
+export function migrateV1ToV3(raw: Record<string, unknown>, fallbackUpdatedAt: number, resolveCwd: SessionCwdResolver): DocumentParts {
 	const entries = (raw.entries !== null && typeof raw.entries === 'object' ? raw.entries : {}) as Record<string, unknown>;
 	const repos = (raw.repos !== null && typeof raw.repos === 'object' ? raw.repos : {}) as Record<string, unknown>;
 	const classified = classifyEntries(entries, fallbackUpdatedAt);
@@ -535,13 +635,13 @@ export function migrateV1ToV3(raw: Record<string, unknown>, fallbackUpdatedAt: n
 	foldSessionsIntoWorkspaces(trees, classified.sessions, resolveCwd);
 	const workspaces = assembleWorkspaces(trees, classifyRepos(repos), {}, fallbackUpdatedAt);
 
-	return makeDocument({
+	return {
 		settings: classified.settings,
 		layout: classified.layout,
 		refFilters: classified.refFilters,
 		workspaces,
 		drafts: classified.drafts,
-	});
+	};
 }
 
 /**
@@ -552,9 +652,9 @@ export function migrateV1ToV3(raw: Record<string, unknown>, fallbackUpdatedAt: n
  *
  * @param raw - v2 原始对象。
  * @param resolveCwd - sessionId 到工作区根路径的解析器。
- * @returns 文档。
+ * @returns 各分区内容。
  */
-export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionCwdResolver = readSessionCwd): StateDocument {
+export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionCwdResolver = readSessionCwd): DocumentParts {
 	const locations = raw.repoLocations !== null && typeof raw.repoLocations === 'object' ? raw.repoLocations as Record<string, unknown> : {};
 	const reposByKey: Record<string, CachedRepoLocation[]> = {};
 	for (const [key, value] of Object.entries(locations)) {
@@ -573,13 +673,13 @@ export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionC
 	foldSessionsIntoWorkspaces(trees, sessions, resolveCwd);
 	const workspaces = assembleWorkspaces(trees, reposByKey, {}, Date.now());
 
-	return makeDocument({
+	return {
 		settings: raw.settings !== null && typeof raw.settings === 'object' ? raw.settings as Record<string, unknown> : null,
 		layout: coerceLayout(raw.layout),
 		refFilters: coerceRefFilters(raw.refFilters),
 		workspaces,
 		drafts: coerceDrafts(raw.drafts),
-	});
+	};
 }
 
 /**
@@ -624,24 +724,79 @@ function mergeDrafts(base: { readonly commitMessages: Record<string, string> } |
 }
 
 /**
- * 原子写回文档。
+ * 写回文档：先更新内存态，再交给 storage domain 落盘。
+ *
+ * 内存态是权威读面：域写入失败时保留内存值，面板照常工作，只留一条记录。域尚未打开时
+ * 登记一次待补写，打开完成后统一落一次。
  *
  * @param next - 新文档。
  * @returns 无。
  */
 function save(next: StateDocument): void {
-	stateDoc = next;
-	const path = pathOf();
-	if (path === null) return;
+	stateDoc = { ...next, writtenAt: Date.now() };
+	if (domainGlobal === null) {
+		// 域还没打开：记一次待补写，打开后统一落盘；同时按旧版文件写一份，避免进程提前退出丢改动。
+		if (pendingWrites.length === 0) pendingWrites.push(() => { void persist(); });
+		writeLegacyFile(stateDoc);
+		return;
+	}
+	void persist();
+}
+
+/**
+ * 把内存文档交给域落盘。
+ *
+ * @returns 落盘完成。
+ */
+async function persist(): Promise<void> {
+	const global = domainGlobal;
+	const doc = stateDoc;
+	if (global === null || doc === null) return;
+	try {
+		await global.set(doc);
+	} catch (error) {
+		logWarn('state', `状态文档写入 storage domain 失败，本次改动只留在内存里：${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+/**
+ * 把文档写进旧版文件。
+ *
+ * 只在域不可用时使用，使回退路径与旧版行为一致；域可用时不写这个文件。写盘是同步的：
+ * 回退路径与旧版行为一致，调用方紧接着读回同一份文件时不必等一轮事件循环。
+ *
+ * @param doc - 文档。
+ * @returns 无。
+ */
+function writeLegacyFile(doc: StateDocument): void {
+	const path = legacyFilePath();
 	try {
 		mkdirSync(dirname(path), { recursive: true });
 		const tmp = path + '.tmp';
-		writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
+		// 带上结构版本：回退文件与旧版 v3 同形，旧版插件读它仍能正常工作。
+		writeFileSync(tmp, JSON.stringify({ schemaVersion: LEGACY_SCHEMA_VERSION, ...doc }, null, 2), 'utf8');
 		renameSync(tmp, path);
 	} catch (error) {
-		// 写盘失败时保留内存态，不打断面板；但设置与布局改动会因此丢失，需要留下记录。
-		logWarn('state', `插件状态写盘失败，本次改动只留在内存里：${path}：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('state', `旧版状态文档写盘失败，本次改动只留在内存里：${path}：${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+/**
+ * 域是否已接上。
+ *
+ * @returns 接上时为 true；回退到旧版文件时为 false。
+ */
+export function stateDomainReady(): boolean {
+	return domainGlobal !== null;
+}
+
+/**
+ * 域打开失败的原因；未失败时为 null。
+ *
+ * @returns 说明文本。
+ */
+export function stateDomainFailure(): string | null {
+	return domainFailure;
 }
 
 /**
@@ -859,11 +1014,16 @@ export function readSnapshot(): {
 }
 
 /**
- * 清掉内存态，使下次读取重新落盘载入。
+ * 清掉内存态与域句柄，使下次读取重新载入。
+ *
+ * 测试用：同一进程里换隔离目录后重新接域。
  *
  * @returns 无。
  */
 export function resetStateCache(): void {
 	stateDoc = null;
-	statePath = null;
+	legacyPath = null;
+	domainGlobal = null;
+	domainFailure = null;
+	pendingWrites = [];
 }

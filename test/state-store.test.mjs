@@ -85,7 +85,6 @@ test('migrateV1ToV3：各分区按类型归位', async () => {
 	// 两个会话还原到同一工作区根：按 updatedAt 取最新（同刻时 session-abc 先入，session-def 后入）。
 	const cwds = { 'session-abc': 'E:/GitHubCode', 'session-def': 'E:/GitHubCode' };
 	const doc = mod.migrateV1ToV3(v1, 1000, (id) => cwds[id] ?? null);
-	assert.equal(doc.schemaVersion, 3);
 	assert.deepEqual(doc.settings, { autoFetch: true });
 	assert.equal(doc.layout.repoOpen, false);
 	assert.equal(doc.layout.graphHeight, 400);
@@ -138,7 +137,6 @@ test('migrateV2ToV3：会话与仓库位置按工作区根合并，updatedAt 取
 	};
 	// 两个会话都还原到 e:/githubcode，旧的先入、新的后入：取 updatedAt 最新的 session-new。
 	const doc = mod.migrateV2ToV3(v2, (id) => (id === 'session-old' || id === 'session-new' ? 'E:/GitHubCode' : null));
-	assert.equal(doc.schemaVersion, 3);
 	assert.ok('e:/githubcode' in doc.workspaces);
 	assert.equal(doc.workspaces['e:/githubcode'].selectedRepo, 'e:/githubcode/new');
 	assert.deepEqual(doc.workspaces['e:/githubcode'].expandedRepos, ['e:/githubcode/new']);
@@ -220,23 +218,19 @@ test('readRepoLocations / writeRepoLocations / listRepoLocationWorkspaces：经�
 	assert.deepEqual(mod.listRepoLocationWorkspaces(), ['e:/githubcode']);
 });
 
-test('readSnapshot：v1 文档首次读取自动迁移并落盘', async () => {
-	const { mod, home } = await freshState(JSON.stringify({
-		version: 1,
-		entries: { 'dsh-source-control-settings': { x: 1 } },
-		repos: {},
-	}));
+test('readSnapshot：v1 文档首次读取自动导入，旧文件保持原样', async () => {
+	const original = JSON.stringify({ version: 1, entries: { 'dsh-source-control-settings': { x: 1 } }, repos: {} });
+	const { mod, home } = await freshState(original);
 	mod.resetStateCache();
 	const snap = mod.readSnapshot();
 	assert.deepEqual(snap.settings, { x: 1 });
-	// 落盘后文件已是当前结构版本。
+	// 旧文件只作导入来源：不改写，便于回滚。
 	const { readFileSync } = await import('node:fs');
-	const persisted = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-	assert.equal(persisted.schemaVersion, 3);
+	assert.equal(readFileSync(join(home, 'state.json'), 'utf8'), original);
 });
 
-test('readSnapshot：v2 文档首次读取自动迁移并落盘', async () => {
-	const { mod, home } = await freshState(JSON.stringify({
+test('readSnapshot：v2 文档首次读取自动导入', async () => {
+	const { mod } = await freshState(JSON.stringify({
 		schemaVersion: 2, settings: { y: 2 }, layout: null, refFilters: {},
 		sessions: {}, repoLocations: { 'e:/githubcode': [{ path: 'e:/githubcode/repo', name: 'repo' }] }, drafts: null,
 	}));
@@ -244,10 +238,35 @@ test('readSnapshot：v2 文档首次读取自动迁移并落盘', async () => {
 	const snap = mod.readSnapshot();
 	assert.deepEqual(snap.settings, { y: 2 });
 	assert.equal(snap.workspaces['e:/githubcode'].repos.length, 1);
-	const { readFileSync } = await import('node:fs');
-	const persisted = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-	assert.equal(persisted.schemaVersion, 3);
-	assert.ok(!('sessions' in persisted) && !('repoLocations' in persisted), '旧分区不再落盘');
+});
+
+test('openStateStore：宿主未装载 storageDomain 时回退旧文件', async () => {
+	const { mod } = await freshState(JSON.stringify({
+		schemaVersion: 3, settings: { z: 3 }, layout: null, refFilters: {}, workspaces: {}, drafts: null,
+	}));
+	mod.resetStateCache();
+	assert.equal(await mod.openStateStore(undefined), false);
+	assert.equal(mod.stateDomainReady(), false);
+	assert.match(mod.stateDomainFailure() ?? '', /storageDomain/);
+	assert.deepEqual(mod.readSnapshot().settings, { z: 3 }, '回退时仍读旧文件');
+});
+
+test('openStateStore：接上 storage domain 后读域里的文档', async () => {
+	const { mod } = await freshState(JSON.stringify({
+		schemaVersion: 3, settings: { legacy: true }, layout: null, refFilters: {}, workspaces: {}, drafts: null,
+	}));
+	mod.resetStateCache();
+	const stored = { writtenAt: 7, settings: { fromDomain: 1 }, layout: null, refFilters: {}, workspaces: {}, drafts: null };
+	let written = null;
+	const fakeDomain = {
+		open: async () => ({ global: { get: () => stored, set: async (value) => { written = value; } } }),
+	};
+	assert.equal(await mod.openStateStore(fakeDomain), true);
+	assert.equal(mod.stateDomainReady(), true);
+	assert.deepEqual(mod.readSnapshot().settings, { fromDomain: 1 }, '域里的文档优先于旧文件');
+	mod.writeSettings({ changed: true });
+	await new Promise((r) => setTimeout(r, 0));
+	assert.deepEqual(written?.settings, { changed: true }, '写入交给域');
 });
 
 test('readDraft / clearDraft：按归一化键读写', async () => {
