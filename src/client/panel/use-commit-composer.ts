@@ -202,13 +202,13 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 		const key = draftKeyOf(path);
 		void (async () => {
 			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
-			const persisted = await takePersistedDraft(path, key);
+			const persisted = await takePersistedDraft(path, path);
 			if (cancelled.current) return;
 			const saved = loadSessionValue<string | null>(key, null);
 			if (saved === null && persisted !== null) {
 				saveSessionValue(key, persisted);
 				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
-				void clearPersistedDraft(path, key).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
+				void clearPersistedDraft(path, path).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
 			}
 			setMessage(saved ?? persisted ?? '');
 			setDraftPath(path);

@@ -1,21 +1,26 @@
 /**
- * 客户端存储：宿主侧持久化 + 内存缓存，以及会话级存储。
+ * 客户端存储：宿主侧类型化持久化 + 内存缓存，以及会话级存储。
  *
  * 两级存储：
- * - 宿主持久化：数据落在宿主（`$DSH_HOME/dsh-source-control/`），本模块只在首屏预取一次，
- *   之后读走内存缓存；写更新缓存并异步落盘。键值对读写用 {@link loadValue} / {@link saveValue}。
+ * - 宿主持久化：数据落在宿主（`$DSH_HOME/dsh-source-control/`），按类型分区。本模块只在首屏预取
+ *   一次快照，之后读走内存缓存；写更新缓存并异步落盘。类型化读写用 getSettings/setSettings、
+ *   getLayout/setLayout、getRefFilters/setRefFilters、getWorkspace/setWorkspace。
  * - 会话级：数据落在浏览器 sessionStorage，直读直写，不经宿主也不进内存缓存。读写用
  *   {@link loadSessionValue} / {@link saveSessionValue} / {@link clearSessionValue}。
  *
- * 预取是异步的，而 `useState(() => loadValue(...))` 在挂载时同步执行，因此首次渲染读到的是回退值，
- * 且 useState 的初始值不会随预取完成而重算。调用方须在预取完成后把状态重新按真实值初始化，
- * 否则每次进入都会显示默认值（表现为「设置每次都被重置」）。
+ * 预取是异步的，而 `useState(() => get…())` 在挂载时同步执行，因此首次渲染读到的是回退值，
+ * 且 useState 的初始值不会随预取完成而重算。调用方须在预取完成后把状态重新按真实值初始化。
  *
  * 本模块是客户端唯一的存储出口，其它模块不直接访问 sessionStorage。
  */
-import { readState, writeState } from '../api/index.ts';
-/** 内存缓存：宿主状态的镜像。 */
-let cache: Record<string, unknown> = {};
+import { normalizePath } from '../shared/path-key.ts';
+import {
+	readState, writeLayout, writeRefFilters, writeWorkspace, writeSettings,
+	type PanelLayoutSnapshot, type StateSnapshot,
+} from '../api/index.ts';
+
+/** 内存缓存：宿主状态快照的镜像。 */
+let cache: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
 
 /** 是否已完成首次预取。 */
 let primed = false;
@@ -25,19 +30,19 @@ let priming: Promise<void> | null = null;
 
 /** 当前工作区路径；写盘时作为 repo 参数。 */
 let currentCwd: string | null = null;
-/** 预取完成时的订阅者；预取完成后一次性通知。 */
+/** 预取完成时的订阅者；预取完成后一次性! 一次性通知。 */
 const readyListeners = new Set<() => void>();
 
 /**
- * 工作区路径尚未确定时暂存的写入。
+ * 路径未确定时暂存的类型化写入。
  *
- * 挂载早期（预取尚未开始）可能先发生写入，此时拿不到 repo 参数；直接丢弃会让那次改动永久丢失，
+ * 挂载早期（预取尚未开始）可能先发生写入，此时拿不到 cwd 参数；直接丢弃会让那次改动永久丢失，
  * 因此先记下来，路径确定后一并补写。
  */
-const pendingWrites = new Map<string, unknown>();
+const pendingWrites: Array<() => void> = [];
 
 /**
- * 首次预取宿主状态到内存缓存。
+ * 首次预取宿主状态快照到内存缓存。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。
@@ -50,11 +55,8 @@ export async function primeStorage(cwd: string): Promise<void> {
 		try {
 			cache = await readState(cwd);
 			// 补写路径未定期间暂存的改动：预取刚读回的值以后写为准。
-			for (const [key, value] of pendingWrites) {
-				if (value === null) Reflect.deleteProperty(cache, key); else cache[key] = value;
-				void writeState(cwd, key, value).catch(() => { /* 落盘失败时保留内存态 */ });
-			}
-			pendingWrites.clear();
+			for (const flush of pendingWrites) flush();
+			pendingWrites.length = 0;
 			primed = true;
 			for (const listener of readyListeners) listener();
 			readyListeners.clear();
@@ -79,7 +81,7 @@ export function storageReady(): boolean {
 /**
  * 订阅预取完成。
  *
- * 已就绪时立即调用；否则等预取完成后调用一次。用于把挂载时按回退值初始化的状态改成真实值。
+ * 已就绪时立即调用；否则等预取完成后调用一次。
  *
  * @param listener - 预取完成时调用。
  * @returns 取消订阅。
@@ -91,34 +93,111 @@ export function subscribeStorage(listener: () => void): () => void {
 }
 
 /**
- * 读取一个键值。
+ * 调度一次类型化写入：更新缓存并异步落盘，路径未定时暂存。
  *
- * @param key - 键。
- * @param fallback - 缺失时的回退值。
- * @returns 值或回退值。
+ * @param mutateCache - 对缓存的就地更新。
+ * @param flush - 落盘写入（cwd 已定时调用）。
+ * @returns 无。
  */
-export function loadValue<T>(key: string, fallback: T): T {
-	const value = cache[key];
-	return value === undefined ? fallback : value as T;
+function dispatch(mutateCache: () => void, flush: (cwd: string) => Promise<void>): void {
+	mutateCache();
+	const cwd = currentCwd;
+	if (cwd === null) {
+		pendingWrites.push(() => { const c = currentCwd; if (c !== null) void flush(c).catch(() => { /* 落盘失败时保留内存态 */ }); });
+		return;
+	}
+	void flush(cwd).catch(() => { /* 落盘失败时保留内存态 */ });
 }
 
 /**
- * 写入一个键值：更新缓存并异步落盘。
+ * 读取设置。
  *
- * @param key - 键。
- * @param value - 值；null 表示删除。
+ * @returns 设置对象；无时为 null。
+ */
+export function getSettings(): Record<string, unknown> | null {
+	return cache.settings;
+}
+
+/**
+ * 写入设置。
+ *
+ * @param settings - 设置对象；null 清除。
  * @returns 无。
  */
-export function saveValue(key: string, value: unknown): void {
-	if (value === null || value === undefined) Reflect.deleteProperty(cache, key);
-	else cache[key] = value;
-	const cwd = currentCwd;
-	if (cwd === null) {
-		// 路径未定：先暂存，待预取拿到 cwd 后补写，避免这次改动丢失。
-		pendingWrites.set(key, value ?? null);
-		return;
-	}
-	void writeState(cwd, key, value ?? null).catch(() => { /* 落盘失败时保留内存态 */ });
+export function setSettings(settings: Record<string, unknown> | null): void {
+	dispatch(() => { cache = { ...cache, settings }; }, (cwd) => writeSettings(cwd, settings));
+}
+
+/**
+ * 读取布局。
+ *
+ * @returns 布局；无时为 null。
+ */
+export function getLayout(): PanelLayoutSnapshot | null {
+	return cache.layout;
+}
+
+/**
+ * 写入布局。
+ *
+ * @param layout - 布局对象；null 清除。
+ * @returns 无。
+ */
+export function setLayout(layout: PanelLayoutSnapshot | null): void {
+	dispatch(() => { cache = { ...cache, layout }; }, (cwd) => writeLayout(cwd, layout));
+}
+
+/**
+ * 读取引用筛选表。
+ *
+ * @returns 筛选表。
+ */
+export function getRefFilters(): Record<string, 'all' | string[]> {
+	return cache.refFilters;
+}
+
+/**
+ * 写入引用筛选表。
+ *
+ * @param refFilters - 筛选表。
+ * @returns 无。
+ */
+export function setRefFilters(refFilters: Record<string, 'all' | string[]>): void {
+	dispatch(() => { cache = { ...cache, refFilters: { ...refFilters } }; }, (cwd) => writeRefFilters(cwd, refFilters));
+}
+
+/**
+ * 读取一个工作区的树状态。
+ *
+ * @param workspaceCwd - 工作区根路径。
+ * @returns 选择与展开；无记录时 selectedRepo 为 null、expandedRepos 为空。
+ */
+export function getWorkspace(workspaceCwd: string): { selectedRepo: string | null; expandedRepos: readonly string[] } {
+	const key = normalizePath(workspaceCwd);
+	const ws = Object.prototype.hasOwnProperty.call(cache.workspaces, key) ? cache.workspaces[key] : undefined;
+	return ws === undefined ? { selectedRepo: null, expandedRepos: [] } : ws;
+}
+
+/**
+ * 写入一个工作区的部分树状态；合并到缓存中的工作区。
+ *
+ * @param workspaceCwd - 工作区根路径。
+ * @param partial - 待合并的部分状态。
+ * @returns 无。
+ */
+export function setWorkspace(workspaceCwd: string, partial: { selectedRepo?: string | null; expandedRepos?: string[] }): void {
+	const key = normalizePath(workspaceCwd);
+	if (key === '') return;
+	dispatch(() => {
+		const prev = Object.prototype.hasOwnProperty.call(cache.workspaces, key) ? cache.workspaces[key] : undefined;
+		const selectedRepo = partial.selectedRepo !== undefined ? partial.selectedRepo : prev?.selectedRepo ?? null;
+		const expandedRepos = partial.expandedRepos !== undefined ? partial.expandedRepos : prev?.expandedRepos ?? [];
+		const repos = prev?.repos ?? [];
+		const workspaces = { ...cache.workspaces };
+		if (selectedRepo === null && expandedRepos.length === 0 && repos.length === 0) Reflect.deleteProperty(workspaces, key);
+		else workspaces[key] = { selectedRepo, expandedRepos, repos, updatedAt: Date.now() };
+		cache = { ...cache, workspaces };
+	}, (cwd) => writeWorkspace(cwd, workspaceCwd, partial));
 }
 
 /**
@@ -129,7 +208,7 @@ export function saveValue(key: string, value: unknown): void {
  * @returns 无。
  */
 export function resetStorageCache(): void {
-	cache = {};
+	cache = { settings: null, layout: null, refFilters: {}, workspaces: {} };
 	primed = false;
 	priming = null;
 }
@@ -216,11 +295,11 @@ export function migrateLegacyDrafts(): void {
 	}
 	try {
 		for (const [key] of drafts) {
-			// 会话键已有值才清 localStorage 残留；会话键本身是转入目标，不删除。
+			// 会话键已有值才清 localStorage 拆留；会话键本身是转入目标，不删除。
 			if (store.getItem(key) !== null) local?.removeItem(key);
 		}
 	} catch {
-		/* 清理失败时保留旧键，下次进入重试 */
+		/* 清理失败时保留旧键，下次进入! 进入重试 */
 	}
 }
 

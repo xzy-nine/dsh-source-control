@@ -7,6 +7,8 @@
  */
 import type { Commit, RefItem } from '../shared/types.ts';
 import { normalizePath } from '../shared/path-key.ts';
+import { idsOf, refIdOf } from '../shared/ref-id.ts';
+export { refIdOf };
 
 /** 引用筛选的三种模式：全部、自动、手选。 */
 export type RefFilterMode = 'all' | 'auto' | 'manual';
@@ -55,11 +57,6 @@ export function filterKeyOf(repoPath: string): string {
  * @param value - 待收敛的值。
  * @returns 非空字符串组成的数组。
  */
-function idsOf(value: unknown): string[] {
-	if (!Array.isArray(value)) return [];
-	return value.filter((id): id is string => typeof id === 'string' && id !== '');
-}
-
 /**
  * 从一个仓库的持久化项读出筛选状态。
  *
@@ -120,19 +117,6 @@ export function legacyFilterOf(value: unknown): RefFilter | null {
 	const names = idsOf((value as { selected?: unknown }).selected);
 	if (names.length === 0) return DEFAULT_REF_FILTER;
 	return { mode: 'manual', ids: names.map((name) => refIdOf(name, name.includes('/') ? 'remote' : 'branch')) };
-}
-/**
- * 取一个引用在持久化与请求里使用的完整名。
- *
- * @param name - 引用短名。
- * @param type - 引用种类。
- * @returns 完整引用名，如 `refs/heads/main`、`refs/remotes/origin/main`。
- */
-export function refIdOf(name: string, type: RefItem['type']): string {
-	if (name.startsWith('refs/')) return name;
-	if (type === 'tag') return `refs/tags/${name}`;
-	if (type === 'remote') return `refs/remotes/${name}`;
-	return `refs/heads/${name}`;
 }
 
 /**

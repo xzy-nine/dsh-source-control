@@ -16,13 +16,13 @@ import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import {
-	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterKeyOf, filterSummaryOf,
-	legacyFilterOf, readStoredFilter, REF_FILTER_KEY, revalidatedFilter, sortRefs, writeStoredFilter,
+	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterSummaryOf,
+	readStoredFilter, revalidatedFilter, sortRefs, writeStoredFilter,
 } from './refs.ts';
 import type { AutoFilterContext, RefFilter } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import {
-	loadValue, migrateLegacyDrafts, primeStorage, saveValue,
+	getRefFilters, migrateLegacyDrafts, primeStorage, setRefFilters,
 	storageReady as storagePrimed,
 } from './storage.ts';
 import { logClient, migrateLegacyState } from '../api/index.ts';
@@ -158,7 +158,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
 		selectNode, toggleNode, setSelectedId, rescan, refreshTree,
-	} = useRepos({ cwd, sessionId });
+	} = useRepos({ cwd });
 
 	/*
 	 * 取数目标：选中节点优先，其次**当且仅当工作区根本身是仓库**时用它。
@@ -201,7 +201,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const patchFilter = React.useCallback((next: RefFilter) => {
 		setRefFilter(next);
 		if (workingTreePath === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(loadValue(REF_FILTER_KEY, {}), workingTreePath, next));
+		setRefFilters(writeStoredFilter(getRefFilters(), workingTreePath, next));
 	}, [workingTreePath]);
 
 	/*
@@ -212,23 +212,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 */
 	React.useEffect(() => {
 		if (!storageReady || workingTreePath === null) return;
-		const registry = loadValue<Record<string, unknown>>(REF_FILTER_KEY, {});
-		const key = filterKeyOf(workingTreePath);
-		if (registry[key] !== undefined) {
-			setRefFilter(readStoredFilter(registry, workingTreePath));
-			return;
-		}
-		/*
-		 * 旧版本把筛选按仓库存成独立键（`<前缀>:<仓库路径>`）：首次进入时折合到新表并清掉旧键，
-		 * 否则升级后各仓库的筛选都会回到默认自动。
-		 */
-		const legacyKey = `${REF_FILTER_KEY}:${workingTreePath}`;
-		const legacyValue = loadValue<unknown>(legacyKey, null);
-		const legacy = legacyFilterOf(legacyValue);
-		setRefFilter(legacy ?? DEFAULT_REF_FILTER);
-		if (legacy === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(registry, workingTreePath, legacy));
-		saveValue(legacyKey, null);
+		setRefFilter(readStoredFilter(getRefFilters(), workingTreePath));
 	}, [storageReady, workingTreePath]);
 
 	/*

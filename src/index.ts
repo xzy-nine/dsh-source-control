@@ -13,6 +13,7 @@ import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 import { registerGgRoutes } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
+import { pruneWorkspaces } from './source-control/state-store.js';
 import { initLog, logError, logInfo, logRoot } from './source-control/logger.js';
 
 export const name = 'source-control';
@@ -46,6 +47,8 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		// 翻译走官方 translator 服务；未装载时该服务取不到，翻译入口据此提示降级。
 		const getTranslator = () => (ctx as unknown as { get(name: string): unknown }).get('translator');
 		const disposers = registerGgRoutes(webServer, { getLlm, getAgentDefaultModel, getTranslator });
+		// 启动即清理过期与超量工作区：fire-and-forget，失败不影响路由。
+		try { pruneWorkspaces(); } catch { /* 清理失败时下次启动重试 */ }
 		// 预扫不 await：不阻塞 apply 返回，失败也不影响路由。
 		void primeCachedWorkspaces().catch((error: unknown) => {
 			logInfo('repo', `启动预扫仓库树失败，不影响路由与面板取数：${error instanceof Error ? error.message : String(error)}`);
