@@ -4,8 +4,7 @@
  * 子进程环境、子进程生命周期、空闲跟踪、调用频率告警、只读结果缓存与在途复用、
  * 仓库写事件都在本模块。上层的工作区操作与子模块操作共用这里的 {@link runGit}。
  */
-import { spawn } from 'node:child_process';
-import { collectProcess } from './child-process.js';
+import { runCollect, terminateAllChildren } from './host-runtime.js';
 import { countSpawnInScope } from './api/refresh-scope.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
 
@@ -133,44 +132,15 @@ export function normalizeRepo(cwd: string): string {
 }
 
 /**
- * 已启动且未结束的子进程；宿主退出时逐个终止，避免留下孤儿 git.exe。
- *
- * 不设截止时刻：远端不可达或凭据缺失时 git 自身会结束进程，钩子属于仓库自身的脚本，
- * 其耗时不由本插件限制。本集合只用于宿主退出时的清理。
- */
-const liveChildren = new Set<ReturnType<typeof spawn>>();
-
-/**
- * 按进程树终止一个 git 子进程。
- *
- * Windows 上 kill 只终止直接子进程，而 git 会再派生 git.exe（子模块、凭据助手、lfs），
- * 遗留的孙进程同样占 CPU 与仓库句柄，因此按 /t 整树终止。
- *
- * @param child - 子进程。
- * @returns 无。
- */
-function killTree(child: ReturnType<typeof spawn>): void {
-	if (process.platform === 'win32' && child.pid !== undefined) {
-		spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
-		return;
-	}
-	try {
-		child.kill();
-	} catch {
-		/* 进程已退出 */
-	}
-}
-
-/**
  * 终止所有在跑的 git 子进程。
  *
  * Windows 上父进程退出不会连带结束子进程，遗留的 git.exe 会持有仓库句柄并占 CPU。
+ * 终止按受管进程范围下发，整棵进程树一并结束。
  *
  * @returns 无。
  */
 export function killRunningGit(): void {
-	for (const child of liveChildren) killTree(child);
-	liveChildren.clear();
+	terminateAllChildren();
 }
 
 /* 宿主退出与终止信号下都收尾；重复调用无副作用。 */
@@ -726,14 +696,7 @@ export function isProbeCommand(args: readonly string[]): boolean {
  */
 function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
 	countSpawnInScope();
-	return collectProcess({
-		command: 'git',
-		args,
-		cwd,
-		env: gitEnvironment(isReadOnly(args)),
-		onChild: (child) => { liveChildren.add(child); },
-		onSettled: (child) => { liveChildren.delete(child); },
-	});
+	return runCollect({ command: 'git', args, cwd, env: gitEnvironment(isReadOnly(args)) });
 }
 
 /**

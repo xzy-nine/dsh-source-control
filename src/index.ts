@@ -14,6 +14,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { registerGgRoutes } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
 import { openStateStore, pruneWorkspaces, stateDomainFailure } from './source-control/state-store.js';
+import { installHostCapabilities } from './source-control/host-runtime.js';
 import { initLog, logError, logInfo, logRoot, logWarn } from './source-control/logger.js';
 
 export const name = 'source-control';
@@ -67,6 +68,11 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 
 	ctx.inject(['webServer'], (host) => {
 		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
+		/*
+		 * 宿主能力：子进程、文件读取与目录监视都经 seam。缺一项即抛错让装载失败——插件没有原生
+		 * 回退，读不到仓库或跑不了 git 时早失败比晚失败好定位。
+		 */
+		installHostCapabilities((name) => (ctx as unknown as { get(key: string): unknown }).get(name));
 		/*
 		 * 状态文档接进 DSH 的 storage domain；未装载时回退到旧版 state.json，路由照常可用。
 		 *

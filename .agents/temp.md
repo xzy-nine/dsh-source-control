@@ -13,10 +13,6 @@
 | # | 位置 | 现状（自行实现） | 应使用 | 依据 | 优先级 | 优势 | 劣势与风险 |
 |---|---|---|---|---|---|---|---|
 | 9 | [routes.ts:340](src/source-control/routes.ts#L340)、[api/http.ts:17](src/source-control/api/http.ts#L17)、[api/events.ts:81](src/source-control/api/events.ts#L81)、[client/api/http.ts](src/client/api/http.ts)、[client/api/stream.ts](src/client/api/stream.ts) | 自建 `/dsh-source-control/gg/api` 命令分派、手写 JSON 请求体、自写 SSE 事件流与客户端 fetch 传输 | Typert Remote（`@Remote` + `ctx.remote.<ns>`）+ API Gateway 的 Remote stream | [adding-a-remote-api.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/cookbook/adding-a-remote-api.zh.md)、[web-client.zh.md:28-34](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/web-client.zh.md#L28-L34) | P2 | 生成式类型契约、取消、`RemoteError` 码表、logical stream 与 generation 重连、鉴权与 trust 归 connection，去掉手写 JSON、SSE 与 400 | 改动面等于整个面板：约 40 条命令、并发合并、命令耗时汇总、SSE 广播与 400 语义都要重新表达；需 TypertRemoteService + 两个生成入口 + 构建期生成器（本仓库现为 tsc + esbuild）；新增 typert-protocol peer 依赖。建议先在新命令上试点 |
-| 10 | [child-process.ts:90](src/source-control/child-process.ts#L90)（整文件，含 `createLimiter`） | 自写 spawn、stdout/stderr 收集、超时、并发限流 | `ctx.subprocess`（收集模式 + spill + `graceMs` + managed range） | [subprocess.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/subprocess.zh.md) | P2 | 受管进程范围终止、spill 溢出到文件、`DSH_*` 环境清理、显式 stdio | seam 不提供默认值，每处调用要写全 stdio 与 graceMs；git 输出是整份解析，spill 多一层读取；`createLimiter` 不在 seam 内仍要自留；跨远程执行世界时语义变化需重新验证 |
-| 11 | [git-exec.ts:154](src/source-control/git-exec.ts#L154) | 自写 `taskkill /t /f` 整树终止与进程退出清理 | `SubprocessHandle.terminate()` / `waitForExit()` | 同上 | 随 #10 | `terminate()` 与 `waitForExit()` 覆盖整棵受管范围 | 自写 taskkill 只处理 Windows；脱离 #10 单独改无收益 |
-| 12 | [repo-watcher.ts:246](src/source-control/repo-watcher.ts#L246)、[:341](src/source-control/repo-watcher.ts#L341) | 直接 `node:fs` 的 `watch` | `ctx.fs.watch(target, changed, signal)` | [filesystem.zh.md:411](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/filesystem.zh.md#L411) | P3 | 与远端、沙箱后端一致，signal 生命周期 | 现有监视的价值在过滤与去噪（无文件名事件的快照核对、250/400ms 合并、32 仓库上限、工作区递归下探），seam 只给 changed 回调，这些逻辑一行都省不掉；递归监视取决于后端能力 |
-| 13 | [repo-discovery.ts](src/source-control/repo-discovery.ts)、[hooks.ts](src/source-control/hooks.ts)、[state-store.ts](src/source-control/state-store.ts) | 直接 `readFileSync` / `readdirSync` / `statSync` | `ctx.fs` 的 `stat` / `readText` / 列表 | 同上 | P3 | 尊重沙箱与远程后端 | 发现层按深度上限做大量 stat/readdir，走 seam 变成逐次异步往返；git 目录内部布局仍需原生路径。需要远程工作区支持时升为 P1 |
 | 14 | [ssh-status.ts:211](src/source-control/ssh-status.ts#L211) | 自写 ssh 探测（`BatchMode`、`~/.ssh` 私钥扫描、认证判定） | `ctx.ssh`（`SshConnection`） | [ssh.zh.md:117](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/ssh.zh.md#L117)（宿主装载该包时） | P3 | 官方 SSH 连接归属与 helper runtime | `ssh-status` 是诊断（是否安装、私钥列表、认证结果），须在未装载 ssh 包时可用；`ctx.ssh` 是 POSIX 连接 owner，不覆盖 Windows 客户端探测 |
 
 ## 三、客户端服务与 UI 原语
@@ -34,6 +30,7 @@
 - `pruneWorkspaces` 的 30 天 / 200 条淘汰：业务策略，storage domain 不提供淘汰。
 - `native-open.ts`、`terminal-run.ts`、`file-diff.tsx` 的 `useCodeHighlighter`：已在用宿主能力。
 - `worktree-remove.ts` 自跑 `git worktree remove`：`ctx.worktrees` 只创建、且是未进 base 与 web-app 组合的 experimental 包，为一条 remove 引入它不划算。
+- 插件自身持久化与日志（`pluginHome()` 下的 `state.json`、日志、反馈 outbox）：这些路径在 `writableRoots` 之外，`workspace-write` 下走 `ctx.fs` 会被 `FS_SANDBOX_DENIED` 拒绝，因此永久保留 `node:fs`。
 
 ## 五、已完成（本轮已落地，从表中移除）
 
@@ -50,5 +47,9 @@
 | 16 | 会话工作区根 | `dsh-session-cwd.ts` 不再读 `session_projcache` 文件布局，改从 `ctx.sessionPersistence.list()` 的 `snapshot.header` 取 `id → cwd`；解析器仍可注入，服务缺失或 `list` 抛错时会话条目丢弃、不抛错 |
 | 24 | 会话可见性判据 | `isSessionDisplayed(retain)` 与 `activeWorkspaceOf(infos)` 改为只读官方 `SessionRetainInfo` 与显式传入的会话信息；组件路径用席位标准 hook `useSessionRetainInfo`，模块级预加载用 `ctx.sessions.list` + `ctx.sessions.retainInfo(id)` |
 | 25 | generation-store | 模块级登记表改由 `@deepseek-ai/dsh-client-store` 的 `createSnapshotStore` 承载（immer 草稿 + 订阅发布），按仓库键的归属语义与「空闲且无人订阅即删」保留 |
+| 10 | 子进程 seam | 新增 `host-runtime.ts` 的 `runCollect`：装了 `ctx.subprocess` 走受管范围（整树终止、显式 stdio、`graceMs`、`DSH_*` 清理），未装载回退原生 spawn；`git-exec.ts`、`gh-cli.ts`、`feedback.ts`、`log-archive.ts`、`ssh-status.ts` 五处调用点统一改走它 |
+| 11 | 进程树终止 | 自写 `taskkill /t /f` 从 `git-exec.ts` 移到 `host-runtime.ts` 的 `killTree`，只服务原生回退路径；seam 路径用 `SubprocessHandle.terminate()` |
+| 12 | 目录监视 | `repo-watcher.ts` 的 `node:fs` `watch` 改走 `watchDirAt`：原生路径保留文件名与递归，`ctx.fs.watch` 路径名字与类型为 null 并降级为单层，调用方按「名字未知」核对结构状态 |
+| 13 | 文件读取 | `repo-node.ts`、`repo-enrich.ts`、`worktree-branches.ts`、`repo-facts.ts`、`hooks.ts`、`repo-watcher.ts` 的 stat/readFile/readdir 改走 `probePathAt` / `readTextAt` / `listDirAt` / `statAt`；新鲜度守卫改用 seam 的 `version` 令牌 |
 | 17 | 缓存淘汰收口 | 新增 `src/shared/lru-map.ts`（`LruMap` + `CacheLimit` + `TRIM_RATIO`），宿主 `host-cache.ts` / `repo-facts.ts` 与客户端 `client/shared/cache.ts` 共用同一份容量与淘汰顺序；`putCached` / `getCached` 去掉 `limit` 形参，TTL 包装仍留 host-cache |
 | 21 | 弹窗挂载 | `runDialog` 改为投 `OverlayHost` 的 FIFO 队列（不再是每次一个 React 根）；新增 `showError(message)` 错误弹窗，正文可滚动可整段复制，错误类提示全部由 toast 改为弹窗 |

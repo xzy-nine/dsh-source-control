@@ -5,7 +5,7 @@
  * `.git` 文件、`HEAD` 给出该工作树的分支。因此枚举工作树读文件即可，不需要
  * `git worktree list`。判定与 git 调用分离，便于直接单测。
  */
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
 import { dirname, join, resolve } from 'node:path';
 
 /** `HEAD` 文件的解析结果。 */
@@ -106,7 +106,7 @@ export function worktreeRootOf(gitDir: string): string | null {
 /** 读一个 `HEAD` 文件的分支与短哈希。 */
 async function readHeadRecord(headPath: string): Promise<{ branch: string | null; head: string | null }> {
 	try {
-		const ref = parseHeadRef(await readFile(headPath, 'utf8'));
+		const ref = parseHeadRef(await readTextAt(headPath));
 		return { branch: ref.branch, head: ref.hash === null ? null : ref.hash.slice(0, 7) };
 	} catch {
 		return { branch: null, head: null };
@@ -116,7 +116,7 @@ async function readHeadRecord(headPath: string): Promise<{ branch: string | null
 /** 读一个文件，失败时返回 null。 */
 async function readTextFile(path: string): Promise<string | null> {
 	try {
-		return await readFile(path, 'utf8');
+		return await readTextAt(path);
 	} catch {
 		return null;
 	}
@@ -147,11 +147,11 @@ export async function readWorktrees(commonDir: string): Promise<WorktreeRecord[]
 	const dir = join(commonDir, 'worktrees');
 	let entries;
 	try {
-		entries = await readdir(dir, { withFileTypes: true });
+		entries = await listDirAt(dir);
 	} catch {
 		return records;
 	}
-	const linked = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+	const linked = await Promise.all(entries.filter((entry) => entry.type === 'directory').map(async (entry) => {
 		const recordDir = join(dir, entry.name);
 		const pointer = await readTextFile(join(recordDir, 'gitdir'));
 		if (pointer === null) return null;
@@ -224,7 +224,7 @@ export async function readHeadRef(repo: string): Promise<HeadRef | null> {
 	const gitDir = await resolveGitDir(repo);
 	if (gitDir === null) return null;
 	try {
-		return parseHeadRef(await readFile(resolve(gitDir, 'HEAD'), 'utf8'));
+		return parseHeadRef(await readTextAt(resolve(gitDir, 'HEAD')));
 	} catch {
 		return null;
 	}
@@ -241,7 +241,7 @@ export async function readHeadRef(repo: string): Promise<HeadRef | null> {
  */
 export async function readLooseRef(commonDir: string, refName: string): Promise<string | null> {
 	try {
-		const loose = (await readFile(resolve(commonDir, refName), 'utf8')).trim();
+		const loose = (await readTextAt(resolve(commonDir, refName))).trim();
 		return loose === '' ? null : loose;
 	} catch {
 		return null;
@@ -259,11 +259,11 @@ export async function readLooseRef(commonDir: string, refName: string): Promise<
  */
 export async function gitDirAt(dir: string): Promise<string | null> {
 	const gitEntry = join(dir, '.git');
+	const kind = await probePathAt(gitEntry);
+	if (kind === 'directory') return gitEntry;
+	if (kind !== 'file') return null;
 	try {
-		const info = await stat(gitEntry);
-		if (info.isDirectory()) return gitEntry;
-		if (!info.isFile()) return null;
-		const pointer = await readFile(gitEntry, 'utf8');
+		const pointer = await readTextAt(gitEntry);
 		const line = pointer.split(/\r?\n/).find((row) => row.startsWith('gitdir:'));
 		if (line === undefined) return null;
 		const target = line.slice('gitdir:'.length).trim();
@@ -282,16 +282,12 @@ export async function gitDirAt(dir: string): Promise<string | null> {
  * @returns 是裸仓库的 git 目录时为 true。
  */
 async function isBareGitDir(dir: string): Promise<boolean> {
-	try {
-		const [head, objects, refs] = await Promise.all([
-			stat(join(dir, 'HEAD')),
-			stat(join(dir, 'objects')),
-			stat(join(dir, 'refs')),
-		]);
-		return head.isFile() && objects.isDirectory() && refs.isDirectory();
-	} catch {
-		return false;
-	}
+	const [head, objects, refs] = await Promise.all([
+		probePathAt(join(dir, 'HEAD')),
+		probePathAt(join(dir, 'objects')),
+		probePathAt(join(dir, 'refs')),
+	]);
+	return head === 'file' && objects === 'directory' && refs === 'directory';
 }
 
 /**
@@ -327,7 +323,7 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
  */
 export async function gitCommonDirOf(gitDir: string): Promise<string> {
 	try {
-		const common = (await readFile(resolve(gitDir, 'commondir'), 'utf8')).trim();
+		const common = (await readTextAt(resolve(gitDir, 'commondir'))).trim();
 		return common === '' ? gitDir : resolve(gitDir, common);
 	} catch {
 		return gitDir;

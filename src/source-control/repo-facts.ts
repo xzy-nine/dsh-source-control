@@ -8,7 +8,7 @@
  * `HEAD` 不缓存：它是各缓存的失效判据，读的是当前值。布局缓存存的是待决结果，同一仓库的
  * 并发请求因此共享一次解析。
  */
-import { readFile, stat } from 'node:fs/promises';
+import { readTextAt, statAt } from './host-runtime.js';
 import { join, resolve } from 'node:path';
 import { getCached, noteRepoCommonDir, putCached } from './host-cache.js';
 import type { CacheEntry } from './host-cache.js';
@@ -45,8 +45,8 @@ const layouts = new LruMap<string, CacheEntry<Promise<RepoLayout | null>>>({ lim
 interface PackedRefsSnapshot {
 	/** 引用全名到哈希。 */
 	readonly refs: ReadonlyMap<string, string>;
-	/** 读取时 `packed-refs` 的修改时刻。 */
-	readonly mtimeMs: number;
+	/** 读取时 `packed-refs` 的新鲜度令牌。 */
+	readonly version: unknown;
 	/** 读取时 `packed-refs` 的大小。 */
 	readonly size: number;
 }
@@ -73,13 +73,10 @@ function repoKeyOf(repo: string): string {
  * @param path - 文件路径。
  * @returns 修改时刻与大小。
  */
-async function stampOf(path: string): Promise<{ mtimeMs: number; size: number } | null> {
-	try {
-		const info = await stat(path);
-		return info.isFile() ? { mtimeMs: info.mtimeMs, size: info.size } : null;
-	} catch {
-		return null;
-	}
+async function stampOf(path: string): Promise<{ version: unknown; size: number } | null> {
+	const info = await statAt(path);
+	if (info === undefined || info.type !== 'file') return null;
+	return { version: info.version, size: info.size ?? 0 };
 }
 
 /**
@@ -149,10 +146,10 @@ async function packedRefsOf(commonDir: string): Promise<PackedRefsSnapshot | nul
 	const cached = layoutTtlMs > 0 ? getCached(packedRefs, key) : undefined;
 	const stamp = await stampOf(path);
 	if (stamp === null) return null;
-	if (cached !== undefined && cached.mtimeMs === stamp.mtimeMs && cached.size === stamp.size) return cached;
+	if (cached !== undefined && cached.version === stamp.version && cached.size === stamp.size) return cached;
 	let source: string;
 	try {
-		source = await readFile(path, 'utf8');
+		source = await readTextAt(path);
 	} catch {
 		return null;
 	}
@@ -181,7 +178,7 @@ export async function readPackedRef(commonDir: string, refName: string): Promise
  */
 async function readHeadFile(gitDir: string): Promise<HeadRef | null> {
 	try {
-		return parseHeadRef(await readFile(resolve(gitDir, 'HEAD'), 'utf8'));
+		return parseHeadRef(await readTextAt(resolve(gitDir, 'HEAD')));
 	} catch {
 		return null;
 	}
