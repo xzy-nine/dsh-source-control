@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain';
 import { pluginHome } from './dsh-home.js';
 import { logInfo, logWarn } from './logger.js';
-import { readSessionCwd } from './dsh-session-cwd.js';
+import { readSessionCwdMap, sessionHeaderReader } from './dsh-session-cwd.js';
 
 /** 状态文档文件名。 */
 const STATE_FILE = 'state.json';
@@ -119,6 +119,9 @@ let stateDoc: StateDocument | null = null;
 /** 旧版状态文档的绝对路径；只在导入时读。 */
 let legacyPath: string | null = null;
 
+/** 已存会话的工作区根表；接域时从会话持久化服务读一次，迁移按会话 id 查。 */
+let sessionCwds: ReadonlyMap<string, string> = new Map();
+
 /**
  * 路径键归一化：统一 \`/\` 分隔、去尾斜杠、盘符路径小写。
  *
@@ -156,9 +159,10 @@ function emptyDocument(): StateDocument {
  * 不再享有域的结构校验与原子发布。调用方在宿主 `apply` 里等待本函数，之后访问器即可同步读。
  *
  * @param storageDomain - `ctx.storageDomain`；缺失时为 undefined。
+ * @param readSessionPersistence - 取 `ctx.sessionPersistence`；未装载时给 undefined。
  * @returns 是否已接上域。
  */
-export async function openStateStore(storageDomain: unknown): Promise<boolean> {
+export async function openStateStore(storageDomain: unknown, readSessionPersistence?: () => unknown): Promise<boolean> {
 	const facility = storageDomain as { open?: (spec: unknown) => Promise<{ global: { get(): unknown; set(value: unknown): Promise<void> } }> } | undefined;
 	if (typeof facility?.open !== 'function') {
 		// 静默：调用方可能在等域就位，逐次记日志会刷屏。
@@ -170,6 +174,7 @@ export async function openStateStore(storageDomain: unknown): Promise<boolean> {
 		const global = domain.global as unknown as { get(): StateDocument; set(value: StateDocument): Promise<void> };
 		const stored = coerceDocument(global.get());
 		// 域里从未写入过（writtenAt 为 0）时先导入旧版文件：升级用户的数据在这里接过来。
+		if (stored.writtenAt === 0) sessionCwds = await readSessionCwdMap(sessionHeaderReader(readSessionPersistence?.()));
 		const imported = stored.writtenAt === 0 ? importLegacyFile() : null;
 		domainGlobal = global;
 		stateDoc = imported ?? stored;
@@ -223,7 +228,7 @@ function importLegacyFile(): StateDocument | null {
 			: raw.schemaVersion === 2
 				? migrateV2ToV3(raw)
 				: raw.version === 1 || raw.schemaVersion === undefined
-					? migrateV1ToV3(raw, statSync(path).mtimeMs, readSessionCwd)
+					? migrateV1ToV3(raw, statSync(path).mtimeMs, resolveSessionCwd)
 					: null;
 		if (parts === null) {
 			logWarn('state', `旧版状态文档结构版本不符（读到 ${String(raw.schemaVersion ?? raw.version)}），已忽略：${path}`);
@@ -410,6 +415,19 @@ function normalizeExpanded(value: unknown): string[] {
  * @returns 工作区根路径；无法还原时为 null。
  */
 export type SessionCwdResolver = (sessionId: string) => string | null;
+
+/**
+ * 从已存会话的 header 表取工作区根。
+ *
+ * 会话持久化服务缺失、会话不在表里时给 null——迁移按「无法还原则丢弃该会话」处理。
+ *
+ * @param sessionId - 会话 id。
+ * @returns 工作区根路径；无法还原时为 null。
+ */
+function resolveSessionCwd(sessionId: string): string | null {
+	const cwd = sessionCwds.get(sessionId);
+	return cwd === undefined ? null : cwd;
+}
 
 /** 按会话键的选中与展开；迁移的中间形态。 */
 interface SessionFold {
@@ -654,7 +672,7 @@ export function migrateV1ToV3(raw: Record<string, unknown>, fallbackUpdatedAt: n
  * @param resolveCwd - sessionId 到工作区根路径的解析器。
  * @returns 各分区内容。
  */
-export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionCwdResolver = readSessionCwd): DocumentParts {
+export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionCwdResolver = resolveSessionCwd): DocumentParts {
 	const locations = raw.repoLocations !== null && typeof raw.repoLocations === 'object' ? raw.repoLocations as Record<string, unknown> : {};
 	const reposByKey: Record<string, CachedRepoLocation[]> = {};
 	for (const [key, value] of Object.entries(locations)) {
@@ -693,7 +711,7 @@ export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionC
  * @param resolveCwd - sessionId 到工作区根路径的解析器。
  * @returns 无。
  */
-export function mergeLegacyEntries(entries: Record<string, unknown>, resolveCwd: SessionCwdResolver = readSessionCwd): void {
+export function mergeLegacyEntries(entries: Record<string, unknown>, resolveCwd: SessionCwdResolver = resolveSessionCwd): void {
 	const current = load();
 	const classified = classifyEntries(entries, Date.now());
 	const trees = new Map<string, WorkspaceTree>();
@@ -1026,4 +1044,5 @@ export function resetStateCache(): void {
 	domainGlobal = null;
 	domainFailure = null;
 	pendingWrites = [];
+	sessionCwds = new Map();
 }

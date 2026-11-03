@@ -7,7 +7,6 @@
 | 6 | [diff-view.ts:20](src/client/diff/diff-view.ts#L20) | 模块级 `Map` 存 split/wrap，刷新即丢 | `panel/storage.ts` 同一出口（宿主持久化） | 同上 | P1 | 刷新后保留 split/wrap | 纯视图偏好，宿主往返成本高于收益；更合适的落点是并入设置项，与其它视图设置同源 |
 | 7 | [state.ts:158](src/client/api/state.ts#L158) | 直接遍历 `localStorage` / `sessionStorage` 旧键 | 迁移例外可留，但应作为唯一豁免点显式标注 | 同上 | P2 | — | 这是唯一访问浏览器存储的迁移例外；在代码处标注豁免即可 |
 | 8 | [settings.ts:80](src/client/panel/settings.ts#L80) + [settings-model.ts](src/client/panel/settings-model.ts) | 自绘设置页与设置 JSON 形状 | `ctx.settings` 的 Config schema 表单 + `SettingsForm` 原语 | [adding-a-settings-card.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/cookbook/adding-a-settings-card.zh.md)、[settings.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/settings.zh.md) | P1（仅表单原语） | 原生设置卡片、revision 冲突保护、profile patch 持久化 | 本插件设置是按工作区的运行时开关，`ctx.settings` 投影的是插件 Config（profile 级、schemastery），语义不同；搬过去会变成全局生效并写 profile patch。可取部分仅是用 `SettingsForm` 原语渲染，数据仍留本插件 |
-| 16 | [dsh-session-cwd.ts:34](src/source-control/dsh-session-cwd.ts#L34) | 直读 `$DSH_HOME/storages/session_projcache/sessions/<id>.json` 内部文件格式 | `ctx.sessionProjectionCache.cachedSnapshot(header)` / `ctx.sessions` | [session-projection.zh.md:230-254](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/session-projection.zh.md#L230-L254) | P1 | 不再依赖其它子系统的私有文件布局 | `cachedSnapshot` 要 SessionHeader 而非 sessionId；该代码只服务 v1 文档迁移，新装用户走不到，直接删迁移比换 API 更省 |
 
 ## 二、宿主侧服务与能力 seam
 
@@ -25,8 +24,6 @@
 | # | 位置 | 现状（自行实现） | 应使用 | 依据 | 优先级 | 优势 | 劣势与风险 |
 |---|---|---|---|---|---|---|---|
 | 18 | [context-menu.ts:209](src/client/ui/context-menu.ts#L209) | 自建右键浮层（`createRoot` + 自定位 + 二级菜单翻向补丁） | `ctx.contextMenus`（`open` / `register` / `notify`） | `packages/client/ui-context-menu`（提交 `411f157983`） | **暂缓** | 原生定位、键盘、子菜单与视口夹取，自动 dismiss 并与 modal 层协作，删掉自建 createRoot 与翻向补丁 | 暂缓原因：该包 `dsh-v0.2.2-alpha.3` 才发布——`dsh-v0.2.1-rc.2`、`dsh-v0.2.1-rc.5`、`dsh-v0.2.2-alpha.2` 三个 tag 都没有 `packages/client/ui-context-menu`，本机 app.asar（0.2.1-rc.5）里 `contextMenus` / `useContextMenu` 零命中；`docs/upgrade-guide/v0.2.1-rc.2/context-menu-services/` 只说明 `ctx.menus → ctx.contextMenus` 改名，不代表该版本有包。恢复条件：engines 下限抬到 `>=0.2.2-alpha.3`，届时本机 0.2.1-rc.5 会因区间不符拒绝加载本插件。另：菜单项现由 JSON 元数据加闭包命令式构造，要改成 target 与 contribution 注册模型，10 处调用点全部重写，`hint` 在 `MenuActionView` 无对应字段会丢 |
-| 24 | [repo-preload.ts:130](src/client/panel/repo-preload.ts#L130)、[:141](src/client/panel/repo-preload.ts#L141) | 手工读 sessions 快照判 `retainedBy.mainView` / `current`、自取 cwd | `useSessionRetainInfo` / `useSessionStatus`（Session scope 席位已注入） | [web-client.zh.md:60](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/web-client.zh.md#L60)；`ui-session` 导出 | P2 | 不再依赖 sessions 快照的 `retainedBy` 内部形状 | 两处调用在模块级预加载（非组件），hook 用不上，须由面板把结果传进 preload；`activeWorkspaceOf` 的选取规则仍要自留 |
-| 25 | [generation-store.ts](src/client/panel/generation-store.ts) | 模块级 `Map` + `Set<listener>` 手写 observable | `@deepseek-ai/dsh-client-store` 的 `defineStore` / `createSnapshotStore` | `client/store` | P3 | immer 加 rafFlush 的成熟实现，且可开 `persist` | 为约 40 行的按仓库登记表引入一个客户端 store 依赖，收益低；`client-store` 与 `ui-primitives` 同属平台模块，需确认可外部化 |
 | 26 | [client/api/log.ts:42](src/client/api/log.ts#L42) | 自建队列 + `logEvent` 命令批量上报 | `ctx.logger`（客户端 Context 同样提供） | 同 #4 | P2 | 去掉队列与 `logEvent` 命令 | 浏览器侧 logger 默认只到 console，无 exporter 即等于丢日志，这正是 logEvent 存在的原因；与 #4 一并判断 |
 | 27 | [client/index.ts:520](src/client/index.ts#L520) 与 [repo-preload.ts](src/client/panel/repo-preload.ts) | 自取 `sessions` 快照推工作区 | `ctx.workspaces`（ClientWorkspaceModel） | [web-client.zh.md:52](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/web-client.zh.md#L52) | P2 | 官方工作区模型（归档、置顶、顺序） | 本插件要的是当前会话的工作区根与仓库级状态，前者来自 sessions 而非 workspace 列表，可替代范围有限 |
 
@@ -50,5 +47,8 @@
 | 22 | relativeTime | 相对时间分档改由 primitives 的 `relativeTime(at, now)` 提供；`refresh-status.ts` 只留纯函数 `refreshTextOf(bucket)` 与文案表（新增天/月/年档），新模块 `panel/refresh-time.ts` 做分档到文案的代入 |
 | 23 | fileSizeText | 宿主侧 `formatBytes` 整体删除、issue 正文不再写体积，宿主只回字节数；客户端日志文件列表改用 primitives 的 `fileSizeText` |
 | 20 | toast 挂载 | `showToast(text)` 投常驻 `OverlayHost`（`installOverlay` 注册进根级 list 席位 `shell.overlay`），不再 `createRoot` + `document.body`；删除 `ToastTone` / `ToastOptions` / `HOLD_OF` / `holdFor`，只留信息类提示 |
+| 16 | 会话工作区根 | `dsh-session-cwd.ts` 不再读 `session_projcache` 文件布局，改从 `ctx.sessionPersistence.list()` 的 `snapshot.header` 取 `id → cwd`；解析器仍可注入，服务缺失或 `list` 抛错时会话条目丢弃、不抛错 |
+| 24 | 会话可见性判据 | `isSessionDisplayed(retain)` 与 `activeWorkspaceOf(infos)` 改为只读官方 `SessionRetainInfo` 与显式传入的会话信息；组件路径用席位标准 hook `useSessionRetainInfo`，模块级预加载用 `ctx.sessions.list` + `ctx.sessions.retainInfo(id)` |
+| 25 | generation-store | 模块级登记表改由 `@deepseek-ai/dsh-client-store` 的 `createSnapshotStore` 承载（immer 草稿 + 订阅发布），按仓库键的归属语义与「空闲且无人订阅即删」保留 |
 | 17 | 缓存淘汰收口 | 新增 `src/shared/lru-map.ts`（`LruMap` + `CacheLimit` + `TRIM_RATIO`），宿主 `host-cache.ts` / `repo-facts.ts` 与客户端 `client/shared/cache.ts` 共用同一份容量与淘汰顺序；`putCached` / `getCached` 去掉 `limit` 形参，TTL 包装仍留 host-cache |
 | 21 | 弹窗挂载 | `runDialog` 改为投 `OverlayHost` 的 FIFO 队列（不再是每次一个 React 根）；新增 `showError(message)` 错误弹窗，正文可滚动可整段复制，错误类提示全部由 toast 改为弹窗 |

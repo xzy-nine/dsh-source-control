@@ -42,11 +42,12 @@ const DOMAIN_WAIT_INTERVAL_MS = 100;
  * 处理，状态文档回退到旧版文件。
  *
  * @param read - 取 `ctx.storageDomain`。
+ * @param readSessionPersistence - 取 `ctx.sessionPersistence`；迁移旧会话键时读会话 header。
  * @returns 是否接上了域。
  */
-async function openStateStoreWhenReady(read: () => unknown): Promise<boolean> {
+async function openStateStoreWhenReady(read: () => unknown, readSessionPersistence: () => unknown): Promise<boolean> {
 	for (let attempt = 0; attempt < DOMAIN_WAIT_ATTEMPTS; attempt += 1) {
-		if (await openStateStore(read())) return true;
+		if (await openStateStore(read(), readSessionPersistence)) return true;
 		if (attempt + 1 < DOMAIN_WAIT_ATTEMPTS) await new Promise((resolve) => { setTimeout(resolve, DOMAIN_WAIT_INTERVAL_MS); });
 	}
 	logWarn('state', `storage domain 始终未就位（${stateDomainFailure() ?? '原因未知'}），状态文档回退到旧版 state.json`);
@@ -72,7 +73,10 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		 * 域打开是异步的，而预扫与清理要读已持久化的工作区根，因此串在同一个异步链上：
 		 * 先接域、再清理、最后预扫。
 		 */
-		const ready = openStateStoreWhenReady(() => (ctx as unknown as { get(name: string): unknown }).get('storageDomain'));
+		const ready = openStateStoreWhenReady(
+			() => (ctx as unknown as { get(name: string): unknown }).get('storageDomain'),
+			() => (ctx as unknown as { get(name: string): unknown }).get('sessionPersistence'),
+		);
 		const getLlm = () => (ctx as unknown as { get(name: string): unknown }).get('llm');
 		const getAgentDefaultModel = () => (ctx as unknown as { get(name: string): unknown }).get('agentDefaultModel');
 		// 翻译走官方 translator 服务；未装载时该服务取不到，翻译入口据此提示降级。

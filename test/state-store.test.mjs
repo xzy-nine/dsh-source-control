@@ -4,7 +4,8 @@
  * 从 `lib/` 产物导入宿主 `state-store.js`（`pretest` 先重建），从 `src/` 直连客户端
  * `path-key.ts` 做归一化跨端一致性校验。每个用例用 `DSH_SOURCE_CONTROL_HOME` 隔离磁盘文档。
  *
- * 迁移用例显式传入 sessionId -> 工作区根 的解析器，不依赖真实 DSH 会话存储。
+ * 迁移用例显式传入 sessionId -> 工作区根 的解析器，不依赖真实 DSH 会话存储；接域路径用假的
+ * sessionPersistence 提供已存会话 header。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -267,6 +268,50 @@ test('openStateStore：接上 storage domain 后读域里的文档', async () =>
 	mod.writeSettings({ changed: true });
 	await new Promise((r) => setTimeout(r, 0));
 	assert.deepEqual(written?.settings, { changed: true }, '写入交给域');
+});
+
+test('openStateStore：旧版 v2 会话键经 sessionPersistence 的 header 还原工作区根', async () => {
+	const { mod } = await freshState(JSON.stringify({
+		schemaVersion: 2, settings: null, layout: null, refFilters: {},
+		sessions: { 'session-a': { selectedRepo: 'e:/githubcode/repo', expandedRepos: [], updatedAt: 900 } },
+		repoLocations: {}, drafts: null,
+	}));
+	mod.resetStateCache();
+	const fakeDomain = {
+		open: async () => ({ global: { get: () => ({ writtenAt: 0 }), set: async () => {} } }),
+	};
+	const fakePersistence = {
+		list: async () => [
+			{ header: { id: 'session-a', cwd: 'E:/GitHubCode' } },
+			{ header: { id: 'session-b' } },
+			{ header: { cwd: 'E:/GitHubCode/other' } },
+		],
+	};
+	assert.equal(await mod.openStateStore(fakeDomain, () => fakePersistence), true);
+	const ws = mod.readSnapshot().workspaces['e:/githubcode'];
+	assert.ok(ws !== undefined, '会话 header 的 cwd 还原成工作区根');
+	assert.equal(ws.selectedRepo, 'e:/githubcode/repo');
+	assert.equal(ws.updatedAt, 900);
+	assert.ok(!('e:/githubcode/other' in mod.readSnapshot().workspaces), '无会话 id 的 header 丢弃');
+});
+
+test('openStateStore：sessionPersistence 缺失或列表失败时丢弃会话条目，不抛错', async () => {
+	const legacy = JSON.stringify({
+		schemaVersion: 2, settings: null, layout: null, refFilters: {},
+		sessions: { 'session-a': { selectedRepo: 'e:/githubcode/repo', expandedRepos: [], updatedAt: 900 } },
+		repoLocations: { 'E:\\GitHubCode': [{ path: 'E:/GitHubCode/repo', name: 'repo' }] }, drafts: null,
+	});
+	for (const probe of [undefined, () => undefined, () => ({ list: async () => { throw new Error('boom'); } })]) {
+		const { mod } = await freshState(legacy);
+		mod.resetStateCache();
+		const fakeDomain = {
+			open: async () => ({ global: { get: () => ({ writtenAt: 0 }), set: async () => {} } }),
+		};
+		assert.equal(await mod.openStateStore(fakeDomain, probe), true);
+		const ws = mod.readSnapshot().workspaces['e:/githubcode'];
+		assert.ok(ws !== undefined, '仓库位置仍在');
+		assert.equal(ws.selectedRepo, null, '无法还原的会话条目丢弃');
+	}
 });
 
 test('readDraft / clearDraft：按归一化键读写', async () => {

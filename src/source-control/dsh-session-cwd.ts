@@ -1,46 +1,53 @@
 /**
- * 从 DSH 会话存储解析 sessionId 对应的工作区根路径。
+ * 会话工作区根：按 sessionId 从 DSH 会话持久化服务取会话 header 的 `cwd`。
  *
- * 迁移旧版按 sessionId 分区的状态时用：DSH 把会话的工作区写入
- * \`$DSH_HOME/storages/session_projcache/sessions/<sessionId>.json\` 的 \`record.identity.cwd\`，
- * 这是唯一能把旧会话键还原成工作区根的来源。只在迁移时按需读取单个文件。
+ * 迁移旧版按会话分区的状态时用：会话的工作区根就是 `SessionHeader.cwd`，宿主侧经
+ * `ctx.sessionPersistence.list()` 读出已存会话的 header。
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { dshHome } from './dsh-home.js';
 
-/**
- * 解析 DSH home。
- *
- * 走 \`./dsh-home.ts\` 的同一入口，但不认 \`DSH_SOURCE_CONTROL_HOME\`：那是插件数据的测试
- * 隔离变量，会话存储属于 DSH 自身。
- *
- * @returns DSH home 绝对路径。
- */
-export function resolveDshHome(): string {
-	return dshHome();
+/** 会话持久化服务在迁移里用到的最小读面：列出已存会话。 */
+export interface SessionHeaderReader {
+	list(): Promise<readonly unknown[]>;
 }
 
 /**
- * 取一个会话记录里的工作区根路径。
+ * 把会话持久化服务收窄成迁移用的读面。
  *
- * 文件缺失、JSON 非法或字段缺失时给 null——迁移按「无法还原则丢弃该会话」处理。
- *
- * @param sessionId - 会话 id。
- * @returns 工作区根路径；无法还原时为 null。
+ * @param source - `ctx.sessionPersistence`；未装载时为 undefined。
+ * @returns 读面；服务缺失或不提供 `list` 时为 null。
  */
-export function readSessionCwd(sessionId: string): string | null {
-	if (sessionId === '') return null;
-	const path = join(resolveDshHome(), 'storages', 'session_projcache', 'sessions', `${sessionId}.json`);
+export function sessionHeaderReader(source: unknown): SessionHeaderReader | null {
+	if (source === null || typeof source !== 'object') return null;
+	const list = (source as { list?: unknown }).list;
+	if (typeof list !== 'function') return null;
+	return source as SessionHeaderReader;
+}
+
+/**
+ * 读出全部已存会话的工作区根。
+ *
+ * 会话没有 header、header 缺 `id` 或 `cwd`、列表读取失败时不给该会话的结果——迁移按
+ * 「无法还原则丢弃该会话」处理。列表只读一次，失败按空表处理。
+ *
+ * @param reader - 会话 header 读面；服务缺失时为 null。
+ * @returns 会话 id 到工作区根路径的表。
+ */
+export async function readSessionCwdMap(reader: SessionHeaderReader | null): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	if (reader === null) return out;
+	let snapshots: readonly unknown[];
 	try {
-		const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-		const record = raw.record;
-		if (record === null || typeof record !== 'object') return null;
-		const identity = (record as Record<string, unknown>).identity;
-		if (identity === null || typeof identity !== 'object') return null;
-		const cwd = (identity as Record<string, unknown>).cwd;
-		return typeof cwd === 'string' && cwd !== '' ? cwd : null;
+		snapshots = await reader.list();
 	} catch {
-		return null;
+		return out;
 	}
+	for (const snapshot of snapshots) {
+		if (snapshot === null || typeof snapshot !== 'object') continue;
+		const header = (snapshot as { header?: unknown }).header;
+		if (header === null || typeof header !== 'object') continue;
+		const id = (header as { id?: unknown }).id;
+		const cwd = (header as { cwd?: unknown }).cwd;
+		if (typeof id === 'string' && id !== '' && typeof cwd === 'string' && cwd !== '') out.set(id, cwd);
+	}
+	return out;
 }
