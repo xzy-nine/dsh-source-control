@@ -79,6 +79,7 @@
     "client": {
       "platform": "web",
       "inject": [
+        "@deepseek-ai/dsh-client-store",
         "@deepseek-ai/dsh-client-ui-primitives"
       ]
     }
@@ -93,6 +94,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.6-alpha.1",
+    "@deepseek-ai/dsh-client-store": "0.2.2-alpha.2",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-alpha.2",
     "@types/mdast": "^4.0.4",
     "@types/node": "^24.0.0",
@@ -115,6 +117,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1 || ~4.0.5 || ~4.0.6-alpha.1",
+    "@deepseek-ai/dsh-client-store": ">=0.2.0-rc.2 <=0.2.2-alpha.2",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.2 <=0.2.2-alpha.2"
   }
 }

@@ -12,6 +12,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { getCached, noteRepoCommonDir, putCached } from './host-cache.js';
 import type { CacheEntry } from './host-cache.js';
+import { LruMap, TRIM_RATIO } from '../shared/lru-map.js';
 import { onRepositoryWrite } from './working-tree.js';
 import { gitCommonDirOf, parseHeadRef, readLooseRef, resolveGitDir } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -33,11 +34,12 @@ const LAYOUT_LIMIT = 64;
 /** 打包引用缓存的容量上限。 */
 const PACKED_REFS_LIMIT = 8;
 
+
 /** 布局缓存的有效期；0 表示关闭缓存。 */
 let layoutTtlMs = LAYOUT_TTL_MS;
 
 /** 布局缓存：键为规范化仓库路径，值为待决的解析结果。 */
-const layouts = new Map<string, CacheEntry<Promise<RepoLayout | null>>>();
+const layouts = new LruMap<string, CacheEntry<Promise<RepoLayout | null>>>({ limit: LAYOUT_LIMIT, ratio: TRIM_RATIO });
 
 /** 打包引用表的快照与守卫。 */
 interface PackedRefsSnapshot {
@@ -50,7 +52,7 @@ interface PackedRefsSnapshot {
 }
 
 /** 打包引用缓存：键为规范化公共目录。 */
-const packedRefs = new Map<string, CacheEntry<PackedRefsSnapshot>>();
+const packedRefs = new LruMap<string, CacheEntry<PackedRefsSnapshot>>({ limit: PACKED_REFS_LIMIT, ratio: TRIM_RATIO });
 
 /**
  * 归一化仓库路径，作为缓存键。
@@ -129,7 +131,7 @@ export function repoLayout(repo: string): Promise<RepoLayout | null> {
 	const cached = getCached(layouts, key);
 	if (cached !== undefined) return cached;
 	const pending = readLayout(repo);
-	putCached(layouts, LAYOUT_LIMIT, key, pending, layoutTtlMs);
+	putCached(layouts, key, pending, layoutTtlMs);
 	return pending;
 }
 
@@ -155,7 +157,7 @@ async function packedRefsOf(commonDir: string): Promise<PackedRefsSnapshot | nul
 		return null;
 	}
 	const snapshot: PackedRefsSnapshot = { refs: parsePackedRefs(source), ...stamp };
-	if (layoutTtlMs > 0) putCached(packedRefs, PACKED_REFS_LIMIT, key, snapshot, Number.POSITIVE_INFINITY);
+	if (layoutTtlMs > 0) putCached(packedRefs, key, snapshot, Number.POSITIVE_INFINITY);
 	return snapshot;
 }
 

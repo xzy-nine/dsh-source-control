@@ -8,7 +8,6 @@
 | 7 | [state.ts:158](src/client/api/state.ts#L158) | 直接遍历 `localStorage` / `sessionStorage` 旧键 | 迁移例外可留，但应作为唯一豁免点显式标注 | 同上 | P2 | — | 这是唯一访问浏览器存储的迁移例外；在代码处标注豁免即可 |
 | 8 | [settings.ts:80](src/client/panel/settings.ts#L80) + [settings-model.ts](src/client/panel/settings-model.ts) | 自绘设置页与设置 JSON 形状 | `ctx.settings` 的 Config schema 表单 + `SettingsForm` 原语 | [adding-a-settings-card.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/cookbook/adding-a-settings-card.zh.md)、[settings.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/settings.zh.md) | P1（仅表单原语） | 原生设置卡片、revision 冲突保护、profile patch 持久化 | 本插件设置是按工作区的运行时开关，`ctx.settings` 投影的是插件 Config（profile 级、schemastery），语义不同；搬过去会变成全局生效并写 profile patch。可取部分仅是用 `SettingsForm` 原语渲染，数据仍留本插件 |
 | 16 | [dsh-session-cwd.ts:34](src/source-control/dsh-session-cwd.ts#L34) | 直读 `$DSH_HOME/storages/session_projcache/sessions/<id>.json` 内部文件格式 | `ctx.sessionProjectionCache.cachedSnapshot(header)` / `ctx.sessions` | [session-projection.zh.md:230-254](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/session-projection.zh.md#L230-L254) | P1 | 不再依赖其它子系统的私有文件布局 | `cachedSnapshot` 要 SessionHeader 而非 sessionId；该代码只服务 v1 文档迁移，新装用户走不到，直接删迁移比换 API 更省 |
-| 17 | [host-cache.ts:164](src/source-control/host-cache.ts#L164)（`putCached`/`getCached`） | 自写 TTL + LRU 淘汰 | 与 [client/shared/cache.ts](src/client/shared/cache.ts) 的 `LruMap` 重复，应收口一处 | 项目内部重复 | P1 | 宿主与客户端共用一份 TTL/LRU 实现，消除漂移 | `client/shared/cache.ts` 无 TTL，需加过期包装；宿主侧键的 `\0` 分隔与按仓库作废语义仍留 host-cache |
 
 ## 二、宿主侧服务与能力 seam
 
@@ -20,7 +19,6 @@
 | 12 | [repo-watcher.ts:246](src/source-control/repo-watcher.ts#L246)、[:341](src/source-control/repo-watcher.ts#L341) | 直接 `node:fs` 的 `watch` | `ctx.fs.watch(target, changed, signal)` | [filesystem.zh.md:411](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/filesystem.zh.md#L411) | P3 | 与远端、沙箱后端一致，signal 生命周期 | 现有监视的价值在过滤与去噪（无文件名事件的快照核对、250/400ms 合并、32 仓库上限、工作区递归下探），seam 只给 changed 回调，这些逻辑一行都省不掉；递归监视取决于后端能力 |
 | 13 | [repo-discovery.ts](src/source-control/repo-discovery.ts)、[hooks.ts](src/source-control/hooks.ts)、[state-store.ts](src/source-control/state-store.ts) | 直接 `readFileSync` / `readdirSync` / `statSync` | `ctx.fs` 的 `stat` / `readText` / 列表 | 同上 | P3 | 尊重沙箱与远程后端 | 发现层按深度上限做大量 stat/readdir，走 seam 变成逐次异步往返；git 目录内部布局仍需原生路径。需要远程工作区支持时升为 P1 |
 | 14 | [ssh-status.ts:211](src/source-control/ssh-status.ts#L211) | 自写 ssh 探测（`BatchMode`、`~/.ssh` 私钥扫描、认证判定） | `ctx.ssh`（`SshConnection`） | [ssh.zh.md:117](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/ssh.zh.md#L117)（宿主装载该包时） | P3 | 官方 SSH 连接归属与 helper runtime | `ssh-status` 是诊断（是否安装、私钥列表、认证结果），须在未装载 ssh 包时可用；`ctx.ssh` 是 POSIX 连接 owner，不覆盖 Windows 客户端探测 |
-| 15 | [worktree-remove.ts:23](src/source-control/worktree-remove.ts#L23) | 自跑 `git worktree remove` | `ctx.worktrees`（experimental-worktree） | [capability-seams.zh.md:669](E:/GitHubCode/02DSH/deepseek-harness/docs/capability-seams.zh.md#L669)（实验包，按需） | P3 | 官方工作树创建 | 该 seam 只创建且为 experimental 包，未在 base 与 web-app 组合中；本插件做的是 remove，为一条命令引入实验包不划算 |
 
 ## 三、客户端服务与 UI 原语
 
@@ -38,6 +36,7 @@
 - `host-cache.ts` 的按仓库作废、`repo-watcher.ts` 的结构判定、`git-exec.ts` 的 `isGitIdle` 门控：git 语义业务逻辑，无 DSH 对应。
 - `pruneWorkspaces` 的 30 天 / 200 条淘汰：业务策略，storage domain 不提供淘汰。
 - `native-open.ts`、`terminal-run.ts`、`file-diff.tsx` 的 `useCodeHighlighter`：已在用宿主能力。
+- `worktree-remove.ts` 自跑 `git worktree remove`：`ctx.worktrees` 只创建、且是未进 base 与 web-app 组合的 experimental 包，为一条 remove 引入它不划算。
 
 ## 五、已完成（本轮已落地，从表中移除）
 
@@ -51,4 +50,5 @@
 | 22 | relativeTime | 相对时间分档改由 primitives 的 `relativeTime(at, now)` 提供；`refresh-status.ts` 只留纯函数 `refreshTextOf(bucket)` 与文案表（新增天/月/年档），新模块 `panel/refresh-time.ts` 做分档到文案的代入 |
 | 23 | fileSizeText | 宿主侧 `formatBytes` 整体删除、issue 正文不再写体积，宿主只回字节数；客户端日志文件列表改用 primitives 的 `fileSizeText` |
 | 20 | toast 挂载 | `showToast(text)` 投常驻 `OverlayHost`（`installOverlay` 注册进根级 list 席位 `shell.overlay`），不再 `createRoot` + `document.body`；删除 `ToastTone` / `ToastOptions` / `HOLD_OF` / `holdFor`，只留信息类提示 |
+| 17 | 缓存淘汰收口 | 新增 `src/shared/lru-map.ts`（`LruMap` + `CacheLimit` + `TRIM_RATIO`），宿主 `host-cache.ts` / `repo-facts.ts` 与客户端 `client/shared/cache.ts` 共用同一份容量与淘汰顺序；`putCached` / `getCached` 去掉 `limit` 形参，TTL 包装仍留 host-cache |
 | 21 | 弹窗挂载 | `runDialog` 改为投 `OverlayHost` 的 FIFO 队列（不再是每次一个 React 根）；新增 `showError(message)` 错误弹窗，正文可滚动可整段复制，错误类提示全部由 toast 改为弹窗 |
