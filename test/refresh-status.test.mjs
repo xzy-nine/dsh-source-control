@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { parallel } from './harness.mjs';
 import {
-	backgroundFlagsOf, beginBackground, endBackground, lastRefreshText, refreshNoticeOf, refreshNoticeSince,
+	backgroundFlagsOf, beginBackground, endBackground, refreshNoticeOf, refreshNoticeSince, refreshTextOf,
 	REFRESH_TEXT,
 } from '../src/client/panel/refresh-status.ts';
 
@@ -66,16 +66,13 @@ parallel('刷新状态与提示', (t) => {
 		);
 	});
 
-	t.test('相对时间文案：分档给出，从未刷新为空串', () => {
-		assert.equal(lastRefreshText(0, 100_000), '');
-		assert.equal(lastRefreshText(99_000, 100_000), REFRESH_TEXT.justNow);
-		assert.equal(lastRefreshText(40_000, 100_000), withCount(REFRESH_TEXT.minutesAgo, 1));
-		// at 为 0 表示从未刷新，任何当前时刻都给出空串。
-		assert.equal(lastRefreshText(0, 20 * 60_000), '');
-		assert.equal(lastRefreshText(1, 20 * 60_000 + 1), withCount(REFRESH_TEXT.minutesAgo, 20));
-		assert.equal(lastRefreshText(1, 3 * 3_600_000 + 1), withCount(REFRESH_TEXT.hoursAgo, 3));
-		// 时钟回拨（系统时间被改）时不给负值文案。
-		assert.equal(lastRefreshText(200_000, 100_000), REFRESH_TEXT.justNow);
+	t.test('相对时间文案：按分档代入模板', () => {
+		assert.equal(refreshTextOf({ unit: 'now', n: 0 }), REFRESH_TEXT.justNow);
+		assert.equal(refreshTextOf({ unit: 'minutes', n: 1 }), withCount(REFRESH_TEXT.minutesAgo, 1));
+		assert.equal(refreshTextOf({ unit: 'hours', n: 3 }), withCount(REFRESH_TEXT.hoursAgo, 3));
+		assert.equal(refreshTextOf({ unit: 'days', n: 2 }), withCount(REFRESH_TEXT.daysAgo, 2));
+		assert.equal(refreshTextOf({ unit: 'months', n: 4 }), withCount(REFRESH_TEXT.monthsAgo, 4));
+		assert.equal(refreshTextOf({ unit: 'years', n: 1 }), withCount(REFRESH_TEXT.yearsAgo, 1));
 	});
 
 	/** 构造一轮后台刷新的基线。 */

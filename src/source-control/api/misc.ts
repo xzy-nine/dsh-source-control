@@ -14,7 +14,6 @@ import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
 import { invalidateRepo } from '../host-cache.js';
 import { submitFeedback } from '../feedback.js';
-import { formatBytes } from '../feedback-text.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
 import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
@@ -348,8 +347,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			respondResultSync('feedbackInfo', {
 				logDir: logRoot(),
 				currentFile: currentLogFile(),
-				// 体积文本由宿主给出：客户端不再自带一份格式化实现。
-				files: recentLogFiles(5).map((file) => ({ ...file, sizeText: formatBytes(file.size) })),
+				files: recentLogFiles(5),
 			});
 			break;
 		case 'submitFeedback': {

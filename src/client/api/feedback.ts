@@ -13,8 +13,6 @@ export interface LogFileInfo {
 	readonly day: string;
 	readonly name: string;
 	readonly size: number;
-	/** 宿主给出的体积文本，如 `312.4 KB`。 */
-	readonly sizeText: string;
 	readonly modified: number;
 }
 
@@ -63,7 +61,6 @@ export async function loadFeedbackInfo(cwd: string | null): Promise<FeedbackInfo
 			return {
 				path: textOf(file.path), day: textOf(file.day), name: textOf(file.name),
 				size: typeof file.size === 'number' ? file.size : 0,
-				sizeText: textOf(file.sizeText),
 				modified: typeof file.modified === 'number' ? file.modified : 0,
 			};
 		}),

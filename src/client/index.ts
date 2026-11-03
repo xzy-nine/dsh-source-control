@@ -21,6 +21,7 @@ import {
 	diffFileAddress, gitDiffAddress, gitDiffRequest, gitDiffTitle, parseGitDiffAddress, type GitDiffScope,
 } from './diff/resource-path.ts';
 import { NativeOpenControl } from './ui/native-open.ts';
+import { installOverlay } from './ui/overlay-host.ts';
 import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
@@ -414,6 +415,9 @@ export function apply(ctx) {
 
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
+
+	// 覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。
+	ctx.effect(() => installOverlay(slots));
 
 	// ── 右侧栏页类型：定义与正文两阶段注册 ──────────────────────
 	const rightTabs = ctx.sidebarRightTabs;

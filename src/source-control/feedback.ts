@@ -155,7 +155,6 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 		platform: platformText(),
 		node: process.version,
 		logFile: null,
-		logSize: null,
 		redaction: '',
 		exemptionCount: (options.exemptions ?? []).length,
 	};
@@ -173,7 +172,6 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 		facts = {
 			...facts,
 			logFile: archiveFileName(packed.path),
-			logSize: packed.size,
 			redaction: redactSummary(masked.counts),
 		};
 	}

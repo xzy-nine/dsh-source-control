@@ -32,8 +32,6 @@ export interface FeedbackFacts {
 	readonly node: string;
 	/** 打包后的日志文件名；未附带时为 null。 */
 	readonly logFile: string | null;
-	/** 日志体积（字节）；未附带时为 null。 */
-	readonly logSize: number | null;
 	/** 脱敏摘要；未做任何替换时为空串。 */
 	readonly redaction: string;
 	/** 登记豁免的字符串数量。 */
@@ -51,18 +49,6 @@ export function feedbackIssueTitle(type: FeedbackType, title: string): string {
 	return `${FEEDBACK_TYPES[type].prefix} ${title.trim()}`;
 }
 
-/**
- * 字节数的可读形式。
- *
- * @param bytes - 字节数。
- * @returns 文本，如 `312.4 KB`。
- */
-export function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${String(bytes)} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /** 反馈正文的固定文案。文案归此处，调用方与测试都按引用取用。 */
 export const FEEDBACK_TEXT = {
 	/** 描述段标题。 */
@@ -75,8 +61,8 @@ export const FEEDBACK_TEXT = {
 	redactionHeading: '## 脱敏',
 	/** 未附带日志时该段的正文。 */
 	noLog: '未附带日志。',
-	/** 日志段正文；`{file}` 为文件名，`{size}` 为可读体积。 */
-	logPacked: '日志已打包为 `{file}`（{size}），格式为 logcat threadtime，每次启动一个文件。',
+	/** 日志段正文；`{file}` 为文件名。 */
+	logPacked: '日志已打包为 `{file}`，格式为 logcat threadtime，每次启动一个文件。',
 	/** 日志段的上传步骤。 */
 	uploadStep: '> 请把该压缩包拖到本条 issue 的评论框上传（GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。',
 	/** 日志段的本地路径说明。 */
@@ -102,9 +88,7 @@ export const FEEDBACK_TEXT = {
 function logSection(facts: FeedbackFacts): string[] {
 	if (facts.logFile === null) return [FEEDBACK_TEXT.noLog];
 	return [
-		FEEDBACK_TEXT.logPacked
-			.replace('{file}', facts.logFile)
-			.replace('{size}', formatBytes(facts.logSize ?? 0)),
+		FEEDBACK_TEXT.logPacked.replace('{file}', facts.logFile),
 		'',
 		FEEDBACK_TEXT.uploadStep,
 		FEEDBACK_TEXT.localPathNote,
