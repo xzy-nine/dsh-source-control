@@ -14,6 +14,14 @@
 
 .dialogHint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
 
+/* 结果入口：地址与路径都是长串，独占一行并允许折行。 */
+
+.dialogLinks{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+
+.dialogLink{padding:2px 4px;border:none;border-radius:4px;background:transparent;font-family:var(--ds-font-family-code, monospace);font-size:11px;line-height:1.6;color:var(--dsw-alias-label-link, var(--dsw-alias-label-secondary));word-break:break-all;text-align:left;user-select:text;cursor:pointer}
+
+.dialogLink:hover{background:var(--dsw-alias-interactive-bg-hover);text-decoration:underline}
+
 /* 破坏性操作的确认按钮：Button 的 variant 规则带 :hover:not(:disabled)，特异性更高，
    因此同时匹配静止与悬停两种状态才能压过它。 */
 

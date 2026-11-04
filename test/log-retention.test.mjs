@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parallel } from './harness.mjs';
 import {
 	dayFolderName, isDayFolderName, logFileName, orderLogFiles, planDayEvictions, planExpiredDayFolders,
-	DAY_FOLDER_LIMIT_BYTES, LOG_RETENTION_DAYS,
+	DAY_FOLDER_LIMIT_BYTES, LOG_RETENTION_DAYS, OUTBOX_FOLDER,
 } from '../lib/src/source-control/log-retention.js';
 
 
@@ -60,7 +60,9 @@ parallel('日志目录判据', (t) => {
 		assert.equal(LOG_RETENTION_DAYS, 15);
 		assert.equal(DAY_FOLDER_LIMIT_BYTES, 15 * 1024 * 1024);
 		const now = new Date(2026, 0, 20, 12, 0, 0);
-		const names = ['2026-01-20', '2026-01-06', '2026-01-05', '2025-12-31', 'outbox'];
+		const names = ['2026-01-20', '2026-01-06', '2026-01-05', '2025-12-31', OUTBOX_FOLDER];
+		// 反馈暂存目录名不是日期：过期判据不碰它，它的清空归启动时的整目录删除。
+		assert.equal(isDayFolderName(OUTBOX_FOLDER), false);
 		// 第 15 天是 01-06，早于它（01-05 及之前）的文件夹整体删除。
 		assert.deepEqual(planExpiredDayFolders(names, now), ['2026-01-05', '2025-12-31']);
 	});

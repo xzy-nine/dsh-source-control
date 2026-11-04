@@ -97,6 +97,35 @@ test('清理会删除超出保留期的日文件夹', async () => {
 	assert.equal(existsSync(staleDir), false, '过期日文件夹应被删除');
 });
 
+test('启动清理清空反馈暂存目录，日志母本保留', async () => {
+	const { home, module } = await freshLogger();
+	module.logInfo('test', 'mother');
+	module.flushSync();
+	const mother = module.currentLogFile();
+	const outbox = join(home, 'logs', 'outbox');
+	// 上次会话留下的三类取用物：压缩包、未压缩副本、issue 正文草稿。
+	mkdirSync(outbox, { recursive: true });
+	writeFileSync(join(outbox, '20261104-143111-redacted.zip'), 'zip', 'utf8');
+	writeFileSync(join(outbox, '20261104-143111-redacted.log'), 'plain', 'utf8');
+	writeFileSync(join(outbox, 'issue-body-1762300000000.md'), '# body', 'utf8');
+	module.cleanLogs(new Date());
+	assert.deepEqual(readdirSync(outbox), [], '暂存目录应被清空');
+	assert.ok(existsSync(mother), '日志母本不受清理影响');
+	assert.ok(readFileSync(mother, 'utf8').includes('mother'), '母本内容保留');
+});
+
+test('会话内打包不会删掉上一次的压缩包', async () => {
+	const { home, module } = await freshLogger();
+	const { archiveLog } = await import('../lib/src/source-control/log-archive.js');
+	const first = await archiveLog('20260101-000000.log', 'first\n');
+	assert.ok(existsSync(first.path), '压缩包应已写出');
+	// 同一次运行里再提交一条反馈：上一次的包仍在，用户可能还没把它拖进 issue 评论框。
+	const second = await archiveLog('20260102-000000.log', 'second\n');
+	assert.ok(existsSync(second.path));
+	assert.ok(existsSync(first.path), '上一次的压缩包应保留到下次启动');
+	assert.ok(existsSync(join(home, 'logs', 'outbox')));
+});
+
 test('日文件夹超限时清理最旧的文件', async () => {
 	const { home, module } = await freshLogger();
 	module.logInfo('test', 'current');

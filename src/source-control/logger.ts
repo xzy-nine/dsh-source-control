@@ -1,7 +1,7 @@
 /**
  * 宿主侧文本日志：logcat 格式、每次启动一个文件、按日归档、按体积与保留期清理。
  *
- * 目录布局见 `./log-retention.ts`：`<root>/<YYYY-MM-DD>/logcat-<date>-<time>-<pid>.log`。
+ * 目录布局见 `./log-retention.ts`：`<root>/<YYYY-MM-DD>/<YYYYMMDD>-<HHmmss>.log`。
  * 根目录是插件数据目录下的 `logs`，解析见 `./dsh-home.ts`。
  *
  * 写入策略：行先入缓冲，按 `FLUSH_DELAY_MS` 合并为一次追加写；进程退出时同步收尾。
@@ -14,7 +14,7 @@ import { formatLogLines, type LogLevel } from './log-format.js';
 
 export type { LogLevel };
 import {
-	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES,
+	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES, OUTBOX_FOLDER,
 } from './log-retention.js';
 
 /** 级别到数值的映射，用于门控比较。 */
@@ -241,7 +241,33 @@ export function recentLogFiles(limit = 10): LogFileInfo[] {
 }
 
 /**
- * 清理过期日文件夹与超限文件。
+ * 清空反馈暂存目录。
+ *
+ * 目录里只有一次性的取用物：待用户拖进 issue 评论框的压缩包，与已由 `gh` 写进 issue 的
+ * 正文草稿。日志母本留在日文件夹里，因此清空后仍能重新打包提交。
+ */
+function cleanOutbox(): void {
+	const dir = join(logRoot(), OUTBOX_FOLDER);
+	let names: string[];
+	try {
+		names = readdirSync(dir);
+	} catch {
+		return;
+	}
+	let removed = 0;
+	for (const name of names) {
+		try {
+			rmSync(join(dir, name), { recursive: true, force: true });
+			removed += 1;
+		} catch {
+			/* 占用中的文件留待下次启动 */
+		}
+	}
+	if (removed > 0) logInfo('logs', `已清空反馈暂存目录，删除上次会话留下的 ${String(removed)} 个文件`);
+}
+
+/**
+ * 清理过期日文件夹、超限文件与反馈暂存目录。
  *
  * 保留期按日文件夹名判断；体积按同一文件夹内的启动先后淘汰，当前写入的文件不受影响。
  *
@@ -256,6 +282,7 @@ export function cleanLogs(now: Date = new Date()): void {
 	} catch {
 		return;
 	}
+	cleanOutbox();
 	const expired = planExpiredDayFolders(names, now, LOG_RETENTION_DAYS);
 	for (const name of expired) {
 		try { rmSync(join(root, name), { recursive: true, force: true }); } catch { /* 占用中的目录留待下次 */ }

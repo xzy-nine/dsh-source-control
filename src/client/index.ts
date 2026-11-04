@@ -100,12 +100,13 @@ function GitGraphTab(props) {
 		);
 	}, [props.terminals, props.sidebarRightService]);
 	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
-	const revealPath = React.useCallback((path: string): void => {
-		if (typeof props.revealPath !== 'function') return;
+	// 返回的 promise 供需要排定顺序的调用方等待（先定位、再开浏览器）；失败一律吞掉。
+	const revealPath = React.useCallback((path: string): Promise<void> => {
+		if (typeof props.revealPath !== 'function') return Promise.resolve();
 		try {
-			void Promise.resolve(props.revealPath(path)).catch(() => { /* 定位失败不影响面板 */ });
+			return Promise.resolve(props.revealPath(path)).then(() => undefined, () => undefined);
 		} catch {
-			/* 同上报错忽略 */
+			return Promise.resolve();
 		}
 	}, [props.revealPath]);
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;

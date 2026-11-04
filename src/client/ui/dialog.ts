@@ -179,6 +179,68 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 }
 
 /**
+ * 提示框里的一个入口：文案与动作由调用方给，弹窗只排版。
+ *
+ * 结果里的去向（issue 地址、压缩包位置）跟着结果走，因此留在结果弹窗里，
+ * 不散落在触发它的表单页上。
+ */
+export interface MessageLink {
+	/** 入口文案。 */
+	readonly label: string;
+	/** 点击回调。 */
+	readonly onClick: () => void;
+}
+
+/** 含入口与勾选的提示框选项。 */
+export interface MessageLinksOptions {
+	readonly title: string;
+	readonly message: string;
+	/** 结果里可点的入口，按给出顺序排列。 */
+	readonly links?: readonly MessageLink[];
+	/** 勾选项文案；缺省时不渲染勾选。 */
+	readonly checkboxLabel?: string;
+	/** 初始勾选状态；缺省为勾选。 */
+	readonly checked?: boolean;
+	/** 关闭按钮文案。 */
+	readonly closeLabel?: string;
+}
+
+/**
+ * 含入口与勾选的提示框：关闭时回投勾选状态。
+ *
+ * 勾选不门控关闭——它表达的是关闭之后的后续动作，不是对本条提示的确认。
+ *
+ * @param options - 见 {@link MessageLinksOptions}。
+ * @returns 关闭时是否勾选；没有勾选项时恒为 false。
+ */
+export function showMessageWithLinks({ title, message, links = [], checkboxLabel, checked = true, closeLabel = '知道了' }: MessageLinksOptions): Promise<boolean> {
+	return runDialog<boolean>((finish) => {
+		function Content(): React.ReactElement {
+			const [on, setOn] = React.useState(checked);
+			const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
+			return dialogModal(
+				title,
+				close,
+				dialogBody(
+					message,
+					links.length > 0 && React.createElement(
+						'div',
+						{ className: css.dialogLinks },
+						...links.map((link) => React.createElement('button', {
+							key: link.label, type: 'button', className: css.dialogLink,
+							onClick: link.onClick,
+						}, link.label)),
+					),
+					checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
+				),
+				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: close }, closeLabel),
+			);
+		}
+		return React.createElement(Content);
+	});
+}
+
+/**
  * 错误框：显示失败原因，正文可整段复制。
  *
  * @param message - 错误文本。

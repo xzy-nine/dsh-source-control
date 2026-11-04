@@ -9,6 +9,7 @@ import { basename, join } from 'node:path';
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { runCollect } from './host-runtime.js';
 import { logRoot } from './logger.js';
+import { OUTBOX_FOLDER } from './log-retention.js';
 
 /** 打包结果。 */
 export interface LogArchive {
@@ -23,10 +24,13 @@ export interface LogArchive {
 /**
  * 目录名：落在日志根目录下的 outbox，失败时用户可自行取用。
  *
+ * 目录内容是一次性的：压缩包与正文草稿都已在提交时用完（压缩包待用户拖进 issue 评论框、
+ * 正文已由 `gh` 写进 issue），母本日志留在日文件夹里不受影响，因此启动时整目录清空。
+ *
  * @returns 绝对路径。
  */
 export function outboxDir(): string {
-	return join(logRoot(), 'outbox');
+	return join(logRoot(), OUTBOX_FOLDER);
 }
 
 /**

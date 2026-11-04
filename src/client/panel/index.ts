@@ -63,8 +63,8 @@ export interface GitGraphPanelProps {
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
-	readonly onRevealPath?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
+	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 	/** 打开宿主目录选择器；未装载时为 undefined。 */
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */

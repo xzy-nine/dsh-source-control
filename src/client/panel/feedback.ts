@@ -2,15 +2,18 @@
  * 反馈页签：填写反馈、可选附带日志，交宿主经 `gh issue create` 建 issue。
  *
  * 日志附带由宿主完成：先在本地写出一份脱敏副本并压成 zip，再把压缩包路径交回本页；
- * 提交成功后本页把 issue 与新开页打开，由用户把压缩包拖到 issue 评论框上传
+ * 提交成功后本页把 issue 与压缩包位置打开，由用户把压缩包拖到 issue 评论框上传
  * （GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。
  * 脱敏默认开启；停用脱敏与逐条豁免都在本页操作，被豁免的字符串原样保留。
+ *
+ * 提交成功后由一个结果弹窗承接全部去向：issue 地址与压缩包位置都在弹窗里点（或按勾选自动打开），
+ * 表单页只留输入与提交按钮。
  */
 import React from 'react';
 import { Button, Checkbox, fileSizeText, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
 import { loadFeedbackInfo, logClient, submitFeedback } from '../api/index.ts';
-import type { FeedbackInfo, FeedbackType, SubmitFeedbackOutcome } from '../api/index.ts';
-import { showMessage } from '../ui/dialog.ts';
+import type { FeedbackInfo, FeedbackType } from '../api/index.ts';
+import { showMessage, showMessageWithLinks } from '../ui/dialog.ts';
 import { openExternal } from '../ui/context-menu.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import { FileRow, FolderRow } from './tree-rows.tsx';
@@ -34,8 +37,8 @@ export interface FeedbackTabProps {
 	readonly onOpenExternal?: ((url: string) => void) | undefined;
 	/** 按绝对路径打开一个文件；缺省不做任何事。 */
 	readonly onOpenFile?: ((path: string) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；缺省不做任何事。 */
-	readonly onRevealPath?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；缺省不做任何事。返回的 promise 用于排定打开顺序。 */
+	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 }
 
 /** 日志文件的树条目：路径是 `日期/文件名`，真实路径另存。 */
@@ -70,7 +73,6 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 	// undefined 表示读取中，null 表示读取失败；两者在界面上分开显示。
 	const [info, setInfo] = React.useState<FeedbackInfo | null | undefined>(undefined);
 	const [busy, setBusy] = React.useState(false);
-	const [result, setResult] = React.useState<SubmitFeedbackOutcome | null>(null);
 	// 折叠的日志目录：按路径记，默认全部展开。
 	const [collapsedLogs, setCollapsedLogs] = React.useState<ReadonlySet<string>>(() => new Set());
 
@@ -95,7 +97,28 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		return changeRowsOf(entries, collapsedLogs, true);
 	}, [info, collapsedLogs]);
 
-	/** 提交：成功时打开 issue 页并提示上传压缩包，失败说明原因并给出日志目录。 */
+	/**
+	 * 在系统文件管理器中定位一个路径，等宿主受理后再返回。
+	 *
+	 * 宿主不具备桌面能力、或定位请求被拒时只记一条日志：定位属于便利步骤，
+	 * 失败不改变已经成功的提交结果。
+	 *
+	 * @param path - 要定位的绝对路径。
+	 * @returns 定位完成后完成。
+	 */
+	const revealArchive = async (path: string): Promise<void> => {
+		if (onRevealPath === undefined) {
+			logClient('W', 'feedback', `宿主未提供文件管理器能力，跳过定位 ${path}`);
+			return;
+		}
+		try {
+			await onRevealPath(path);
+		} catch (error) {
+			logClient('W', 'feedback', `定位压缩包失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+		}
+	};
+
+	/** 提交：结果由一个弹窗承接全部去向；失败说明原因并给出日志目录。 */
 	const submit = (): void => {
 		if (busy) return;
 		if (title.trim() === '' || description.trim() === '') {
@@ -103,7 +126,6 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 			return;
 		}
 		setBusy(true);
-		setResult(null);
 		void (async () => {
 			try {
 				const outcome = await submitFeedback(cwd, {
@@ -111,7 +133,6 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					exemptions: exemptions.split('\n').map((line) => line.trim()).filter((line) => line !== ''),
 					pluginVersion,
 				});
-				setResult(outcome);
 				if (outcome.error !== null) {
 					logClient('E', 'feedback', `反馈提交失败，原因分类 ${outcome.kind}：${outcome.error}`);
 					const hint = FAILURE_HINT[outcome.kind] ?? '可手动在上游仓库创建 issue。';
@@ -121,26 +142,37 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					});
 					return;
 				}
-				logClient('I', 'feedback', `反馈已提交，issue 地址：${outcome.url}${outcome.archive === null ? '（未附带日志）' : `，日志压缩包：${outcome.archive}`}`);
-				// 新开页打开 issue：用户在其中把压缩包拖进评论框上传。
-				if (outcome.url !== '') onOpenExternal(outcome.url);
+				const { url, archive } = outcome;
+				logClient('I', 'feedback', `反馈已提交，issue 地址：${url}${archive === null ? '（未附带日志）' : `，日志压缩包：${archive}`}`);
 				setTitle('');
 				setDescription('');
-				await showMessage({
+				// 去向全部在结果弹窗里：地址与路径各是一个可点入口，勾选只决定关闭后是否自动打开。
+				const openNow = await showMessageWithLinks({
 					title: '反馈已提交',
 					message: [
-						outcome.url,
+						'提交完成。下面两个入口可以随时再打开。',
 						'',
-						...outcome.archive === null
+						...archive === null
 							? ['本次未附带日志。']
 							: [
-								`日志已打包：${outcome.archive}`,
-								'',
-								'请把该压缩包拖到刚打开的 issue 评论框上传；GitHub 的附件接口不接受日志等文本类型。',
+								'请把该压缩包拖到 issue 的评论框上传；GitHub 的附件接口不接受日志等文本类型。',
 								...(outcome.compressed ? [] : ['（系统没有可用的 tar，压缩包实际是未压缩的日志副本。）']),
 							],
 					].join('\n'),
+					links: [
+						...(url === '' ? [] : [{ label: `打开反馈页：${url}`, onClick: () => { onOpenExternal(url); } }]),
+						...(archive === null ? [] : [{ label: `在文件管理器中定位：${archive}`, onClick: () => { void revealArchive(archive); } }]),
+					],
+					checkboxLabel: '自动打开路径与反馈页便于提交',
 				});
+				/*
+				 * 先定位压缩包、再打开 issue 页：压缩包是用户下一步要拖进评论框的东西，
+				 * 浏览器抢到前台后文件管理器会被盖住，顺序反了就要来回切窗口。
+				 */
+				if (openNow) {
+					if (archive !== null) await revealArchive(archive);
+					if (url !== '') onOpenExternal(url);
+				}
 			} catch (error) {
 				logClient('E', 'feedback', `反馈提交过程出错：${error instanceof Error ? error.message : String(error)}`);
 				await showMessage({ title: '反馈未提交', message: error instanceof Error ? error.message : String(error) });
@@ -205,7 +237,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				type: 'button', className: css.fbPathLink,
 				disabled: info === null || info === undefined || info.logDir === '' || onRevealPath === undefined,
 				title: info !== null && info !== undefined && info.logDir !== '' ? `在文件管理器中打开：${info.logDir}` : undefined,
-				onClick: () => { if (info !== null && info !== undefined && info.logDir !== '') onRevealPath?.(info.logDir); },
+				onClick: () => { if (info !== null && info !== undefined && info.logDir !== '') void revealArchive(info.logDir); },
 			}, info === undefined ? '（读取中）' : info === null ? '（读取失败）' : info.logDir === '' ? '（不可用）' : info.logDir),
 			logRows.length > 0 && React.createElement('div', { className: changesCss.logTree },
 				...logRows.map((row) => {
@@ -233,14 +265,6 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		React.createElement('div', { className: css.fbActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: submit },
 				busy ? '提交中…' : '提交反馈'),
-			result !== null && result.error === null && result.url !== '' && React.createElement('span', { className: css.fbResult },
-				React.createElement('a', {
-					href: result.url, target: '_blank', rel: 'noreferrer',
-					onClick: (event: React.MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); onOpenExternal(result.url); },
-				}, result.url),
-			),
-			result !== null && result.error !== null && React.createElement('span', { className: css.fbResult }, result.error),
-			result !== null && result.error === null && result.archive !== null && React.createElement('div', { className: css.fbPathLink }, result.archive),
 		),
 	);
 }

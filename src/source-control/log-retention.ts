@@ -1,7 +1,7 @@
 /**
  * 日志目录的命名、排序与清理判据（纯函数）。
  *
- * 目录布局：`<root>/<YYYY-MM-DD>/logcat-<YYYYMMDD>-<HHmmssSSS>-<pid>.log`。
+ * 目录布局：`<root>/<YYYY-MM-DD>/<YYYYMMDD>-<HHmmss>.log`。
  * 日文件夹名带日期，文件名带启动时刻，因此同一文件夹内按文件名升序即为启动先后。
  */
 
@@ -10,6 +10,9 @@ export const DAY_FOLDER_LIMIT_BYTES = 15 * 1024 * 1024;
 
 /** 日志保留天数：含当天在内的天数。 */
 export const LOG_RETENTION_DAYS = 15;
+
+/** 反馈压缩包目录名：落在日志根目录下，启动时整目录清空。 */
+export const OUTBOX_FOLDER = 'outbox';
 
 /** 日文件夹名：`YYYY-MM-DD`。 */
 const DAY_FOLDER_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
