@@ -14,7 +14,7 @@ import { showCheckbox, showError, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { reportError } from './errors.ts';
-import { showToast } from './toast.ts';
+import { showToast, type ToastTone } from './toast.ts';
 import {
 	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterSummaryOf,
 	readStoredFilter, revalidatedFilter, sortRefs, writeStoredFilter,
@@ -433,11 +433,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, refresh, refreshEntries, setState]);
 
+	/** 失败提示：说明失败原因，或当前条件下操作无法进行的原因；正文可复制。 */
+	const notify = React.useCallback((message: string): Promise<void> => {
+		void showError(message);
+		return Promise.resolve();
+	}, []);
+
+	/** 结果告知：动作已完成的结论与需要用户继续处理的状态，顶部轻量提示，不打断操作。 */
+	const announce = React.useCallback((message: string, tone: ToastTone = 'info'): Promise<void> => {
+		showToast(message, { tone });
+		return Promise.resolve();
+	}, []);
+
 	/* 提交框：草稿、钩子勾选、AI 生成、翻译与提交。 */
 	const composer = useCommitComposer({
 		workingTreePath, settings, commits: state.commits, merging: state.merging,
 		entries: state.entries, translateReady, commitBusy: busyFlags.commit, onScreen, run,
-		notify: (message: string) => { void showError(message); return Promise.resolve(); },
+		notify,
 	});
 
 	/**
@@ -463,12 +475,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, setState]);
 
-	/** 失败提示：说明当前条件下操作无法进行的原因，或报告未完成的一次性结果。 */
-	const notify = React.useCallback((message: string): Promise<void> => {
-		void showError(message);
-		return Promise.resolve();
-	}, []);
-
 	/*
 	 * 选中仓库的同步状态：取自当前工作区快照，与图形区、更改区、提交框读同一个数。
 	 *
@@ -483,7 +489,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const remoteSync = useRemoteSync({
 		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync: selectedSync, remotes: state.remotes, head: state.head,
 		settings, busyFlags, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks,
-		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify },
+		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify, announce },
 	});
 
 	/**
@@ -500,9 +506,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const handleDiscardPaths = React.useCallback(async (cwd: string, paths: readonly string[], untracked: boolean) => {
 		const report = await discardPaths(cwd, paths, untracked);
 		const notice = discardNoticeOf(report);
-		if (notice !== '') await notify(notice);
+		if (notice.failures.length > 0) await notify(notice.failures.join('\n'));
+		if (notice.outcomes.length > 0) await announce(notice.outcomes.join('\n'));
 		return report;
-	}, [notify]);
+	}, [notify, announce]);
 
 	/** 中止进行中的合并，把工作区恢复到合并前。已解决的冲突改动会一并丢弃，因此先确认。 */
 	const handleAbortMerge = React.useCallback(() => {
@@ -551,7 +558,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const repoCommands = useRepoCommands({
 		cwd, workingTreePath, sessionId, settings, settingsOpen, remotes: state.remotes, head: state.head,
 		detail: state.detail, busyFlags, selectedNode, pickDirectory, runInTerminal, openDiff,
-		actions: { run, withProgress, notify }, setState, rescanPending, setSettings,
+		actions: { run, withProgress, notify, announce }, setState, rescanPending, setSettings,
 	});
 
 	/*
@@ -641,12 +648,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive: repoCommands.handleCreateArchive, head: state.head,
-		notify, setCommitMessage: composer.setMessage,
+		notify, announce, setCommitMessage: composer.setMessage,
 		handleCreatePullRequest: repoCommands.handleCreatePullRequest, canCreatePullRequest: repoCommands.canCreatePullRequest,
 		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
 		foreignBranches: state.foreignBranches,
 	}), [
-		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify,
+		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify, announce,
 		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches,
 	]);
 

@@ -30,7 +30,7 @@ Status: implemented
 
 新增 `client/ui/overlay-host.ts`：`installOverlay(slots)` 把 `OverlayHost` 注册进根级 list 席位 `shell.overlay`（id `dsh-source-control.overlay`，order 100），维护 `pushDialog` / `removeDialog` 的 FIFO 队列与 `pushToast` / `removeToast`。
 
-`showToast(text)` 只投这条常驻通道，不再 `createRoot` + `document.body`；`ToastTone` / `ToastOptions` / `HOLD_OF` / `holdFor` 删除，只留信息类提示。
+`showToast(text, options)` 只投这条常驻通道，不再 `createRoot` + `document.body`。提示保留两个类别 `ToastTone`（`success` / `info`）与按文本长度推算的 `holdFor`，失败原因不在其中。
 
 `runDialog` 改为投 `OverlayHost` 的 FIFO 队列。新增 `showError(message)` 错误弹窗：正文可滚动、可整段复制（带复制按钮，用 primitives 的 `writeClipboard`）。错误类提示**全部由 toast 改为弹窗**，因为长期使用后报错信息（含 git hook 执行失败）需要被复制出来。
 
@@ -56,7 +56,7 @@ Status: implemented
 
 **保留 `execCommand` 回退以兼容旧浏览器。** 否决：宿主运行在它自己的 Web 壳里，`writeClipboard` 已覆盖该环境；回退分支从未在真实环境走通过。
 
-**保留 toast 的分级（成功 / 失败 / 警告）。** 否决：分级带来的是颜色差异，而错误需要的是可复制、可停留、可读完整正文——那是弹窗的职责。保留信息类 toast，错误一律弹窗。
+**保留 toast 的分级（成功 / 失败 / 警告）。** 否决：失败与警告需要可复制、可停留、可读完整正文——那是弹窗的职责，颜色区分替代不了。提示只保留成功与中性两类，失败一律弹窗。
 
 **差异视图偏好按页地址记忆。** 否决：见上，逐文件偏好在实际使用里是重复劳动。若将来确需逐文件记忆，应在设置里加一层 `Record<address, choice>`，而不是回到模块级 `Map`。
 

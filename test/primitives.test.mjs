@@ -537,10 +537,31 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(buildStart !== -1, '未找到删除分支的处理函数');
 		const build = menu.slice(buildStart, menu.indexOf('\n\t},', buildStart));
 		assert.ok(!/disabled/.test(build), '删除项不应因当前分支置灰，改为点击后提示');
-		// 提示走顶部轻量横幅，不再使用需要关闭的模态弹窗。
 		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
 		assert.match(toast, /export function showToast/, '应提供轻量提示');
 		assert.match(toast, /from '@deepseek-ai\/dsh-client-ui-primitives'/, '提示应复用 ui-primitives 的 Toast');
+	});
+
+	t.test('成功结果与失败原因走不同呈现面', () => {
+		/*
+		 * notify 是失败面（弹窗标题「操作失败」），announce 是结果告知（顶部轻量提示）。
+		 * 已完成的动作被当成失败报告是本用例守护的回归点：两者都是 `string`，
+		 * 只有断言调用点落在哪个出口上，才能区分「发布成功」与「发布失败」。
+		 */
+		const deps = readFileSync(join(panelDir, 'action-deps.ts'), 'utf8');
+		assert.match(deps, /readonly notify: \(message: string\) => Promise<void>/, '应保留失败面');
+		assert.match(deps, /readonly announce: \(message: string, tone\?: ToastTone\) => Promise<void>/, '应提供结果告知');
+
+		const remoteSync = readFileSync(join(panelDir, 'use-remote-sync.ts'), 'utf8');
+		assert.match(remoteSync, /await announce\(`已发布到/, '发布成功的地址是结果告知');
+
+		const repoCommands = readFileSync(join(panelDir, 'use-repo-commands.ts'), 'utf8');
+		assert.match(repoCommands, /await announce\(url === '' \? 'Pull Request 已创建。'/, 'PR 创建成功是结果告知');
+		assert.match(repoCommands, /await announce\(`已在终端执行克隆/, '克隆命令已发出是结果告知');
+		assert.match(repoCommands, /await notify\('无法在终端里执行克隆命令/, '克隆命令未能发出才是失败');
+
+		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
+		assert.match(toast, /export type ToastTone = 'success' \| 'info'/, '结果告知应区分成功与中性');
 	});
 
 	t.test('提交菜单与引用菜单共用同一份操作注册表', () => {

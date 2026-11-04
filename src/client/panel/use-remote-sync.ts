@@ -40,7 +40,7 @@ export interface RemoteSyncDeps {
 	readonly runHooks: boolean;
 	/** 操作结束复位钩子勾选。 */
 	readonly setRunHooks: (next: boolean) => void;
-	/** 面板动作依赖：run、withProgress 与 notify。 */
+	/** 面板动作依赖：run、withProgress 与 announce。 */
 	readonly actions: PanelActionDeps;
 }
 
@@ -71,7 +71,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		workingTreePath, selectedRepoName, currentSync, remotes, head, settings, busyFlags,
 		pushHookActive, runHooks, setRunHooks, actions,
 	} = deps;
-	const { run, withProgress, notify } = actions;
+	const { run, withProgress, announce } = actions;
 
 	/**
 	 * 推送某个仓库的当前分支到其上游，失败时报错。
@@ -268,7 +268,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 							name: source.name, owner: source.owner, private: source.private, description: source.description,
 							protocol: source.protocol,
 						});
-						await notify(`已发布到 ${url}`);
+						await announce(`已发布到 ${url}`, 'success');
 					}, undefined, undefined, { intent: '发布到 GitHub 新仓库' });
 					return;
 				}
@@ -287,7 +287,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			}, undefined, undefined, { intent: `推送分支 ${branch}` });
 			publishDone();
 		})();
-	}, [busyFlags.network, remotes, currentSync, workingTreePath, run, askRemoteSource, notify, pushHookActive, runHooks, setRunHooks]);
+	}, [busyFlags.network, remotes, currentSync, workingTreePath, run, askRemoteSource, announce, pushHookActive, runHooks, setRunHooks]);
 
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
