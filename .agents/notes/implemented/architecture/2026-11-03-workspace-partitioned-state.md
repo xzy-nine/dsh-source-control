@@ -21,7 +21,7 @@ Status: implemented
 
 ### 迁移：从 DSH 会话存储还原工作区
 
-旧记录按 `sessionId` 分键，没有工作区信息。`dsh-session-cwd.ts` 从 `$DSH_HOME/storages/session_projcache/sessions/<sessionId>.json` 的 `record.identity.cwd` 读取该会话的工作区根——这是唯一能把旧会话键还原成工作区的来源，只在迁移时按会话读单个文件，文件缺失或字段不可用时丢弃该条。
+旧记录按 `sessionId` 分键，没有工作区信息。`dsh-session-cwd.ts` 从 `ctx.sessionPersistence.list()` 的 `snapshot.header.cwd` 读取该会话的工作区根——这是唯一能把旧会话键还原成工作区的来源，只在迁移时读一次列表，header 缺失或字段不可用时丢弃该条。读取方式见 [状态改由 storage domain 与 DSH 会话存储承载](2026-11-04-storage-domain-and-session-persistence.md)。
 
 `migrateV1ToV3`（平铺 entries + 顶层 `repos`）与 `migrateV2ToV3`（`sessions` + `repoLocations`）把它作为注入的解析器参数，因此可脱离真实 DSH 存储单测。同一工作区落到多条会话时按 `updatedAt` 取最新一条：选中与展开是「上次离开这里时的样子」，取最近一次才符合预期，求并集会把用户从未在此工作区展开过的节点带进来。
 
@@ -39,7 +39,7 @@ Status: implemented
 
 **迁移时丢弃旧会话记录。** 否决：实测 53 条旧记录都能还原出工作区根，丢弃等于让用户在每个工作区重新选一次仓库、重新展开。
 
-**读 `.dsh/sessions/<编码工作区>/<sessionId>` 目录名反解工作区。** 否决：目录名是转义后的编码（非 ASCII 段变成 `~XXXX~`），反解不可靠；`session_projcache` 的单会话文件里有原始 `cwd` 字符串。
+**读 `.dsh/sessions/<编码工作区>/<sessionId>` 目录名反解工作区。** 否决：目录名是转义后的编码（非 ASCII 段变成 `~XXXX~`），反解不可靠；会话持久化服务的 header 里有原始 `cwd` 字符串。
 
 **客户端延迟重键：首次带 cwd 写入时合并该会话的旧记录。** 否决：旧记录要等用户下次进入对应会话才归位，在此之前状态一直是错的；宿主有解析器可用时应当一次迁完。
 

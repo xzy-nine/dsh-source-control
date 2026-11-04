@@ -17,13 +17,13 @@ Status: implemented
 
 ### 宿主：单一类型化文档
 
-`state-store.ts` 持久化一份带 `schemaVersion` 的类型化文档，所有读写经分区访问器，`readSnapshot` 一次返回首屏所需的全量快照。`save` 是唯一写入口，原子 tmp+rename。具体分区与版本号由 [持久化维度改为工作区与仓库](2026-11-03-workspace-partitioned-state.md) 拥有。
+`state-store.ts` 持有一份类型化文档，所有读写经分区访问器，`readSnapshot` 一次返回首屏所需的全量快照。文档现落在宿主的 storage domain（zod 全局槽，schema 校验与版本演进归宿主），落地方式见 [状态改由 storage domain 与 DSH 会话存储承载](2026-11-04-storage-domain-and-session-persistence.md)。具体分区由 [持久化维度改为工作区与仓库](2026-11-03-workspace-partitioned-state.md) 拥有。
 
 路径键统一经 `normalizePath`（`\`→`/`、去尾斜杠、盘符小写），与客户端 `path-key.ts` 对齐。ref-filter 收敛为「`'all'` 或完整引用 id 列表」，自动模式不落盘。expanded 统一为 `string[]`。草稿从 `ggg-commit-msg:*` 移入 `drafts.commitMessages[normPath]`。
 
 ### 迁移：宿主统一调度
 
-`load()` 首次读取时检测 `schemaVersion`，旧版文档原地迁移并落盘。分类逻辑是纯函数，文档迁移与 `mergeLegacyEntries` 共用。浏览器旧键迁移由客户端 `migrateLegacyState` 收集 localStorage / sessionStorage 里的旧键原样发给宿主 `mergeLegacyEntries` 命令——浏览器不持久化，也不承担格式转换，分类与合并全在宿主。搬完清掉浏览器旧键即幂等。
+旧版文档（v1 / v2 / v3）在域为空时导入一次并冻结为迁移来源。分类逻辑是纯函数，文档迁移与 `mergeLegacyEntries` 共用。浏览器旧键迁移由客户端 `migrateLegacyState` 收集 localStorage / sessionStorage 里的旧键原样发给宿主 `mergeLegacyEntries` 命令——浏览器不持久化，也不承担格式转换，分类与合并全在宿主。搬完清掉浏览器旧键即幂等。
 
 ### 工作区清理
 
@@ -43,4 +43,4 @@ Status: implemented
 
 ## Consequences
 
-状态文档从一张前缀袋变成类型化分区，读写经访问器而非字符串键拼接，路径键统一归一。旧版用户首次进入时 `load()` 自动迁移并落盘。浏览器旧键迁移一次性完成后宿主是唯一数据源。分区有 `updatedAt` 与容量上限，不再无限增长。新增 `test/state-store.test.mjs` 覆盖归一、迁移、合并与清理、草稿读写。
+状态文档从一张前缀袋变成类型化分区，读写经访问器而非字符串键拼接，路径键统一归一。旧版用户在域为空时自动迁移一次。浏览器旧键迁移一次性完成后宿主是唯一数据源。分区有 `updatedAt` 与容量上限，不再无限增长。新增 `test/state-store.test.mjs` 覆盖归一、迁移、合并与清理、草稿读写。
