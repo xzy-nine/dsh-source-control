@@ -148,7 +148,17 @@ test('产物不引入共享菜单包的运行时依赖', () => {
 	// 共享菜单只是可选宿主能力：未提供它的宿主不装该包，实体引用会让插件在半数宿主上加载失败。
 	const source = readFileSync(bundlePath, 'utf8');
 	assert.equal(source.includes('dsh-client-ui-context-menu'), false, '产物不得包含共享菜单包的运行时引用');
-	assert.equal(source.includes('anchorRef'), false, '产物不得依赖只有更高宿主版本才有的锚点字段');
+});
+
+test('产物同时携带两代锚点属性', () => {
+	/*
+	 * 宿主的 Menu 分两代：旧宿主认 getAnchorRect 并优先使用它，新宿主认 anchorRef / anchorPoint
+	 * 且完全不读 getAnchorRect。只给一侧会让另一侧拿不到锚点，菜单静默落到视口左下角。
+	 */
+	const source = readFileSync(bundlePath, 'utf8');
+	for (const name of ['getAnchorRect', 'anchorRef', 'anchorPoint']) {
+		assert.ok(source.includes(name), '产物应携带锚点属性：' + name);
+	}
 });
 
 test('apply 注册右侧栏页类型与 header 入口', () => {
