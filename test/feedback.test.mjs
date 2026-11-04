@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	FEEDBACK_REPO, FEEDBACK_TEXT, FEEDBACK_TYPES, buildIssueBody, feedbackIssueTitle, formatBytes,
+	FEEDBACK_REPO, FEEDBACK_TEXT, FEEDBACK_TYPES, buildIssueBody, feedbackIssueTitle,
 } from '../lib/src/source-control/feedback-text.js';
 import { archiveFileName, archiveLog } from '../lib/src/source-control/log-archive.js';
 
@@ -17,7 +17,7 @@ import { archiveFileName, archiveLog } from '../lib/src/source-control/log-archi
 const facts = {
 	type: 'bug', description: '点开差异页就空白', pluginVersion: '0.8.0',
 	platform: 'win32 10.0 x64', node: 'v24.0.0',
-	logFile: '20260102-090000-redacted.zip', logSize: 320 * 1024,
+	logFile: '20260102-090000-redacted.zip',
 	redaction: '令牌 ×1', exemptionCount: 0,
 };
 
@@ -32,7 +32,6 @@ test('正文含描述、环境、日志与脱敏四段', () => {
 	assert.ok(body.includes('0.8.0'));
 	assert.ok(body.includes('win32 10.0 x64'));
 	assert.ok(body.includes('20260102-090000-redacted.zip'));
-	assert.ok(body.includes('320.0 KB'));
 	assert.ok(body.includes('令牌 ×1'));
 });
 
@@ -44,19 +43,13 @@ test('日志段落写明手动上传步骤', () => {
 });
 
 test('未附带日志时正文写明未附带', () => {
-	const body = buildIssueBody({ ...facts, logFile: null, logSize: null, redaction: '' });
+	const body = buildIssueBody({ ...facts, logFile: null, redaction: '' });
 	assert.ok(body.includes(FEEDBACK_TEXT.noLog));
 	assert.ok(body.includes(FEEDBACK_TEXT.noRedaction));
 });
 
 test('反馈目标为本插件仓库', () => {
 	assert.equal(FEEDBACK_REPO, 'xzy-nine/dsh-source-control');
-});
-
-test('字节数换算', () => {
-	assert.equal(formatBytes(512), '512 B');
-	assert.equal(formatBytes(2048), '2.0 KB');
-	assert.equal(formatBytes(3 * 1024 * 1024), '3.0 MB');
 });
 
 /** 本文件创建的临时目录；文件级 after 统一删除。 */

@@ -6,9 +6,9 @@
 import React from 'react';
 import {
 	FileTypeIcon, IconChevronDownOutlineRegular, IconCloseOutlineRegular,
-	IconFolderCloseRegular, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
+	IconFolderCloseRegular, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
@@ -436,7 +436,7 @@ function ChangeGroupView({
 		onDiscardGroup: onDiscardAll,
 		onOpenFile, onAddToGitignore, onAddToLocalExclude,
 		// 菜单里的路径相对仓库根；复制时给出绝对路径，便于直接粘进终端或编辑器。
-		onCopyPath: (path: string) => { void copyText(absolutePathOf(workingTreePath, path)); },
+		onCopyPath: (path: string) => { void writeClipboard(absolutePathOf(workingTreePath, path)); },
 	}), [busy, staged, truncated, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard, onDiscardFolder, onDiscardAll, onOpenFile, onAddToGitignore, onAddToLocalExclude, workingTreePath]);
 	const handleHeadContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
 		event.stopPropagation();

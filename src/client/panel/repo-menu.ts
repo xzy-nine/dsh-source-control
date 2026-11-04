@@ -4,7 +4,8 @@
  * 两项都直接组装菜单项与执行体，不持有 React 状态；状态与回调由面板传入。
  */
 import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, throwIfError } from '../api/index.ts';
-import { copyText, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
+import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox } from '../ui/dialog.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
@@ -76,7 +77,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 			},
 		},
 		{ type: 'divider' },
-		{ title: '复制路径', onClick: () => { void copyText(node.path); } },
+		{ title: '复制路径', onClick: () => { void writeClipboard(node.path); } },
 	];
 	if (isUninitializedSubmodule) {
 		items.push({ type: 'divider' }, {

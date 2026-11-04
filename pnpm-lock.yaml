@@ -10,10 +10,23 @@ overrides:
 importers:
 
   .:
+    dependencies:
+      '@deepseek-ai/dsh-home-paths':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
+      '@deepseek-ai/dsh-storage-domain':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)(@deepseek-ai/dsh-storage@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1))
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.6-alpha.1
         version: 4.0.6-alpha.1
+      '@deepseek-ai/dsh-client-store':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
       '@deepseek-ai/dsh-client-ui-primitives':
         specifier: 0.2.2-alpha.2
         version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
@@ -29,15 +42,15 @@ importers:
       '@types/react-dom':
         specifier: 18.3.1
         version: 18.3.1
-      blueimp-md5:
-        specifier: ^2.19.0
-        version: 2.19.0
       esbuild:
         specifier: ^0.24.2
         version: 0.24.2
       eslint-plugin-sonarjs:
         specifier: ^4.2.0
         version: 4.2.2(eslint@10.13.0)
+      immer:
+        specifier: ^10.2.0
+        version: 10.2.0
       js-yaml:
         specifier: ^4.1.0
         version: 4.3.2
@@ -74,6 +87,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      zustand:
+        specifier: ~4.5.7
+        version: 4.5.7(@types/react@18.3.12)(immer@10.2.0)(react@18.3.1)
 
 packages:
 
@@ -167,10 +183,37 @@ packages:
   '@deepseek-ai/cosmokit@1.8.7-alpha.1':
     resolution: {integrity: sha512-+R+9sx+SJbkyeidV3s+fvgsqCMZAfx2Z00YCQNhc5RsTen1SnvIYWM8neQah/1SxjlsXRo9jxX9U58Wk68JjvA==}
 
+  '@deepseek-ai/cosmokit@1.8.7-alpha.2':
+    resolution: {integrity: sha512-cZQ1AhU/fxPkPnp0HAk7zbBGG0lnFUtlceACSDqWQ0a1RiTV1vcL2YRkHD5xCY026j/4Smgce1TuaCFZXhzt6A==}
+
+  '@deepseek-ai/dsh-client-store@0.2.2-alpha.2':
+    resolution: {integrity: sha512-vGeI3ewFYtO3tUUmT0nd8SmcuDuMSJkj3G5MS1ovZRLgowMzqtUqii0GsYmOKLe6R/edIYdhvdVU6sahCZ2JXA==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.6-alpha.1
+
   '@deepseek-ai/dsh-client-ui-primitives@0.2.2-alpha.2':
     resolution: {integrity: sha512-hjf2/KLaAUxDrAhdnr2QQj6TZKFNi/O2UUqrZtRCBxwFfcRzRPBiXq9ayK4qFxllDDL0ZnjvDoqTUMd86ipCKQ==}
     peerDependencies:
       '@deepseek-ai/cordis': ~4.0.6-alpha.1
+
+  '@deepseek-ai/dsh-home-paths@0.2.2-alpha.2':
+    resolution: {integrity: sha512-Csxrpp2CFmdPWG3UYGsrGmE11GYpo/iuQuPHg/8ydPfykvhjC4F3BM6WSmYlrBrSE9SKEXVNyY32E2Ec3dHklg==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.6-alpha.1
+
+  '@deepseek-ai/dsh-storage-domain@0.2.2-alpha.2':
+    resolution: {integrity: sha512-/K07UMUrqShfZfCAkjoQHf4KDBSxRGcgTYSuZ+nE7mA0peeuyI1UGSQafqZV46gbXaK5xgHN58j7BasyuXMtuw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.6-alpha.1
+      '@deepseek-ai/dsh-storage': 0.2.2-alpha.2
+
+  '@deepseek-ai/dsh-storage@0.2.2-alpha.2':
+    resolution: {integrity: sha512-B78oLpjgKQfKRFQp5NZSq4rk4iZ26xlrnFzSRJ3DBMP9hezUMqemxG0JCyp1l2TmuWm3UyIt4tkOqfW1djq1sw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.6-alpha.1
+
+  '@deepseek-ai/schemastery@3.18.6-alpha.2':
+    resolution: {integrity: sha512-lRrvZLD9v1BAG5625lyYcRcMJ2xInGjWl65W6H3kL/YSCXUU2/aD1XLBXvoNYvXw2RuAXEfNTSFuZ/XArstwVA==}
 
   '@esbuild/aix-ppc64@0.24.2':
     resolution: {integrity: sha512-thpVCb/rhxE/BnMLQ7GReQLLN8q9qbHmI55F4489/ByVg2aQaQ6kbcLb6FHkocZzQhxc4gx0sCk0tJkKBFzDhA==}
@@ -811,9 +854,6 @@ packages:
     resolution: {integrity: sha512-GbBStl/EVlSWkiJQBZps3H1iARBrC7vt++Jb/TTmCNu/jZ04VW7tSN1nScbFXBUy1AN+jzeL7Zep9sbQxLhXKA==}
     engines: {node: '>=8.9'}
 
-  blueimp-md5@2.19.0:
-    resolution: {integrity: sha512-DRQrD6gJyy8FbiE4s+bDoXS9hiW3Vbx5uCdwvcCf3zLHL+Iv7LtGHLpr+GZV8rHG8tK766FGYBwRbu8pELTt+w==}
-
   brace-expansion@5.0.12:
     resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
     engines: {node: 20 || >=22}
@@ -1122,6 +1162,9 @@ packages:
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
+
+  immer@10.2.0:
+    resolution: {integrity: sha512-d/+XTN3zfODyjr89gM3mPq1WNX2B8pYsu7eORitdwyA2sBubnTl3laYlBk4sXY5FUa5qTZGBDPJICVbvqzjlbw==}
 
   imurmurhash@0.1.4:
     resolution: {integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==}
@@ -1667,6 +1710,11 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
+  use-sync-external-store@1.7.0:
+    resolution: {integrity: sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   void-elements@3.1.0:
     resolution: {integrity: sha512-Dhxzh5HZuiHQhbvTW9AMetFfBHDMYpo23Uo9btPXgdYP+3T5S+p+jgNy7spra+veYhBP2dCSgxR/i2Y02h5/6w==}
     engines: {node: '>=0.10.0'}
@@ -1718,6 +1766,24 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
+
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
+  zustand@4.5.7:
+    resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
+    engines: {node: '>=12.7.0'}
+    peerDependencies:
+      '@types/react': '>=16.8'
+      immer: '>=9.0.6'
+      react: '>=16.8'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      immer:
+        optional: true
+      react:
+        optional: true
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -1802,9 +1868,35 @@ snapshots:
 
   '@deepseek-ai/cosmokit@1.8.7-alpha.1': {}
 
+  '@deepseek-ai/cosmokit@1.8.7-alpha.2': {}
+
+  '@deepseek-ai/dsh-client-store@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.6-alpha.1
+
   '@deepseek-ai/dsh-client-ui-primitives@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.6-alpha.1
+
+  '@deepseek-ai/dsh-home-paths@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.6-alpha.1
+
+  '@deepseek-ai/dsh-storage-domain@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)(@deepseek-ai/dsh-storage@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1))':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.6-alpha.1
+      '@deepseek-ai/dsh-storage': 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
+      '@deepseek-ai/schemastery': 3.18.6-alpha.2
+      zod: 4.4.3
+
+  '@deepseek-ai/dsh-storage@0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.6-alpha.1
+
+  '@deepseek-ai/schemastery@3.18.6-alpha.2':
+    dependencies:
+      '@deepseek-ai/cosmokit': 1.8.7-alpha.2
+      '@standard-schema/spec': 1.1.0
 
   '@esbuild/aix-ppc64@0.24.2':
     optional: true
@@ -2209,8 +2301,6 @@ snapshots:
       execa: 4.1.0
       which: 2.0.2
 
-  blueimp-md5@2.19.0: {}
-
   brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.4
@@ -2601,6 +2691,8 @@ snapshots:
   human-signals@1.1.1: {}
 
   ignore@5.3.2: {}
+
+  immer@10.2.0: {}
 
   imurmurhash@0.1.4: {}
 
@@ -3358,6 +3450,10 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
+  use-sync-external-store@1.7.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+
   void-elements@3.1.0: {}
 
   w3c-xmlserializer@6.0.0:
@@ -3398,5 +3494,15 @@ snapshots:
   yaml@2.9.1: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@4.4.3: {}
+
+  zustand@4.5.7(@types/react@18.3.12)(immer@10.2.0)(react@18.3.1):
+    dependencies:
+      use-sync-external-store: 1.7.0(react@18.3.1)
+    optionalDependencies:
+      '@types/react': 18.3.12
+      immer: 10.2.0
+      react: 18.3.1
 
   zwitch@2.0.4: {}

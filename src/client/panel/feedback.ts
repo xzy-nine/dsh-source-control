@@ -7,7 +7,7 @@
  * 脱敏默认开启；停用脱敏与逐条豁免都在本页操作，被豁免的字符串原样保留。
  */
 import React from 'react';
-import { Button, Checkbox, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, Checkbox, fileSizeText, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
 import { loadFeedbackInfo, logClient, submitFeedback } from '../api/index.ts';
 import type { FeedbackInfo, FeedbackType, SubmitFeedbackOutcome } from '../api/index.ts';
 import { showMessage } from '../ui/dialog.ts';
@@ -89,7 +89,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		const entries: LogTreeEntry[] = info.files.map((file) => ({
 			path: `${file.day}/${file.name}`,
 			fullPath: file.path,
-			sizeText: file.sizeText,
+			sizeText: fileSizeText(file.size),
 		}));
 		// 日志文件按启动先后倒序：最新的一次启动排在最上面。
 		return changeRowsOf(entries, collapsedLogs, true);

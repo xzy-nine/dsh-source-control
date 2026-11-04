@@ -12,7 +12,7 @@ import React from 'react';
 import {
 	HoverCard, IconArchiveOutlineRegular, IconClockOutlineRegular,
 	IconCopyOutlineRegular, IconGoalOutlineRegular, IconUserOutlineRegular,
-	MarkdownText,
+	MarkdownText, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
 	HEAD_CORE_RADIUS, HEAD_NODE_RADIUS, INDICATOR_DASH, INDICATOR_NODE_RADIUS, INDICATOR_RING_RADIUS,
@@ -22,7 +22,6 @@ import {
 } from './lanes.ts';
 import { RemoteRefIcon, TagRefIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
-import { copyText } from '../ui/context-menu.ts';
 import { interfaceLanguage, showTranslateEntry, translatedTitle } from '../panel/language.ts';
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
@@ -317,7 +316,7 @@ function CommitCard({
 				className: css.cardCopy,
 				title: '复制完整哈希',
 				'aria-label': '复制完整哈希',
-				onClick: () => { void copyText(commit.hash); },
+				onClick: () => { void writeClipboard(commit.hash); },
 			}, React.createElement(IconCopyOutlineRegular, { size: 13 })),
 		),
 	);

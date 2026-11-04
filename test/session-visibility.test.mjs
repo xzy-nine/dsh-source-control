@@ -6,42 +6,46 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSessionDisplayed } from '../src/client/panel/repo-preload.ts';
+import { activeWorkspaceOf, isSessionDisplayed } from '../src/client/panel/repo-preload.ts';
 import { parallel } from './harness.mjs';
-
-/** 造一份会话列表快照。 */
-function list(byId, current) {
-	return { ids: Object.keys(byId), byId, ...(current === undefined ? {} : { current }) };
-}
 
 parallel('会话可见性', (t) => {
 	t.test('引用计数大于 0 即视为正在显示', () => {
-		assert.equal(isSessionDisplayed(list({ s1: { cwd: '/a', retainedBy: { mainView: 1 } } }), 's1'), true);
+		assert.equal(isSessionDisplayed({ retainedBy: { mainView: 1 } }), true);
 	});
 
 	t.test('引用计数为 0 或缺失时不显示', () => {
-		assert.equal(isSessionDisplayed(list({ s1: { cwd: '/a', retainedBy: { mainView: 0 } } }), 's1'), false);
-		assert.equal(isSessionDisplayed(list({ s1: { cwd: '/a', retainedBy: {} } }), 's1'), false);
-		assert.equal(isSessionDisplayed(list({ s1: { cwd: '/a' } }), 's1'), false);
+		assert.equal(isSessionDisplayed({ retainedBy: { mainView: 0 } }), false);
+		assert.equal(isSessionDisplayed({ retainedBy: {} }), false);
+		assert.equal(isSessionDisplayed(undefined), false);
 	});
 
-	t.test('只有被引用的那个会话算显示', () => {
-		const state = list({
-			s1: { cwd: '/a', retainedBy: { mainView: 0 } },
-			s2: { cwd: '/b', retainedBy: { mainView: 1 } },
-		});
-		assert.equal(isSessionDisplayed(state, 's1'), false);
-		assert.equal(isSessionDisplayed(state, 's2'), true);
+	t.test('保留信息来源缺失时不算显示', () => {
+		assert.equal(isSessionDisplayed(null), false);
+		assert.equal(isSessionDisplayed({}), false);
 	});
 
-	t.test('旧宿主以 current 为准', () => {
-		const state = list({ s1: { cwd: '/a' }, s2: { cwd: '/b' } }, 's2');
-		assert.equal(isSessionDisplayed(state, 's2'), true);
-		assert.equal(isSessionDisplayed(state, 's1'), false);
+	t.test('活跃工作区：按传入顺序取第一个被主视图持有的会话', () => {
+		const infos = [
+			{ id: 's1', cwd: '/work/a' },
+			{ id: 's2', cwd: '/work/b', retain: { retainedBy: { mainView: 1 } } },
+			{ id: 's3', cwd: '/work/c', retain: { retainedBy: { mainView: 1 } } },
+		];
+		assert.deepEqual(activeWorkspaceOf(infos), { sessionId: 's2', cwd: '/work/b' });
 	});
 
-	t.test('快照缺失或为空时一律不算显示', () => {
-		assert.equal(isSessionDisplayed(null, 's1'), false);
-		assert.equal(isSessionDisplayed({}, 's1'), false);
+	t.test('活跃工作区：子代理会话与缺 cwd 的会话不产生工作区', () => {
+		const infos = [
+			{ id: 's1', cwd: '/work/a', retain: { retainedBy: { mainView: 1 } }, origin: 'subagent' },
+			{ id: 's2', retain: { retainedBy: { mainView: 1 } } },
+			{ id: 's3', cwd: '/work/c', retain: { retainedBy: { mainView: 1 } } },
+		];
+		assert.deepEqual(activeWorkspaceOf(infos), { sessionId: 's3', cwd: '/work/c' });
+	});
+
+	t.test('活跃工作区：没有正在显示的会话或输入缺失时为空', () => {
+		assert.equal(activeWorkspaceOf([{ id: 's1', cwd: '/work/a' }]), null);
+		assert.equal(activeWorkspaceOf([]), null);
+		assert.equal(activeWorkspaceOf(null), null);
 	});
 });

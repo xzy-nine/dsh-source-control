@@ -2,76 +2,130 @@
  * 宿主侧状态读写，以及浏览器旧数据的一次性迁移。
  *
  * 持久化统一落在宿主（见 source-control/state-store.ts）；本模块是客户端入口，并在首次
- * 连接时把浏览器 localStorage / sessionStorage 里的旧数据搬到宿主，搬完打标记不再重复。
- * 提交信息草稿是会话级数据，不经本模块迁移。
+ * 连接时把浏览器 localStorage / sessionStorage 里的旧数据搬到宿主类型化分区，搬完清掉浏览器
+ * 旧键即幂等。提交信息草稿是会话级数据，不经本模块迁移。
  */
 import { callApi } from './http.ts';
 
-/** 迁移完成标记：记在宿主，换浏览器不会重复迁移。 */
-const MIGRATED_KEY = 'dsh-source-control-migrated';
+/** 面板布局快照。 */
+export interface PanelLayoutSnapshot {
+	readonly repoOpen: boolean;
+	readonly graphOpen: boolean;
+	readonly graphHeight: number;
+	readonly repoHeight: number;
+}
+
+/** 一个工作区的聚合状态快照。 */
+export interface WorkspaceSnapshotState {
+	readonly selectedRepo: string | null;
+	readonly expandedRepos: readonly string[];
+	readonly repos: ReadonlyArray<{ readonly path: string; readonly name: string }>;
+	readonly updatedAt: number;
+}
+
+/** 宿主状态快照：设置、布局、引用筛选与工作区。 */
+export interface StateSnapshot {
+	readonly settings: Record<string, unknown> | null;
+	readonly layout: PanelLayoutSnapshot | null;
+	readonly refFilters: Record<string, 'all' | string[]>;
+	readonly workspaces: Record<string, WorkspaceSnapshotState>;
+}
+
+/** 空快照。 */
+const EMPTY_SNAPSHOT: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
 
 /**
- * 需要从浏览器搬到宿主的 localStorage 键前缀。
- *
- * 提交信息草稿（`ggg-commit-msg:`）不在其中：草稿是会话级数据，由调用方按仓库键经
- * `panel/storage.ts` 的会话级读写自行取回，不迁往宿主。
- */
-const LEGACY_LOCAL_PREFIXES = ['dsh-source-control-', 'dsh-source-control-ref-filter:'];
-
-/**
- * 读取宿主的全部状态键值。
+ * 读取宿主状态快照。
  *
  * @param cwd - 会话工作区路径。
  * @param signal - 取消信号。
- * @returns 键值表。
+ * @returns 快照。
  */
-export async function readState(cwd: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+export async function readState(cwd: string, signal?: AbortSignal): Promise<StateSnapshot> {
 	const payload = await callApi(cwd, { command: 'readState' }, signal);
-	const entries = payload.entries;
-	return entries !== null && typeof entries === 'object' ? entries as Record<string, unknown> : {};
+	if (typeof payload !== 'object') return EMPTY_SNAPSHOT;
+	return {
+		settings: payload.settings !== null && typeof payload.settings === 'object' ? payload.settings as Record<string, unknown> : null,
+		layout: payload.layout !== null && typeof payload.layout === 'object' ? payload.layout as PanelLayoutSnapshot : null,
+		refFilters: payload.refFilters !== null && typeof payload.refFilters === 'object' ? payload.refFilters as Record<string, 'all' | string[]> : {},
+		workspaces: payload.workspaces !== null && typeof payload.workspaces === 'object' ? payload.workspaces as Record<string, WorkspaceSnapshotState> : {},
+	};
 }
 
 /**
- * 写入宿主的一个状态键值。
+ * 写入设置。
  *
  * @param cwd - 会话工作区路径。
- * @param key - 键。
- * @param value - 值；null 表示删除。
+ * @param settings - 设置对象；null 清除。
  * @returns 无。
  */
-export async function writeState(cwd: string, key: string, value: unknown): Promise<void> {
-	await callApi(cwd, { command: 'writeState', key, value });
+export async function writeSettings(cwd: string, settings: Record<string, unknown> | null): Promise<void> {
+	await callApi(cwd, { command: 'writeSettings', settings });
+}
+
+/**
+ * 写入布局。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param layout - 布局对象；null 清除。
+ * @returns 无。
+ */
+export async function writeLayout(cwd: string, layout: PanelLayoutSnapshot | null): Promise<void> {
+	await callApi(cwd, { command: 'writeLayout', layout });
+}
+
+/**
+ * 写入引用筛选表。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param refFilters - 筛选表。
+ * @returns 无。
+ */
+export async function writeRefFilters(cwd: string, refFilters: Record<string, 'all' | string[]>): Promise<void> {
+	await callApi(cwd, { command: 'writeRefFilters', refFilters });
+}
+
+/**
+ * 写入一个工作区的选中与展开状态。
+ *
+ * @param cwd - 会话工作区路径，仅作请求的 repo 传参。
+ * @param workspaceCwd - 目标工作区根路径；持久化以此分键。
+ * @param partial - 待合并的部分状态。
+ * @returns 无。
+ */
+export async function writeWorkspace(cwd: string, workspaceCwd: string, partial: { selectedRepo?: string | null; expandedRepos?: string[] }): Promise<void> {
+	const msg: Record<string, unknown> = { command: 'writeWorkspace', cwd: workspaceCwd };
+	if (partial.selectedRepo !== undefined) msg.selectedRepo = partial.selectedRepo;
+	if (partial.expandedRepos !== undefined) msg.expandedRepos = partial.expandedRepos;
+	await callApi(cwd, msg);
 }
 
 /**
  * 取回一次此前落在宿主的提交信息草稿。
  *
  * 草稿改为会话级后不再写入宿主，但旧版本可能已把草稿持久化在宿主；调用方在首次挂载时用本函数
- * 取回一次：键值为非空字符串时返回该文本。本函数只读宿主键，不删除；调用方在草稿落到会话存储
- * 后调用 {@link clearPersistedDraft} 删除旧键，删除失败不影响已取回的文本。
+ * 取回一次。本函数只读宿主，不删除；调用方在草稿落到会话存储后调用 {@link clearPersistedDraft}
+ * 删除旧键，删除失败不影响已取回的文本。
  *
  * @param cwd - 会话工作区路径。
- * @param key - 宿主状态键。
+ * @param repoPath - 仓库路径。
  * @returns 取回的草稿文本；无草稿时返回 null。
  */
-export async function takePersistedDraft(cwd: string, key: string): Promise<string | null> {
-	const entries = await readState(cwd);
-	const value = entries[key];
-	if (typeof value !== 'string' || value === '') return null;
-	return value;
+export async function takePersistedDraft(cwd: string, repoPath: string): Promise<string | null> {
+	const payload = await callApi(cwd, { command: 'readDraft', repoPath });
+	const draft = (payload as { draft?: unknown }).draft;
+	return typeof draft === 'string' && draft !== '' ? draft : null;
 }
 
 /**
- * 删除宿主持久化里的一个键。
- *
- * 草稿落到会话存储后由调用方用它清掉旧版本遗留在宿主的草稿键，避免旧键长期滞留。
+ * 删除宿主持久化里的一个遗留草稿。
  *
  * @param cwd - 会话工作区路径。
- * @param key - 宿主状态键。
+ * @param repoPath - 仓库路径。
  * @returns 无。
  */
-export async function clearPersistedDraft(cwd: string, key: string): Promise<void> {
-	await writeState(cwd, key, null);
+export async function clearPersistedDraft(cwd: string, repoPath: string): Promise<void> {
+	await callApi(cwd, { command: 'clearDraft', repoPath });
 }
 
 /**
@@ -82,7 +136,7 @@ export async function clearPersistedDraft(cwd: string, key: string): Promise<voi
  */
 export async function readRepoLocations(cwd: string): Promise<Array<{ path: string; name: string }>> {
 	const payload = await callApi(cwd, { command: 'readRepoLocations' });
-	const repos = Array.isArray(payload.repos) ? payload.repos : [];
+	const repos = Array.isArray((payload as { repos?: unknown }).repos) ? (payload as { repos: unknown[] }).repos : [];
 	return repos.filter((item): item is { path: string; name: string } =>
 		item !== null && typeof item === 'object'
 		&& typeof (item as { path?: unknown }).path === 'string'
@@ -101,12 +155,24 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 }
 
 /**
- * 把浏览器里的旧持久化数据搬到宿主，只做一次。
+ * 旧版浏览器键前缀，需搬到宿主。
+ *
+ * 这两个常量与下面的迁移循环是本仓库**唯一**允许直接访问 `localStorage` / `sessionStorage`
+ * 的位置：旧版把数据存在浏览器里，迁移必须先把它们读出来。迁移完成后浏览器不再是数据源，
+ * 新数据一律走宿主持久化（见 `source-control/state-store.ts`）。
+ */
+const LEGACY_PREFIX = 'dsh-source-control-';
+const LEGACY_MIGRATED_KEY = 'dsh-source-control-migrated';
+
+/**
+ * 把浏览器里的旧持久化数据搬到宿主。
  *
  * 旧版本把设置、布局与引用筛选存在 localStorage / sessionStorage；迁移后统一由宿主落盘。
- * 提交信息草稿是会话级数据，不在 {@link LEGACY_LOCAL_PREFIXES} 内，由调用方经
- * `panel/storage.ts` 的 migrateLegacyDrafts 转入会话存储，不进宿主。已在宿主标记过则跳过；
- * 搬完清掉浏览器里的旧键，避免下次重复读取。
+ * 客户端只负责收集旧键原样发给宿主，分类与合并由宿主 `mergeLegacyEntries` 统一完成——浏览器不
+ * 持久化，也不承担格式转换。提交信息草稿是会话级数据，由 `panel/storage.ts` 的
+ * migrateLegacyDrafts 转入会话存储，不进宿主。搬完清掉浏览器旧键即幂等。
+ *
+ * 浏览器存储只在这一个函数里被读取，且只为搬迁旧键；迁移完成后不再有其它访问点。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。
@@ -114,28 +180,25 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 export async function migrateLegacyState(cwd: string): Promise<void> {
 	if (typeof localStorage === 'undefined') return;
 	try {
-		const entries = await readState(cwd);
-		if (entries[MIGRATED_KEY] === true) return;
-		const pending: Array<[string, unknown]> = [];
+		const entries: Record<string, unknown> = {};
+		const keys: string[] = [];
 		for (const store of [localStorage, sessionStorage]) {
 			for (let at = 0; at < store.length; at += 1) {
 				const key = store.key(at);
 				if (key === null) continue;
-				if (!LEGACY_LOCAL_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
-				if (key === MIGRATED_KEY) continue;
+				if (!key.startsWith(LEGACY_PREFIX)) continue;
+				if (key === LEGACY_MIGRATED_KEY) continue;
+				if (key in entries) continue;
 				const raw = store.getItem(key);
 				if (raw === null) continue;
-				try {
-					pending.push([key, JSON.parse(raw) as unknown]);
-				} catch {
-					pending.push([key, raw]);
-				}
+				try { entries[key] = JSON.parse(raw) as unknown; } catch { entries[key] = raw; }
+				keys.push(key);
 			}
 		}
-		for (const [key, value] of pending) await writeState(cwd, key, value);
-		await writeState(cwd, MIGRATED_KEY, true);
-		// 迁移成功后清掉浏览器里的旧键：此后宿主是唯一数据源。
-		for (const [key] of pending) {
+		if (keys.length === 0) return;
+		await callApi(cwd, { command: 'mergeLegacyEntries', entries });
+		// 搬完清掉浏览器里的旧键：此后宿主是唯一数据源。
+		for (const key of keys) {
 			try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch { /* 忽略 */ }
 		}
 	} catch {

@@ -127,3 +127,17 @@ try {
 } catch {
 	// 产物尚未构建时（例如只跑单个客户端测试）没有日志模块可初始化，不影响隔离本身。
 }
+
+/*
+ * 装上宿主能力：生产代码没有原生回退，缺少 ctx.fs / ctx.subprocess 即装载失败；测试进程没有
+ * 宿主，因此用 Node 原生实现填满同一份能力面，让被测代码走的是它自己的那条路径。
+ */
+try {
+	const runtime = await import(pathToFileURL(join(root, 'lib', 'src', 'source-control', 'host-runtime.js')).href);
+	const fixture = await import(pathToFileURL(join(root, 'test', 'host-fixture.mjs')).href);
+	const fs = fixture.nodeBackedFs();
+	const subprocess = fixture.nodeBackedSubprocess();
+	runtime.installHostCapabilities((name) => (name === 'fs' ? fs : name === 'subprocess' ? subprocess : undefined));
+} catch {
+	// 产物尚未构建时（例如只跑单个客户端测试）没有能力面可装，被测代码会自己报缺服务。
+}

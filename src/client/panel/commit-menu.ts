@@ -11,7 +11,8 @@
 import {
 	addTag, branchesContaining, checkoutCommit, cherrypickCommit, createBranch, resetToCommit, revertCommit, throwIfError,
 } from '../api/index.ts';
-import { copyText, openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
+import { openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox, showSelect, showText } from '../ui/dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
@@ -174,8 +175,8 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	push(items, byId('rebaseOnto'));
 	push(items, byId('mergeIntoBranch'));
 	items.push({ type: 'divider' });
-	push(items, { title: COMMIT_MENU.copyHash, onClick: () => { void copyText(commit.hash); } });
-	push(items, { title: COMMIT_MENU.copyMessage, onClick: () => { void copyText(commit.message ?? ''); } });
+	push(items, { title: COMMIT_MENU.copyHash, onClick: () => { void writeClipboard(commit.hash); } });
+	push(items, { title: COMMIT_MENU.copyMessage, onClick: () => { void writeClipboard(commit.message ?? ''); } });
 	return items;
 }
 

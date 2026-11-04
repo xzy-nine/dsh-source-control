@@ -23,7 +23,7 @@ import { IssueLinkingForm, UserDetailsForm } from './settings-details.ts';
 import type { SettingsTab, UserDetails } from './settings-types.ts';
 import css from '../css/settings.module.css';
 
-export { SETTINGS_KEY, ORDERING, DATE_FORMAT_TYPE, REMOTE_PROTOCOLS, defaultSettings, loadSettings, saveSettings, formatDate } from './settings-model.ts';
+export { ORDERING, DATE_FORMAT_TYPE, REMOTE_PROTOCOLS, defaultSettings, loadSettings, saveSettings, formatDate } from './settings-model.ts';
 export type { UserDetails, SettingsTab } from './settings-types.ts';
 
 /** 页签对应的面板 id。 */

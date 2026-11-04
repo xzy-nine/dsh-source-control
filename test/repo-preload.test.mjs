@@ -101,37 +101,30 @@ test('预加载：补齐按批下发，每批不超过上限', async () => {
 });
 
 test('activeWorkspaceOf：只取主视图当前会话的那一个工作区', () => {
-	const list = {
-		ids: ['s1', 's2', 's3', 's4'],
-		byId: {
-			s1: { cwd: '/work/a' },
-			s2: { cwd: '/work/b', retainedBy: { mainView: 1 } },
-			s3: { cwd: '/work/c' },
-			s4: { cwd: '/work/d', retainedBy: { mainView: 1 }, origin: 'subagent' },
-		},
-	};
+	const infos = [
+		{ id: 's1', cwd: '/work/a' },
+		{ id: 's2', cwd: '/work/b', retain: { retainedBy: { mainView: 1 } } },
+		{ id: 's3', cwd: '/work/c' },
+		{ id: 's4', cwd: '/work/d', retain: { retainedBy: { mainView: 1 } }, origin: 'subagent' },
+	];
 	assert.deepEqual(
-		activeWorkspaceOf(list),
+		activeWorkspaceOf(infos),
 		{ sessionId: 's2', cwd: '/work/b' },
 		'只返回主视图会话的工作区，其它会话的工作区不参与',
 	);
 
+	assert.deepEqual(activeWorkspaceOf([{ id: 's1', cwd: '/work/a' }]), null, '没有正在显示的会话时为空');
 	assert.deepEqual(
-		activeWorkspaceOf({ ids: ['s1'], byId: { s1: { cwd: '/work/a' } } }),
-		null,
-		'没有正在显示的会话时为空',
-	);
-	assert.deepEqual(
-		activeWorkspaceOf({ ids: ['s1'], byId: { s1: { cwd: '/work/a', retainedBy: { mainView: 1 } } }, current: 's1' }),
+		activeWorkspaceOf([{ id: 's1', cwd: '/work/a', retain: { retainedBy: { mainView: 1 } } }]),
 		{ sessionId: 's1', cwd: '/work/a' },
-		'旧宿主的 current 标记同样生效',
+		'被主视图持有的会话即为活跃会话',
 	);
 	assert.deepEqual(
-		activeWorkspaceOf({ ids: ['s1'], byId: { s1: { retainedBy: { mainView: 1 } } } }),
+		activeWorkspaceOf([{ id: 's1', retain: { retainedBy: { mainView: 1 } } }]),
 		null,
 		'缺 cwd 的会话不产生工作区',
 	);
-	assert.deepEqual(activeWorkspaceOf(null), null, '非对象输入返回 null');
+	assert.deepEqual(activeWorkspaceOf(null), null, '缺失输入返回 null');
 });
 
 test('预加载：按发现、纠正、补齐、同步的顺序取数并逐阶段发布', async () => {

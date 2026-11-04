@@ -1,4 +1,4 @@
-import { loadValue, saveValue } from './storage.ts';
+import { getWorkspace, setWorkspace } from './storage.ts';
 import { normalizePath } from '../shared/path-key.ts';
 
 /**
@@ -7,9 +7,6 @@ import { normalizePath } from '../shared/path-key.ts';
  * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。路径归一化见 `shared/path-key.ts`。
  */
 
-/** 存储键前缀。 */
-const SELECTION_KEY = 'dsh-source-control-selection';
-const EXPANDED_KEY = 'dsh-source-control-expanded';
 
 /**
  * 按 id 查找节点。
@@ -168,74 +165,43 @@ export function claimPendingSelection(nodes, pendingId) {
 }
 
 /**
- * 读取持久化的选中节点。
+ * 读取一个工作区持久化的选中节点。
  *
- * @param {string} sessionId - 会话 id。
+ * @param {string|null} cwd - 工作区根路径。
  * @returns {string|null} 节点 id。
  */
-export function loadSelection(sessionId) {
-	return readStored(SELECTION_KEY, sessionId);
+export function loadSelection(cwd) {
+	return getWorkspace(cwd ?? '').selectedRepo;
 }
 
 /**
- * 写入选中的节点 id。
+ * 写入一个工作区选中的节点 id。
  *
- * @param {string} sessionId - 会话 id。
+ * @param {string|null} cwd - 工作区根路径。
  * @param {string|null} id - 节点 id。
  * @returns {void}
  */
-export function saveSelection(sessionId, id) {
-	writeStored(SELECTION_KEY, sessionId, id);
+export function saveSelection(cwd, id) {
+	setWorkspace(cwd ?? '', { selectedRepo: id });
 }
 
 /**
- * 读取持久化的展开集合。
+ * 读取一个工作区持久化的展开集合。
  *
- * @param {string} sessionId - 会话 id。
+ * @param {string|null} cwd - 工作区根路径。
  * @returns {Set<string>} 节点 id 集合。
  */
-export function loadExpanded(sessionId) {
-	const raw = readStored(EXPANDED_KEY, sessionId);
-	if (raw === null || raw === '') return new Set();
-	try {
-		const parsed = JSON.parse(raw);
-		return new Set(Array.isArray(parsed) ? parsed : []);
-	} catch {
-		return new Set();
-	}
+export function loadExpanded(cwd) {
+	return new Set(getWorkspace(cwd ?? '').expandedRepos);
 }
 
 /**
- * 写入展开集合。
+ * 写入一个工作区的展开集合。
  *
- * @param {string} sessionId - 会话 id。
+ * @param {string|null} cwd - 工作区根路径。
  * @param {Set<string>} ids - 节点 id 集合。
  * @returns {void}
  */
-export function saveExpanded(sessionId, ids) {
-	writeStored(EXPANDED_KEY, sessionId, JSON.stringify([...ids]));
-}
-
-/**
- * 读取一个会话维度下的存储值。
- *
- * @param {string} prefix - 键前缀。
- * @param {string} sessionId - 会话 id。
- * @returns {string|null} 存储值。
- */
-function readStored(prefix, sessionId) {
-	const value = loadValue<string | null>(`${prefix}:${sessionId ?? ''}`, null);
-	return typeof value === 'string' ? value : null;
-}
-
-/**
- * 写入一个会话维度下的存储值。
- *
- * @param {string} prefix - 键前缀。
- * @param {string} sessionId - 会话 id。
- * @param {string|null} value - 存储值；null 表示删除。
- * @returns {void}
- */
-function writeStored(prefix, sessionId, value) {
-	saveValue(`${prefix}:${sessionId ?? ''}`, value ?? null);
+export function saveExpanded(cwd, ids) {
+	setWorkspace(cwd ?? '', { expandedRepos: [...ids] });
 }

@@ -30,7 +30,7 @@ const clientEntry = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8'
 parallel('面板重挂载', (t) => {
 	t.test('数据缓存位于宿主内存', () => {
 		for (const store of ['graphs', 'repoInfos', 'snapshots']) {
-			assert.match(hostCache, new RegExp(`const ${store} = new Map`), `宿主应有 ${store} 缓存`);
+			assert.match(hostCache, new RegExp(`const ${store} = new LruMap`), `宿主应有 ${store} 缓存`);
 		}
 		for (const fn of ['readGraph', 'writeGraph', 'readRepoInfo', 'writeRepoInfo', 'readSnapshot', 'writeSnapshot']) {
 			assert.match(hostCache, new RegExp(`export function ${fn}`), `宿主应导出 ${fn}`);
@@ -109,7 +109,7 @@ parallel('面板重挂载', (t) => {
 		 * 判据本身由 test/session-visibility.test.mjs 按行为覆盖：`retainedBy.mainView` 是引用计数，
 		 * 当布尔比较恒为假，会让生成结果永远不上屏。这里只断言传递链。
 		 */
-		assert.match(clientEntry, /isSessionDisplayed\(sessions, sessionId\)/, '应复用会话判定，不另造一套');
+		assert.match(clientEntry, /isSessionDisplayed\(retain\)/, '应复用会话判定，不另造一套');
 		assert.match(clientEntry, /tab\?\.visible === true/, '应判定侧栏页是否可见');
 		assert.match(clientEntry, /onScreen,/, '应把上屏条件传给面板');
 		assert.match(panel, /onScreen = true/, '面板应接收上屏条件');

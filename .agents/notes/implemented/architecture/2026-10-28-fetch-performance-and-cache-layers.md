@@ -43,10 +43,10 @@ Status: implemented
 - 路由的 `hooksState` 先读该缓存，未命中才跑 `git config --get core.hooksPath`；钩子文件是否存在仍由 `detectHooks` 现读。
 - 不新增「仓库行领先/落后」缓存：客户端按 `syncedIds` 只取一次。
 
-### 并发上限 `child-process.ts` + `repo-discovery.ts`
+### 并发上限 `limiter.ts` + `repo-sync.ts`
 
-- `child-process.ts` 的 `createLimiter(max)`：队列加在跑计数，任务成功或失败都归还额度。
-- `repo-discovery.ts` 的 `loadReposSync` 走模块级 `createLimiter(SYNC_CONCURRENCY)`，常量取 5；面板的单仓库命令不入队，保持「宿主不串行化命令」。
+- `limiter.ts` 的 `createLimiter(max)`：队列加在跑计数，任务成功或失败都归还额度。
+- `repo-sync.ts` 的 `loadReposSync` 走模块级 `createLimiter(SYNC_CONCURRENCY)`，常量取 5；面板的单仓库命令不入队，保持「宿主不串行化命令」。
 - 注释写明作用域：只有仓库树的批量领先/落后取数限流。
 
 ### 客户端取数契约与去重

@@ -7,7 +7,7 @@
  */
 import { basename, join } from 'node:path';
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { collectProcess } from './child-process.js';
+import { runCollect } from './host-runtime.js';
 import { logRoot } from './logger.js';
 
 /** 打包结果。 */
@@ -43,7 +43,7 @@ export async function archiveLog(name: string, text: string): Promise<LogArchive
 	const logPath = join(dir, logName);
 	writeFileSync(logPath, text, 'utf8');
 	const zipPath = join(dir, logName.replace(/\.log$/, '') + '.zip');
-	const result = await collectProcess({
+	const result = await runCollect({
 		command: 'tar',
 		// -a 按扩展名选压缩格式；-C 指定源目录、只打一个文件，避免把整目录打进去。
 		args: ['-a', '-c', '-f', zipPath, '-C', dir, logName],

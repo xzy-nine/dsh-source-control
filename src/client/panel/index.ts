@@ -10,19 +10,19 @@ import {
 	discardPaths, fetchRepo, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
 } from '../api/index.ts';
-import { showCheckbox, showText } from '../ui/dialog.ts';
+import { showCheckbox, showError, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { reportError } from './errors.ts';
 import { showToast } from './toast.ts';
 import {
-	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterKeyOf, filterSummaryOf,
-	legacyFilterOf, readStoredFilter, REF_FILTER_KEY, revalidatedFilter, sortRefs, writeStoredFilter,
+	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterSummaryOf,
+	readStoredFilter, revalidatedFilter, sortRefs, writeStoredFilter,
 } from './refs.ts';
 import type { AutoFilterContext, RefFilter } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import {
-	loadValue, migrateLegacyDrafts, primeStorage, saveValue,
+	getRefFilters, migrateLegacyDrafts, primeStorage, setRefFilters,
 	storageReady as storagePrimed,
 } from './storage.ts';
 import { logClient, migrateLegacyState } from '../api/index.ts';
@@ -31,7 +31,8 @@ import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
 import { discardNoticeOf } from './discard-notice.ts';
-import { backgroundFlagsOf, lastRefreshText as relativeRefreshText, refreshNoticeSince } from './refresh-status.ts';
+import { backgroundFlagsOf, refreshNoticeSince } from './refresh-status.ts';
+import { lastRefreshText as relativeRefreshText } from './refresh-time.ts';
 import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
@@ -158,7 +159,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
 		selectNode, toggleNode, setSelectedId, rescan, refreshTree,
-	} = useRepos({ cwd, sessionId });
+	} = useRepos({ cwd });
 
 	/*
 	 * 取数目标：选中节点优先，其次**当且仅当工作区根本身是仓库**时用它。
@@ -201,7 +202,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const patchFilter = React.useCallback((next: RefFilter) => {
 		setRefFilter(next);
 		if (workingTreePath === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(loadValue(REF_FILTER_KEY, {}), workingTreePath, next));
+		setRefFilters(writeStoredFilter(getRefFilters(), workingTreePath, next));
 	}, [workingTreePath]);
 
 	/*
@@ -212,23 +213,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 */
 	React.useEffect(() => {
 		if (!storageReady || workingTreePath === null) return;
-		const registry = loadValue<Record<string, unknown>>(REF_FILTER_KEY, {});
-		const key = filterKeyOf(workingTreePath);
-		if (registry[key] !== undefined) {
-			setRefFilter(readStoredFilter(registry, workingTreePath));
-			return;
-		}
-		/*
-		 * 旧版本把筛选按仓库存成独立键（`<前缀>:<仓库路径>`）：首次进入时折合到新表并清掉旧键，
-		 * 否则升级后各仓库的筛选都会回到默认自动。
-		 */
-		const legacyKey = `${REF_FILTER_KEY}:${workingTreePath}`;
-		const legacyValue = loadValue<unknown>(legacyKey, null);
-		const legacy = legacyFilterOf(legacyValue);
-		setRefFilter(legacy ?? DEFAULT_REF_FILTER);
-		if (legacy === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(registry, workingTreePath, legacy));
-		saveValue(legacyKey, null);
+		setRefFilter(readStoredFilter(getRefFilters(), workingTreePath));
 	}, [storageReady, workingTreePath]);
 
 	/*
@@ -279,7 +264,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
 		graphTranslated, graphTranslating,
 		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
-	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast, cleanupSeconds: settings.cleanupSeconds });
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: (message: string) => { void showError(message); }, cleanupSeconds: settings.cleanupSeconds });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -452,7 +437,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const composer = useCommitComposer({
 		workingTreePath, settings, commits: state.commits, merging: state.merging,
 		entries: state.entries, translateReady, commitBusy: busyFlags.commit, onScreen, run,
-		notify: (message: string) => { showToast(message); return Promise.resolve(); },
+		notify: (message: string) => { void showError(message); return Promise.resolve(); },
 	});
 
 	/**
@@ -478,9 +463,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, setState]);
 
-	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
+	/** 失败提示：说明当前条件下操作无法进行的原因，或报告未完成的一次性结果。 */
 	const notify = React.useCallback((message: string): Promise<void> => {
-		showToast(message);
+		void showError(message);
 		return Promise.resolve();
 	}, []);
 
@@ -635,7 +620,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		};
 		const notice = refreshNoticeSince(noticeBaselineRef.current, current);
 		noticeBaselineRef.current = current;
-		if (notice !== '') showToast(notice, { tone: 'info' });
+		if (notice !== '') showToast(notice);
 	}, [state.lastRefreshAt, state.phase, state.entries, state.nextSkip, graphScope]);
 
 
@@ -749,10 +734,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return () => { cancelled.current = true; };
 	}, [workingTreePath, state.head, refFilter.mode, filterOpen]);
 
-	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条；同时记一条错误日志。
+	// 错误以弹窗呈现：状态变化即弹一条；同时记一条错误日志。
 	React.useEffect(() => {
 		if (state.error === null) return;
-		showToast(state.error);
+		void showError(state.error);
 		logClient('E', 'panel', `面板操作失败${workingTreePath === null ? '' : `，仓库 ${workingTreePath}`}：${state.error}`);
 	}, [state.error, workingTreePath]);
 

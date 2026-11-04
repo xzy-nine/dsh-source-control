@@ -21,6 +21,14 @@ const GATE_RETRY_MS = 1000;
  */
 const lastFetchAt = new Map<string, number>();
 
+/**
+ * 各仓库当前的抓取间隔毫秒数。
+ *
+ * 模块级而不是实例内：面板重新挂载时 effect 重建，局部变量会归零、退避级数丢失。
+ * 键同 {@link normalizePath}。
+ */
+const fetchPeriodMs = new Map<string, number>();
+
 /** 定时抓取的入参。 */
 export interface UseAutoFetchOptions {
 	/** 当前工作树路径；未选中时为 null。 */
@@ -84,8 +92,8 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 
 		const key = normalizePath(workingTreePath);
 		const baseMs = autoFetchPeriodMs(periodSeconds);
-		/** 下一轮前的等待毫秒数；无新引用时逐轮后延。 */
-		let periodMs = baseMs;
+		/** 下一轮前的等待毫秒数；无新引用时逐轮后延。从模块级取上次的级数，挂载重置不归零。 */
+		let periodMs = fetchPeriodMs.get(key) ?? baseMs;
 
 		void (async () => {
 			while (!isCancelled()) {
@@ -113,6 +121,7 @@ export function useAutoFetch({ workingTreePath, enabled, periodSeconds, busyRef,
 				// 只有引用确实变化才回调：失败或远端没有新提交时重载拿到的还是旧数据。
 				if (changed) onFetchedRef.current?.(workingTreePath);
 				periodMs = nextAutoFetchPeriodMs(periodMs, baseMs, changed);
+				fetchPeriodMs.set(key, periodMs);
 				// 周期下限另有兜底：设置值异常时也不会退化成密集抓取。
 				await sleep(Math.max(AUTO_REFRESH_COOLDOWN_MS, periodMs));
 			}

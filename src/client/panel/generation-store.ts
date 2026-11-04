@@ -5,8 +5,12 @@
  * 实例级状态随之丢失，生成中的文本就会落到下一个活跃仓库的提交框里。按仓库键登记后，
  * 生成只写它自己那一份，上屏时机由调用方按「当前仓库 + 侧栏页可见」判定。
  *
+ * 每份登记是一个快照 store，订阅与发布由 store 承担；登记另记订阅者数，空闲（不在生成）且
+ * 无人订阅时随最后一个订阅者退订一并删除。
+ *
  * 不中断生成：切换仓库只是让结果暂存，请求自然跑完。
  */
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store';
 import { normalizePath } from '../shared/path-key.ts';
 
 /** 一份生成任务的状态。 */
@@ -21,16 +25,36 @@ export interface GenerationState {
 	readonly stats: unknown;
 }
 
-/** 一份登记：状态与变更通知。 */
-interface Entry extends GenerationState {
-	/** 订阅者。 */
-	readonly listeners: Set<() => void>;
+/** 登记状态的可写形状：store 的草稿写在这上面。 */
+type GenerationDraft = { -readonly [Key in keyof GenerationState]: GenerationState[Key] };
+
+/** 一份登记：状态快照与订阅者数。 */
+interface Entry {
+	/** 该仓库的状态快照。 */
+	readonly store: SnapshotStore<GenerationDraft>;
+	/** 当前订阅者数；归零且空闲时删除这份登记。 */
+	subscribers: number;
 }
 
 const EMPTY: GenerationState = { text: '', busy: false, warning: '', stats: null };
 
 /** 按仓库键登记的任务。 */
 const entries = new Map<string, Entry>();
+
+/**
+ * 取一个仓库键的登记，没有时创建。
+ *
+ * @param key - 归一化后的仓库键。
+ * @returns 该仓库的登记。
+ */
+function entryOf(key: string): Entry {
+	let entry = entries.get(key);
+	if (entry === undefined) {
+		entry = { store: createSnapshotStore<GenerationDraft>(EMPTY), subscribers: 0 };
+		entries.set(key, entry);
+	}
+	return entry;
+}
 
 /**
  * 取一个仓库键的生成状态。
@@ -40,7 +64,7 @@ const entries = new Map<string, Entry>();
  */
 export function generationStateOf(repo: string | null): GenerationState {
 	if (repo === null) return EMPTY;
-	return entries.get(normalizePath(repo)) ?? EMPTY;
+	return entries.get(normalizePath(repo))?.store.getSnapshot() ?? EMPTY;
 }
 
 /**
@@ -52,34 +76,30 @@ export function generationStateOf(repo: string | null): GenerationState {
  */
 export function subscribeGeneration(repo: string, listener: () => void): () => void {
 	const key = normalizePath(repo);
-	let entry = entries.get(key);
-	if (entry === undefined) {
-		entry = { ...EMPTY, listeners: new Set() };
-		entries.set(key, entry);
-	}
-	entry.listeners.add(listener);
+	const entry = entryOf(key);
+	entry.subscribers += 1;
+	const unsubscribe = entry.store.subscribe(listener);
+	/** 取消订阅只结算一次：重复调用不再扣减订阅者数。 */
+	let released = false;
 	return () => {
-		const current = entries.get(key);
-		if (current === undefined) return;
-		current.listeners.delete(listener);
+		if (released) return;
+		released = true;
+		unsubscribe();
+		entry.subscribers -= 1;
 		// 已结束且无人订阅：删掉，避免按仓库无限累积。
-		if (current.listeners.size === 0 && !current.busy) entries.delete(key);
+		if (entry.subscribers === 0 && !entry.store.getSnapshot().busy && entries.get(key) === entry) entries.delete(key);
 	};
 }
 
 /**
- * 就地更新一份登记并通知订阅者。
+ * 写一份登记的状态。
  *
  * @param repo - 仓库路径。
- * @param patch - 要改的字段。
+ * @param mutate - 在草稿上写入要改的字段。
  * @returns 无。
  */
-function patch(repo: string, patchOf: Partial<GenerationState>): void {
-	const key = normalizePath(repo);
-	const current = entries.get(key);
-	const next: Entry = { ...(current ?? { ...EMPTY, listeners: new Set() }), ...patchOf, listeners: current?.listeners ?? new Set() };
-	entries.set(key, next);
-	for (const listener of [...next.listeners]) listener();
+function patch(repo: string, mutate: (draft: GenerationDraft) => void): void {
+	entryOf(normalizePath(repo)).store.update(mutate);
 }
 
 /**
@@ -89,7 +109,12 @@ function patch(repo: string, patchOf: Partial<GenerationState>): void {
  * @returns 无。
  */
 export function beginGeneration(repo: string): void {
-	patch(repo, { text: '', busy: true, warning: '', stats: null });
+	patch(repo, (draft) => {
+		draft.text = '';
+		draft.busy = true;
+		draft.warning = '';
+		draft.stats = null;
+	});
 }
 
 /**
@@ -100,8 +125,7 @@ export function beginGeneration(repo: string): void {
  * @returns 无。
  */
 export function appendGeneration(repo: string, chunk: string): void {
-	const current = generationStateOf(repo);
-	patch(repo, { text: current.text + chunk });
+	patch(repo, (draft) => { draft.text += chunk; });
 }
 
 /**
@@ -112,7 +136,7 @@ export function appendGeneration(repo: string, chunk: string): void {
  * @returns 无。
  */
 export function warnGeneration(repo: string, warning: string): void {
-	patch(repo, { warning });
+	patch(repo, (draft) => { draft.warning = warning; });
 }
 
 /**
@@ -123,7 +147,7 @@ export function warnGeneration(repo: string, warning: string): void {
  * @returns 无。
  */
 export function noteGenerationStats(repo: string, stats: unknown): void {
-	patch(repo, { stats });
+	patch(repo, (draft) => { draft.stats = stats; });
 }
 
 /**
@@ -133,7 +157,7 @@ export function noteGenerationStats(repo: string, stats: unknown): void {
  * @returns 无。
  */
 export function endGeneration(repo: string): void {
-	patch(repo, { busy: false });
+	patch(repo, (draft) => { draft.busy = false; });
 }
 
 /**
@@ -147,7 +171,10 @@ export function endGeneration(repo: string): void {
 export function takeGenerationText(repo: string): string | null {
 	const current = generationStateOf(repo);
 	if (current.busy || current.text === '') return null;
-	patch(repo, { text: '', warning: '' });
+	patch(repo, (draft) => {
+		draft.text = '';
+		draft.warning = '';
+	});
 	return current.text;
 }
 
@@ -159,9 +186,11 @@ export function takeGenerationText(repo: string): string | null {
  */
 export function clearGeneration(repo: string): void {
 	const key = normalizePath(repo);
-	const current = entries.get(key);
+	const entry = entries.get(key);
+	if (entry === undefined) return;
 	entries.delete(key);
-	if (current !== undefined) for (const listener of [...current.listeners]) listener();
+	// 订阅者仍挂在这份快照上：发布一份空状态，让它们看到清空。
+	entry.store.set({ ...EMPTY });
 }
 
 /**
