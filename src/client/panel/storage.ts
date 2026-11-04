@@ -5,8 +5,12 @@
  * - 宿主持久化：数据落在宿主（`$DSH_HOME/dsh-source-control/`），按类型分区。本模块只在首屏预取
  *   一次快照，之后读走内存缓存；写更新缓存并异步落盘。类型化读写用 getSettings/setSettings、
  *   getLayout/setLayout、getRefFilters/setRefFilters、getWorkspace/setWorkspace。
- * - 会话级：数据落在浏览器 sessionStorage，直读直写，不经宿主也不进内存缓存。读写用
+ * - 会话级：提交草稿落在浏览器 sessionStorage，直读直写，不经宿主也不进内存缓存。读写用
  *   {@link loadSessionValue} / {@link saveSessionValue} / {@link clearSessionValue}。
+ *
+ * 会话级存储是「浏览器不持久化」这条规则**唯一**的例外：草稿随标签页消失正是期望行为，搬进
+ * 宿主会让关掉的标签页在下次启动时冒出半截提交信息。除本模块与 `api/state.ts` 的旧键迁移外，
+ * 其它模块不直接访问浏览器存储。
  *
  * 预取是异步的，而 `useState(() => get…())` 在挂载时同步执行，因此首次渲染读到的是回退值，
  * 且 useState 的初始值不会随预取完成而重算。调用方须在预取完成后把状态重新按真实值初始化。

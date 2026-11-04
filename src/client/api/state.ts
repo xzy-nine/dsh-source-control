@@ -154,7 +154,13 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 	await callApi(cwd, { command: 'writeRepoLocations', repos });
 }
 
-/** 旧版浏览器键前缀，需搬到宿主。 */
+/**
+ * 旧版浏览器键前缀，需搬到宿主。
+ *
+ * 这两个常量与下面的迁移循环是本仓库**唯一**允许直接访问 `localStorage` / `sessionStorage`
+ * 的位置：旧版把数据存在浏览器里，迁移必须先把它们读出来。迁移完成后浏览器不再是数据源，
+ * 新数据一律走宿主持久化（见 `source-control/state-store.ts`）。
+ */
 const LEGACY_PREFIX = 'dsh-source-control-';
 const LEGACY_MIGRATED_KEY = 'dsh-source-control-migrated';
 
@@ -165,6 +171,8 @@ const LEGACY_MIGRATED_KEY = 'dsh-source-control-migrated';
  * 客户端只负责收集旧键原样发给宿主，分类与合并由宿主 `mergeLegacyEntries` 统一完成——浏览器不
  * 持久化，也不承担格式转换。提交信息草稿是会话级数据，由 `panel/storage.ts` 的
  * migrateLegacyDrafts 转入会话存储，不进宿主。搬完清掉浏览器旧键即幂等。
+ *
+ * 浏览器存储只在这一个函数里被读取，且只为搬迁旧键；迁移完成后不再有其它访问点。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。

@@ -149,6 +149,10 @@ export interface Settings {
 	cleanupSeconds: number;
 	onRepoLoadScrollToHead: boolean;
 	showAvatars: boolean;
+	/** 差异页默认左右并排；单侧改动时仍退回单列。 */
+	diffSplit: boolean;
+	/** 差异页默认自动换行。 */
+	diffWrap: boolean;
 	graphColours: readonly string[] | null;
 	aiCommitProvider: string;
 	aiCommitModel: string;

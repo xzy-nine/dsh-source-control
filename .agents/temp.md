@@ -2,10 +2,7 @@
 
 | # | 位置 | 现状（自行实现） | 应使用 | 依据 | 优先级 | 优势 | 劣势与风险 |
 |---|---|---|---|---|---|---|---|
-| 4 | [logger.ts:55](src/source-control/logger.ts#L55)（全文） | 自建 logcat 格式、级别门控、缓冲合并写、保留期与体积淘汰 | `ctx.logger(name)`（Cordis logger 服务，exporter 由宿主安装） | [context.zh.md:133](E:/GitHubCode/02DSH/deepseek-harness/docs/cordis-api/context.zh.md#L133) | P1 | 级别与 exporter 由宿主统一，去掉自建格式与缓冲 | 反馈功能的日志打包读的是本插件按启动分文件、有保留期与脱敏的日志；改后文件位置与格式不归本插件，feedback / log-archive / log-retention 整条链路要重做。宜只接诊断输出，文件日志保留 |
 | 5 | [storage.ts:8](src/client/panel/storage.ts#L8)、[:244](src/client/panel/storage.ts#L244) | 浏览器 `sessionStorage` 存提交草稿（`ggg-commit-msg:*`），不经宿主 | 宿主持久化（同 storage domain 的草稿表，或会话级持久化 seam） | [typed-state-document.md](.agents/notes/implemented/architecture/2026-11-03-workspace-partitioned-state.md)「浏览器不持久化」 | P1 | 换浏览器与清缓存不丢，与「浏览器不持久化」一致 | 草稿是会话级易失数据，搬宿主后跨会话可见需新的归属规则；每次输入要防抖往返，现挂载时同步读；随标签页消失可能正是期望行为 |
-| 6 | [diff-view.ts:20](src/client/diff/diff-view.ts#L20) | 模块级 `Map` 存 split/wrap，刷新即丢 | `panel/storage.ts` 同一出口（宿主持久化） | 同上 | P1 | 刷新后保留 split/wrap | 纯视图偏好，宿主往返成本高于收益；更合适的落点是并入设置项，与其它视图设置同源 |
-| 7 | [state.ts:158](src/client/api/state.ts#L158) | 直接遍历 `localStorage` / `sessionStorage` 旧键 | 迁移例外可留，但应作为唯一豁免点显式标注 | 同上 | P2 | — | 这是唯一访问浏览器存储的迁移例外；在代码处标注豁免即可 |
 | 8 | [settings.ts:80](src/client/panel/settings.ts#L80) + [settings-model.ts](src/client/panel/settings-model.ts) | 自绘设置页与设置 JSON 形状 | `ctx.settings` 的 Config schema 表单 + `SettingsForm` 原语 | [adding-a-settings-card.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/cookbook/adding-a-settings-card.zh.md)、[settings.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/settings.zh.md) | P1（仅表单原语） | 原生设置卡片、revision 冲突保护、profile patch 持久化 | 本插件设置是按工作区的运行时开关，`ctx.settings` 投影的是插件 Config（profile 级、schemastery），语义不同；搬过去会变成全局生效并写 profile patch。可取部分仅是用 `SettingsForm` 原语渲染，数据仍留本插件 |
 
 ## 二、宿主侧服务与能力 seam
@@ -13,14 +10,12 @@
 | # | 位置 | 现状（自行实现） | 应使用 | 依据 | 优先级 | 优势 | 劣势与风险 |
 |---|---|---|---|---|---|---|---|
 | 9 | [routes.ts:340](src/source-control/routes.ts#L340)、[api/http.ts:17](src/source-control/api/http.ts#L17)、[api/events.ts:81](src/source-control/api/events.ts#L81)、[client/api/http.ts](src/client/api/http.ts)、[client/api/stream.ts](src/client/api/stream.ts) | 自建 `/dsh-source-control/gg/api` 命令分派、手写 JSON 请求体、自写 SSE 事件流与客户端 fetch 传输 | Typert Remote（`@Remote` + `ctx.remote.<ns>`）+ API Gateway 的 Remote stream | [adding-a-remote-api.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/cookbook/adding-a-remote-api.zh.md)、[web-client.zh.md:28-34](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/web-client.zh.md#L28-L34) | P2 | 生成式类型契约、取消、`RemoteError` 码表、logical stream 与 generation 重连、鉴权与 trust 归 connection，去掉手写 JSON、SSE 与 400 | 改动面等于整个面板：约 40 条命令、并发合并、命令耗时汇总、SSE 广播与 400 语义都要重新表达；需 TypertRemoteService + 两个生成入口 + 构建期生成器（本仓库现为 tsc + esbuild）；新增 typert-protocol peer 依赖。建议先在新命令上试点 |
-| 14 | [ssh-status.ts:211](src/source-control/ssh-status.ts#L211) | 自写 ssh 探测（`BatchMode`、`~/.ssh` 私钥扫描、认证判定） | `ctx.ssh`（`SshConnection`） | [ssh.zh.md:117](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/ssh.zh.md#L117)（宿主装载该包时） | P3 | 官方 SSH 连接归属与 helper runtime | `ssh-status` 是诊断（是否安装、私钥列表、认证结果），须在未装载 ssh 包时可用；`ctx.ssh` 是 POSIX 连接 owner，不覆盖 Windows 客户端探测 |
 
 ## 三、客户端服务与 UI 原语
 
 | # | 位置 | 现状（自行实现） | 应使用 | 依据 | 优先级 | 优势 | 劣势与风险 |
 |---|---|---|---|---|---|---|---|
 | 18 | [context-menu.ts:209](src/client/ui/context-menu.ts#L209) | 自建右键浮层（`createRoot` + 自定位 + 二级菜单翻向补丁） | `ctx.contextMenus`（`open` / `register` / `notify`） | `packages/client/ui-context-menu`（提交 `411f157983`） | **暂缓** | 原生定位、键盘、子菜单与视口夹取，自动 dismiss 并与 modal 层协作，删掉自建 createRoot 与翻向补丁 | 暂缓原因：该包 `dsh-v0.2.2-alpha.3` 才发布——`dsh-v0.2.1-rc.2`、`dsh-v0.2.1-rc.5`、`dsh-v0.2.2-alpha.2` 三个 tag 都没有 `packages/client/ui-context-menu`，本机 app.asar（0.2.1-rc.5）里 `contextMenus` / `useContextMenu` 零命中；`docs/upgrade-guide/v0.2.1-rc.2/context-menu-services/` 只说明 `ctx.menus → ctx.contextMenus` 改名，不代表该版本有包。恢复条件：engines 下限抬到 `>=0.2.2-alpha.3`，届时本机 0.2.1-rc.5 会因区间不符拒绝加载本插件。另：菜单项现由 JSON 元数据加闭包命令式构造，要改成 target 与 contribution 注册模型，10 处调用点全部重写，`hint` 在 `MenuActionView` 无对应字段会丢 |
-| 26 | [client/api/log.ts:42](src/client/api/log.ts#L42) | 自建队列 + `logEvent` 命令批量上报 | `ctx.logger`（客户端 Context 同样提供） | 同 #4 | P2 | 去掉队列与 `logEvent` 命令 | 浏览器侧 logger 默认只到 console，无 exporter 即等于丢日志，这正是 logEvent 存在的原因；与 #4 一并判断 |
 | 27 | [client/index.ts:520](src/client/index.ts#L520) 与 [repo-preload.ts](src/client/panel/repo-preload.ts) | 自取 `sessions` 快照推工作区 | `ctx.workspaces`（ClientWorkspaceModel） | [web-client.zh.md:52](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/web-client.zh.md#L52) | P2 | 官方工作区模型（归档、置顶、顺序） | 本插件要的是当前会话的工作区根与仓库级状态，前者来自 sessions 而非 workspace 列表，可替代范围有限 |
 
 ## 四、判定为可保留（不列入改造）
@@ -31,6 +26,10 @@
 - `native-open.ts`、`terminal-run.ts`、`file-diff.tsx` 的 `useCodeHighlighter`：已在用宿主能力。
 - `worktree-remove.ts` 自跑 `git worktree remove`：`ctx.worktrees` 只创建、且是未进 base 与 web-app 组合的 experimental 包，为一条 remove 引入它不划算。
 - 插件自身持久化与日志（`pluginHome()` 下的 `state.json`、日志、反馈 outbox）：这些路径在 `writableRoots` 之外，`workspace-write` 下走 `ctx.fs` 会被 `FS_SANDBOX_DENIED` 拒绝，因此永久保留 `node:fs`。
+- 测试进程用 `test/host-fixture.mjs` 以 Node 原生实现填满同一份能力面：生产代码没有原生回退，测试进程也没有宿主，替身只服务测试。
+- `logger.ts` 自建 logcat 格式、级别门控、保留期与体积淘汰：`ctx.logger`（[logger.ts](E:/GitHubCode/02DSH/deepseek-harness/vendor/cordis/src/logger.ts)）只把结构化 `Message` 分发给注册的 `Exporter`，自身不写文件；DSH base bundle 里没有文件 exporter，两个消费方（`session-log-deepseek`、`session-telemetry-otel`）以 `sessionId` 为键并经 OTLP 上报远端 collector，只在用户显式提交反馈后释放。本插件要的是「按启动分文件、有保留期、可被反馈页读取并脱敏打包」，换成它会让 `recentLogFiles` / `currentLogFile` / `readLogForAttach` / outbox 整条链路失去数据源。
+- `client/api/log.ts` 的队列 + `logEvent` 命令批量上报：浏览器侧 `ctx.logger` 没有 exporter 即只到 console，等于丢日志；它存在的目的正是把客户端日志送回宿主，写进上面那个按启动分文件的日志。与 `logger.ts` 同一条链路，一并保留。
+- `ssh-status.ts` 自写 ssh 探测（`BatchMode`、`~/.ssh` 私钥扫描、认证判定）：`ctx.ssh`（[ssh.zh.md](E:/GitHubCode/02DSH/deepseek-harness/docs/subsystems/ssh.zh.md)）是「部署方持有远端执行世界」的连接 owner，配置要求 host、远端 helper 路径与 SHA-256，把 `ctx.fs` / `ctx.subprocess` 整体搬到远端；本插件要的是**本机诊断**（装没装、有哪些私钥、能否认证 github.com），未装载 ssh 包时也要能给出「未安装」。两者方向与前提都不同，`ctx.ssh` 不覆盖 Windows 客户端探测。另：base bundle 与 desktop profile 都没有安装该包。
 
 ## 五、已完成（本轮已落地，从表中移除）
 
@@ -47,9 +46,11 @@
 | 16 | 会话工作区根 | `dsh-session-cwd.ts` 不再读 `session_projcache` 文件布局，改从 `ctx.sessionPersistence.list()` 的 `snapshot.header` 取 `id → cwd`；解析器仍可注入，服务缺失或 `list` 抛错时会话条目丢弃、不抛错 |
 | 24 | 会话可见性判据 | `isSessionDisplayed(retain)` 与 `activeWorkspaceOf(infos)` 改为只读官方 `SessionRetainInfo` 与显式传入的会话信息；组件路径用席位标准 hook `useSessionRetainInfo`，模块级预加载用 `ctx.sessions.list` + `ctx.sessions.retainInfo(id)` |
 | 25 | generation-store | 模块级登记表改由 `@deepseek-ai/dsh-client-store` 的 `createSnapshotStore` 承载（immer 草稿 + 订阅发布），按仓库键的归属语义与「空闲且无人订阅即删」保留 |
-| 10 | 子进程 seam | 新增 `host-runtime.ts` 的 `runCollect`：装了 `ctx.subprocess` 走受管范围（整树终止、显式 stdio、`graceMs`、`DSH_*` 清理），未装载回退原生 spawn；`git-exec.ts`、`gh-cli.ts`、`feedback.ts`、`log-archive.ts`、`ssh-status.ts` 五处调用点统一改走它 |
-| 11 | 进程树终止 | 自写 `taskkill /t /f` 从 `git-exec.ts` 移到 `host-runtime.ts` 的 `killTree`，只服务原生回退路径；seam 路径用 `SubprocessHandle.terminate()` |
-| 12 | 目录监视 | `repo-watcher.ts` 的 `node:fs` `watch` 改走 `watchDirAt`：原生路径保留文件名与递归，`ctx.fs.watch` 路径名字与类型为 null 并降级为单层，调用方按「名字未知」核对结构状态 |
+| 10 | 子进程 seam | 新增 `host-runtime.ts` 的 `runCollect`：走 `ctx.subprocess` 受管范围（整树终止、显式 stdio、`graceMs`、`DSH_*` 清理）；`git-exec.ts`、`gh-cli.ts`、`feedback.ts`、`log-archive.ts`、`ssh-status.ts` 五处调用点统一改走它。原生回退与 `child-process.ts` 已删除，缺服务即装载失败 |
+| 11 | 进程树终止 | 自写 `taskkill /t /f` 整段删除，终止一律按 `SubprocessHandle.terminate()` 的受管范围下发 |
+| 12 | 目录监视 | `repo-watcher.ts` 的 `node:fs` `watch` 改走 `watchDirAt`。`ctx.fs.watch` 只观察直接子项、不给名字与类型，因此工作区级监视补一层：给每个直接子目录各挂句柄，并按 `PROBE_DEPTH` 枚举仓库集合快照，未变即不通知 |
 | 13 | 文件读取 | `repo-node.ts`、`repo-enrich.ts`、`worktree-branches.ts`、`repo-facts.ts`、`hooks.ts`、`repo-watcher.ts` 的 stat/readFile/readdir 改走 `probePathAt` / `readTextAt` / `listDirAt` / `statAt`；新鲜度守卫改用 seam 的 `version` 令牌 |
+| 6 | 差异视图偏好 | `diff-view.ts` 改为纯映射（`diffViewOf` / `withDiffView`），选择并入 `Settings` 的 `diffSplit` / `diffWrap`，与其它视图开关同源并随宿主持久化；新增 `diff/use-diff-view.ts` 的 `useDiffView(cwd)` 负责预取后回填与写回 |
+| 7 | 浏览器存储豁免标注 | `api/state.ts` 的旧键迁移与 `panel/storage.ts` 的会话级草稿各自标注为「浏览器不持久化」的唯一例外，并说明草稿随标签页消失正是期望行为 |
 | 17 | 缓存淘汰收口 | 新增 `src/shared/lru-map.ts`（`LruMap` + `CacheLimit` + `TRIM_RATIO`），宿主 `host-cache.ts` / `repo-facts.ts` 与客户端 `client/shared/cache.ts` 共用同一份容量与淘汰顺序；`putCached` / `getCached` 去掉 `limit` 形参，TTL 包装仍留 host-cache |
 | 21 | 弹窗挂载 | `runDialog` 改为投 `OverlayHost` 的 FIFO 队列（不再是每次一个 React 根）；新增 `showError(message)` 错误弹窗，正文可滚动可整段复制，错误类提示全部由 toast 改为弹窗 |

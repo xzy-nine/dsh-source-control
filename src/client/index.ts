@@ -16,7 +16,7 @@ import {
 import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffStats } from './diff/diff-stats.ts';
-import { readDiffView, writeDiffView } from './diff/diff-view.ts';
+import { useDiffView } from './diff/use-diff-view.ts';
 import {
 	diffFileAddress, gitDiffAddress, gitDiffRequest, gitDiffTitle, parseGitDiffAddress, type GitDiffScope,
 } from './diff/resource-path.ts';
@@ -221,10 +221,10 @@ function GitDiffTab(props) {
 	const [menuOpen, setMenuOpen] = React.useState(false);
 	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
-	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
-	const [wrap, setWrap] = React.useState(() => readDiffView(address).wrap);
-	// 默认左右并排：FileDiff 的 split 模式（单侧改动时它会自动退回单列）。
-	const [split, setSplit] = React.useState(() => readDiffView(address).split);
+	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
+	const diffView = useDiffView(typeof cwd === 'string' ? cwd : null);
+	const wrap = diffView.choice.wrap;
+	const split = diffView.choice.split;
 	/** 在同一页里切到另一个文件：只改导航参数，页身份不变。 */
 	const switchFile = React.useCallback((path: string) => {
 		if (tabActions === undefined || path === currentPath) return;
@@ -319,12 +319,7 @@ function GitDiffTab(props) {
 					children: React.createElement('button', {
 						type: 'button', className: css.tool, 'aria-pressed': split, 'aria-label': '左右对比',
 						'data-review-tool': 'split',
-						onClick: () => {
-							setSplit((value) => {
-								writeDiffView(address, { split: !value, wrap: readDiffView(address).wrap });
-								return !value;
-							});
-						},
+						onClick: () => { diffView.patch({ split: !split }); },
 					}, React.createElement(IconCompareSplitOutlineRegular, { className: css.compareIcon })),
 				}),
 				React.createElement(Tooltip, {
@@ -332,12 +327,7 @@ function GitDiffTab(props) {
 					children: React.createElement('button', {
 						type: 'button', className: css.tool, 'aria-pressed': wrap, 'aria-label': '自动换行',
 						'data-review-tool': 'wrap',
-						onClick: () => {
-							setWrap((value) => {
-								writeDiffView(address, { split: readDiffView(address).split, wrap: !value });
-								return !value;
-							});
-						},
+						onClick: () => { diffView.patch({ wrap: !wrap }); },
 					}, wrap ? React.createElement(IconNowrapFillRegular) : React.createElement(IconWrapFillRegular)),
 				}),
 				React.createElement(Tooltip, {

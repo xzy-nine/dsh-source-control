@@ -58,6 +58,8 @@ export function defaultSettings(): Settings {
 		cleanupSeconds: CLEANUP_PERIOD_SECONDS_DEFAULT,
 		onRepoLoadScrollToHead: false,
 		showAvatars: true,
+		diffSplit: true,
+		diffWrap: true,
 		graphColours: null,
 		aiCommitProvider: '',
 		aiCommitModel: '',

@@ -213,9 +213,9 @@ parallel('客户端结构与产物契约', (t) => {
 	t.test('差异页默认并排且可切换', () => {
 		// 复制来的 FileDiff 支持统一 / 并排两种布局；差异页应默认并排并给出切换。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /useState\(true\)/, '默认应为并排');
 		assert.match(source, /FileDiff, \{ state, split, wrap, retry: load \}/, '应把 split 传给 FileDiff');
-		assert.match(source, /setSplit/, '应能切换布局');
+		// 切换走设置，不再用组件内的 useState：刷新与换浏览器都要保留。
+		assert.match(source, /diffView\.patch\(\{ split: !split \}\)/, '应能切换布局');
 		const css = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
 		assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 	});
@@ -413,14 +413,15 @@ parallel('客户端结构与产物契约', (t) => {
 	t.test('差异面板默认自动换行', () => {
 		// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
 		const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
-		const choice = /const DEFAULT_CHOICE: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
+		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
 		assert.ok(choice !== null, '未找到默认视图选择');
 		assert.equal(choice[1], 'true', '并排应默认开启');
 		assert.equal(choice[2], 'true', '换行应默认开启');
-		// 面板从记录里读初值，因此切页再回来仍是上次的选择。
+		// 视图选择取自面板设置，因此与其它视图开关同源、随宿主持久化。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.wrap\)/, 'wrap 初值应取自记录');
-		assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.split\)/, 'split 初值应取自记录');
+		assert.match(source, /const diffView = useDiffView\(/, '差异页应经 hook 取视图选择');
+		assert.match(source, /const wrap = diffView\.choice\.wrap;/, 'wrap 取自设置');
+		assert.match(source, /const split = diffView\.choice\.split;/, 'split 取自设置');
 	});
 
 	t.test('删除分支只列以该提交为尖端的分支', () => {
