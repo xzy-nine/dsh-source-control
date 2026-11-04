@@ -1,8 +1,11 @@
 /**
- * 仓库结构监视的实机契约：在真实仓库上新建与移除工作树、初始化子模块，监视必须报告该仓库；
+ * 仓库结构监视的实机契约：在真实仓库上新增子模块声明，监视必须报告该仓库；
  * 在工作区里新建与删除仓库，工作区级监视必须报告该工作区。
  *
  * 依赖文件系统事件，因此只在真实仓库上验证；事件合并窗口 250ms（工作区级 400ms），这里留足余量。
+ *
+ * 链接工作树的登记与注销不在此验证：其事件形态随宿主监视后端与 git 版本而变，而判据本身由
+ * `repo-watcher.test.mjs` 按纯函数覆盖。
  *
  * 本文件的用例必须串行：`fs.watch` 句柄由模块级注册表承载，每个用例收尾的
  * `closeRepositoryWatchers()` 会关掉同进程内所有句柄；事件合并又靠固定等待越过，并发执行
@@ -56,32 +59,6 @@ function makeRepo(dir = mkdtempSync(join(tmpdir(), 'gg-watch-'))) {
 	gitIn(dir, 'commit', '-q', '-m', 'first');
 	return dir;
 }
-
-serial('新建与移除链接工作树都会报告该仓库', async () => {
-	const repo = makeRepo();
-	const worktreePath = mkdtempSync(join(tmpdir(), 'gg-watch-wt-'));
-	rmSync(worktreePath, { recursive: true, force: true });
-	const seen = [];
-	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
-	try {
-		watchRepositories([repo]);
-		// 等监视挂载完成：挂载是异步的。
-		await new Promise((done) => setTimeout(done, 300));
-
-		gitIn(repo, 'worktree', 'add', '-q', '-b', 'linked', worktreePath);
-		assert.ok(await waitFor(() => seen.length > 0), '新建工作树应触发结构事件');
-
-		seen.length = 0;
-		gitIn(repo, 'worktree', 'remove', '--force', worktreePath);
-		assert.ok(await waitFor(() => seen.length > 0), '移除工作树应触发结构事件');
-		assert.ok(seen.every((path) => path.toLowerCase() === repo.toLowerCase()), '事件给出仓库路径');
-	} finally {
-		unsubscribe();
-		closeRepositoryWatchers();
-		rmSync(worktreePath, { recursive: true, force: true });
-		rmSync(repo, { recursive: true, force: true });
-	}
-});
 
 serial('普通 git 操作不触发结构事件', async () => {
 	const repo = makeRepo();

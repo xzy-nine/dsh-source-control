@@ -30,10 +30,10 @@ const clientEntry = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8'
 parallel('面板重挂载', (t) => {
 	t.test('数据缓存位于宿主内存', () => {
 		for (const store of ['graphs', 'repoInfos', 'snapshots']) {
-			assert.match(hostCache, new RegExp(`const ${store} = new LruMap`), `宿主应有 ${store} 缓存`);
+			assert.ok(hostCache.includes(`const ${store} = new LruMap`), `宿主应有 ${store} 缓存`);
 		}
 		for (const fn of ['readGraph', 'writeGraph', 'readRepoInfo', 'writeRepoInfo', 'readSnapshot', 'writeSnapshot']) {
-			assert.match(hostCache, new RegExp(`export function ${fn}`), `宿主应导出 ${fn}`);
+			assert.ok(hostCache.includes(`export function ${fn}`), `宿主应导出 ${fn}`);
 		}
 		/*
 		 * 写操作按仓库作废：别的仓库数据不受影响，清全表会让同时打开多个仓库的面板各自重取。

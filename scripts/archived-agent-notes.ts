@@ -105,7 +105,7 @@ export function validateArchiveArtifacts(artifacts: ReadonlyMap<string, Buffer>)
   const notes = new Map<string, Buffer>()
   for (const [path, content] of artifacts) {
     const match = /^([^/]+)\/(\d{4}-\d{2}-\d{2}-.+?)\.md$/.exec(path)
-    if (match?.[1] === undefined || match[2] === undefined) {
+    if (match === null) {
       errors.push(`${path}: expected {kind}/yyyy-mm-dd-topic.md`)
       continue
     }

@@ -57,4 +57,4 @@ Status: implemented
 
 ## Testing
 
-`test/host-runtime.test.mjs` 覆盖 seam 契约与缺服务抛错；`test/workspace-watch-depth.test.mjs` 覆盖子目录句柄挂载、新建子目录补挂与关闭时收尾；`test/repo-watcher-live.test.mjs` 覆盖在已存在的子目录里新建仓库、新建的直接子目录在下一轮事件后补挂。
+`test/host-runtime.test.mjs` 覆盖 seam 契约与缺服务抛错；`test/workspace-watch-depth.test.mjs` 覆盖子目录句柄挂载、新建子目录补挂与关闭时收尾；`test/repo-watcher-live.test.mjs` 覆盖 `.gitmodules` 声明与工作区仓库增删的报告。
