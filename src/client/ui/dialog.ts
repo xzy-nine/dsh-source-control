@@ -181,7 +181,7 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 /**
  * 提示框里的一个入口：文案与动作由调用方给，弹窗只排版。
  *
- * 结果里的去向（issue 地址、压缩包位置）跟着结果走，因此留在结果弹窗里，
+ * 结果里的去向（如 issue 地址）跟着结果走，因此留在结果弹窗里，
  * 不散落在触发它的表单页上。
  */
 export interface MessageLink {

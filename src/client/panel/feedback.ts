@@ -1,13 +1,12 @@
 /**
  * 反馈页签：填写反馈、可选附带日志，交宿主经 `gh issue create` 建 issue。
  *
- * 日志附带由宿主完成：先在本地写出一份脱敏副本并压成 zip，再把压缩包路径交回本页；
- * 提交成功后本页把 issue 与压缩包位置打开，由用户把压缩包拖到 issue 评论框上传
- * （GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。
+ * 日志附带由宿主完成：本页按所选天数挑出日志文件交给宿主，宿主导出脱敏文本并作为独立评论
+ * 追加到新建的 issue 下（GitHub 的评论正文上限 65536 字符，日志按它合并成若干条）。
  * 脱敏默认开启；停用脱敏与逐条豁免都在本页操作，被豁免的字符串原样保留。
  *
- * 提交成功后由一个结果弹窗承接全部去向：issue 地址与压缩包位置都在弹窗里点（或按勾选自动打开），
- * 表单页只留输入与提交按钮。
+ * 日志位置列表默认折叠，展开哪一天由本页的展开集决定；所选天数与展开状态都只在本页有效。
+ * 提交成功后由一个结果弹窗承接去向，表单页只留输入与提交按钮。
  */
 import React from 'react';
 import { Button, Checkbox, fileSizeText, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -39,6 +38,32 @@ export interface FeedbackTabProps {
 	readonly onOpenFile?: ((path: string) => void) | undefined;
 	/** 在系统文件管理器中定位一个路径；缺省不做任何事。返回的 promise 用于排定打开顺序。 */
 	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
+}
+
+/** 日志天数选项：与宿主保留期一致，最长一档就是全部保留期。 */
+const LOG_DAY_OPTIONS = [
+	{ value: '1', label: '1 天' },
+	{ value: '3', label: '3 天' },
+	{ value: '5', label: '5 天' },
+	{ value: '15', label: '15 天' },
+];
+
+/**
+ * 最近 n 天（含今天）的日文件夹名下界。
+ *
+ * 与 `log-retention.ts` 的 `dayFolderName` 同形，比较用字符串：`YYYY-MM-DD` 定宽，
+ * 字典序即时间序。
+ *
+ * @param now - 当前时间。
+ * @param days - 天数。
+ * @returns `YYYY-MM-DD` 形态的下界。
+ */
+function cutoffDayKey(now: Date, days: number): string {
+	const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	cutoff.setDate(cutoff.getDate() - Math.max(0, days - 1));
+	const month = String(cutoff.getMonth() + 1).padStart(2, '0');
+	const day = String(cutoff.getDate()).padStart(2, '0');
+	return `${String(cutoff.getFullYear())}-${month}-${day}`;
 }
 
 /** 日志文件的树条目：路径是 `日期/文件名`，真实路径另存。 */
@@ -73,8 +98,10 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 	// undefined 表示读取中，null 表示读取失败；两者在界面上分开显示。
 	const [info, setInfo] = React.useState<FeedbackInfo | null | undefined>(undefined);
 	const [busy, setBusy] = React.useState(false);
-	// 折叠的日志目录：按路径记，默认全部展开。
-	const [collapsedLogs, setCollapsedLogs] = React.useState<ReadonlySet<string>>(() => new Set());
+	// 附带哪几天的日志：只在本页有效，不持久化。
+	const [logDays, setLogDays] = React.useState(1);
+	// 展开的日志目录：按路径记，默认全部折叠。
+	const [openLogs, setOpenLogs] = React.useState<ReadonlySet<string>>(() => new Set());
 
 	// 日志位置与所选仓库无关：不依赖 cwd，挂载即取一次。
 	React.useEffect(() => {
@@ -85,17 +112,25 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		return () => { cancelled = true; };
 	}, []);
 
+	// 按所选天数筛出的日志文件；天数是最近 N 天（含今天）。
+	const shownFiles = React.useMemo(() => {
+		if (info === null || info === undefined) return [];
+		const cutoff = cutoffDayKey(new Date(), logDays);
+		return info.files.filter((file) => file.day >= cutoff);
+	}, [info, logDays]);
+
 	// 日志文件按「日期/文件名」组成文件树：复用变更区的建行逻辑，日期即为顶层文件夹。
 	const logRows = React.useMemo<ChangeRow<LogTreeEntry>[]>(() => {
-		if (info === null || info === undefined) return [];
-		const entries: LogTreeEntry[] = info.files.map((file) => ({
+		const entries: LogTreeEntry[] = shownFiles.map((file) => ({
 			path: `${file.day}/${file.name}`,
 			fullPath: file.path,
 			sizeText: fileSizeText(file.size),
 		}));
-		// 日志文件按启动先后倒序：最新的一次启动排在最上面。
-		return changeRowsOf(entries, collapsedLogs, true);
-	}, [info, collapsedLogs]);
+		// 默认折叠：未展开过的日文件夹都进折叠集；日志按启动先后倒序，最新的排在最上面。
+		const days = new Set(shownFiles.map((file) => file.day));
+		const collapsed = new Set([...days].filter((day) => !openLogs.has(day)));
+		return changeRowsOf(entries, collapsed, true);
+	}, [shownFiles, openLogs]);
 
 	/**
 	 * 在系统文件管理器中定位一个路径，等宿主受理后再返回。
@@ -106,7 +141,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 	 * @param path - 要定位的绝对路径。
 	 * @returns 定位完成后完成。
 	 */
-	const revealArchive = async (path: string): Promise<void> => {
+	const revealPath = async (path: string): Promise<void> => {
 		if (onRevealPath === undefined) {
 			logClient('W', 'feedback', `宿主未提供文件管理器能力，跳过定位 ${path}`);
 			return;
@@ -114,7 +149,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		try {
 			await onRevealPath(path);
 		} catch (error) {
-			logClient('W', 'feedback', `定位压缩包失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			logClient('W', 'feedback', `定位日志位置失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
 		}
 	};
 
@@ -130,6 +165,8 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 			try {
 				const outcome = await submitFeedback(cwd, {
 					type, title, description, attachLogs, disableRedaction,
+					// 只提交所选天数内、当前可见的那些日志；空数组让宿主退回当前启动的那一份。
+					logFiles: attachLogs ? shownFiles.map((file) => file.path) : [],
 					exemptions: exemptions.split('\n').map((line) => line.trim()).filter((line) => line !== ''),
 					pluginVersion,
 				});
@@ -142,37 +179,28 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					});
 					return;
 				}
-				const { url, archive } = outcome;
-				logClient('I', 'feedback', `反馈已提交，issue 地址：${url}${archive === null ? '（未附带日志）' : `，日志压缩包：${archive}`}`);
+				const { url, commentCount, commentError } = outcome;
+				logClient('I', 'feedback', `反馈已提交，issue 地址：${url}${commentCount === 0 ? '（未附带日志）' : `，日志评论 ${String(commentCount)} 条`}${commentError === null ? '' : `，${commentError}`}`);
 				setTitle('');
 				setDescription('');
-				// 去向全部在结果弹窗里：地址与路径各是一个可点入口，勾选只决定关闭后是否自动打开。
+				// 去向全部在结果弹窗里：地址是一个可点入口，勾选只决定关闭后是否自动打开。
 				const openNow = await showMessageWithLinks({
 					title: '反馈已提交',
 					message: [
-						'提交完成。下面两个入口可以随时再打开。',
+						'提交完成。日志全文已作为独立评论追加在本 issue 下。',
 						'',
-						...archive === null
+						...commentCount === 0
 							? ['本次未附带日志。']
-							: [
-								'请把该压缩包拖到 issue 的评论框上传；GitHub 的附件接口不接受日志等文本类型。',
-								...(outcome.compressed ? [] : ['（系统没有可用的 tar，压缩包实际是未压缩的日志副本。）']),
-							],
+							: commentError === null
+								? [`日志已分成 ${String(commentCount)} 条评论追加。`]
+								: [`日志评论未全部发出：${commentError}`],
 					].join('\n'),
 					links: [
 						...(url === '' ? [] : [{ label: `打开反馈页：${url}`, onClick: () => { onOpenExternal(url); } }]),
-						...(archive === null ? [] : [{ label: `在文件管理器中定位：${archive}`, onClick: () => { void revealArchive(archive); } }]),
 					],
-					checkboxLabel: '自动打开路径与反馈页便于提交',
+					checkboxLabel: '自动打开反馈页便于查看',
 				});
-				/*
-				 * 先定位压缩包、再打开 issue 页：压缩包是用户下一步要拖进评论框的东西，
-				 * 浏览器抢到前台后文件管理器会被盖住，顺序反了就要来回切窗口。
-				 */
-				if (openNow) {
-					if (archive !== null) await revealArchive(archive);
-					if (url !== '') onOpenExternal(url);
-				}
+				if (openNow && url !== '') onOpenExternal(url);
 			} catch (error) {
 				logClient('E', 'feedback', `反馈提交过程出错：${error instanceof Error ? error.message : String(error)}`);
 				await showMessage({ title: '反馈未提交', message: error instanceof Error ? error.message : String(error) });
@@ -213,11 +241,20 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				onChange: setAttachLogs,
 			}),
 			React.createElement('div', { className: css.fbNote },
-				'日志以 logcat threadtime 格式记录，每次启动一个文件。提交时打包脱敏副本，磁盘上的原始日志不变。'),
+				'日志以 logcat threadtime 格式记录，每次启动一个文件，单份写满 60000 字符时另起一份。提交的是脱敏后的文本副本，磁盘上的原始日志不变。'),
+		),
+		attachLogs && React.createElement('div', { className: css.fbField },
+			React.createElement(SegmentedControl, {
+				id: 'ggg-fb-log-days', label: '日志范围', value: String(logDays),
+				onChange: (next: string) => { setLogDays(Number(next)); },
+				options: LOG_DAY_OPTIONS,
+			}),
+			React.createElement('div', { className: css.fbNote },
+				`将提交最近 ${String(logDays)} 天内的 ${String(shownFiles.length)} 份日志。`),
 		),
 		attachLogs && React.createElement('div', { className: css.fbField },
 			React.createElement(Checkbox, {
-				checked: disableRedaction, label: '停用脱敏（打包原始内容）',
+				checked: disableRedaction, label: '停用脱敏（提交原始内容）',
 				onChange: setDisableRedaction,
 			}),
 			React.createElement('div', { className: css.fbNote },
@@ -237,14 +274,14 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				type: 'button', className: css.fbPathLink,
 				disabled: info === null || info === undefined || info.logDir === '' || onRevealPath === undefined,
 				title: info !== null && info !== undefined && info.logDir !== '' ? `在文件管理器中打开：${info.logDir}` : undefined,
-				onClick: () => { if (info !== null && info !== undefined && info.logDir !== '') void revealArchive(info.logDir); },
+				onClick: () => { if (info !== null && info !== undefined && info.logDir !== '') void revealPath(info.logDir); },
 			}, info === undefined ? '（读取中）' : info === null ? '（读取失败）' : info.logDir === '' ? '（不可用）' : info.logDir),
 			logRows.length > 0 && React.createElement('div', { className: changesCss.logTree },
 				...logRows.map((row) => {
 					if (row.kind === 'folder') {
 						return React.createElement(FolderRow, {
 							key: `f:${row.path}`, path: row.path, name: row.name, depth: row.depth, open: row.open, count: row.count,
-							onToggle: () => { setCollapsedLogs((previous) => {
+							onToggle: () => { setOpenLogs((previous) => {
 								const next = new Set(previous);
 								if (next.has(row.path)) next.delete(row.path);
 								else next.add(row.path);
@@ -261,6 +298,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				}),
 			),
 			info !== null && info !== undefined && info.files.length === 0 && React.createElement('div', { className: css.fbNote }, '该目录下还没有日志文件'),
+			info !== null && info !== undefined && info.files.length > 0 && shownFiles.length === 0 && React.createElement('div', { className: css.fbNote }, `最近 ${String(logDays)} 天内没有日志文件`),
 		),
 		React.createElement('div', { className: css.fbActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: submit },

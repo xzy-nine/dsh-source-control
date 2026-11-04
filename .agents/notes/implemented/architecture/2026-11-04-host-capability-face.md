@@ -7,7 +7,7 @@ Status: implemented
 宿主提供了 `ctx.fs`（`SandboxedFileSystem`）与 `ctx.subprocess`，但插件各处仍直接用 Node 原语：
 
 - `child-process.ts` 自建子进程封装，并自写 `taskkill /t /f` 终止进程树。
-- `git-exec.ts`、`gh-cli.ts`、`feedback.ts`、`log-archive.ts`、`ssh-status.ts` 各自 `spawn` 并各管超时、stdio 与错误文本。
+- `git-exec.ts`、`gh-cli.ts`、`feedback.ts`、`ssh-status.ts` 各自 `spawn` 并各管超时、stdio 与错误文本。
 - `repo-node.ts`、`repo-enrich.ts`、`worktree-branches.ts`、`repo-facts.ts`、`hooks.ts`、`repo-watcher.ts` 直接 `fs.stat` / `readFile` / `readdir`。
 - `repo-watcher.ts` 用 `node:fs.watch(Boolean)` 观察工作区。
 

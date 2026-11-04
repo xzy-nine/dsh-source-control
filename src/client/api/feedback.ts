@@ -36,10 +36,10 @@ export interface SubmitFeedbackOutcome {
 	readonly kind: string;
 	/** 日志目录。 */
 	readonly logDir: string;
-	/** 日志压缩包绝对路径；未附带日志时为 null。 */
-	readonly archive: string | null;
-	/** 压缩包是否成功压缩。 */
-	readonly compressed: boolean;
+	/** 已追加的日志评论条数；未附带日志时为 0。 */
+	readonly commentCount: number;
+	/** 日志评论提交失败的原因；全部成功或未附带日志时为 null。 */
+	readonly commentError: string | null;
 }
 
 /**
@@ -79,6 +79,8 @@ export async function submitFeedback(cwd: string | null, options: {
 	readonly title: string;
 	readonly description: string;
 	readonly attachLogs: boolean;
+	/** 附带哪几份日志（绝对路径）；空数组表示取当前启动的那一份。 */
+	readonly logFiles: readonly string[];
 	readonly disableRedaction: boolean;
 	readonly exemptions: readonly string[];
 	readonly pluginVersion: string;
@@ -90,7 +92,7 @@ export async function submitFeedback(cwd: string | null, options: {
 		error,
 		kind: textOf(payload.kind),
 		logDir: textOf(payload.logDir),
-		archive: typeof payload.archive === 'string' && payload.archive !== '' ? payload.archive : null,
-		compressed: payload.compressed === true,
+		commentCount: typeof payload.commentCount === 'number' ? payload.commentCount : 0,
+		commentError: typeof payload.commentError === 'string' && payload.commentError !== '' ? payload.commentError : null,
 	};
 }

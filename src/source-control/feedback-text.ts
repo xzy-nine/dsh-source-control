@@ -1,8 +1,8 @@
 /**
- * 反馈的正文拼装（纯函数）：类型前缀、环境信息、日志打包说明与脱敏摘要。
+ * 反馈的正文拼装（纯函数）：类型前缀、环境信息、日志说明与脱敏摘要。
  *
- * 正文结构固定为四段：用户描述、环境、日志、脱敏。日志段落给出压缩包文件名与上传步骤，
- * 收件方据此知道正文之外的附件应当是什么。
+ * 正文结构固定为四段：用户描述、环境、日志、脱敏。日志段落只说明有哪些日志文件与几条
+ * 日志评论，全文在那些评论里。
  */
 
 /** 反馈类型。 */
@@ -30,8 +30,10 @@ export interface FeedbackFacts {
 	readonly platform: string;
 	/** Node 版本。 */
 	readonly node: string;
-	/** 打包后的日志文件名；未附带时为 null。 */
-	readonly logFile: string | null;
+	/** 随本次反馈提交的日志文件名；未附带日志时为空数组。 */
+	readonly logFiles: readonly string[];
+	/** 日志占用的评论条数；未附带日志时为 0。 */
+	readonly logCommentCount: number;
 	/** 脱敏摘要；未做任何替换时为空串。 */
 	readonly redaction: string;
 	/** 登记豁免的字符串数量。 */
@@ -61,12 +63,12 @@ export const FEEDBACK_TEXT = {
 	redactionHeading: '## 脱敏',
 	/** 未附带日志时该段的正文。 */
 	noLog: '未附带日志。',
-	/** 日志段正文；`{file}` 为文件名。 */
-	logPacked: '日志已打包为 `{file}`，格式为 logcat threadtime，每次启动一个文件。',
-	/** 日志段的上传步骤。 */
-	uploadStep: '> 请把该压缩包拖到本条 issue 的评论框上传（GitHub 的附件接口不接受日志等文本类型，只能由界面手动上传）。',
-	/** 日志段的本地路径说明。 */
-	localPathNote: '> 本地路径已在创建反馈时告知，可直接从该目录取用。',
+	/** 单份日志时的正文；`{file}` 为文件名。 */
+	logOne: '`{file}`，格式为 logcat threadtime，全文见本 issue 下的日志评论。',
+	/** 多份日志时的正文；`{files}` 为以顿号分隔的文件名。 */
+	logMany: '`{files}`，格式为 logcat threadtime，全文见本 issue 下的日志评论。',
+	/** 日志评论条数的说明；`{n}` 为条数。 */
+	logComments: '按评论上限合并为 {n} 条评论追加在本 issue 下。',
 	/** 未触发脱敏替换时的正文。 */
 	noRedaction: '本次提交未触发脱敏替换。',
 	/** 发生脱敏替换时的正文；`{summary}` 为脱敏摘要。 */
@@ -80,19 +82,17 @@ export const FEEDBACK_TEXT = {
 } as const;
 
 /**
- * 日志段落的正文：压缩包名、体积与上传步骤。
+ * 日志段落的正文：提交了哪些文件、分成几条评论。
  *
  * @param facts - 见 {@link FeedbackFacts}。
  * @returns 段落文本。
  */
 function logSection(facts: FeedbackFacts): string[] {
-	if (facts.logFile === null) return [FEEDBACK_TEXT.noLog];
-	return [
-		FEEDBACK_TEXT.logPacked.replace('{file}', facts.logFile),
-		'',
-		FEEDBACK_TEXT.uploadStep,
-		FEEDBACK_TEXT.localPathNote,
-	];
+	if (facts.logFiles.length === 0) return [FEEDBACK_TEXT.noLog];
+	const listed = facts.logFiles.length === 1
+		? FEEDBACK_TEXT.logOne.replace('{file}', facts.logFiles[0])
+		: FEEDBACK_TEXT.logMany.replace('{files}', facts.logFiles.join('、'));
+	return [listed, '', FEEDBACK_TEXT.logComments.replace('{n}', String(facts.logCommentCount))];
 }
 
 export function buildIssueBody(facts: FeedbackFacts): string {

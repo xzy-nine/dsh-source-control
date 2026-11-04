@@ -11,7 +11,20 @@ export const DAY_FOLDER_LIMIT_BYTES = 15 * 1024 * 1024;
 /** 日志保留天数：含当天在内的天数。 */
 export const LOG_RETENTION_DAYS = 15;
 
-/** 反馈压缩包目录名：落在日志根目录下，启动时整目录清空。 */
+/**
+ * 单份日志的字符上限。
+ *
+ * GitHub 的 issue 评论正文上限是 65536 字符（mediumblob 262144 字节 ÷ 4），日志要能被
+ * 整份投进一条评论，落盘时就按它约束。留约 5500 字符给 `<details>` 包装、标题与行数摘要。
+ */
+export const LOG_FILE_CHAR_LIMIT = 60000;
+
+/**
+ * 反馈暂存目录名：落在日志根目录下，启动时整目录清空。
+ *
+ * 目录里只有一次性的取用物——提交 issue 与评论时 `--body-file` 的载体文件。
+ * 它们在写完之后已经没有价值，内容都已进了 issue。
+ */
 export const OUTBOX_FOLDER = 'outbox';
 
 /** 日文件夹名：`YYYY-MM-DD`。 */

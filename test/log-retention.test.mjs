@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parallel } from './harness.mjs';
 import {
 	dayFolderName, isDayFolderName, logFileName, orderLogFiles, planDayEvictions, planExpiredDayFolders,
-	DAY_FOLDER_LIMIT_BYTES, LOG_RETENTION_DAYS, OUTBOX_FOLDER,
+	DAY_FOLDER_LIMIT_BYTES, LOG_RETENTION_DAYS, LOG_FILE_CHAR_LIMIT,
 } from '../lib/src/source-control/log-retention.js';
 
 
@@ -16,7 +16,7 @@ parallel('日志目录判据', (t) => {
 		assert.equal(dayFolderName(new Date(2026, 0, 2, 23, 59, 59)), '2026-01-02');
 		assert.equal(dayFolderName(new Date(2026, 11, 31, 0, 0, 0)), '2026-12-31');
 		assert.equal(isDayFolderName('2026-01-02'), true);
-		assert.equal(isDayFolderName('outbox'), false);
+		assert.equal(isDayFolderName('tmp'), false);
 		assert.equal(isDayFolderName('2026-1-2'), false);
 	});
 
@@ -59,10 +59,13 @@ parallel('日志目录判据', (t) => {
 	t.test('保留期为 15 天，当天算第一天', () => {
 		assert.equal(LOG_RETENTION_DAYS, 15);
 		assert.equal(DAY_FOLDER_LIMIT_BYTES, 15 * 1024 * 1024);
+		// 单份日志的上限给 issue 评论正文上限（65536 字符）留出包装余量。
+		assert.equal(LOG_FILE_CHAR_LIMIT, 60000);
+		assert.ok(65536 - LOG_FILE_CHAR_LIMIT >= 4000, '包装余量至少留 4000 字符');
 		const now = new Date(2026, 0, 20, 12, 0, 0);
-		const names = ['2026-01-20', '2026-01-06', '2026-01-05', '2025-12-31', OUTBOX_FOLDER];
-		// 反馈暂存目录名不是日期：过期判据不碰它，它的清空归启动时的整目录删除。
-		assert.equal(isDayFolderName(OUTBOX_FOLDER), false);
+		const names = ['2026-01-20', '2026-01-06', '2026-01-05', '2025-12-31', 'tmp'];
+		// 非日期目录名不参与过期判据。
+		assert.equal(isDayFolderName('tmp'), false);
 		// 第 15 天是 01-06，早于它（01-05 及之前）的文件夹整体删除。
 		assert.deepEqual(planExpiredDayFolders(names, now), ['2026-01-05', '2025-12-31']);
 	});

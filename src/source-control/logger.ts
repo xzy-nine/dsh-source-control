@@ -5,6 +5,7 @@
  * 根目录是插件数据目录下的 `logs`，解析见 `./dsh-home.ts`。
  *
  * 写入策略：行先入缓冲，按 `FLUSH_DELAY_MS` 合并为一次追加写；进程退出时同步收尾。
+ * 单份文件写到 `LOG_FILE_CHAR_LIMIT` 时在此刻分片另起一份，不丢弃记录。
  * 体积与保留期清理在写入前按当日与全部日文件夹各判一次，判据见 log-retention.ts。
  */
 import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { formatLogLines, type LogLevel } from './log-format.js';
 
 export type { LogLevel };
 import {
-	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES, OUTBOX_FOLDER,
+	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES, LOG_FILE_CHAR_LIMIT, OUTBOX_FOLDER,
 } from './log-retention.js';
 
 /** 级别到数值的映射，用于门控比较。 */
@@ -40,6 +41,9 @@ let dayDir: string | null = null;
 
 /** 待写入的行。 */
 let buffer: string[] = [];
+
+/** 当前文件已写出的字符数（含换行）；分片判据按它累计。 */
+let fileChars = 0;
 
 /** 合并写定时器。 */
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -85,6 +89,7 @@ function openFile(now: Date): void {
 	mkdirSync(dir, { recursive: true });
 	dayDir = dir;
 	filePath = join(dir, logFileName(now));
+	fileChars = 0;
 	if (!exitHookInstalled) {
 		exitHookInstalled = true;
 		// 同步收尾：缓冲里剩下的行在进程退出前落盘。
@@ -105,6 +110,55 @@ function writeLine(line: string): void {
 	} catch {
 		/* 日志不可写不影响插件功能 */
 	}
+}
+
+/**
+ * 路径的文件名部分。
+ *
+ * @param path - 绝对路径；为 null 时给空串。
+ * @returns 文件名。
+ */
+function fileNameOf(path: string | null): string {
+	return path === null ? '' : path.split(/[\\/]/).pop() ?? '';
+}
+
+/**
+ * 分片标记的一行。
+ *
+ * 标记按正常记录格式写出，因此日志行格式始终统一，解析方不需要为它开例外。
+ *
+ * @param now - 标记时间。
+ * @param message - 标记正文。
+ * @returns 已格式化的一行。
+ */
+function markLine(now: Date, message: string): string {
+	return formatLogLines({ time: now, pid: process.pid, tid: 0, level: 'I', tag: 'logs', message })[0];
+}
+
+/**
+ * 在当前时刻分片：闭合当前文件并另起一份。
+ *
+ * 缓冲必须先落到旧文件，否则残留的行会跟着新路径写进新文件。两侧各写一行标记，
+ * 单独拿到其中一份时能看出日志从这里续到别处，不会以为记录到此为止。
+ *
+ * 文件名沿用 `YYYYMMDD-HHmmss.log`，不含序号：写满 `LOG_FILE_CHAR_LIMIT` 至少需要
+ * 数十分钟的真实记录，跨秒是常态。同一秒内写满时（只可能由合成的高频写入触发）顺延到
+ * 下一个秒位，保证新文件与旧文件不同名——同名会让「新文件」写回旧文件，上限就此失效。
+ *
+ * @param now - 分片时刻。
+ */
+function splitFile(now: Date): void {
+	flushSync();
+	const from = fileNameOf(filePath);
+	let at = new Date(now.getTime());
+	while (fileNameOf(join(dayDir ?? logRoot(), logFileName(at))) === from) at = new Date(at.getTime() + 1000);
+	const next = join(dayDir ?? logRoot(), logFileName(at));
+	const tail = markLine(now, `单份日志达到 ${String(LOG_FILE_CHAR_LIMIT)} 字符上限，在此分片，续见 ${fileNameOf(next)}`);
+	writeLine(tail);
+	filePath = next;
+	const head = markLine(now, `接上一份 ${from}`);
+	fileChars = head.length + 1;
+	writeLine(head);
 }
 
 /**
@@ -147,7 +201,15 @@ export function log(level: LogLevel, tag: string, message: string, time?: Date):
 	const now = time ?? new Date();
 	if (filePath === null) openFile(now);
 	const text = message.length > MAX_MESSAGE_CHARS ? `${message.slice(0, MAX_MESSAGE_CHARS)}…` : message;
-	for (const line of formatLogLines({ time: now, pid: process.pid, tid: 0, level, tag, message: text })) buffer.push(line);
+	const lines = formatLogLines({ time: now, pid: process.pid, tid: 0, level, tag, message: text });
+	// 分片按字符计（评论侧的限制也是字符）：这份文件再写会越限就在此刻另起一份。
+	let added = 0;
+	for (const line of lines) added += line.length + 1;
+	if (fileChars > 0 && fileChars + added > LOG_FILE_CHAR_LIMIT) {
+		splitFile(now);
+	}
+	for (const line of lines) buffer.push(line);
+	fileChars += added;
 	// 缓冲过长时立即落盘，避免等待窗口内堆积。
 	if (buffer.length >= 512) flushSync();
 	else schedule();
@@ -243,8 +305,8 @@ export function recentLogFiles(limit = 10): LogFileInfo[] {
 /**
  * 清空反馈暂存目录。
  *
- * 目录里只有一次性的取用物：待用户拖进 issue 评论框的压缩包，与已由 `gh` 写进 issue 的
- * 正文草稿。日志母本留在日文件夹里，因此清空后仍能重新打包提交。
+ * 目录里只有一次性的取用物：提交 issue 与日志评论时 `--body-file` 的载体文件。
+ * 内容都已进了 issue，启动时整目录清掉即可，不影响下次提交。
  */
 function cleanOutbox(): void {
 	const dir = join(logRoot(), OUTBOX_FOLDER);
@@ -321,6 +383,7 @@ export function resetLogStateForTests(): void {
 	rootDir = null;
 	filePath = null;
 	dayDir = null;
+	fileChars = 0;
 	buffer = [];
 	levelThreshold = LEVEL_RANK.I;
 }
