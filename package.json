@@ -61,6 +61,7 @@
     "lint:fix": "oxlint --type-aware --fix src",
     "hooks:install": "node scripts/install-hooks.mjs",
     "check:duplication": "node scripts/check-duplication.mjs",
+    "check:dual-track": "node scripts/check-dual-track-baseline.mjs",
     "verify-md-wrap": "tsx scripts/verify-md-wrap.ts",
     "verify-md-links": "tsx scripts/verify-md-links.ts",
     "verify-doc-budgets": "tsx scripts/verify-doc-budgets.ts",
@@ -69,7 +70,7 @@
     "verify-archived-agent-notes": "tsx scripts/verify-archived-agent-notes.ts",
     "verify-skill-invocation-metadata": "tsx scripts/verify-skill-invocation-metadata.ts",
     "test:docs": "tsx scripts/verify-all.ts",
-    "pretest": "pnpm run build && pnpm run check:duplication",
+    "pretest": "pnpm run build && pnpm run check:duplication && pnpm run check:dual-track",
     "test": "node --test --test-timeout=120000 --import ./test/setup.mjs test/*.test.mjs"
   },
   "dsh": {
@@ -95,6 +96,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.6-alpha.1",
     "@deepseek-ai/dsh-client-store": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-context-menu": "0.2.2-rc.1",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-alpha.2",
     "@types/mdast": "^4.0.4",
     "@types/node": "^24.0.0",

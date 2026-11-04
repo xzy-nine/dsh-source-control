@@ -22,6 +22,8 @@ import {
 } from './diff/resource-path.ts';
 import { NativeOpenControl } from './ui/native-open.ts';
 import { installOverlay } from './ui/overlay-host.ts';
+import { useSharedContextMenu } from './ui/context-menu.ts';
+import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
 import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
@@ -501,6 +503,22 @@ export function apply(ctx) {
 
 	// 覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。
 	ctx.effect(() => installOverlay(slots));
+
+	/*
+	 * 右键菜单：宿主提供共享菜单时改走它，否则保持本插件的自建浮层。
+	 *
+	 * 用 ctx.inject 而不是 ctx.get 探测：只有服务就位时这段才启动，服务缺席时不注册、
+	 * 也不影响插件其余部分；服务卸载时作用域回到这里清空。
+	 */
+	if (typeof ctx.inject === 'function') {
+		ctx.inject(['contextMenus'], (scope: { contextMenus?: ContextMenus; effect?: (run: () => () => void) => void }) => {
+			const menus = scope.contextMenus;
+			if (menus === undefined) return;
+			useSharedContextMenu(menus);
+			// 作用域销毁时清空：服务没了就必须退回自建浮层，不能留着失效引用。
+			scope.effect?.(() => () => { useSharedContextMenu(null); });
+		});
+	}
 
 	// ── 右侧栏页类型：定义与正文两阶段注册 ──────────────────────
 	const rightTabs = ctx.sidebarRightTabs;

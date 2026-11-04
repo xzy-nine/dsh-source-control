@@ -144,6 +144,13 @@ test('产物包络注册为包名并只请求外部平台模块', () => {
 	}
 });
 
+test('产物不引入共享菜单包的运行时依赖', () => {
+	// 共享菜单只是可选宿主能力：未提供它的宿主不装该包，实体引用会让插件在半数宿主上加载失败。
+	const source = readFileSync(bundlePath, 'utf8');
+	assert.equal(source.includes('dsh-client-ui-context-menu'), false, '产物不得包含共享菜单包的运行时引用');
+	assert.equal(source.includes('anchorRef'), false, '产物不得依赖只有更高宿主版本才有的锚点字段');
+});
+
 test('apply 注册右侧栏页类型与 header 入口', () => {
 	const restore = snapshotGlobals();
 	try {
@@ -157,13 +164,16 @@ test('apply 注册右侧栏页类型与 header 入口', () => {
 		register: (spec) => ({ spec }),
 	};
 	const rightTabs = { register: (spec) => { registered.push(spec.id); return spec; } };
+	const injected = [];
 	const ctx = {
 		slots,
 		sidebarRightTabs: rightTabs,
 		sidebarRight: { openTab: () => {} },
 		effect: (fn) => { effects.push(fn); fn(); },
+		inject: (deps, run) => { injected.push(deps); run({ contextMenus: undefined, effect: () => {} }); },
 	};
 	client.apply(ctx);
+	assert.deepEqual(injected, [['contextMenus']], 'apply 应探测宿主的共享菜单服务');
 	assert.ok(effects.length > 0, 'apply 必须通过 ctx.effect 注册');
 	assert.ok(registered.includes('dsh-source-control/panel'), '应注册面板页类型');
 	assert.ok(registered.includes('dsh-source-control/diff'), '应注册差异页类型');
