@@ -1,7 +1,7 @@
 /**
  * 右键菜单的构建上下文与共用构件：分支项置灰、远程分支弹名、复制引用名、确认后执行、标签二级菜单。
  */
-import { copyText } from '../../ui/context-menu.ts';
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ConfirmationOptions } from '../../ui/dialog.ts';
@@ -35,8 +35,10 @@ export interface GraphMenuDeps {
 	readonly handleCreateArchive: (ref: string, refLabel: string) => Promise<void>;
 	/** 当前分支名。 */
 	readonly head: string | null;
-	/** 一般提示：用于说明当前条件下操作无法进行的原因。 */
+	/** 失败提示：说明失败原因，或当前条件下操作无法进行的原因。 */
 	readonly notify: (message: string) => Promise<void>;
+	/** 结果告知：动作已完成的结论与需要用户继续处理的状态。 */
+	readonly announce: (message: string, tone?: 'success' | 'info') => Promise<void>;
 	/** 创建 Pull Request：由面板负责选目标分支、填标题正文并调用 gh。 */
 	readonly handleCreatePullRequest: () => Promise<void>;
 	/** 当前分支是否有可创建 PR 的远程：无 GitHub 远程时该项不显示。 */
@@ -175,7 +177,7 @@ export function branchFromRemoteItem(
 export function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): ContextMenuItem | null {
 	const ref = ctx.ref;
 	if (ref === null) return null;
-	return { title: meta.title, onClick: () => { void copyText(ref.name); } };
+	return { title: meta.title, onClick: () => { void writeClipboard(ref.name); } };
 }
 
 /**

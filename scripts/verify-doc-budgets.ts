@@ -14,8 +14,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import { docSystem, repoRoot } from './doc-system.config.ts'
-import { uniqueRepoFiles } from './repo-files.ts'
 import { gateHint } from './gate-hint.ts'
+import { uniqueRepoFiles } from './repo-files.ts'
 
 const root = repoRoot
 
@@ -44,7 +44,7 @@ function toRepoPath(absolute: string): string {
 
 /**
  * 覆盖比较与清单键都按大小写不敏感归一。磁盘上的实际大小写随检出平台与
- * 历史重命名而变（例如 `Docs/` 在磁盘上是 `Docs/`），而清单键是配置里
+ * 历史重命名而变（例如 `docs/` 在磁盘上是 `Docs/`），而清单键是配置里
  * 写定的形态；按字面比较会把同一篇文档判成缺失。
  */
 function normalizePath(path: string): string {

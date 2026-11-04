@@ -41,17 +41,20 @@ export function createRefreshScheduler(options: RefreshSchedulerOptions): Refres
 	let disposed = false;
 	let lastRefreshAt = 0;
 	let timer: number | null = null;
+	let running = false;
 
-	/** 重载一次；面板忙时挂起到空闲。 */
+	/** 重载一次；面板忙时挂起到空闲，已在途时跳过。 */
 	const runRefresh = (): void => {
 		if (disposed || !options.canRefresh()) return;
+		if (running) return;
 		if (options.isBusy()) {
 			if (timer === null) timer = window.setTimeout(() => { timer = null; runRefresh(); }, BUSY_RETRY_MS);
 			return;
 		}
+		running = true;
 		lastRefreshAt = Date.now();
 		options.beforeRefresh?.();
-		void options.refresh().catch(() => { /* 重载失败由面板自身提示 */ });
+		void options.refresh().catch(() => { /* 重载失败由面板自身提示 */ }).finally(() => { running = false; });
 	};
 
 	/** 冷却满后再重载；冷却未满时挂起一次收尾。 */

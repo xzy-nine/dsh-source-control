@@ -9,8 +9,9 @@ import { detectHooks } from '../hooks.js';
 import { addToGitignore, addToLocalExclude, localExcludeState } from '../ignore.js';
 import { readHooksPath, readSnapshot, writeHooksPath, writeSnapshot } from '../host-cache.js';
 import { getWorkingTreeSnapshot } from '../git-query.js';
+import type { WorkingTreeSnapshot } from '../status-parse.js';
 import { branchesOfOtherWorktrees } from '../repo-discovery.js';
-import { gitOrThrow, runGit, whenWorktreeIdle } from '../git-exec.js';
+import { gitOrThrow, runGit, whenLocalSettled } from '../git-exec.js';
 import { repoHeadHash } from '../repo-facts.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
@@ -28,6 +29,26 @@ const EMPTY_SNAPSHOT = {
 	error: null,
 };
 
+/** 在途的工作区快照读取：同仓库并发请求共享一次 git status，避免多面板各起一遍。 */
+const inFlightSnapshots = new Map<string, Promise<WorkingTreeSnapshot>>();
+
+/**
+ * 取一次工作区快照；同仓库已有在途读取时复用其结果。
+ *
+ * @param repo - 仓库路径。
+ * @returns 快照。
+ */
+async function obtainSnapshot(repo: string): Promise<WorkingTreeSnapshot> {
+	const existing = inFlightSnapshots.get(repo);
+	if (existing !== undefined) return existing;
+	const promise = getWorkingTreeSnapshot(repo).then((snapshot) => {
+		writeSnapshot(repo, snapshot);
+		return snapshot;
+	}).finally(() => { inFlightSnapshots.delete(repo); });
+	inFlightSnapshots.set(repo, promise);
+	return promise;
+}
+
 /**
  * 处理工作区域的一条命令。
  *
@@ -42,14 +63,14 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 			await respondResult('loadWorkingTree', async () => {
 				// 写操作（暂存/提交/检出等）未结束时先等它结束：否则会读到写了一半的工作区。
 				// 抓取不算：它不改工作区，等它会让面板在抓取期间白等几秒。
-				await whenWorktreeIdle(repo);
+				await whenLocalSettled(repo);
 				return { repo, entries: await loadWorkingTree(repo) };
 			});
 			break;
 		case 'loadWorkingTreeSnapshot': {
 			// 结果自带 error 字段，因此不经 respondResult —— 它会在展开后再写一次 error: null。
 			// 只读工作区：抓取期间照常读，不必等它结束。
-			await whenWorktreeIdle(repo);
+			await whenLocalSettled(repo);
 			/*
 			 * 非仓库路径直接回空快照，不起子进程：工作区根常常只是一层目录，对它取数会让
 			 * 每条 git 命令都以 `not a git repository` 失败。
@@ -72,9 +93,7 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 				respond({ command: 'loadWorkingTreeSnapshot', repo, ...cachedSnapshot });
 				break;
 			}
-			const snapshot = await getWorkingTreeSnapshot(repo);
-			// 失败结果同样缓存：紧接着的重试会命中，避免连续失败反复起 git。
-			writeSnapshot(repo, snapshot);
+			const snapshot = await obtainSnapshot(repo);
 			respond({ command: 'loadWorkingTreeSnapshot', repo, ...snapshot });
 			break;
 		}

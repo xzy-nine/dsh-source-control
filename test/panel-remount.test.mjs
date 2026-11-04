@@ -22,23 +22,25 @@ const hostCache = readFileSync(join(root, 'src', 'source-control', 'host-cache.t
 const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
 const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
 const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
+const composer = readFileSync(join(root, 'src', 'client', 'panel', 'use-commit-composer.ts'), 'utf8');
+const clientEntry = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
 
 
 /** 本文件的用例之间无共享进程级状态，因此并发执行；并发前提见 test/harness.mjs。 */
 parallel('面板重挂载', (t) => {
 	t.test('数据缓存位于宿主内存', () => {
 		for (const store of ['graphs', 'repoInfos', 'snapshots']) {
-			assert.match(hostCache, new RegExp(`const ${store} = new Map`), `宿主应有 ${store} 缓存`);
+			assert.ok(hostCache.includes(`const ${store} = new LruMap`), `宿主应有 ${store} 缓存`);
 		}
 		for (const fn of ['readGraph', 'writeGraph', 'readRepoInfo', 'writeRepoInfo', 'readSnapshot', 'writeSnapshot']) {
-			assert.match(hostCache, new RegExp(`export function ${fn}`), `宿主应导出 ${fn}`);
+			assert.ok(hostCache.includes(`export function ${fn}`), `宿主应导出 ${fn}`);
 		}
 		/*
 		 * 写操作按仓库作废：别的仓库数据不受影响，清全表会让同时打开多个仓库的面板各自重取。
 		 * 同一仓库的主工作树与链接工作树路径不同，按 git 公共目录一并覆盖。
 		 */
-		assert.match(hostCache, /onRepositoryWrite\(\(repo\) => \{ invalidateOnWrite\(repo\); \}\)/, '成功的写操作应按仓库作废缓存');
-		assert.match(hostCache, /export function invalidateOnWrite/, '应导出按仓库作废的实现');
+		assert.match(hostCache, /onRepositoryWrite\(\(repo, surface\) => \{ invalidateOnWrite\(repo, surface\); \}\)/, '成功的写操作应按仓库与影响面作废缓存');
+		assert.match(hostCache, /export function invalidateOnWrite\(repo: string, surface: WriteSurface = 'history'\)/, '应导出按影响面作废的实现');
 		assert.match(hostCache, /noteRepoCommonDir/, '应登记 git 公共目录以覆盖链接工作树');
 	});
 
@@ -88,6 +90,38 @@ parallel('面板重挂载', (t) => {
 			/function listKey\(values: readonly string\[\] \| null\): string \{[\s\S]{0,200}?JSON\.stringify\(values\)/,
 			'列表应保留边界地编码进缓存键',
 		);
+	});
+
+	t.test('AI 生成按发起仓库归属，不随活跃仓库漂移', () => {
+		/*
+		 * 事故形态：在 A 生成、生成中切到子模块，结果写进了子模块的提交框。守护三条 ——
+		 * 生成状态按仓库登记、发起时记下仓库、结果只写那一份。
+		 */
+		assert.match(composer, /beginGeneration\(repo\)/, '发起时按仓库开始生成');
+		assert.match(composer, /const repo = workingTreePath;/, '整段生成绑定发起时的仓库');
+		assert.match(composer, /generationStateOf\(workingTreePath\)/, '生成状态按当前仓库取');
+		// 不中断：卸载时不再 abort 生成请求。
+		assert.ok(!/aiAbortRef/.test(composer), '生成不应在切换仓库或卸载时被中断');
+	});
+
+	t.test('提交框上屏条件取自会话判定与侧栏页可见性', () => {
+		/*
+		 * 判据本身由 test/session-visibility.test.mjs 按行为覆盖：`retainedBy.mainView` 是引用计数，
+		 * 当布尔比较恒为假，会让生成结果永远不上屏。这里只断言传递链。
+		 */
+		assert.match(clientEntry, /isSessionDisplayed\(retain\)/, '应复用会话判定，不另造一套');
+		assert.match(clientEntry, /tab\?\.visible === true/, '应判定侧栏页是否可见');
+		assert.match(clientEntry, /onScreen,/, '应把上屏条件传给面板');
+		assert.match(panel, /onScreen = true/, '面板应接收上屏条件');
+		assert.match(panel, /onScreen, run,/, '应把上屏条件传给提交框');
+	});
+
+	t.test('变更列表与提交图各有自己的就绪阶段', () => {
+		/*
+		 * 两路并行取数、快照通常先回：共用一个阶段会让更改区陪着提交图显示占位。
+		 */
+		assert.match(panel, /phase: state\.entriesPhase/, '更改区应读变更列表那一路的阶段');
+		assert.match(panel, /busy: busyFlags, phase: state\.phase/, '图形区应读提交图那一路的阶段');
 	});
 
 	t.test('客户端不缓存提交数据，只保留取数参数', () => {

@@ -47,6 +47,28 @@ export function isRepoBusy(entries: readonly BusyEntry[], repo: string | null, s
 }
 
 /**
+ * 会挡住后台读取的影响面。
+ *
+ * 联网操作（推送、抓取、拉取）不改写本地对象库与工作区，后台读取照常进行；把它们算作阻塞
+ * 会让变更列表与提交图在一次推送的整段时间里停更。
+ */
+const BLOCKING_SCOPES: ReadonlySet<BusyScope> = new Set<BusyScope>(['read', 'commit', 'history']);
+
+/**
+ * 某个仓库是否有会挡住后台读取的操作在跑。
+ *
+ * 供事件驱动的刷新与兜底轮询的门控使用：联网操作期间它们应当照常刷新。
+ *
+ * @param entries - 现有记录。
+ * @param repo - 仓库路径；null 表示未选中仓库。
+ * @returns 有会阻塞读取的记录时为 true。
+ */
+export function isReadBlocked(entries: readonly BusyEntry[], repo: string | null): boolean {
+	if (repo === null) return false;
+	return entries.some((entry) => entry.repo === repo && BLOCKING_SCOPES.has(entry.scope));
+}
+
+/**
  * 某个仓库的忙碌分级。
  *
  * @param entries - 现有记录。

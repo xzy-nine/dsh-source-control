@@ -2,7 +2,7 @@
  * 仓库树批量领先/落后取数：每个仓库一次 `for-each-ref`，入队限流。
  */
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
-import { createLimiter } from './child-process.js';
+import { createLimiter } from './limiter.js';
 import { logDebug } from './logger.js';
 import { runGit } from './working-tree.js';
 

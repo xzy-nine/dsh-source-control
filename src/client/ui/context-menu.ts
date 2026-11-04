@@ -12,39 +12,6 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import css from '../css/context-menu.module.css';
 import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
-/**
- * 把文本写入剪贴板：优先异步剪贴板接口，回退到 execCommand。
- *
- * @param text - 待复制文本。
- * @returns 写入成功返回 true。
- */
-export async function copyText(text: string): Promise<boolean> {
-	// 非安全上下文下没有 clipboard 接口：按可能缺省读取，避免取属性时抛出而落到回退之外。
-	const clipboard = navigator.clipboard as Clipboard | undefined;
-	if (typeof clipboard?.writeText === 'function') {
-		try {
-			await clipboard.writeText(text);
-			return true;
-		} catch {
-			return false;
-		}
-	}
-	try {
-		const textarea = document.createElement('textarea');
-		textarea.value = text;
-		textarea.style.position = 'fixed';
-		textarea.style.opacity = '0';
-		document.body.appendChild(textarea);
-		textarea.select();
-		// 剪贴板接口不可用时的回退：execCommand 已废弃，但仍是唯一无需权限的同步复制路径。
-		// oxlint-disable-next-line typescript/no-deprecated -- 回退路径无替代 API。
-		const ok = document.execCommand('copy');
-		textarea.remove();
-		return ok;
-	} catch {
-		return false;
-	}
-}
 
 /**
  * 在新标签页打开链接。

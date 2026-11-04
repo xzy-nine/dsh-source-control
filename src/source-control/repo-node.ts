@@ -3,8 +3,8 @@
  *
  * 节点构造（工作树与子模块枚举）在 `repo-enrich.ts`，发现流程在 `repo-discovery.ts`。
  */
-import { readdir, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { listDirAt, probePathAt } from './host-runtime.js';
 import { logDebug } from './logger.js';
 
 /** 节点种类：主工作树仓库、链接工作树、子模块。 */
@@ -143,12 +143,8 @@ export function parseHead(source: string): { branch: string | null; head: string
  * @returns `dir`（主工作树）、`file`（工作树/子模块检出）或 null。
  */
 export async function gitEntryOf(dir: string): Promise<'dir' | 'file' | null> {
-	try {
-		const info = await stat(join(dir, '.git'));
-		return info.isDirectory() ? 'dir' : info.isFile() ? 'file' : null;
-	} catch {
-		return null;
-	}
+	const kind = await probePathAt(join(dir, '.git'));
+	return kind === 'directory' ? 'dir' : kind === 'file' ? 'file' : null;
 }
 
 /**
@@ -169,9 +165,9 @@ export async function hasGitEntry(dir: string): Promise<boolean> {
  */
 export async function subdirectories(dir: string): Promise<string[]> {
 	try {
-		const entries = await readdir(dir, { withFileTypes: true });
+		const entries = await listDirAt(dir);
 		return entries
-			.filter((entry) => entry.isDirectory() && !shouldPruneDirectory(entry.name))
+			.filter((entry) => entry.type === 'directory' && !shouldPruneDirectory(entry.name))
 			.map((entry) => join(dir, entry.name));
 	} catch (error) {
 		// 权限不足或目录已消失：不影响其它层级的发现，但要知道是哪一层没读到。

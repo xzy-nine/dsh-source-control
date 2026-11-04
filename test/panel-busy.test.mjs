@@ -2,7 +2,7 @@
  * 忙碌状态分级：按仓库与影响面记录，互不阻塞。
  */
 import assert from 'node:assert/strict';
-import { addBusy, anyBusy, busyFlagsOf, isRepoBusy, removeBusy } from '../src/client/panel/busy.ts';
+import { addBusy, anyBusy, busyFlagsOf, isReadBlocked, isRepoBusy, removeBusy } from '../src/client/panel/busy.ts';
 import { parallel } from './harness.mjs';
 
 
@@ -61,5 +61,29 @@ parallel('忙碌分级', (t) => {
 		for (const scope of ['read', 'commit', 'history', 'network']) {
 			assert.equal(anyBusy({ ...idle, [scope]: true }), true, scope + ' 在忙时应显示进度条');
 		}
+	});
+
+	t.test('联网操作不挡住后台读取', () => {
+		/*
+		 * 推送与抓取不改写本地对象库与工作区：把它们算作阻塞，会让变更列表与提交图在一次推送的
+		 * 整段时间里停更。
+		 */
+		const network = addBusy([], '/repo/a', 'network');
+		assert.equal(isReadBlocked(network, '/repo/a'), false, '联网操作不算阻塞');
+		assert.equal(isRepoBusy(network, '/repo/a'), true, '但它仍是忙碌：控件与进度条照常');
+	});
+
+	t.test('本地写操作挡住后台读取', () => {
+		for (const scope of ['read', 'commit', 'history']) {
+			assert.equal(isReadBlocked(addBusy([], '/repo/a', scope), '/repo/a'), true, scope + ' 应挡住读取');
+		}
+	});
+
+	t.test('未选中仓库时读取不被挡住', () => {
+		assert.equal(isReadBlocked(addBusy([], '/repo/a', 'commit'), null), false);
+	});
+
+	t.test('别的仓库的操作不挡住本仓库读取', () => {
+		assert.equal(isReadBlocked(addBusy([], '/repo/b', 'history'), '/repo/a'), false);
 	});
 });

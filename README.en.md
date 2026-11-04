@@ -15,7 +15,7 @@ A [DeepSeek Harness](https://github.com/DeepSeek-ai/deepseek-harness) (dsh) plug
 - **Remote protocols**: a remote address can be switched between HTTPS and SSH in both directions, checking the local SSH status before switching to SSH.
 - **Text logs**: Android logcat threadtime format, one file per startup, grouped by day, kept 15 days with a 15 MB daily cap.
 - **Feedback**: submit an issue from the settings **Feedback** tab or the feedback button in the repositories header; opt in to attach logs and the tool packs a zip, creates the issue, and the user drags the zip into its comment box.
-- **Safety**: destructive actions ask for confirmation, and failed actions explain themselves as a notice.
+- **Safety**: destructive actions ask for confirmation, failures explain themselves in a dialog, and completed actions report as a light notice.
 
 The complete description of every feature is in [功能说明](Docs/功能/功能说明.md) (Chinese only).
 

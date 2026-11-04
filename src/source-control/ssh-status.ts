@@ -7,7 +7,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { collectProcess } from './child-process.js';
+import { runCollect } from './host-runtime.js';
 
 /** 本地 SSH 状态。 */
 export interface SshStatus {
@@ -52,7 +52,7 @@ interface SshResult {
  * @returns 退出码与输出。
  */
 function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> {
-	return collectProcess({
+	return runCollect({
 		command: 'ssh',
 		args,
 		env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },

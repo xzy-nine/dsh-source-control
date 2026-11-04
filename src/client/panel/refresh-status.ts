@@ -15,6 +15,12 @@ export const REFRESH_TEXT = {
 	minutesAgo: '{n} 分钟前',
 	/** 小时档模板；`{n}` 为小时数。 */
 	hoursAgo: '{n} 小时前',
+	/** 天档模板；`{n}` 为天数。 */
+	daysAgo: '{n} 天前',
+	/** 月档模板；`{n}` 为月数。 */
+	monthsAgo: '{n} 个月前',
+	/** 年档模板；`{n}` 为年数。 */
+	yearsAgo: '{n} 年前',
 	/** 告知前缀。 */
 	noticePrefix: '已更新：',
 	/** 工作区计数的名称与单位。 */
@@ -24,23 +30,6 @@ export const REFRESH_TEXT = {
 	commitsLabel: '提交图',
 	commitsUnit: '个提交',
 } as const;
-
-/**
- * 代入模板里的 `{n}`。
- *
- * @param template - 含 `{n}` 的模板。
- * @param n - 代入的数量。
- * @returns 代入后的文本。
- */
-function fillCount(template: string, n: number): string {
-	return template.replace('{n}', String(n));
-}
-
-/** 一分钟的毫秒数；相对时间文案按分档给出。 */
-const MINUTE_MS = 60_000;
-
-/** 一小时的毫秒数；超过一小时按「小时前」给出。 */
-const HOUR_MS = 60 * MINUTE_MS;
 
 /**
  * 登记一次后台刷新开始。
@@ -89,19 +78,32 @@ export function backgroundFlagsOf(entries: readonly BackgroundRefresh[]): Backgr
 	};
 }
 
+/** 相对时间分档：单位与数量；`now` 档不带数量。 */
+export interface RefreshTimeBucket {
+	/** 分档单位。 */
+	readonly unit: 'now' | 'minutes' | 'hours' | 'days' | 'months' | 'years';
+	/** 该档的数量；`now` 档为 0。 */
+	readonly n: number;
+}
+
+/** 分档到文案模板的映射。 */
+const TEMPLATE_OF: Readonly<Record<RefreshTimeBucket['unit'], string>> = {
+	now: REFRESH_TEXT.justNow,
+	minutes: REFRESH_TEXT.minutesAgo,
+	hours: REFRESH_TEXT.hoursAgo,
+	days: REFRESH_TEXT.daysAgo,
+	months: REFRESH_TEXT.monthsAgo,
+	years: REFRESH_TEXT.yearsAgo,
+};
+
 /**
- * 把时刻格式化为相对时间文案。
+ * 把相对时间分档代入文案模板。
  *
- * @param at - 目标时刻；0 表示从未刷新。
- * @param now - 当前时刻。
- * @returns 相对时间文案；从未刷新时为空串。
+ * @param bucket - 分档与数量。
+ * @returns 相对时间文案。
  */
-export function lastRefreshText(at: number, now: number): string {
-	if (at <= 0) return '';
-	const diff = Math.max(0, now - at);
-	if (diff < MINUTE_MS) return REFRESH_TEXT.justNow;
-	if (diff < HOUR_MS) return fillCount(REFRESH_TEXT.minutesAgo, Math.floor(diff / MINUTE_MS));
-	return fillCount(REFRESH_TEXT.hoursAgo, Math.floor(diff / HOUR_MS));
+export function refreshTextOf(bucket: RefreshTimeBucket): string {
+	return TEMPLATE_OF[bucket.unit].replace('{n}', String(bucket.n));
 }
 
 /** 一次刷新的前后计数：条目数与提交数。 */

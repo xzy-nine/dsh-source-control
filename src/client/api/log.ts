@@ -14,6 +14,7 @@ interface ClientLogEntry {
 	readonly level: ClientLogLevel;
 	readonly tag: string;
 	readonly message: string;
+	readonly time: number;
 }
 
 /** 队列条数上限：超出时丢弃最旧的。 */
@@ -40,7 +41,7 @@ let sending = false;
  */
 export function logClient(level: ClientLogLevel, tag: string, message: string): void {
 	if (message === '') return;
-	queue.push({ level, tag, message });
+	queue.push({ level, tag, message, time: Date.now() });
 	if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
 	if (timer !== undefined) return;
 	timer = setTimeout(() => { timer = undefined; void flushClientLog(); }, FLUSH_DELAY_MS);

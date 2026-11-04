@@ -12,8 +12,10 @@
  * - 仓库信息：分支、远程、贮藏，变化频率低。
  * - 工作区快照：一次 `git status`，是三者中最慢的一条，有效期最短。
  */
-import { onRepositoryWrite, type WorkingTreeSnapshot } from './working-tree.js';
+import { onRepositoryWrite, type WriteSurface } from './working-tree.js';
+import type { WorkingTreeSnapshot } from './working-tree.js';
 import type { CommitNode, RepoInfo } from './git-types.js';
+import { LruMap, TRIM_RATIO } from '../shared/lru-map.js';
 
 /** 缓存值：提交图窗口。 */
 export interface CachedGraph {
@@ -70,14 +72,6 @@ const SNAPSHOT_LIMIT = 32;
 const HOOKS_PATH_LIMIT = 32;
 
 /**
- * 超出容量后回落到的比例。
- *
- * 一次淘汰一批而不是每写一条就删一条：批量摊平了淘汰成本，也避免容量边界上反复触发
- * 单条淘汰。
- */
-const TRIM_RATIO = 0.75;
-
-/**
  * `core.hooksPath` 的存活毫秒数。
  *
  * 该取值只在仓库配置变化时改变，而配置变化不产生写事件；有效期因此按分钟计。
@@ -85,13 +79,13 @@ const TRIM_RATIO = 0.75;
 const HOOKS_PATH_TTL_MS = 60_000;
 
 /** 提交图窗口缓存：键含仓库与全部取数参数。 */
-const graphs = new Map<string, CacheEntry<CachedGraph>>();
+const graphs = new LruMap<string, CacheEntry<CachedGraph>>({ limit: GRAPH_LIMIT, ratio: TRIM_RATIO });
 /** 仓库信息缓存：键为仓库与取数参数。 */
-const repoInfos = new Map<string, CacheEntry<RepoInfo>>();
+const repoInfos = new LruMap<string, CacheEntry<RepoInfo>>({ limit: REPO_INFO_LIMIT, ratio: TRIM_RATIO });
 /** 工作区快照缓存：键为仓库。 */
-const snapshots = new Map<string, CacheEntry<CachedSnapshot>>();
+const snapshots = new LruMap<string, CacheEntry<CachedSnapshot>>({ limit: SNAPSHOT_LIMIT, ratio: TRIM_RATIO });
 /** 钩子路径缓存：键为仓库。 */
-const hooksPaths = new Map<string, CacheEntry<string>>();
+const hooksPaths = new LruMap<string, CacheEntry<string>>({ limit: HOOKS_PATH_LIMIT, ratio: TRIM_RATIO });
 
 /**
  * 影响仓库信息的取数参数。
@@ -149,49 +143,37 @@ function repoInfoKey(repo: string, params: RepoInfoParams): string {
 }
 
 /**
- * 写入一条缓存项并按容量淘汰最旧。
+ * 写入一条缓存项；容量与淘汰顺序由缓存自己的上限决定。
  *
  * 仓库事实层（`repo-facts.ts`）复用本函数与其配对的 {@link getCached}，不另写淘汰逻辑。
  *
  * @param store - 目标缓存。
- * @param limit - 容量上限。
  * @param key - 缓存键。
  * @param value - 值。
  * @param ttlMs - 存活毫秒数；取 `Number.POSITIVE_INFINITY` 表示由其它守卫失效。
  * @returns 无。
  */
-export function putCached<T>(store: Map<string, CacheEntry<T>>, limit: number, key: string, value: T, ttlMs: number): void {
-	store.delete(key);
+export function putCached<T>(store: LruMap<string, CacheEntry<T>>, key: string, value: T, ttlMs: number): void {
 	store.set(key, { value, expiresAt: Date.now() + ttlMs });
-	if (store.size <= limit) return;
-	// 回落到 limit * ratio：一次淘汰一批，不在容量边界上逐条删。
-	const target = Math.max(1, Math.floor(limit * TRIM_RATIO));
-	while (store.size > target) {
-		const oldest = store.keys().next();
-		if (oldest.done === true) break;
-		store.delete(oldest.value);
-	}
 }
 
 /**
  * 读一条未过期的缓存项，命中即视为最近使用。
  *
- * `Map` 保持插入序，命中后删了重插即把该项移到队尾，淘汰因此落在最久未用的一项上。
- * 翻页回看时仍活跃的窗口不会因为「写入得早」被挤掉。
+ * 取值即把该项移到最新，淘汰因此落在最久未用的一项上：翻页回看时仍活跃的窗口不会
+ * 因为「写入得早」被挤掉。
  *
  * @param store - 目标缓存。
  * @param key - 缓存键。
  * @returns 值；未命中或已过期时为 undefined。
  */
-export function getCached<T>(store: Map<string, CacheEntry<T>>, key: string): T | undefined {
+export function getCached<T>(store: LruMap<string, CacheEntry<T>>, key: string): T | undefined {
 	const entry = store.get(key);
 	if (entry === undefined) return undefined;
 	if (Date.now() >= entry.expiresAt) {
 		store.delete(key);
 		return undefined;
 	}
-	store.delete(key);
-	store.set(key, entry);
 	return entry.value;
 }
 
@@ -251,7 +233,7 @@ export function readGraph(repo: string, params: Parameters<typeof graphKey>[1]):
  * @returns 无。
  */
 export function writeGraph(repo: string, params: Parameters<typeof graphKey>[1], value: CachedGraph): void {
-	putCached(graphs, GRAPH_LIMIT, graphKey(repo, params), value, GRAPH_TTL_MS);
+	putCached(graphs, graphKey(repo, params), value, GRAPH_TTL_MS);
 }
 
 /**
@@ -274,7 +256,7 @@ export function readRepoInfo(repo: string, params: RepoInfoParams): RepoInfo | u
  * @returns 无。
  */
 export function writeRepoInfo(repo: string, params: RepoInfoParams, value: RepoInfo): void {
-	putCached(repoInfos, REPO_INFO_LIMIT, repoInfoKey(repo, params), value, REPO_INFO_TTL_MS);
+	putCached(repoInfos, repoInfoKey(repo, params), value, REPO_INFO_TTL_MS);
 }
 
 /**
@@ -311,7 +293,7 @@ export function readSnapshot(repo: string, head: string | null = null): CachedSn
  * @returns 无。
  */
 export function writeSnapshot(repo: string, value: CachedSnapshot): void {
-	putCached(snapshots, SNAPSHOT_LIMIT, snapshotKey(repo, value.head), value, SNAPSHOT_TTL_MS);
+	putCached(snapshots, snapshotKey(repo, value.head), value, SNAPSHOT_TTL_MS);
 }
 
 /**
@@ -332,7 +314,24 @@ export function readHooksPath(repo: string): string | undefined {
  * @returns 无。
  */
 export function writeHooksPath(repo: string, value: string): void {
-	putCached(hooksPaths, HOOKS_PATH_LIMIT, keyOf(repo), value, HOOKS_PATH_TTL_MS);
+	putCached(hooksPaths, keyOf(repo), value, HOOKS_PATH_TTL_MS);
+}
+
+/**
+ * 删掉一个缓存里受目标仓库影响的条目。
+ *
+ * 键形如 `<仓库>\0<其余>`：取仓库部分与各祖先前缀比对；不含分隔符的键整体就是仓库路径。
+ *
+ * @param store - 目标缓存。
+ * @param key - 目标仓库的规范化路径。
+ * @returns 无。
+ */
+function dropAffected<T>(store: LruMap<string, CacheEntry<T>>, key: string): void {
+	for (const entryKey of store.keys()) {
+		const separator = entryKey.indexOf('\0');
+		const cached = separator === -1 ? entryKey : entryKey.slice(0, separator);
+		if (affectedBy(cached, key)) store.delete(entryKey);
+	}
 }
 
 /**
@@ -362,24 +361,10 @@ function affectedBy(cachedRepo: string, key: string): boolean {
  */
 export function invalidateRepo(repo: string): void {
 	const key = keyOf(repo);
-	for (const snapshotKeyName of snapshots.keys()) {
-		const separator = snapshotKeyName.indexOf('\0');
-		const cached = separator === -1 ? snapshotKeyName : snapshotKeyName.slice(0, separator);
-		if (affectedBy(cached, key)) snapshots.delete(snapshotKeyName);
-	}
-	for (const infoKey of repoInfos.keys()) {
-		const separator = infoKey.indexOf('\0');
-		const cached = separator === -1 ? infoKey : infoKey.slice(0, separator);
-		if (affectedBy(cached, key)) repoInfos.delete(infoKey);
-	}
-	for (const graphKeyName of graphs.keys()) {
-		const separator = graphKeyName.indexOf('\0');
-		const cached = separator === -1 ? graphKeyName : graphKeyName.slice(0, separator);
-		if (affectedBy(cached, key)) graphs.delete(graphKeyName);
-	}
-	for (const hooksKey of hooksPaths.keys()) {
-		if (affectedBy(hooksKey, key)) hooksPaths.delete(hooksKey);
-	}
+	dropAffected(snapshots, key);
+	dropAffected(repoInfos, key);
+	dropAffected(graphs, key);
+	dropAffected(hooksPaths, key);
 }
 
 /**
@@ -417,16 +402,38 @@ export function noteRepoCommonDir(repo: string, commonDir: string): void {
 }
 
 /**
- * 作废一条写命令影响到的全部缓存。
+ * 作废一个仓库及其共享公共目录的其它工作树的工作区快照。
  *
- * 覆盖三类影响：该仓库自身及其祖先与后代（子模块的写会改变父仓库 `status` 的结果），
- * 以及与它共享同一 git 公共目录的其它工作树（主工作树与链接工作树是不同路径）。
- * 其余仓库的缓存不受影响。
+ * 只索引或工作区的写不会移动 HEAD、不会改引用与贮藏，因此提交图窗口、仓库信息与钩子路径
+ * 仍然有效；清掉它们会让紧接着的全量刷新重跑一次 `git log` 与仓库信息批。
  *
  * @param repo - 发生写入的仓库路径。
  * @returns 无。
  */
-export function invalidateOnWrite(repo: string): void {
+function invalidateSnapshotsOnWrite(repo: string): void {
+	const key = keyOf(repo);
+	dropAffected(snapshots, key);
+	const commonDir = commonDirByRepo.get(key);
+	if (commonDir === undefined) return;
+	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
+		if (cachedCommonDir !== commonDir || cachedRepo === key) continue;
+		dropAffected(snapshots, cachedRepo);
+	}
+}
+
+/**
+ * 作废一条写命令影响到的全部缓存。
+ *
+ * 影响面为 `history` 时覆盖三类影响：该仓库自身及其祖先与后代（子模块的写会改变父仓库
+ * `status` 的结果），以及与它共享同一 git 公共目录的其它工作树（主工作树与链接工作树是
+ * 不同路径）。影响面为 `index` 时只清工作区快照，范围同上。
+ *
+ * @param repo - 发生写入的仓库路径。
+ * @param surface - 影响面；省略时按 `history` 处理。
+ * @returns 无。
+ */
+export function invalidateOnWrite(repo: string, surface: WriteSurface = 'history'): void {
+	if (surface === 'index') { invalidateSnapshotsOnWrite(repo); return; }
 	invalidateRepo(repo);
 	const commonDir = commonDirByRepo.get(keyOf(repo));
 	if (commonDir === undefined) return;
@@ -444,4 +451,4 @@ export function invalidateOnWrite(repo: string): void {
  * 同一仓库的主工作树与链接工作树是两个不同路径，但共享同一 git 公共目录，
  * 由 {@link invalidateOnWrite} 一并覆盖。
  */
-onRepositoryWrite((repo) => { invalidateOnWrite(repo); });
+onRepositoryWrite((repo, surface) => { invalidateOnWrite(repo, surface); });

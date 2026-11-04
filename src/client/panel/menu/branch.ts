@@ -109,7 +109,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 					conflicted.current = result.conflicted;
 				}, `${MERGE_MODE_TITLES[mode]} ${name}`);
 				if (conflicted.current) {
-					await deps.notify('已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。');
+					await deps.announce('已检出到该分支并保持待合并状态，请在变更列表中解决冲突后再提交。');
 				}
 			})();
 		};

@@ -16,6 +16,14 @@ export const AUTO_FETCH_PERIOD_SECONDS_DEFAULT = 180;
 export const AUTO_FETCH_PERIOD_SECONDS_MIN = 10;
 export const AUTO_FETCH_PERIOD_SECONDS_MAX = 3600;
 
+/**
+ * 连续无新引用时抓取间隔的后延上限（秒）。
+ *
+ * 抓取的固定开销在秒级，而远端多数轮次没有新提交；无变化时按倍数后延能把绝大多数往返省掉，
+ * 上限仍保证离开一段时间后能自己发现变化。
+ */
+export const AUTO_FETCH_BACKOFF_MAX_SECONDS = 1800;
+
 /** 过期缓存的清理周期（毫秒）。 */
 export const CLEANUP_INTERVAL_MS = 300000;
 
@@ -331,6 +339,24 @@ export function autoFetchPeriodMs(seconds: number): number {
 	const value = Number.isFinite(seconds) ? Math.round(seconds) : AUTO_FETCH_PERIOD_SECONDS_DEFAULT;
 	const clamped = Math.min(AUTO_FETCH_PERIOD_SECONDS_MAX, Math.max(AUTO_FETCH_PERIOD_SECONDS_MIN, value));
 	return clamped * 1000;
+}
+
+/**
+ * 下一次抓取前应等待的毫秒数。
+ *
+ * 无变化时按倍数后延，上限取「设置的基础周期」与 {@link AUTO_FETCH_BACKOFF_MAX_SECONDS} 的较大者：
+ * 基础周期本身已超过上限时按设置走，不把用户的选择压小。有变化即复位到基础周期，使下一轮
+ * 重新按最短间隔观察。
+ *
+ * @param currentMs - 本轮的间隔毫秒数。
+ * @param baseMs - 设置给出的基础间隔毫秒数。
+ * @param changed - 本轮抓取是否拉回了新引用。
+ * @returns 下一次抓取前的等待毫秒数。
+ */
+export function nextAutoFetchPeriodMs(currentMs: number, baseMs: number, changed: boolean): number {
+	const ceiling = Math.max(baseMs, AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000);
+	if (changed) return baseMs;
+	return Math.min(ceiling, Math.max(baseMs, currentMs * 2));
 }
 
 /**

@@ -213,9 +213,9 @@ parallel('客户端结构与产物契约', (t) => {
 	t.test('差异页默认并排且可切换', () => {
 		// 复制来的 FileDiff 支持统一 / 并排两种布局；差异页应默认并排并给出切换。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /useState\(true\)/, '默认应为并排');
 		assert.match(source, /FileDiff, \{ state, split, wrap, retry: load \}/, '应把 split 传给 FileDiff');
-		assert.match(source, /setSplit/, '应能切换布局');
+		// 切换走设置，不再用组件内的 useState：刷新与换浏览器都要保留。
+		assert.match(source, /diffView\.patch\(\{ split: !split \}\)/, '应能切换布局');
 		const css = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
 		assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 	});
@@ -413,14 +413,15 @@ parallel('客户端结构与产物契约', (t) => {
 	t.test('差异面板默认自动换行', () => {
 		// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
 		const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
-		const choice = /const DEFAULT_CHOICE: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
+		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
 		assert.ok(choice !== null, '未找到默认视图选择');
 		assert.equal(choice[1], 'true', '并排应默认开启');
 		assert.equal(choice[2], 'true', '换行应默认开启');
-		// 面板从记录里读初值，因此切页再回来仍是上次的选择。
+		// 视图选择取自面板设置，因此与其它视图开关同源、随宿主持久化。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.wrap\)/, 'wrap 初值应取自记录');
-		assert.match(source, /React\.useState\(\(\) => readDiffView\(address\)\.split\)/, 'split 初值应取自记录');
+		assert.match(source, /const diffView = useDiffView\(/, '差异页应经 hook 取视图选择');
+		assert.match(source, /const wrap = diffView\.choice\.wrap;/, 'wrap 取自设置');
+		assert.match(source, /const split = diffView\.choice\.split;/, 'split 取自设置');
 	});
 
 	t.test('删除分支只列以该提交为尖端的分支', () => {
@@ -536,10 +537,31 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(buildStart !== -1, '未找到删除分支的处理函数');
 		const build = menu.slice(buildStart, menu.indexOf('\n\t},', buildStart));
 		assert.ok(!/disabled/.test(build), '删除项不应因当前分支置灰，改为点击后提示');
-		// 提示走顶部轻量横幅，不再使用需要关闭的模态弹窗。
 		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
 		assert.match(toast, /export function showToast/, '应提供轻量提示');
 		assert.match(toast, /from '@deepseek-ai\/dsh-client-ui-primitives'/, '提示应复用 ui-primitives 的 Toast');
+	});
+
+	t.test('成功结果与失败原因走不同呈现面', () => {
+		/*
+		 * notify 是失败面（弹窗标题「操作失败」），announce 是结果告知（顶部轻量提示）。
+		 * 已完成的动作被当成失败报告是本用例守护的回归点：两者都是 `string`，
+		 * 只有断言调用点落在哪个出口上，才能区分「发布成功」与「发布失败」。
+		 */
+		const deps = readFileSync(join(panelDir, 'action-deps.ts'), 'utf8');
+		assert.match(deps, /readonly notify: \(message: string\) => Promise<void>/, '应保留失败面');
+		assert.match(deps, /readonly announce: \(message: string, tone\?: ToastTone\) => Promise<void>/, '应提供结果告知');
+
+		const remoteSync = readFileSync(join(panelDir, 'use-remote-sync.ts'), 'utf8');
+		assert.match(remoteSync, /await announce\(`已发布到/, '发布成功的地址是结果告知');
+
+		const repoCommands = readFileSync(join(panelDir, 'use-repo-commands.ts'), 'utf8');
+		assert.match(repoCommands, /await announce\(url === '' \? 'Pull Request 已创建。'/, 'PR 创建成功是结果告知');
+		assert.match(repoCommands, /await announce\(`已在终端执行克隆/, '克隆命令已发出是结果告知');
+		assert.match(repoCommands, /await notify\('无法在终端里执行克隆命令/, '克隆命令未能发出才是失败');
+
+		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
+		assert.match(toast, /export type ToastTone = 'success' \| 'info'/, '结果告知应区分成功与中性');
 	});
 
 	t.test('提交菜单与引用菜单共用同一份操作注册表', () => {

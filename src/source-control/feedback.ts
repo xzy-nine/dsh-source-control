@@ -12,7 +12,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-import { collectProcess } from './child-process.js';
+import { runCollect } from './host-runtime.js';
 import { buildIssueBody, FEEDBACK_REPO, feedbackIssueTitle, type FeedbackFacts, type FeedbackType } from './feedback-text.js';
 import { currentLogFile, logRoot, recentLogFiles } from './logger.js';
 import { redactSummary, redactText } from './log-redact.js';
@@ -33,7 +33,7 @@ interface GhRun {
  * @returns 退出码与输出。
  */
 function runGh(args: readonly string[], cwd: string): Promise<GhRun> {
-	return collectProcess({
+	return runCollect({
 		command: 'gh',
 		args,
 		cwd,
@@ -155,7 +155,6 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 		platform: platformText(),
 		node: process.version,
 		logFile: null,
-		logSize: null,
 		redaction: '',
 		exemptionCount: (options.exemptions ?? []).length,
 	};
@@ -173,7 +172,6 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 		facts = {
 			...facts,
 			logFile: archiveFileName(packed.path),
-			logSize: packed.size,
 			redaction: redactSummary(masked.counts),
 		};
 	}

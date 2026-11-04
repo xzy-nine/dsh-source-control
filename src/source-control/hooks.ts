@@ -7,9 +7,11 @@
  *
  * 探测只读文件系统，不调用 git。
  */
-import { access, constants, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { gitCommonDirOf, resolveGitDir, workTreeBaseOf } from './worktree-branches.js';
+import { probePathAt } from './host-runtime.js';
 
 /** 提交时会运行的钩子名；任一存在即可视为「提交钩子处于激活状态」。 */
 const COMMIT_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'] as const;
@@ -30,16 +32,15 @@ export interface HooksState {
 /**
  * 判定一个文件是否可执行。
  *
- * Windows 上不可执行位不生效，存在即可执行；其余平台要求任一执行位。
+ * Windows 上不可执行位不生效，存在即可执行；其余平台按 `access(X_OK)` 判定执行位。
  *
  * @param path - 文件路径。
  * @returns 可执行时为 true。
  */
 async function isExecutableFile(path: string): Promise<boolean> {
+	if (await probePathAt(path) !== 'file') return false;
+	if (process.platform === 'win32') return true;
 	try {
-		const info = await stat(path);
-		if (!info.isFile()) return false;
-		if (process.platform === 'win32') return true;
 		await access(path, constants.X_OK);
 		return true;
 	} catch {

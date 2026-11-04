@@ -18,6 +18,7 @@ const CLIENT_EXTERNALS = [
 	'react/jsx-runtime',
 	'react-dom',
 	'react-dom/client',
+	'@deepseek-ai/dsh-client-store',
 	'@deepseek-ai/dsh-client-ui-primitives',
 ];
 

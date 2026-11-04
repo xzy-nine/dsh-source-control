@@ -10,19 +10,19 @@ import {
 	discardPaths, fetchRepo, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
 } from '../api/index.ts';
-import { showCheckbox, showText } from '../ui/dialog.ts';
+import { showCheckbox, showError, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
 import { reportError } from './errors.ts';
-import { showToast } from './toast.ts';
+import { showToast, type ToastTone } from './toast.ts';
 import {
-	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterKeyOf, filterSummaryOf,
-	legacyFilterOf, readStoredFilter, REF_FILTER_KEY, revalidatedFilter, sortRefs, writeStoredFilter,
+	checkedRefIds, computeSyncMarkers, currentBranchHashes, DEFAULT_REF_FILTER, filterSummaryOf,
+	readStoredFilter, revalidatedFilter, sortRefs, writeStoredFilter,
 } from './refs.ts';
 import type { AutoFilterContext, RefFilter } from './refs.ts';
 import { openCommitMenu, openRefMenu } from './commit-menu.ts';
 import {
-	loadValue, migrateLegacyDrafts, primeStorage, saveValue,
+	getRefFilters, migrateLegacyDrafts, primeStorage, setRefFilters,
 	storageReady as storagePrimed,
 } from './storage.ts';
 import { logClient, migrateLegacyState } from '../api/index.ts';
@@ -31,7 +31,8 @@ import { useCommitStats } from './use-commit-stats.ts';
 import { useFileChangeRefresh, type SessionsLike } from './use-file-change-refresh.ts';
 import { dropGraphWindows, rememberedMaxCommits, useGraphData } from './use-graph-data.ts';
 import { discardNoticeOf } from './discard-notice.ts';
-import { backgroundFlagsOf, lastRefreshText as relativeRefreshText, refreshNoticeSince } from './refresh-status.ts';
+import { backgroundFlagsOf, refreshNoticeSince } from './refresh-status.ts';
+import { lastRefreshText as relativeRefreshText } from './refresh-time.ts';
 import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
@@ -70,6 +71,12 @@ export interface GitGraphPanelProps {
 	readonly runInTerminal?: ((sessionId: string, command: string) => Promise<boolean>) | undefined;
 	/** 取会话服务；未装载时为 null。 */
 	readonly getSessions?: (() => unknown) | undefined;
+	/**
+	 * 本面板当前是否在屏幕上：所在会话是当前会话，且源代码管理侧栏页可见。
+	 *
+	 * 异步结果（AI 生成的提交信息）只在它为真时写进提交框，否则暂存到所属仓库。
+	 */
+	readonly onScreen?: boolean | undefined;
 }
 
 /** 提交信息中的 Issue 是否开启链接（依赖设置）。 */
@@ -83,7 +90,7 @@ function issueLinkingConfigOf(settings: Settings): unknown {
  * @param props - 见 {@link GitGraphPanelProps}。
  * @returns 面板元素。
  */
-export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions }: GitGraphPanelProps): React.ReactElement {
+export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDirectory, runInTerminal, getSessions, onScreen = true }: GitGraphPanelProps): React.ReactElement {
 	const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 	const [settingsOpen, setSettingsOpen] = React.useState(false);
 	/** 打开设置时直接落位的页签；仓库区标题行与反馈入口各自指定。 */
@@ -152,7 +159,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
 		selectNode, toggleNode, setSelectedId, rescan, refreshTree,
-	} = useRepos({ cwd, sessionId });
+	} = useRepos({ cwd });
 
 	/*
 	 * 取数目标：选中节点优先，其次**当且仅当工作区根本身是仓库**时用它。
@@ -195,7 +202,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const patchFilter = React.useCallback((next: RefFilter) => {
 		setRefFilter(next);
 		if (workingTreePath === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(loadValue(REF_FILTER_KEY, {}), workingTreePath, next));
+		setRefFilters(writeStoredFilter(getRefFilters(), workingTreePath, next));
 	}, [workingTreePath]);
 
 	/*
@@ -206,23 +213,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 */
 	React.useEffect(() => {
 		if (!storageReady || workingTreePath === null) return;
-		const registry = loadValue<Record<string, unknown>>(REF_FILTER_KEY, {});
-		const key = filterKeyOf(workingTreePath);
-		if (registry[key] !== undefined) {
-			setRefFilter(readStoredFilter(registry, workingTreePath));
-			return;
-		}
-		/*
-		 * 旧版本把筛选按仓库存成独立键（`<前缀>:<仓库路径>`）：首次进入时折合到新表并清掉旧键，
-		 * 否则升级后各仓库的筛选都会回到默认自动。
-		 */
-		const legacyKey = `${REF_FILTER_KEY}:${workingTreePath}`;
-		const legacyValue = loadValue<unknown>(legacyKey, null);
-		const legacy = legacyFilterOf(legacyValue);
-		setRefFilter(legacy ?? DEFAULT_REF_FILTER);
-		if (legacy === null) return;
-		saveValue(REF_FILTER_KEY, writeStoredFilter(registry, workingTreePath, legacy));
-		saveValue(legacyKey, null);
+		setRefFilter(readStoredFilter(getRefFilters(), workingTreePath));
 	}, [storageReady, workingTreePath]);
 
 	/*
@@ -273,7 +264,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		statsByHash, messageByHash, translatedByHash, translatedFromByHash, translatingHash,
 		graphTranslated, graphTranslating,
 		hoverCommit, translateCommit, cancelTranslateCommit, translateCommits, cancelTranslateCommits,
-	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: showToast, cleanupSeconds: settings.cleanupSeconds });
+	} = useCommitStats({ workingTreePath, translateReady, onTranslateError: (message: string) => { void showError(message); }, cleanupSeconds: settings.cleanupSeconds });
 
 	// 会话服务只在渲染期读取：该插件的客户端半边可能晚于本插件激活。
 	const sessions = React.useMemo(() => {
@@ -364,7 +355,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		if (node.id === selectedId) return;
 		selectNode(node);
 		setState((previous) => ({
-			...previous, phase: 'loading', commits: [], entries: [],
+			...previous, phase: 'loading', entriesPhase: 'loading', commits: [], entries: [],
 			detail: null, selectedHash: null, error: null,
 		}));
 	}, [selectedId, selectNode, setState]);
@@ -442,11 +433,23 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, refresh, refreshEntries, setState]);
 
+	/** 失败提示：说明失败原因，或当前条件下操作无法进行的原因；正文可复制。 */
+	const notify = React.useCallback((message: string): Promise<void> => {
+		void showError(message);
+		return Promise.resolve();
+	}, []);
+
+	/** 结果告知：动作已完成的结论与需要用户继续处理的状态，顶部轻量提示，不打断操作。 */
+	const announce = React.useCallback((message: string, tone: ToastTone = 'info'): Promise<void> => {
+		showToast(message, { tone });
+		return Promise.resolve();
+	}, []);
+
 	/* 提交框：草稿、钩子勾选、AI 生成、翻译与提交。 */
 	const composer = useCommitComposer({
 		workingTreePath, settings, commits: state.commits, merging: state.merging,
-		entries: state.entries, translateReady, commitBusy: busyFlags.commit, run,
-		notify: (message: string) => { showToast(message); return Promise.resolve(); },
+		entries: state.entries, translateReady, commitBusy: busyFlags.commit, onScreen, run,
+		notify,
 	});
 
 	/**
@@ -472,12 +475,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}
 	}, [workingTreePath, setState]);
 
-	/** 轻量提示：说明当前条件下操作无法进行的原因，或报告一次性结果。 */
-	const notify = React.useCallback((message: string): Promise<void> => {
-		showToast(message);
-		return Promise.resolve();
-	}, []);
-
 	/*
 	 * 选中仓库的同步状态：取自当前工作区快照，与图形区、更改区、提交框读同一个数。
 	 *
@@ -492,7 +489,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const remoteSync = useRemoteSync({
 		workingTreePath, selectedRepoName: selectedNode?.name ?? '', currentSync: selectedSync, remotes: state.remotes, head: state.head,
 		settings, busyFlags, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks,
-		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify },
+		setRunHooks: composer.setRunHooks, actions: { run, withProgress, notify, announce },
 	});
 
 	/**
@@ -509,9 +506,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const handleDiscardPaths = React.useCallback(async (cwd: string, paths: readonly string[], untracked: boolean) => {
 		const report = await discardPaths(cwd, paths, untracked);
 		const notice = discardNoticeOf(report);
-		if (notice !== '') await notify(notice);
+		if (notice.failures.length > 0) await notify(notice.failures.join('\n'));
+		if (notice.outcomes.length > 0) await announce(notice.outcomes.join('\n'));
 		return report;
-	}, [notify]);
+	}, [notify, announce]);
 
 	/** 中止进行中的合并，把工作区恢复到合并前。已解决的冲突改动会一并丢弃，因此先确认。 */
 	const handleAbortMerge = React.useCallback(() => {
@@ -560,7 +558,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const repoCommands = useRepoCommands({
 		cwd, workingTreePath, sessionId, settings, settingsOpen, remotes: state.remotes, head: state.head,
 		detail: state.detail, busyFlags, selectedNode, pickDirectory, runInTerminal, openDiff,
-		actions: { run, withProgress, notify }, setState, rescanPending, setSettings,
+		actions: { run, withProgress, notify, announce }, setState, rescanPending, setSettings,
 	});
 
 	/*
@@ -629,7 +627,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		};
 		const notice = refreshNoticeSince(noticeBaselineRef.current, current);
 		noticeBaselineRef.current = current;
-		if (notice !== '') showToast(notice, { tone: 'info' });
+		if (notice !== '') showToast(notice);
 	}, [state.lastRefreshAt, state.phase, state.entries, state.nextSkip, graphScope]);
 
 
@@ -650,12 +648,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive: repoCommands.handleCreateArchive, head: state.head,
-		notify, setCommitMessage: composer.setMessage,
+		notify, announce, setCommitMessage: composer.setMessage,
 		handleCreatePullRequest: repoCommands.handleCreatePullRequest, canCreatePullRequest: repoCommands.canCreatePullRequest,
 		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
 		foreignBranches: state.foreignBranches,
 	}), [
-		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify,
+		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify, announce,
 		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches,
 	]);
 
@@ -743,10 +741,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return () => { cancelled.current = true; };
 	}, [workingTreePath, state.head, refFilter.mode, filterOpen]);
 
-	// 错误以顶部轻量提示呈现，不再占版面：状态变化即弹一条；同时记一条错误日志。
+	// 错误以弹窗呈现：状态变化即弹一条；同时记一条错误日志。
 	React.useEffect(() => {
 		if (state.error === null) return;
-		showToast(state.error);
+		void showError(state.error);
 		logClient('E', 'panel', `面板操作失败${workingTreePath === null ? '' : `，仓库 ${workingTreePath}`}：${state.error}`);
 	}, [state.error, workingTreePath]);
 
@@ -836,7 +834,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {
-			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.phase,
+			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.entriesPhase,
 			workingTreePath, head: state.head,
 			message: composer.message, onMessageChange: composer.setMessage, amend: composer.amend, onToggleAmend: composer.toggleAmend, onStash: handleStash,
 			// 任一类钩子存在即显示：同一个勾选项同时决定提交与推送是否带 --no-verify。

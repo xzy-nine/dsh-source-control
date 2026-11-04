@@ -2,20 +2,26 @@
  * 宿主侧文本日志：logcat 格式、每次启动一个文件、按日归档、按体积与保留期清理。
  *
  * 目录布局见 `./log-retention.ts`：`<root>/<YYYY-MM-DD>/logcat-<date>-<time>-<pid>.log`。
- * 根目录解析与状态文档同序：`DSH_SOURCE_CONTROL_HOME`（单测隔离）→ `DSH_HOME` → `~/.dsh`。
+ * 根目录是插件数据目录下的 `logs`，解析见 `./dsh-home.ts`。
  *
  * 写入策略：行先入缓冲，按 `FLUSH_DELAY_MS` 合并为一次追加写；进程退出时同步收尾。
  * 体积与保留期清理在写入前按当日与全部日文件夹各判一次，判据见 log-retention.ts。
  */
 import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pluginHome } from './dsh-home.js';
 import { formatLogLines, type LogLevel } from './log-format.js';
 
 export type { LogLevel };
 import {
 	dayFolderName, isDayFolderName, logFileName, LOG_RETENTION_DAYS, orderLogFiles, planDayEvictions, planExpiredDayFolders, DAY_FOLDER_LIMIT_BYTES,
 } from './log-retention.js';
+
+/** 级别到数值的映射，用于门控比较。 */
+const LEVEL_RANK: Record<LogLevel, number> = { V: 0, D: 1, I: 2, W: 3, E: 4 };
+
+/** 当前生效的级别门控；低于此级别的日志不落盘。 */
+let levelThreshold = LEVEL_RANK.I;
 
 /** 写入合并窗口（毫秒）。 */
 const FLUSH_DELAY_MS = 250;
@@ -47,11 +53,7 @@ let exitHookInstalled = false;
  * @returns 绝对路径。
  */
 function resolveRootDir(): string {
-	const override = process.env.DSH_SOURCE_CONTROL_HOME;
-	if (override !== undefined && override.trim().length > 0) return join(override.trim(), 'logs');
-	const envHome = process.env.DSH_HOME;
-	if (envHome !== undefined && envHome.trim().length > 0) return join(envHome.trim(), 'dsh-source-control', 'logs');
-	return join(homedir(), '.dsh', 'dsh-source-control', 'logs');
+	return join(pluginHome(), 'logs');
 }
 
 /**
@@ -138,9 +140,11 @@ function schedule(): void {
  * @param level - 级别。
  * @param tag - 标签。
  * @param message - 消息正文。
+ * @param time - 记录时间；省略时取当前时刻。客户端转写日志时传入条目原始时刻。
  */
-export function log(level: LogLevel, tag: string, message: string): void {
-	const now = new Date();
+export function log(level: LogLevel, tag: string, message: string, time?: Date): void {
+	if (LEVEL_RANK[level] < levelThreshold) return;
+	const now = time ?? new Date();
 	if (filePath === null) openFile(now);
 	const text = message.length > MAX_MESSAGE_CHARS ? `${message.slice(0, MAX_MESSAGE_CHARS)}…` : message;
 	for (const line of formatLogLines({ time: now, pid: process.pid, tid: 0, level, tag, message: text })) buffer.push(line);
@@ -149,6 +153,8 @@ export function log(level: LogLevel, tag: string, message: string): void {
 	else schedule();
 }
 
+/** 跟踪级别。 */
+export function logTrace(tag: string, message: string): void { log('V', tag, message); }
 /** 调试级别。 */
 export function logDebug(tag: string, message: string): void { log('D', tag, message); }
 /** 信息级别。 */
@@ -272,6 +278,8 @@ export function cleanLogs(now: Date = new Date()): void {
  * @returns 本次启动的日志文件路径。
  */
 export function initLog(): string {
+	const envLevel = process.env.DSH_SOURCE_CONTROL_LOG_LEVEL;
+	if (envLevel !== undefined && envLevel in LEVEL_RANK) levelThreshold = LEVEL_RANK[envLevel as LogLevel];
 	const now = new Date();
 	if (filePath === null) openFile(now);
 	cleanLogs(now);
@@ -287,4 +295,5 @@ export function resetLogStateForTests(): void {
 	filePath = null;
 	dayDir = null;
 	buffer = [];
+	levelThreshold = LEVEL_RANK.I;
 }

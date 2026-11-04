@@ -5,11 +5,11 @@
  * 这些封装以 Promise 返回用户操作结果，调用方用 await 串接即可。
  */
 import React from 'react';
-import { createRoot } from 'react-dom/client';
 import {
-	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, type SegmentedTab,
+	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, writeClipboard, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown, type DropdownOption } from './dropdown.ts';
+import { pushDialog, removeDialog } from './overlay-host.ts';
 import css from '../css/dialog.module.css';
 import { cx } from '../css/cx.ts';
 
@@ -104,24 +104,18 @@ function confirmFooter(
 }
 
 /**
- * 在独立 React 根上挂载一个弹窗组件，并在结束时卸载。
+ * 把一个弹窗投进覆盖层队列，并在结束后摘除。
  *
  * @param build - 接收 finish(result) 回调，返回要渲染的 React 元素。
  * @returns 用户操作结果。
  */
 function runDialog<T>(build: (finish: (result: T) => void) => React.ReactElement): Promise<T> {
 	return new Promise((resolve) => {
-		const container = document.createElement('div');
-		document.body.appendChild(container);
-		const root = createRoot(container);
-		const finish = (result: T): void => {
+		pushDialog((id) => build((result) => {
 			resolve(result);
-			requestAnimationFrame(() => {
-				root.unmount();
-				container.remove();
-			});
-		};
-		root.render(build(finish));
+			// 先让出一帧再摘除：退出动画在这段时间里播放。
+			requestAnimationFrame(() => { removeDialog(id); });
+		}));
 	});
 }
 
@@ -178,6 +172,44 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 				() => { finish(undefined); },
 				React.createElement('div', { className: css.dialogHint }, message),
 				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, closeLabel),
+			);
+		}
+		return React.createElement(Content);
+	});
+}
+
+/**
+ * 错误框：显示失败原因，正文可整段复制。
+ *
+ * @param message - 错误文本。
+ * @returns 用户关闭后完成。
+ */
+export function showError(message: string): Promise<void> {
+	return runDialog<undefined>((finish) => {
+		function Content(): React.ReactElement {
+			const [copied, setCopied] = React.useState(false);
+			/** 复制正文；写入失败时按钮文案保持「复制」。 */
+			const copy = async (): Promise<void> => {
+				try {
+					if (await writeClipboard(message)) setCopied(true);
+				} catch {
+					/* 写入失败：按钮文案不变 */
+				}
+			};
+			return dialogModal(
+				'操作失败',
+				() => { finish(undefined); },
+				React.createElement(
+					'div',
+					{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
+					message,
+				),
+				React.createElement(
+					React.Fragment,
+					null,
+					React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: () => { void copy(); } }, copied ? '已复制' : '复制'),
+					React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, '知道了'),
+				),
 			);
 		}
 		return React.createElement(Content);

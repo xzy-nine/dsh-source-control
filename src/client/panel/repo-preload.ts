@@ -107,54 +107,59 @@ function rootKey(root: string): string {
 }
 
 /**
- * 从会话列表快照里取主视图当前会话的工作区。
+ * 一个会话的保留信息里与显示判定有关的部分。
  *
- * 判据是会话行上的 `retainedBy.mainView`：主视图持有该会话的引用即表示它正被显示，
- * 与任何插件页是否打开无关。旧宿主没有该标记时回退 `current`。
+ * 形状取官方会话保留信息（`SessionRetainInfo`）：按引用来源记的计数。
+ */
+export interface SessionRetain {
+	/** 按引用来源记的计数；主视图持有该会话时 `mainView` 大于 0。 */
+	readonly retainedBy: { readonly mainView?: number } | null | undefined;
+}
+
+/** 判定活跃会话所需的一个会话的信息。 */
+export interface SessionInfo {
+	/** 会话 id。 */
+	readonly id: string;
+	/** 会话工作区根；缺失的会话不产生工作区。 */
+	readonly cwd?: string | undefined;
+	/** 会话来源；子代理会话为 `subagent`。 */
+	readonly origin?: string | undefined;
+	/** 官方保留信息；来源不可用时为 undefined。 */
+	readonly retain?: SessionRetain | undefined;
+}
+
+/**
+ * 判断一个会话是否正被主视图显示。
  *
- * 子代理会话沿用父会话的工作区，不作为活跃会话。
+ * 判据是官方保留信息里的 `retainedBy.mainView` —— 它是**引用计数**（数字），大于 0 即表示
+ * 主视图持有该会话。
  *
- * @param list - 会话列表快照（形状同 `SessionListState`）。
+ * @param retain - 该会话的保留信息；来源不可用时为 undefined。
+ * @returns 该会话正被显示时为 true。
+ */
+export function isSessionDisplayed(retain: SessionRetain | undefined): boolean {
+	const count = retain?.retainedBy?.mainView;
+	return typeof count === 'number' && count > 0;
+}
+
+/**
+ * 取主视图当前会话的工作区。
+ *
+ * 主视图持有引用的会话即正在显示的会话，与任何插件页是否打开无关。子代理会话沿用父会话的
+ * 工作区，不作为活跃会话。按传入顺序取第一个满足条件的会话。
+ *
+ * @param sessions - 会话信息列表，顺序即候选顺序；缺失时为 null。
  * @returns 会话 id 与其工作区根；没有正在显示的会话时为 null。
  */
-export function activeWorkspaceOf(list: unknown): { readonly sessionId: string; readonly cwd: string } | null {
-	const state = list as {
-		readonly ids?: unknown;
-		readonly byId?: unknown;
-		readonly current?: unknown;
-	} | null;
-	if (state === null || typeof state !== 'object') return null;
-	const ids = Array.isArray(state.ids) ? state.ids : [];
-	const byId = (state.byId ?? {}) as Record<string, unknown>;
-
-	const pick = (id: string): { sessionId: string; cwd: string } | null => {
-		const row = byId[id] as { readonly cwd?: unknown; readonly origin?: unknown } | undefined;
-		if (row === undefined || typeof row.cwd !== 'string' || row.cwd === '') return null;
-		if (row.origin === 'subagent') return null;
-		return { sessionId: id, cwd: row.cwd };
-	};
-	const isMain = (id: string): boolean => {
-		const row = byId[id] as { readonly retainedBy?: unknown } | undefined;
-		if (row === undefined || row.retainedBy === null || typeof row.retainedBy !== 'object') return false;
-		const count = (row.retainedBy as Record<string, unknown>).mainView;
-		return typeof count === 'number' && count > 0;
-	};
-
-	// 旧宿主用 current 标出当前会话；有值时以它为准。
-	const current = state.current;
-	if (typeof current === 'string' && current !== '') {
-		const hit = pick(current);
-		if (hit !== null) return hit;
-	}
-	for (const id of ids) {
-		if (typeof id !== 'string' || !isMain(id)) continue;
-		const hit = pick(id);
-		if (hit !== null) return hit;
-	}
-	for (const id of Object.keys(byId)) {
-		if (ids.includes(id) || !isMain(id)) continue;
-		const hit = pick(id);
-		if (hit !== null) return hit;
+export function activeWorkspaceOf(
+	sessions: readonly SessionInfo[] | null,
+): { readonly sessionId: string; readonly cwd: string } | null {
+	if (!Array.isArray(sessions)) return null;
+	for (const session of sessions) {
+		if (!isSessionDisplayed(session.retain)) continue;
+		if (typeof session.cwd !== 'string' || session.cwd === '') continue;
+		if (session.origin === 'subagent') continue;
+		return { sessionId: session.id, cwd: session.cwd };
 	}
 	return null;
 }

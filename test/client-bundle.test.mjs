@@ -72,6 +72,22 @@ function loadBundle() {
 			return function Stub() { return null; };
 		},
 	});
+	/*
+	 * 快照 store 的平台模块桩：产物只用到 createSnapshotStore，取快照与订阅按最小面给出。
+	 * 每个 store 是一个持有当前值的对象，订阅者集合随订阅增减。
+	 */
+	const clientStore = {
+		createSnapshotStore: (init) => {
+			let value = init;
+			const listeners = new Set();
+			return {
+				getSnapshot: () => value,
+				subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+				set: (next) => { value = next; for (const listener of [...listeners]) listener(); },
+				update: (recipe) => { value = recipe(value); for (const listener of [...listeners]) listener(); },
+			};
+		},
+	};
 	const load = ({ id, factory }) => {
 		registrations.push(id);
 		captured = factory((name) => {
@@ -79,6 +95,7 @@ function loadBundle() {
 			if (name === 'react') return { ...react, default: react };
 			if (name === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null, Fragment: Symbol('Fragment') };
 			if (name === 'react-dom/client') return { createRoot: () => ({ render: () => {}, unmount: () => {} }) };
+			if (name === '@deepseek-ai/dsh-client-store') return clientStore;
 			if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
 			throw new Error(`未预期的外部模块请求：${name}`);
 		});
@@ -112,11 +129,15 @@ test('产物包络注册为包名并只请求外部平台模块', () => {
 		assert.deepEqual(registrations, ['dsh-source-control']);
 		for (const name of requested) {
 			assert.ok(
-				['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'].includes(name),
+				[
+					'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
+					'@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-primitives',
+				].includes(name),
 				`产物请求了未外部化的模块：${name}`,
 			);
 		}
 		assert.ok(requested.includes('react'), '产物应请求 react');
+		assert.ok(requested.includes('@deepseek-ai/dsh-client-store'), '产物应请求 client-store');
 		assert.ok(requested.includes('@deepseek-ai/dsh-client-ui-primitives'), '产物应请求 ui-primitives');
 	} finally {
 		restore();

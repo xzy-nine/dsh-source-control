@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import {
-	clearPersistedDraft, commitStaged, generateCommitMessage, loadCommitMessage, loadHooksState,
+	clearPersistedDraft, commitStaged, generateCommitMessage, loadCommitMessage, loadHooksState, logClient,
 	takePersistedDraft, translateAvailable, translateText,
 } from '../api/index.ts';
 import type { HooksState } from '../api/index.ts';
@@ -14,6 +14,10 @@ import { draftKeyOf, loadSessionValue, saveSessionValue } from './storage.ts';
 import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { canSubmitOf, commitButtonDisabledOf } from './submit-state.ts';
 import { commitEntries } from './optimistic.ts';
+import {
+	appendGeneration, beginGeneration, endGeneration, generationStateOf, noteGenerationStats, subscribeGeneration, takeGenerationText, warnGeneration,
+} from './generation-store.ts';
+import { canLandGeneration } from './generation-landing.ts';
 import type { AiStats, Commit, PanelRun, Settings, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
@@ -52,6 +56,12 @@ export interface CommitComposerDeps {
 
 	/** 提交影响面是否正忙。 */
 	readonly commitBusy: boolean;
+	/**
+	 * 提交框当前是否在屏幕上：本会话是当前会话，且源代码管理侧栏页可见。
+	 *
+	 * 生成结果只在它为真时上屏；否则留在生成登记里等下一次变真。
+	 */
+	readonly onScreen: boolean;
 	/** 执行一次操作并刷新。 */
 	readonly run: PanelRun;
 	/** 轻量提示。 */
@@ -105,7 +115,7 @@ export interface CommitComposer {
  * @returns 提交框状态与动作。
  */
 export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
-	const { workingTreePath, settings, commits, merging, entries, commitBusy, run, notify } = deps;
+	const { workingTreePath, settings, commits, merging, entries, commitBusy, onScreen, run, notify } = deps;
 	const [message, setMessage] = React.useState('');
 	const [amend, setAmend] = React.useState(false);
 	/**
@@ -117,20 +127,26 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	const [runHooks, setRunHooks] = React.useState(true);
 	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */
 	const [hooksState, setHooksState] = React.useState<HooksState>({ commit: false, push: false, directory: null });
-	const [aiBusy, setAiBusy] = React.useState(false);
-	const [aiWarning, setAiWarning] = React.useState('');
-	const [aiStats, setAiStats] = React.useState<AiStats | null>(null);
+	/*
+	 * 生成状态按仓库登记在模块级（见 ./generation-store.ts）：切换仓库、切换会话与关闭侧栏页都会
+	 * 让本组件重新挂载或换仓库，实例级状态随之丢失，生成中的文本就会落到下一个活跃仓库的提交框。
+	 * 登记按发起时的仓库键存，上屏时机由下面的 effect 按「当前仓库 + 侧栏页可见」判定。
+	 */
+	const [generationTick, setGenerationTick] = React.useState(0);
+	React.useEffect(() => {
+		if (workingTreePath === null) return undefined;
+		return subscribeGeneration(workingTreePath, () => { setGenerationTick((value) => value + 1); });
+	}, [workingTreePath]);
+	void generationTick;
+	const generation = generationStateOf(workingTreePath);
+	const aiBusy = generation.busy;
+	const aiWarning = generation.warning;
+	const aiStats = generation.stats as AiStats | null;
 	const [translateBusy, setTranslateBusy] = React.useState(false);
 	// 翻译服务由 cot-translation bundle 可选装载；不可用时连入口都不显示。
 	const translateReady = deps.translateReady;
 	// 已翻译过的文本：避免对同一内容重复请求，也用于标记「已翻译」。
 	const [translatedFrom, setTranslatedFrom] = React.useState<string | null>(null);
-	const aiAbortRef = React.useRef<AbortController | null>(null);
-
-	/* 卸载时终止进行中的生成：回调会写 message 与 aiBusy，组件已不在时不应再更新。 */
-	React.useEffect(() => () => {
-		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
-	}, []);
 
 	/** 草稿是否已读完；读完之前不得写入。 */
 	const [draftReadDone, setDraftReadDone] = React.useState(false);
@@ -139,6 +155,37 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	/** message 的当前值：切换仓库的收尾里读取它，避免把旧值写进新仓库的键。 */
 	const messageRef = React.useRef(message);
 	messageRef.current = message;
+
+	/*
+	 * 上屏：当前仓库的生成已完成、提交框在屏幕上、草稿已读完时，把结果写进提交框。
+	 *
+	 * 三个条件缺一不可 —— 不满足就让文本留在登记里，等下一次变真。文本只交付一次
+	 * （takeGenerationText 取走即清空），因此切回 A 时不会再被写第二遍。
+	 */
+	React.useEffect(() => {
+		const active = workingTreePath;
+		if (active === null) return;
+		const landed = canLandGeneration({
+			generationRepo: active,
+			activeRepo: draftPath === active ? active : null,
+			busy: generation.busy,
+			hasText: generation.text !== '',
+			onScreen,
+			draftReady: draftReadDone,
+		});
+		if (!landed) {
+			// 有结果却上不了屏时记一条：日志里要能看出是哪一条不成立。
+			if (generation.text !== '' && !generation.busy) {
+				logClient('D', 'ai', `生成结果暂存，等待上屏：仓库 ${active}，会话显示=${String(onScreen)}，草稿就绪=${String(draftReadDone)}`);
+			}
+			return;
+		}
+		const text = takeGenerationText(active);
+		if (text === null) return;
+		setMessage(text);
+		setTranslatedFrom(null);
+		logClient('I', 'ai', `生成结果已写入提交框：仓库 ${active}`);
+	}, [workingTreePath, onScreen, draftReadDone, draftPath, generation.busy, generation.text]);
 
 	/*
 	 * 提交信息草稿：写入必须等草稿读完。message 初始为空串，若在读回之前就写入，会把刚切换过来
@@ -155,13 +202,13 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 		const key = draftKeyOf(path);
 		void (async () => {
 			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
-			const persisted = await takePersistedDraft(path, key);
+			const persisted = await takePersistedDraft(path, path);
 			if (cancelled.current) return;
 			const saved = loadSessionValue<string | null>(key, null);
 			if (saved === null && persisted !== null) {
 				saveSessionValue(key, persisted);
 				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
-				void clearPersistedDraft(path, key).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
+				void clearPersistedDraft(path, path).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
 			}
 			setMessage(saved ?? persisted ?? '');
 			setDraftPath(path);
@@ -247,23 +294,24 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	 */
 	const handleAiCommit = (): void => {
 		if (aiBusy) return;
-		if (workingTreePath === null) { setAiWarning('未选中仓库'); return; }
-		if (aiAbortRef.current !== null) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
-		setAiBusy(true);
-		setAiWarning('');
-		setAiStats(null);
+		if (workingTreePath === null) return;
+		/*
+		 * 发起时记下仓库：整段生成都写这一份登记，与之后当前活跃的是哪个仓库无关。
+		 *
+		 * 不中断生成：切换仓库只是让结果暂存，请求自然跑完；已经取到的那一份由登记保留。
+		 */
+		const repo = workingTreePath;
+		beginGeneration(repo);
 		setTranslatedFrom(null);
-		setMessage('');
-		const controller = new AbortController();
-		aiAbortRef.current = controller;
-		generateCommitMessage(workingTreePath, settings.aiCommitProvider, settings.aiCommitModel, settings.aiCommitRules, {
-			signal: controller.signal,
-			onChunk: (text) => { setMessage((prev) => prev + text); },
-			onWarning: (text) => { setAiWarning(text); },
-			onError: (text) => { setAiWarning(text); },
-			onStats: (stats) => { setAiStats(stats as AiStats); },
 		// 勾选「修补上一次提交」时，让宿主把上一提交的改动一并纳入 diff。
-		}, amend, interfaceLanguage()).finally(() => { setAiBusy(false); aiAbortRef.current = null; }).catch((err: unknown) => { setAiWarning(err instanceof Error ? err.message : String(err)); });
+		void generateCommitMessage(repo, settings.aiCommitProvider, settings.aiCommitModel, settings.aiCommitRules, {
+			onChunk: (text) => { appendGeneration(repo, text); },
+			onWarning: (text) => { warnGeneration(repo, text); },
+			onError: (text) => { warnGeneration(repo, text); },
+			onStats: (stats) => { noteGenerationStats(repo, stats); },
+		}, amend, interfaceLanguage())
+			.catch((err: unknown) => { warnGeneration(repo, err instanceof Error ? err.message : String(err)); })
+			.finally(() => { endGeneration(repo); });
 	};
 
 	/**

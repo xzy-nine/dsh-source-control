@@ -2,7 +2,7 @@
  * 标签类操作：检出、从标签创建分支、复制标签名、删除。
  */
 import { checkoutCommit, createBranch, deleteTag, throwIfError } from '../../api/index.ts';
-import { copyText } from '../../ui/context-menu.ts';
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showCheckbox, showText } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
@@ -37,7 +37,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 		if (targets.length === 0) return null;
 		return tagItem(targets, '复制标签名', (tagName) => ({
 			title: meta.title,
-			onClick: () => { void copyText(tagName); },
+			onClick: () => { void writeClipboard(tagName); },
 		}));
 	},
 	deleteTag: (ctx, meta) => {

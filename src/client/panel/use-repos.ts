@@ -17,10 +17,8 @@ import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
 export interface UseReposOptions {
-	/** 会话工作区路径；没有工作区时为 undefined。 */
+	/** 工作区根路径；没有工作区时为 undefined。选中与展开以此分键持久化。 */
 	readonly cwd: string | undefined;
-	/** 会话 id，用于持久化选中与展开状态。 */
-	readonly sessionId: string;
 }
 
 /** 仓库发现 hook 的返回值。 */
@@ -102,7 +100,7 @@ function noteOf(snapshot: WorkspaceSnapshot | null): string | null {
  * @param options - 见 {@link UseReposOptions}。
  * @returns 树状态与操作。
  */
-export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
+export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 	const hasWorkspace = cwd !== undefined;
 	const initial = hasWorkspace ? getWorkspaceSnapshot(cwd) : null;
 	const [repoNodes, setRepoNodes] = React.useState<RepoNode[]>(() => initial?.nodes ?? []);
@@ -111,7 +109,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 	);
 	const [treeNote, setTreeNote] = React.useState<string | null>(() => noteOf(initial));
 	const [selectedId, setSelectedId] = React.useState<string | null>(null);
-	const [expandedIds, setExpandedIds] = React.useState<Set<string>>(() => loadExpanded(sessionId));
+	const [expandedIds, setExpandedIds] = React.useState<Set<string>>(() => loadExpanded(cwd ?? null));
 	const [syncById, setSyncById] = React.useState<Map<string, RepoSync>>(
 		() => new Map(initial?.syncById ?? []),
 	);
@@ -173,7 +171,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			});
 			if (snapshot.discoveryRevision !== revisionRef.current) {
 				revisionRef.current = snapshot.discoveryRevision;
-				const plan = planSelection(snapshot.nodes, root, loadSelection(sessionId));
+				const plan = planSelection(snapshot.nodes, root, loadSelection(cwd));
 				pendingSelectionRef.current = plan.pendingId;
 				const selected = findNode(snapshot.nodes, plan.selectedId);
 				setSelectedId(selected === null ? null : selected.id);
@@ -208,7 +206,7 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			const snapshot = getWorkspaceSnapshot(root);
 			if (snapshot !== null) apply(snapshot);
 		});
-	}, [cwd, sessionId, hasWorkspace, scanSeq]);
+	}, [cwd, hasWorkspace, scanSeq]);
 
 	/**
 	 * 重新扫描仓库树。
@@ -243,10 +241,10 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 		pendingSelectionRef.current = null;
 		setSelectedId((previous) => {
 			if (node.id === previous) return previous;
-			saveSelection(sessionId, node.id);
+			saveSelection(cwd ?? null, node.id);
 			return node.id;
 		});
-	}, [sessionId]);
+	}, [cwd]);
 
 	/** 展开或收起一个仓库节点。 */
 	const toggleNode = React.useCallback((node: RepoNode) => {
@@ -254,10 +252,10 @@ export function useRepos({ cwd, sessionId }: UseReposOptions): UseReposResult {
 			const next = new Set(previous);
 			if (next.has(node.id)) next.delete(node.id);
 			else next.add(node.id);
-			saveExpanded(sessionId, next);
+			saveExpanded(cwd ?? null, next);
 			return next;
 		});
-	}, [sessionId]);
+	}, [cwd]);
 
 	const visibleRows = React.useMemo(() => flattenVisible(repoNodes, expandedIds), [repoNodes, expandedIds]);
 	const selectedNode = React.useMemo(() => {

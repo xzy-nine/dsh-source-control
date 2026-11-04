@@ -1,7 +1,7 @@
 /**
  * 仓库节点构造：读取 HEAD、枚举工作树与子模块，并按路径补齐。
  */
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
 import { basename, join, resolve } from 'node:path';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { logDebug } from './logger.js';
@@ -22,7 +22,7 @@ async function headOf(dir: string): Promise<{ branch: string | null; head: strin
 	const gitDir = await gitDirAt(dir);
 	if (gitDir === null) return { branch: null, head: null };
 	try {
-		return parseHead(await readFile(join(gitDir, 'HEAD'), 'utf8'));
+		return parseHead(await readTextAt(join(gitDir, 'HEAD')));
 	} catch (error) {
 		logDebug('repo', `读取 HEAD 失败，该仓库按无分支处理：${dir}：${error instanceof Error ? error.message : String(error)}`);
 		return { branch: null, head: null };
@@ -73,7 +73,7 @@ export async function linkedWorktreePresence(repo: string): Promise<'none' | 'so
 	const commonDir = await resolveGitCommonDir(repo);
 	if (commonDir === null) return 'unknown';
 	try {
-		const entries = await readdir(join(commonDir, 'worktrees'));
+		const entries = await listDirAt(join(commonDir, 'worktrees'));
 		return entries.length > 0 ? 'some' : 'none';
 	} catch {
 		return 'none';
@@ -92,7 +92,7 @@ export async function linkedWorktreePresence(repo: string): Promise<'none' | 'so
 async function submodulesOf(dir: string, submoduleIds: Set<string>): Promise<RepoNode[]> {
 	const nodes: RepoNode[] = [];
 	try {
-		const source = await readFile(join(dir, '.gitmodules'), 'utf8');
+		const source = await readTextAt(join(dir, '.gitmodules'));
 		for (const relativePath of submodulePathsWithin(dir, parseSubmodulePaths(source))) {
 			const path = resolve(dir, relativePath);
 			submoduleIds.add(nodeId(path));
@@ -156,12 +156,7 @@ export async function repoNodeOf(
 async function hasNoChildSources(dir: string): Promise<boolean> {
 	if (await gitEntryOf(dir) !== 'dir') return false;
 	if (await linkedWorktreePresence(dir) !== 'none') return false;
-	try {
-		await stat(join(dir, '.gitmodules'));
-		return false;
-	} catch {
-		return true;
-	}
+	return await probePathAt(join(dir, '.gitmodules')) === null;
 }
 
 /**

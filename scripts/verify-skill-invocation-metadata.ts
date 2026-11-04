@@ -3,7 +3,6 @@
  * @module scripts/verify-skill-invocation-metadata
  */
 
-import { gateHint } from './gate-hint.ts'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { load } from 'js-yaml'
@@ -115,7 +114,6 @@ if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
   if (violations.length > 0) {
     process.stderr.write('verify-skill-invocation-metadata: violations found:\n')
     for (const violation of violations) process.stderr.write(`  ${violation}\n`)
-    process.stderr.write(`${gateHint('verify-skill-invocation-metadata')}\n`)
     process.exit(1)
   }
 

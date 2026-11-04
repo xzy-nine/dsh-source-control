@@ -1,9 +1,10 @@
 /**
  * 差异页的视图选择：左右并排与自动换行。
  *
- * 选择按页地址记在模块作用域，因此切到别的侧栏页再切回同一文件时仍是上次的选择；
- * 不随组件卸载丢失，也不依赖页签保留挂载。
+ * 选择是面板设置的一部分，与其它视图开关同源、随设置持久化到宿主，因此刷新与换浏览器都保留。
+ * 本模块只做「设置 ↔ 视图选择」的纯映射，不持有状态。
  */
+import type { Settings } from '../shared/types.ts';
 
 /** 一个差异页的视图选择。 */
 export interface DiffViewChoice {
@@ -14,28 +15,33 @@ export interface DiffViewChoice {
 }
 
 /** 默认选择：左右并排、自动换行。 */
-const DEFAULT_CHOICE: DiffViewChoice = { split: true, wrap: true };
-
-/** 按页地址记录的选择；地址相同即同一文件的同一次比较。 */
-const choices = new Map<string, DiffViewChoice>();
+export const DEFAULT_DIFF_VIEW: DiffViewChoice = { split: true, wrap: true };
 
 /**
- * 读取一个差异页的视图选择。
+ * 从设置里取差异页的视图选择。
  *
- * @param address - 差异页的资源地址。
- * @returns 记录的选择；没有记录时返回默认选择。
+ * @param settings - 面板设置；尚未预取时为 null。
+ * @returns 视图选择；设置不可用时为默认选择。
  */
-export function readDiffView(address: string): DiffViewChoice {
-	return choices.get(address) ?? DEFAULT_CHOICE;
+export function diffViewOf(settings: Settings | null): DiffViewChoice {
+	if (settings === null) return DEFAULT_DIFF_VIEW;
+	return {
+		split: typeof settings.diffSplit === 'boolean' ? settings.diffSplit : DEFAULT_DIFF_VIEW.split,
+		wrap: typeof settings.diffWrap === 'boolean' ? settings.diffWrap : DEFAULT_DIFF_VIEW.wrap,
+	};
 }
 
 /**
- * 记录一个差异页的视图选择。
+ * 在设置里改一项视图选择。
  *
- * @param address - 差异页的资源地址。
- * @param choice - 新的选择。
- * @returns 无。
+ * @param settings - 当前设置。
+ * @param patch - 要改的项。
+ * @returns 新的设置对象。
  */
-export function writeDiffView(address: string, choice: DiffViewChoice): void {
-	choices.set(address, choice);
+export function withDiffView(settings: Settings, patch: Partial<DiffViewChoice>): Settings {
+	return {
+		...settings,
+		...(patch.split === undefined ? {} : { diffSplit: patch.split }),
+		...(patch.wrap === undefined ? {} : { diffWrap: patch.wrap }),
+	};
 }

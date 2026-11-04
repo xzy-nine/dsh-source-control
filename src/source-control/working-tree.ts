@@ -9,10 +9,10 @@
  * - `worktree-remove.ts`：移除链接工作树
  * - `submodule-ops.ts`：初始化子模块与声明路径解析
  */
-export type { GitResult, GitOptions, GitOperationKind } from './git-exec.js';
+export type { GitResult, GitOptions, GitOperationKind, WriteSurface } from './git-exec.js';
 export {
-	gitEnvironment, killRunningGit, isGitIdle, isWorktreeIdle, whenGitIdle, whenWorktreeIdle,
-	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitSpawnCount, gitOrThrow,
+	gitEnvironment, killRunningGit, isGitIdle, isLocalSettled, whenGitIdle, whenLocalSettled,
+	onRepositoryWrite, notifyRepositoryWrite, runGit, describeGitArgs, isProbeCommand, gitOrThrow,
 } from './git-exec.js';
 export type { WorkingTreeEntry, StatusRecord, WorkingTreeSnapshot } from './status-parse.js';
 export { STATUS_LIMIT, forEachStatusRecord, parseStatus, parseStatusSnapshot } from './status-parse.js';

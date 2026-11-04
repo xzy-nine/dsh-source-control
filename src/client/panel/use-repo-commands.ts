@@ -45,7 +45,7 @@ export interface RepoCommandDeps {
 	readonly runInTerminal?: ((sessionId: string, command: string) => Promise<boolean>) | undefined;
 	/** 打开一个文件或差异。 */
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string) => Promise<void>;
-	/** 面板动作依赖：run、withProgress 与 notify。 */
+	/** 面板动作依赖：run、withProgress、notify 与 announce。 */
 	readonly actions: PanelActionDeps;
 	/** 面板状态写入器：导出失败时报告。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
@@ -106,7 +106,7 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 		cwd, workingTreePath, sessionId, settingsOpen, remotes, head, detail, busyFlags,
 		pickDirectory, runInTerminal, openDiff, actions, setState, rescanPending, setSettings,
 	} = deps;
-	const { run, withProgress, notify } = actions;
+	const { run, withProgress, notify, announce } = actions;
 	const [userDetails, setUserDetails] = React.useState<{ userName?: unknown; userEmail?: unknown } | null>(null);
 	// 当前工作树的本地排除条目；有内容时提交框显示查看入口。
 	const [localExclude, setLocalExclude] = React.useState<LocalExcludeState | null>(null);
@@ -196,10 +196,10 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 			await run('commit', async () => { written.value = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent: `加入 .gitignore：${path}` });
 			const result = written.value;
 			if (result === null || result.file === '') return;
-			await notify(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`);
+			await announce(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`, 'success');
 			await openDiff('*', result.file, false, !result.tracked);
 		})();
-	}, [run, workingTreePath, openDiff, notify]);
+	}, [run, workingTreePath, openDiff, announce]);
 
 	/**
 	 * 把未暂存的路径加入本地排除文件 `.git/info/exclude`，随后打开该文件。
@@ -277,16 +277,15 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 			setCloneBusy(true);
 			try {
 				const started = await runInTerminal(sessionId, command);
-				await notify(started
-					? `已在终端执行克隆：${command}`
-					: '无法在终端里执行克隆命令，请在终端里手动执行。');
+				if (started) await announce(`已在终端执行克隆：${command}`, 'success');
+				else await notify('无法在终端里执行克隆命令，请在终端里手动执行。');
 				// 回到本窗口时重扫一次：克隆可能已经完成，也可能还在跑。
 				if (started) rescanPending.current = true;
 			} finally {
 				setCloneBusy(false);
 			}
 		})();
-	}, [cwd, notify, pickDirectory, runInTerminal, sessionId, cloneBusy, rescanPending]);
+	}, [cwd, notify, announce, pickDirectory, runInTerminal, sessionId, cloneBusy, rescanPending]);
 
 	/**
 	 * 创建 Pull Request：选目标分支、填标题与正文，交给 gh 创建。
@@ -339,9 +338,9 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 				body: textOf(form.body),
 				draft: form.draft === true,
 			});
-			await notify(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`);
+			await announce(url === '' ? 'Pull Request 已创建。' : `Pull Request 已创建：${url}`, 'success');
 		}, undefined, undefined, { intent: `创建 Pull Request：${title}` });
-	}, [workingTreePath, head, busyFlags.network, detail, run, notify, withProgress]);
+	}, [workingTreePath, head, busyFlags.network, detail, run, notify, announce, withProgress]);
 
 	/** 导出仓库配置为 JSON 文件下载。 */
 	const handleExportConfig = React.useCallback(async () => {

@@ -225,22 +225,22 @@ export async function getConfig(repo: string, remotes: readonly string[]): Promi
  * 读取一次提交的详情。
  *
  * 差异以第一个父提交为基准，因此合并提交也按单侧差异列出改动文件；根提交没有父提交，
- * 差异基准取提交自身。
+ * 差异基准取提交自身。父提交的有无从提交自身解析，不取信调用方传入的布尔值。
  *
  * @param repo - 仓库路径。
  * @param commitHash - 提交哈希。
- * @param hasParents - 该提交是否有父提交。
+ * @param _hasParents - 已废弃，保留以兼容旧客户端；父提交的有无从提交自身解析。
  * @returns 提交详情；读取失败时 `commitDetails` 为 null 且 `error` 为错误文本。
  */
-export async function getCommitDetails(repo: string, commitHash: string, hasParents: boolean): Promise<CommitDetailsData> {
+export async function getCommitDetails(repo: string, commitHash: string, _hasParents: boolean): Promise<CommitDetailsData> {
 	try {
-		const fromCommit = hasParents ? `${commitHash}^` : commitHash;
-		const [base, nameStatus, numStat] = await Promise.all([
-			getCommitDetailsBase(repo, commitHash),
+		const base = await getCommitDetailsBase(repo, commitHash);
+		if (base === null) throw new Error('无法解析提交详情');
+		const fromCommit = base.parents.length > 0 ? `${commitHash}^` : commitHash;
+		const [nameStatus, numStat] = await Promise.all([
 			getDiffNameStatus(repo, fromCommit, commitHash),
 			getDiffNumStat(repo, fromCommit, commitHash),
 		]);
-		if (base === null) throw new Error('无法解析提交详情');
 		return { commitDetails: { ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) }, error: null };
 	} catch (error) {
 		return { commitDetails: null, error: errorText(error) };

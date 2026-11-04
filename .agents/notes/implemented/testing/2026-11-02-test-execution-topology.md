@@ -34,4 +34,4 @@ Status: implemented
 
 ## Testing
 
-`parallel` 组的并发行为由 `test/diff-stats.test.mjs` 等 35 个文件的执行序验证；`serial` 标注由 `test/repo-watcher-live.test.mjs` 的 7 个用例验证。全局还原由各文件的 `test.after` 兜底，跑完一次全量后 `tmpdir()` 不留本插件的隔离目录。文案口径由各模块的常量表与对应测试的同引用断言锁定：把任一文案改一个字，测试保持绿。
+`parallel` 组的并发行为由 `test/diff-stats.test.mjs` 等 35 个文件的执行序验证；`serial` 标注由 `test/repo-watcher-live.test.mjs` 的 6 个用例验证。全局还原由各文件的 `test.after` 兜底，跑完一次全量后 `tmpdir()` 不留本插件的隔离目录。文案口径由各模块的常量表与对应测试的同引用断言锁定：把任一文案改一个字，测试保持绿。

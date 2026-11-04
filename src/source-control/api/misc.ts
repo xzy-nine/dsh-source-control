@@ -8,13 +8,12 @@ import {
 	cleanUntrackedFiles, resetFileToRevision, setConfigValue, unsetConfigValue,
 } from '../git-actions.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from '../gh-cli.js';
-import { gitOrThrow } from '../git-exec.js';
+import { gitOrThrow, runGit } from '../git-exec.js';
 import { getConfig, getRepoInfo } from '../git-query.js';
 import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
 import { invalidateRepo } from '../host-cache.js';
 import { submitFeedback } from '../feedback.js';
-import { formatBytes } from '../feedback-text.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
 import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
@@ -86,22 +85,39 @@ function isBinaryDiff(diffText: string): boolean {
  * @param filePath - 文件路径（相对仓库根）。
  * @param staged - 工作区时是否比较暂存区。
  * @param baseHash - 旧侧提交哈希；非空时按 `baseHash → commitHash` 对比。
+ * @param hasParent - 单提交差异时该提交是否有父提交；无父提交（根提交）以自身为旧侧。
  * @returns 逐块的新旧内容，以及该差异是否为二进制。
  */
-async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean, baseHash = ''): Promise<{ hunks: DiffHunkText[]; binary: boolean }> {
+async function diffHunksOf(repo: string, commitHash: string, filePath: string, staged: boolean, baseHash = '', hasParent = true): Promise<{ hunks: DiffHunkText[]; binary: boolean }> {
 	const args = baseHash !== ''
 		? ['diff', '--no-color', '--unified=3', baseHash, commitHash === '*' ? '' : commitHash, '--', filePath].filter((part) => part !== '')
 		: commitHash === '*'
 			? (staged
 				? ['diff', '--no-color', '--unified=3', '--cached', '--', filePath]
 				: ['diff', '--no-color', '--unified=3', '--', filePath])
-			: ['diff', '--no-color', '--unified=3', `${commitHash}~1`, commitHash, '--', filePath];
+			// 根提交没有父提交：以提交自身为旧侧，与 `getCommitDetails` 的判据一致。
+			: ['diff', '--no-color', '--unified=3', hasParent ? `${commitHash}~1` : commitHash, commitHash, '--', filePath];
 	try {
 		const diffText = await gitOrThrow(args, repo);
 		return { hunks: parseUnifiedDiffHunks(diffText), binary: isBinaryDiff(diffText) };
 	} catch {
 		return { hunks: [], binary: false };
 	}
+}
+
+/**
+ * 判定一个提交是否有父提交。
+ *
+ * 根提交没有父提交：对它的 `~1` 取内容或取差异都会以退出码 128 失败一次，因此先问再取。
+ * `rev-parse` 属查询型命令，非零退出不记警告，且只读结果有短时缓存。
+ *
+ * @param repo - 仓库路径。
+ * @param commitHash - 提交哈希。
+ * @returns 有父提交时为 true。
+ */
+async function revParseHasParent(repo: string, commitHash: string): Promise<boolean> {
+	const result = await runGit(['rev-parse', '--verify', '--quiet', `${commitHash}^`], repo);
+	return result.code === 0;
 }
 
 /**
@@ -229,6 +245,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			try {
 				let oldText: string | null = null;
 				let newText: string | null = null;
+				/** 单提交差异的旧侧是否存在；根提交为 false。 */
+				let hasParent = true;
 				if (baseHash !== '') {
 					// 两提交对比：旧侧取 baseHash，新侧取 commitHash（'*' 表示工作区文件）。
 					try { oldText = await gitOrThrow(['show', `${baseHash}:${filePath}`], repo); } catch { oldText = null; }
@@ -251,13 +269,20 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 						} catch { newText = null; }
 					}
 				} else {
-					// 提交差异：oldText 取父提交，newText 取该提交
-					try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
+					/*
+					 * 提交差异：oldText 取父提交，newText 取该提交。
+					 *
+					 * 根提交没有父提交：直接给空旧侧，不先跑一条注定失败的 `show <hash>~1:<path>`。
+					 */
+					hasParent = await revParseHasParent(repo, commitHash);
+					if (hasParent) {
+						try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
+					}
 					try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
-				const { hunks, binary } = await diffHunksOf(repo, commitHash, filePath, staged, baseHash);
+				const { hunks, binary } = await diffHunksOf(repo, commitHash, filePath, staged, baseHash, hasParent);
 				respond({ command: 'fileDiffContent', path: filePath, oldText, newText, hunks, binary });
 			} catch (e) {
 				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], binary: false, error: e instanceof Error ? e.message : String(e) });
@@ -322,8 +347,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			respondResultSync('feedbackInfo', {
 				logDir: logRoot(),
 				currentFile: currentLogFile(),
-				// 体积文本由宿主给出：客户端不再自带一份格式化实现。
-				files: recentLogFiles(5).map((file) => ({ ...file, sizeText: formatBytes(file.size) })),
+				files: recentLogFiles(5),
 			});
 			break;
 		case 'submitFeedback': {
@@ -354,7 +378,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				const tag = typeof entry.tag === 'string' && entry.tag !== '' ? entry.tag : 'panel';
 				const message = typeof entry.message === 'string' ? entry.message : '';
 				if (message === '') continue;
-				log(clientLogLevel(entry.level), `client/${tag}`, message);
+				const entryTime = typeof entry.time === 'number' ? new Date(entry.time) : undefined;
+				log(clientLogLevel(entry.level), `client/${tag}`, message, entryTime);
 			}
 			respondResultSync('logEvent', { accepted: entries.length });
 			// 客户端上报是插件唯一看不到落盘结果的一环：收几条就记一条，便于确认上报通路是否通。

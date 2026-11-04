@@ -9,10 +9,7 @@ import {
 	CLEANUP_PERIOD_SECONDS_DEFAULT,
 	FALLBACK_POLL_ACTIVE_SECONDS_DEFAULT, FALLBACK_POLL_INTERVAL_SECONDS_DEFAULT,
 } from './change-events.ts';
-import { loadValue, saveValue } from './storage.ts';
-
-/** 设置键。 */
-export const SETTINGS_KEY = 'dsh-source-control-settings';
+import { getSettings, setSettings } from './storage.ts';
 
 /** 提交排序选项，三档与 git 的 `--order` 参数一致。 */
 export const ORDERING = [
@@ -61,6 +58,8 @@ export function defaultSettings(): Settings {
 		cleanupSeconds: CLEANUP_PERIOD_SECONDS_DEFAULT,
 		onRepoLoadScrollToHead: false,
 		showAvatars: true,
+		diffSplit: true,
+		diffWrap: true,
 		graphColours: null,
 		aiCommitProvider: '',
 		aiCommitModel: '',
@@ -76,12 +75,15 @@ export function defaultSettings(): Settings {
  */
 export function loadSettings(): Settings {
 	const base = defaultSettings();
-	const parsed = loadValue<Partial<Settings> | null>(SETTINGS_KEY, null);
-	if (parsed === null || typeof parsed !== 'object') return base;
+	const parsed = getSettings();
+	if (parsed === null) return base;
+	const dateFormat = parsed.dateFormat;
 	return {
 		...base,
 		...parsed,
-		dateFormat: { ...base.dateFormat, ...(parsed.dateFormat ?? {}) },
+		dateFormat: dateFormat !== null && typeof dateFormat === 'object'
+			? { ...base.dateFormat, ...dateFormat as Partial<DateFormat> }
+			: base.dateFormat,
 		issueLinkingConfig: parsed.issueLinkingConfig ?? null,
 		graphColours: Array.isArray(parsed.graphColours) ? parsed.graphColours : null,
 	};
@@ -94,7 +96,7 @@ export function loadSettings(): Settings {
  * @returns 无。
  */
 export function saveSettings(settings: Settings): void {
-	saveValue(SETTINGS_KEY, settings);
+	setSettings({ ...settings });
 }
 /**
  * 把时间戳格式化为提交行展示文本。

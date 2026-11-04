@@ -16,15 +16,16 @@ import {
 import { GitGraphPanel } from './panel/index.ts';
 import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
 import { diffStats } from './diff/diff-stats.ts';
-import { readDiffView, writeDiffView } from './diff/diff-view.ts';
+import { useDiffView } from './diff/use-diff-view.ts';
 import {
 	diffFileAddress, gitDiffAddress, gitDiffRequest, gitDiffTitle, parseGitDiffAddress, type GitDiffScope,
 } from './diff/resource-path.ts';
 import { NativeOpenControl } from './ui/native-open.ts';
+import { installOverlay } from './ui/overlay-host.ts';
 import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
-import { activeWorkspaceOf, getWorkspaceSnapshot, preloadWorkspace } from './panel/repo-preload.ts';
+import { activeWorkspaceOf, getWorkspaceSnapshot, isSessionDisplayed, preloadWorkspace } from './panel/repo-preload.ts';
 import css from './css/index.module.css';
 import diffCss from './css/file-diff.module.css';
 import shared from './css/shared.module.css';
@@ -45,21 +46,45 @@ const DIFF_TAB_KIND = 'devGitGraphDiff';
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
 const EMPTY_SESSIONS = (selector) => selector({ byId: {} });
 
+/** 席位未提供保留信息 hook 时的回退：任何会话都没有保留信息。 */
+const EMPTY_RETAIN_INFO = (sessionIdOrSelector, maybeSelector) => {
+	const selector = typeof sessionIdOrSelector === 'function' ? sessionIdOrSelector : maybeSelector;
+	return typeof selector === 'function' ? selector(undefined) : undefined;
+};
+
 /**
  * 侧栏页正文：从会话快照取工作区，缺失时面板自己显示提示。
  *
  * @param props.sessionId - 席位给出的会话 id。
  * @param props.useSessions - session 作用域席位的标准快照 hook。
+ * @param props.useSessionRetainInfo - 席位标准 hook，读一个会话的官方保留信息。
  * @param props.useTabInfo - 席位标准 hook，提供 tab.actions.openResource。
  * @returns 面板元素。
  */
 function GitGraphTab(props) {
-	const { sessionId, useSessions, useTabInfo } = props;
+	const { sessionId, useSessions, useSessionRetainInfo, useTabInfo } = props;
 	const hook = typeof useSessions === 'function' ? useSessions : EMPTY_SESSIONS;
 	const cwd = hook((sessions) => {
 		const entry = sessions?.byId?.[sessionId];
 		return entry?.cwd;
 	});
+	/*
+	 * 本面板是否在屏幕上：所在会话是当前会话，且本侧栏页可见。
+	 *
+	 * 两个条件都要：会话被切走时侧栏可能仍记住这一页，页签被切走时会话仍在。只有同时成立
+	 * 才算「用户看得见提交框」，异步结果才写进去。会话判定取官方保留信息，与
+	 * `activeWorkspaceOf` 同一判据（`retainedBy.mainView` 是引用计数，不是布尔）；
+	 * 侧栏页可见性取宿主算好的 `tab.visible`。
+	 */
+	const retainInfoHook = typeof useSessionRetainInfo === 'function' ? useSessionRetainInfo : EMPTY_RETAIN_INFO;
+	const sessionDisplayed = retainInfoHook(sessionId, (retain) => isSessionDisplayed(retain));
+	const tabInfoForVisibility = typeof useTabInfo === 'function' ? useTabInfo() : null;
+	const tabVisible = tabInfoForVisibility?.tab?.visible === true;
+	const onScreen = sessionDisplayed === true && tabVisible;
+	// 上屏条件变化记一条：生成结果不上屏时，日志里要能看出是哪一半不成立。
+	React.useEffect(() => {
+		logClient('D', 'panel', `上屏条件：会话显示=${String(sessionDisplayed === true)}、侧栏页可见=${String(tabVisible)}、合计=${String(onScreen)}`);
+	}, [sessionDisplayed, tabVisible, onScreen]);
 	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
 	const pickDirectory = React.useMemo(() => {
 		const service = props.uiWorkspace;
@@ -127,6 +152,7 @@ function GitGraphTab(props) {
 		pickDirectory,
 		runInTerminal,
 		getSessions: props.getSessions,
+		onScreen,
 	});
 }
 
@@ -195,10 +221,10 @@ function GitDiffTab(props) {
 	const [menuOpen, setMenuOpen] = React.useState(false);
 	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
-	// 默认自动换行：长行不换行会被横向裁掉，需要横向滚动才能看全。
-	const [wrap, setWrap] = React.useState(() => readDiffView(address).wrap);
-	// 默认左右并排：FileDiff 的 split 模式（单侧改动时它会自动退回单列）。
-	const [split, setSplit] = React.useState(() => readDiffView(address).split);
+	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
+	const diffView = useDiffView(typeof cwd === 'string' ? cwd : null);
+	const wrap = diffView.choice.wrap;
+	const split = diffView.choice.split;
 	/** 在同一页里切到另一个文件：只改导航参数，页身份不变。 */
 	const switchFile = React.useCallback((path: string) => {
 		if (tabActions === undefined || path === currentPath) return;
@@ -293,12 +319,7 @@ function GitDiffTab(props) {
 					children: React.createElement('button', {
 						type: 'button', className: css.tool, 'aria-pressed': split, 'aria-label': '左右对比',
 						'data-review-tool': 'split',
-						onClick: () => {
-							setSplit((value) => {
-								writeDiffView(address, { split: !value, wrap: readDiffView(address).wrap });
-								return !value;
-							});
-						},
+						onClick: () => { diffView.patch({ split: !split }); },
 					}, React.createElement(IconCompareSplitOutlineRegular, { className: css.compareIcon })),
 				}),
 				React.createElement(Tooltip, {
@@ -306,12 +327,7 @@ function GitDiffTab(props) {
 					children: React.createElement('button', {
 						type: 'button', className: css.tool, 'aria-pressed': wrap, 'aria-label': '自动换行',
 						'data-review-tool': 'wrap',
-						onClick: () => {
-							setWrap((value) => {
-								writeDiffView(address, { split: readDiffView(address).split, wrap: !value });
-								return !value;
-							});
-						},
+						onClick: () => { diffView.patch({ wrap: !wrap }); },
 					}, wrap ? React.createElement(IconNowrapFillRegular) : React.createElement(IconWrapFillRegular)),
 				}),
 				React.createElement(Tooltip, {
@@ -350,7 +366,11 @@ function GitDiffTitle(props) {
  * 按主视图当前会话的工作区后台预加载仓库树。
  *
  * 预加载与面板是否打开无关：面板打开时直接呈现已取回的树。只取当前会话的那一个工作区，
- * 不遍历会话列表里的其它工作区。列表快照变化时重放，切到别的工作区才取下一份。
+ * 不遍历会话列表里的其它工作区。
+ *
+ * 会话信息全部来自官方来源：会话列表取 `ctx.sessions.list`，每个会话的保留信息取
+ * `ctx.sessions.retainInfo(id)`，两者都是可订阅的快照，因此这条路径不需要 React。
+ * 列表与「哪些会话被主视图持有」任一变化时重放，切到别的工作区才取下一份。
  *
  * @param ctx - Cordis 上下文。
  * @returns 取消订阅的函数；服务缺失时为空操作。
@@ -359,12 +379,84 @@ function startWorkspacePreload(ctx) {
 	const sessions = ctx.get?.('sessions');
 	const list = sessions?.list;
 	if (list === undefined || typeof list.getSnapshot !== 'function' || typeof list.subscribe !== 'function') return () => {};
+	if (typeof sessions.retainInfo !== 'function') return () => {};
 	/** 失败后已重试过的工作区根：同一工作区只重试一次，避免失败状态下反复取数。 */
 	const retried = new Set();
-	const apply = () => {
+	/** 已订阅的会话 id -> 取消订阅；列表变化时增删，只留仍在列表里的会话。 */
+	const retainSubscriptions = new Map();
+	/** 最近一次重放时被主视图持有的会话 id。 */
+	let retainedIds = new Set();
+	let disposed = false;
+
+	/** 读一个会话的保留信息快照。 */
+	const retainSnapshot = (id) => {
+		try {
+			return sessions.retainInfo(id).getSnapshot();
+		} catch {
+			return undefined;
+		}
+	};
+	/** 读会话列表快照；缺失时为 null。 */
+	const listSnapshot = () => {
+		try {
+			const snapshot = list.getSnapshot();
+			return snapshot !== null && typeof snapshot === 'object' ? snapshot : null;
+		} catch {
+			return null;
+		}
+	};
+	/**
+	 * 按列表顺序列出会话信息。
+	 *
+	 * 先列 `ids`，再列 `byId` 里不在 `ids` 的保留会话（子代理回退行等）：后者同样可能被
+	 * 主视图持有，排在列表成员之后。
+	 */
+	const sessionsOf = (snapshot) => {
+		const byId = snapshot?.byId ?? {};
+		const infos = [];
+		const seen = new Set();
+		const push = (id) => {
+			if (typeof id !== 'string' || seen.has(id)) return;
+			const row = byId[id];
+			if (row === undefined || row === null) return;
+			seen.add(id);
+			infos.push({ id, cwd: row.cwd, origin: row.origin, retain: retainSnapshot(id) });
+		};
+		for (const id of Array.isArray(snapshot?.ids) ? snapshot.ids : []) push(id);
+		for (const id of Object.keys(byId)) push(id);
+		return infos;
+	};
+	/** 让保留信息订阅覆盖当前被主视图持有的会话。 */
+	const syncRetainSubscriptions = (infos) => {
+		const next = new Set();
+		for (const info of infos) if (isSessionDisplayed(info.retain)) next.add(info.id);
+		if (next.size === retainedIds.size && [...next].every((id) => retainedIds.has(id))) return;
+		retainedIds = next;
+		for (const [id, unsubscribe] of retainSubscriptions) {
+			if (next.has(id)) continue;
+			unsubscribe();
+			retainSubscriptions.delete(id);
+		}
+		for (const id of next) {
+			if (retainSubscriptions.has(id)) continue;
+			try {
+				const unsubscribe = sessions.retainInfo(id).subscribe(apply);
+				retainSubscriptions.set(id, unsubscribe);
+			} catch {
+				/* 订阅不上时不影响列表订阅 */
+			}
+		}
+	};
+
+	function apply() {
+		if (disposed) return;
+		const snapshot = listSnapshot();
+		if (snapshot === null) return;
+		const infos = sessionsOf(snapshot);
+		syncRetainSubscriptions(infos);
 		let active = null;
 		try {
-			active = activeWorkspaceOf(list.getSnapshot());
+			active = activeWorkspaceOf(infos);
 		} catch {
 			return;
 		}
@@ -377,9 +469,16 @@ function startWorkspacePreload(ctx) {
 		if (existing.status !== 'error' || retried.has(active.cwd)) return;
 		retried.add(active.cwd);
 		preloadWorkspace(active.cwd);
-	};
+	}
+
 	apply();
-	return list.subscribe(apply);
+	const unsubscribeList = list.subscribe(apply);
+	return () => {
+		disposed = true;
+		unsubscribeList();
+		for (const unsubscribe of retainSubscriptions.values()) unsubscribe();
+		retainSubscriptions.clear();
+	};
 }
 
 /**
@@ -398,6 +497,9 @@ export function apply(ctx) {
 
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
+
+	// 覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。
+	ctx.effect(() => installOverlay(slots));
 
 	// ── 右侧栏页类型：定义与正文两阶段注册 ──────────────────────
 	const rightTabs = ctx.sidebarRightTabs;

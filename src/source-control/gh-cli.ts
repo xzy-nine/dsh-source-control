@@ -4,7 +4,7 @@
  * 子进程一律用数组参数直接 spawn、不经 shell，与 `working-tree.ts` 的 git 执行方式一致。
  * 需要凭据的操作在没有 `gh` 或未登录时返回可读错误，由前端提示。
  */
-import { collectProcess } from './child-process.js';
+import { runCollect } from './host-runtime.js';
 import { logDebug, logWarn } from './logger.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
@@ -55,7 +55,7 @@ export interface GhOwner {
  */
 async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
 	logDebug('gh', `调用 GitHub CLI：gh ${describeGhArgs(args)}`);
-	const result = await collectProcess({
+	const result = await runCollect({
 		command: 'gh',
 		args,
 		cwd,
