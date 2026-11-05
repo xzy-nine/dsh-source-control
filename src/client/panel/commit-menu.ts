@@ -44,6 +44,12 @@ const ACTIONS: readonly MenuAction[] = MENU_ACTIONS.map((meta) => ({
 /** 按 id 取一项引用操作。 */
 const ACTION_BY_ID = new Map(ACTIONS.map((action) => [action.id, action]));
 
+/** 「该提交被哪些分支包含」的查询结果。 */
+type Containing = { local: string[]; remote: string[]; foreign: string[] };
+
+/** 尚未查询或查询失败时使用的空结果。 */
+const EMPTY_CONTAINING: Containing = { local: [], remote: [], foreign: [] };
+
 /**
  * 构建一次菜单的上下文。
  *
@@ -53,16 +59,10 @@ const ACTION_BY_ID = new Map(ACTIONS.map((action) => [action.id, action]));
  * @param currentHashes - 当前分支可达的提交哈希集合。
  * @returns 构建上下文。
  */
-async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarget | null, currentHashes: ReadonlySet<string>): Promise<MenuContext> {
-	const repo = deps.workingTreePath as string;
+function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarget | null, currentHashes: ReadonlySet<string>, containing: Containing = EMPTY_CONTAINING): MenuContext {
 	const isUncommitted = commit.hash === '*';
-	// 分支只由尖端提交标识，中间提交需按「包含」关系查询；查询失败时退回该提交自身的引用。
-	// 包含关系只用于判断提交是否已在远程上（GitHub 入口），不作为可操作的分支候选。
-	const containing = deps.workingTreePath === null || isUncommitted
-		? { local: [], remote: [], foreign: [] }
-		: await branchesContaining(repo, commit.hash).catch(() => ({ local: [], remote: [], foreign: [] }));
 	return {
-		deps, commit, ref, repo, isUncommitted,
+		deps, commit, ref, repo: deps.workingTreePath as string, isUncommitted,
 		tipBranches: isUncommitted ? [] : (commit.heads ?? []),
 		// 远程 HEAD 是指向分支的符号引用，不作为可签出的目标。
 		tipRemoteBranches: isUncommitted
@@ -75,6 +75,21 @@ async function makeContext(deps: GraphMenuDeps, commit: Commit, ref: RefMenuTarg
 		onCurrentBranch: isUncommitted || currentHashes.has(commit.hash),
 		foreignBranches: new Set([...(deps.foreignBranches ?? []), ...containing.foreign]),
 	};
+}
+
+/**
+ * 查询该提交被哪些分支包含。
+ *
+ * 分支只由尖端提交标识，中间提交的 `heads` 为空，因此必须向 git 追问。查询要跑几个子进程，
+ * 菜单不等它：先用空结果弹出，结果到达后整份替换菜单项。
+ *
+ * @param deps - 菜单依赖面。
+ * @param commit - 目标提交。
+ * @returns 包含关系；无需查询或查询失败时为空结果。
+ */
+function containingOf(deps: GraphMenuDeps, commit: Commit): Promise<Containing> {
+	if (deps.workingTreePath === null || commit.hash === '*') return Promise.resolve(EMPTY_CONTAINING);
+	return branchesContaining(deps.workingTreePath, commit.hash).catch(() => EMPTY_CONTAINING);
 }
 
 /**
@@ -187,19 +202,26 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
  * @param args - 目标提交、当前分支可达的提交集合与触发事件。
  * @returns 无。
  */
-export async function openCommitMenu(
+export function openCommitMenu(
 	deps: GraphMenuDeps,
 	{ commit, event, currentHashes }: { commit: Commit; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
-): Promise<void> {
-	// React 的 currentTarget 只在事件派发期间有效，本函数会 await，因此先在同步段取出。
+): void {
+	// 同步取事件字段：currentTarget 与坐标只在派发期间有效。
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
-	const ctx = await makeContext(deps, commit, null, currentHashes);
+	const ctx = makeContext(deps, commit, null, currentHashes);
 	target.classList.add(MENU_TARGET_CLASS);
+	/*
+	 * 先弹已算好的部分，包含关系随后补齐：git 查询要跑几个子进程，等它会让右键明显迟滞。
+	 * 补齐结果整份替换菜单项，刷新时保留已打开的位置与焦点。
+	 */
 	showContextMenu({
 		x: clientX, y: clientY,
 		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
 		items: buildCommitItems(ctx),
+		pendingItems: containingOf(deps, commit).then(
+			(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
+		),
 	});
 }
 
@@ -213,24 +235,33 @@ export async function openCommitMenu(
  * @param args - 目标提交、引用信息、当前分支可达的提交集合与触发事件。
  * @returns 无。
  */
-export async function openRefMenu(
+export function openRefMenu(
 	deps: GraphMenuDeps,
 	{ commit, refInfo, event, currentHashes }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
-): Promise<void> {
+): void {
 	const target = event.currentTarget;
 	const { clientX, clientY } = event;
-	const ctx = await makeContext(deps, commit, refInfo, currentHashes);
-	const items: ContextMenuItem[] = [];
-	for (const action of ACTIONS) {
-		if (!action.refTypes.includes(refInfo.type)) continue;
-		const item = action.build(ctx);
-		if (item !== null) items.push(item);
-	}
+	const itemsOf = (containing?: Containing): ContextMenuItem[] => {
+		const ctx = makeContext(deps, commit, refInfo, currentHashes, containing);
+		const built: ContextMenuItem[] = [];
+		for (const action of ACTIONS) {
+			if (!action.refTypes.includes(refInfo.type)) continue;
+			const item = action.build(ctx);
+			if (item !== null) built.push(item);
+		}
+		return built;
+	};
+	const items = itemsOf();
 	if (items.length === 0) return;
 	target.classList.add(MENU_TARGET_CLASS);
+	// 与提交菜单同一策略：先弹已算好的部分，包含关系到达后整份替换。
 	showContextMenu({
 		x: clientX, y: clientY,
 		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
 		items,
+		pendingItems: containingOf(deps, commit).then((containing) => {
+			const next = itemsOf(containing);
+			return next.length === 0 ? null : next;
+		}),
 	});
 }

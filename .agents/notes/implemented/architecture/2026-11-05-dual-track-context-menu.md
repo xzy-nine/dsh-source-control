@@ -24,7 +24,30 @@ Status: implemented
 
 判据用插件版本而不是 dsh 引擎下限，因为引擎下限是本插件声明的兼容面，会随宿主发版被动跟进；发布节奏由 `!` 决定，那才是「这次大版本不再背旧兼容」的语义。
 
+打开路径按「先弹出、后补齐」拆分：`makeContext` 只做同步装配，需要向 git 追问的包含关系由 `pendingItems` 单独返回，菜单当帧弹出后整份替换条目——几个子进程的往返不再挡在弹出之前。共享菜单侧靠 `observe` 给出的快照源触发重新解析，自建浮层侧在组件内替换条目。
+
+二级菜单的**左右反向**也归入双轨：旧宿主把子卡片固定为向上、向右展开且不夹取，贴右缘的面板里会被整个裁掉，故用挂在 `body` 上的属性翻转方向；新宿主用 CSS 锚点定位并自带左翻回退，再挂旧补丁会与它的定位打架。渲染侧按 `usePointerGrace` 是否导出区分两代，只在旧宿主设置该属性。
+
 菜单的**锚点**同样是双轨：宿主原语分两代，旧宿主认 `getAnchorRect`（回调给矩形，Menu 优先用它，与 `anchor` 是否为 null 无关），新宿主认 `anchorRef` / `anchorPoint` 且完全不读 `getAnchorRect`。插件同时给出两代属性——两侧都只认识自己那一个，多余属性被忽略。只给一侧会让另一侧拿不到锚点，菜单静默落到视口左下角而不报错，`test/client-bundle.test.mjs` 有一条断言要求产物同时携带三者。
+
+## 版本分界点
+
+双轨不是一条界限，而是三条独立的分界：每项能力的引入版本不同，移除时按各自的版本判断，不能用一个笼统的「大版本」代替。下表是逐项实测的结论，判据取自 tag 上的源码与已发布包，不是推测。
+
+| 能力 | 旧宿主 | 新宿主起始版本 | 插件侧判据 | 移除时要做的事 |
+|---|---|---|---|---|
+| `ctx.contextMenus` 服务（共享菜单承载） | 无 | `0.2.2-alpha.3` | `ctx.inject(['contextMenus'], ...)` 是否启动 | 删自建浮层分支与 `createRoot` 路径 |
+| `Menu` 的 `anchorPoint` / `anchorRef` | 只有 `getAnchorRect` | 晚于 `0.2.2-rc.1`（rc.1 仍无 `anchorPoint`） | 无法直接探测（纯 props），靠双传共存 | 删 `getAnchorRect` 与 4px 补偿 |
+| 子菜单左翻回退 | 无，固定向右且不夹取 | 与 `anchorPoint` 同批 | `usePointerGrace` 是否导出 | 删翻转属性、CSS 补丁与 `state-classes.ts` 常量 |
+
+几处容易记错的地方，记录在此以免重复推导：
+
+- `MENU_TRANSITION_MS.prepare` **不能**用作「新宿主」判据：它在 `0.2.2-rc.1` 就已存在，用它会把 rc.1 误判成新代。
+- `contextual` **不能**用作判据：`0.2.2-alpha.3` 与 `0.2.2-rc.1` 都已支持，早于锚点重构。
+- `useAnchoredPosition` 在 rc.1 仍在导出，到新代才移除，因此它标识的是「旧代」，不是新代。
+- `anchorPoint` 是纯组件属性，运行时拿不到可靠的探测点；只能靠「同时给两代属性、各取所需」共存，不适合按能力分支。
+
+`scripts/check-dual-track-baseline.mjs` 的 `SHARED_MENU_ENGINE_FLOOR` 记录的是**第一条**分界（`0.2.2-alpha.3`），因为它决定菜单能否渲染。另两条分界不参与门禁：它们的失败形态是定位错位而非功能缺失，且由双传属性与 `usePointerGrace` 判据自动退化，不需要额外守卫。
 
 ## Alternatives considered
 
@@ -38,6 +61,10 @@ Status: implemented
 
 **锚点只迁一代、跟随最新原语。** 否决：迁移后的产物跑在不读新属性的宿主上时，菜单落在视口左下角且无任何错误提示，属于最难定位的静默降级。同时给两代只多一个被忽略的属性，代价近乎为零。
 
+**保留全部菜单项等查询完成后一起弹出。** 否决：包含关系要跑四个串行的 git 子进程，装在分支多的仓库上右键会明显迟滞，而这几个查询只决定少数几个条目是否出现。先弹出已算好的部分、结果到达后替换，用户感知的是即时响应。
+
+**继续无条件挂二级菜单翻转补丁。** 否决：新宿主的子卡片用 CSS 锚点定位并自带左翻回退，旧补丁的正负偏移会与它叠加，反而把菜单推到错误位置。补丁按宿主代数启用。
+
 ## Consequences
 
 代价是过渡期内两套菜单实现并存，且共享菜单下丢失悬浮提示。收益是不装该包的宿主照常工作，装了该包的宿主拿到与全站一致的菜单行为。
@@ -50,5 +77,6 @@ Status: implemented
 
 ## Testing
 
-- `test/client-bundle.test.mjs`：产物不含 `dsh-client-ui-context-menu` 的运行时引用；`apply` 会探测 `contextMenus`。
+- `test/client-bundle.test.mjs`：产物不含 `dsh-client-ui-context-menu` 的运行时引用；`apply` 会探测 `contextMenus`；产物同时携带两代锚点属性；二级菜单翻转补丁仍在。
+- `test/primitives.test.mjs`：提交菜单是同步函数，弹出前不得 `await`，包含关系经 `pendingItems` 补齐。
 - `scripts/check-dual-track-baseline.mjs`：人工验证过五个状态——1.x 且双轨仍在（通过）、2.x 且两项都没做（双红）、2.x 只删旧轨（红：下限项）、2.x 只抬下限（红：双轨项）、2.x 两项都完成（通过）。

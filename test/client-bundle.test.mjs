@@ -161,6 +161,17 @@ test('产物同时携带两代锚点属性', () => {
 	}
 });
 
+test('产物保留二级菜单的旧宿主翻转补丁', () => {
+	/*
+	 * 旧宿主的子菜单固定向右展开且不夹取，贴右缘的面板里会被裁掉；新宿主用锚点定位自带左翻
+	 * 回退。两侧能力不同，因此补丁留着、按能力只在旧宿主启用。
+	 */
+	const source = readFileSync(bundlePath, 'utf8');
+	assert.ok(source.includes('data-dsh-source-control-submenu'), '产物应保留二级菜单翻转属性');
+	const css = readFileSync(join(root, 'src', 'client', 'css', 'context-menu.module.css'), 'utf8');
+	assert.ok(css.includes("data-dsh-source-control-submenu~='left'"), '样式应保留左翻规则');
+});
+
 test('apply 注册右侧栏页类型与 header 入口', () => {
 	const restore = snapshotGlobals();
 	try {

@@ -14,7 +14,10 @@ import { createRoot } from 'react-dom/client';
 import {
 	IconChevronRightOutlineRegular, Menu, type MenuEntry, type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives';
+import * as MenuPrimitives from '@deepseek-ai/dsh-client-ui-primitives';
+import { SUBMENU_FLIP_ATTR } from '../css/state-classes.ts';
 import type { ContextMenus, MenuAction } from '@deepseek-ai/dsh-client-ui-context-menu/client';
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store';
 import css from '../css/context-menu.module.css';
 
 declare module '@deepseek-ai/dsh-client-ui-context-menu/client' {
@@ -64,8 +67,16 @@ export interface ContextMenuItem {
 
 /** 弹出右键菜单的选项。 */
 export interface ShowContextMenuOptions {
-	/** 菜单项列表。 */
+	/** 菜单项列表；菜单打开后仍可被 {@link ShowContextMenuOptions.pendingItems} 替换。 */
 	readonly items: readonly ContextMenuItem[];
+	/**
+	 * 稍后补齐的菜单项。
+	 *
+	 * 需要向 git 查询才完整的菜单（如「包含该提交的分支」）先用已算好的部分弹出，再把
+	 * 查询结果整体替换进来：菜单不再等子进程往返，用户看到的是立刻响应。返回 null 表示
+	 * 放弃替换（菜单已关闭或查询失败）。
+	 */
+	readonly pendingItems?: Promise<readonly ContextMenuItem[] | null>;
 	/** 触发点横坐标。 */
 	readonly x: number;
 	/** 触发点纵坐标。 */
@@ -183,6 +194,41 @@ function toSubItems(
 }
 
 /**
+ * 宿主原语是否属于「CSS 锚点」这一代。
+ *
+ * 判据是 `usePointerGrace`：它与锚点定位重构同批引入，只有该代才导出。不能用
+ * `MENU_TRANSITION_MS.prepare`——那个字段在 0.2.2-rc.1 就已经存在，用它会把 rc.1
+ * 误判成新代。
+ *
+ * 这个判据决定二级菜单的翻向由谁负责：新代的子卡片用 `anchor-name` 定位并自带左翻
+ * 回退，旧补丁的正负偏移会与它叠加；旧代子卡片固定向右展开且不夹取，必须由补丁翻转。
+ */
+const modernMenu = typeof (MenuPrimitives as { usePointerGrace?: unknown }).usePointerGrace === 'function';
+
+/** 向右展开二级菜单所需的右侧余量（像素）。 */
+const SUBMENU_RIGHT_ROOM = 400;
+
+/**
+ * 二级菜单的展开方向令牌。
+ *
+ * 旧宿主原语把二级菜单固定为向上、向右展开且不做视口夹取，在本插件贴右缘的面板里
+ * 向右展开必被裁掉。
+ *
+ * @param x - 触发点横坐标。
+ * @param y - 触发点纵坐标。
+ * @param vw - 视口宽度。
+ * @param vh - 视口高度。
+ * @returns 空白分隔的令牌：`left` 改向左展开，`down` 改向下展开；空串表示沿用原语默认。
+ */
+function submenuFlipTokens(x: number, y: number, vw: number, vh: number): string {
+	const tokens: string[] = [];
+	// 触发点在上半屏时卡片向下展开，二级菜单仍向上展开就会顶出视口上缘。
+	if (y < vh / 2) tokens.push('down');
+	if (x + SUBMENU_RIGHT_ROOM > vw) tokens.push('left');
+	return tokens.join(' ');
+}
+
+/**
  * 宿主共享菜单服务；未装载时为 null。
  *
  * 由插件入口在 `ctx.inject(['contextMenus'])` 里装入：宿主没有该服务时它保持 null，
@@ -269,24 +315,56 @@ function toSharedActions(items: readonly ContextMenuItem[]): MenuAction[] {
  * @returns 无。
  */
 function showSharedContextMenu(
-	menus: ContextMenus, items: readonly ContextMenuItem[], x: number, y: number, onClose: (() => void) | undefined,
+	menus: ContextMenus, items: readonly ContextMenuItem[], pendingItems: Promise<readonly ContextMenuItem[] | null> | undefined,
+	x: number, y: number, onClose: (() => void) | undefined,
 ): void {
 	const visibleItems = items.filter((item) => item.visible !== false);
 	if (visibleItems.length === 0) return;
 	const actions = toSharedActions(visibleItems);
 	if (actions.length === 0) return;
 	const menuId = `source-control-${String(++sharedMenuSeq)}`;
-	// 一次性贡献：动作表按 open 前登记、关闭即注销，插件因此不需要跨打开保存任何菜单状态。
-	const unregister = menus.register({ id: menuId, target: 'source-control', order: 0, resolve: () => actions });
+	let released = false;
 	/*
-	 * 关闭与选中共用同一条收尾：共享菜单把 active 置为 null 表示本次打开结束，选中时
-	 * 也会先置空。订阅必须在 open 之前建立，否则首个快照变化会被漏掉。
+	 * 补齐项：共享菜单的 resolve 同步返回，异步结果要主动触发一次重新解析。注册表在 resolve
+	 * 时对 `observe` 给出的每个源订阅一次并重新准备，因此这里用一个快照源充当刷新信号，
+	 * 它的值不参与呈现。
 	 */
-	const unsubscribe = menus.active.subscribe(() => {
-		if (menus.active.getSnapshot() !== null) return;
+	const signal = createSnapshotStore(0);
+	let current = actions;
+	if (pendingItems !== undefined) {
+		void pendingItems.then((next) => {
+			if (next === null || released) return;
+			const visible = next.filter((item) => item.visible !== false);
+			const nextActions = toSharedActions(visible);
+			if (nextActions.length === 0) return;
+			current = nextActions;
+			signal.set(signal.getSnapshot() + 1);
+		}).catch(() => { /* 补齐失败时保留首屏条目 */ });
+	}
+	// 一次性贡献：动作表按 open 前登记、关闭后注销，插件因此不需要跨打开保存任何菜单状态。
+	const unregister = menus.register({
+		id: menuId, target: 'source-control', order: 0,
+		...(pendingItems === undefined ? {} : { observe: () => [signal] }),
+		resolve: () => current,
+	});
+	/*
+	 * 收尾必须推迟到选中动作执行之后。
+	 *
+	 * 共享菜单的 select 顺序是「置空 active → 再执行选中的 run」。若在 active 变空的那一刻
+	 * 就注销贡献，registry 记住的回调会先被 abort 清掉，随后的 select 找不到动作而静默返回：
+	 * 菜单能弹出、点击却没有任何效果。这里只摘订阅并延后到微任务结束再注销，让本轮 select
+	 * 先拿到回调。订阅仍须在 open 之前建立，否则首个快照变化会被漏掉。
+	 */
+	const release = (): void => {
+		if (released) return;
+		released = true;
 		unsubscribe();
 		unregister();
 		onClose?.();
+	};
+	const unsubscribe = menus.active.subscribe(() => {
+		if (menus.active.getSnapshot() !== null) return;
+		queueMicrotask(release);
 	});
 	menus.open({ kind: 'source-control', value: { menuId } }, { x, y });
 }
@@ -299,9 +377,9 @@ function showSharedContextMenu(
  * @param options - 见 {@link ShowContextMenuOptions}。
  * @returns 无。
  */
-export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions): void {
+export function showContextMenu({ items, pendingItems, x, y, onClose }: ShowContextMenuOptions): void {
 	if (sharedMenus !== null) {
-		showSharedContextMenu(sharedMenus, items, x, y, onClose);
+		showSharedContextMenu(sharedMenus, items, pendingItems, x, y, onClose);
 		return;
 	}
 	const visibleItems = items.filter((item) => item.visible !== false);
@@ -321,6 +399,34 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 		onClose?.();
 	};
 	/*
+	 * 补齐项：先按已算好的条目弹出，异步结果到达后整份替换。
+	 *
+	 * 替换在同一个组件实例里完成，菜单不重开也不闪；回调映射与勾选集一并重建，避免旧 id
+	 * 残留到新条目上。
+	 */
+	const state = { entries, handlers, selectedIds };
+	if (pendingItems !== undefined) {
+		void pendingItems.then((next) => {
+			if (closed || next === null) return;
+			const visible = next.filter((item) => item.visible !== false);
+			if (visible.length === 0) return;
+			state.handlers = new Map<string, () => void>();
+			state.selectedIds = [];
+			state.entries = toEntries(visible, state.handlers, state.selectedIds);
+			publish?.(state.entries);
+		}).catch(() => { /* 补齐失败时保留首屏条目 */ });
+	}
+	/** 由组件实例装入：在补齐项到达后触发一次重渲染。 */
+	let publish: ((entries: MenuEntry[]) => void) | null = null;
+	/*
+	 * 二级菜单方向：旧宿主的原语固定向上、向右展开且不夹取，贴右缘的面板里会被裁掉，
+	 * 因此在打开期间挂一个属性让样式翻转。新宿主的子卡片用 CSS 锚点定位并自带左翻回退，
+	 * 不需要也不理会这条补丁，故只在旧宿主上设置。
+	 */
+	const hasSubmenu = visibleItems.some((item) => (item.children ?? []).some((child) => child.visible !== false));
+	const flipTokens = hasSubmenu && !modernMenu ? submenuFlipTokens(x, y, window.innerWidth, window.innerHeight) : '';
+	if (flipTokens !== '') document.body.setAttribute(SUBMENU_FLIP_ATTR, flipTokens);
+	/*
 	 * 锚点同时按两代原语给出：新宿主认 `anchorPoint`（客户端坐标，自行夹取视口），
 	 * 旧宿主认 `getAnchorRect`（自己量矩形）。两者互不认识对方那一个，多传的属性只被
 	 * 忽略，因此同一份代码在两侧都能把菜单放到指针处。
@@ -332,21 +438,32 @@ export function showContextMenu({ items, x, y, onClose }: ShowContextMenuOptions
 		anchorPoint: { x, y },
 		getAnchorRect: () => new DOMRect(x, y - 4, 0, 0),
 	};
+	/*
+	 * `contextual` 是新宿主的指针菜单模式：去掉首行上方留白、按上下文菜单排布。旧宿主
+	 * 不认识这个属性而直接忽略，因此两侧可以共用同一份 props。
+	 */
+	const contextualProps = modernMenu ? { contextual: true } : {};
 	function MenuContent(): React.ReactElement {
 		const [open, setOpen] = React.useState(true);
+		const [current, setCurrent] = React.useState(state.entries);
+		React.useEffect(() => {
+			publish = setCurrent;
+			return () => { publish = null; };
+		}, []);
 		React.useEffect(() => {
 			if (!open) close();
 		}, [open]);
 		return React.createElement(Menu, {
 			open,
 			anchor: null,
-			items: entries,
-			selectedIds,
+			items: current,
+			selectedIds: state.selectedIds,
 			portal: true,
 			...anchorProps,
+			...contextualProps,
 			onSelect: (id: string) => {
 				setOpen(false);
-				handlers.get(id)?.();
+				state.handlers.get(id)?.();
 			},
 			onClose: () => { setOpen(false); },
 		});
