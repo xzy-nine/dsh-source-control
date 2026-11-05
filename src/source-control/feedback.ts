@@ -1,22 +1,27 @@
 /**
- * 反馈提交：把用户填写的正文、环境信息与打包好的日志交 `gh issue create` 提交到本插件仓库，
- * 并把 issue 地址交回前端由用户打开、手动上传日志压缩包。
+ * 反馈提交：把用户填写的正文、环境信息交 `gh issue create` 建 issue，再把日志文本作为
+ * 独立评论追加到该 issue 下。
  *
  * 流程固定为三步：
- * 1. 取日志、脱敏、打包成 zip（`./log-archive.ts`），磁盘上的原始日志不动；
- * 2. `gh issue create` 用 `--body-file` 建 issue——正文里写明压缩包名与上传步骤；
- * 3. 返回 issue 地址与压缩包绝对路径，前端据此提示用户上传。
+ * 1. 取日志、脱敏；磁盘上的原始日志不动；
+ * 2. `gh issue create` 用 `--body-file` 建 issue；
+ * 3. 按 issue 评论上限把日志合并成若干条评论（`./feedback-comment.ts`），逐条
+ *    `gh issue comment --body-file` 追加。
+ *
+ * 日志走评论而不是附件：GitHub 的附件接口不接受日志等文本类型，而评论正文上限 65536
+ * 字符，落盘侧已按它约束单份文件，因此不需要附件环节。
  *
  * 失败一律归类为可读原因交给前端：缺 CLI、未登录、缺 scope、无权限、日志不可读。
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { runCollect } from './host-runtime.js';
 import { buildIssueBody, FEEDBACK_REPO, feedbackIssueTitle, type FeedbackFacts, type FeedbackType } from './feedback-text.js';
+import { groupLogComments, type LogComment, type LogSource } from './feedback-comment.js';
 import { currentLogFile, logRoot, recentLogFiles } from './logger.js';
 import { redactSummary, redactText } from './log-redact.js';
-import { archiveFileName, archiveLog, outboxDir } from './log-archive.js';
+import { OUTBOX_FOLDER } from './log-retention.js';
 
 /** 一次 `gh` 调用的结果。 */
 interface GhRun {
@@ -51,9 +56,9 @@ export interface SubmitFeedbackOptions {
 	readonly description: string;
 	/** 是否附带日志。 */
 	readonly attachLogs: boolean;
-	/** 附带的日志文件绝对路径；缺省时取当前启动的日志文件。 */
-	readonly logFile?: string;
-	/** 是否停用脱敏（停用即打包原始内容）。 */
+	/** 附带哪些日志文件（绝对路径）；缺省时取当前启动的日志文件。 */
+	readonly logFiles?: readonly string[];
+	/** 是否停用脱敏（停用即提交原始内容）。 */
 	readonly disableRedaction?: boolean;
 	/** 豁免保留的字符串。 */
 	readonly exemptions?: readonly string[];
@@ -73,10 +78,10 @@ export interface SubmitFeedbackResult {
 	readonly kind: 'ok' | 'missing-cli' | 'not-logged-in' | 'missing-scope' | 'forbidden' | 'invalid' | 'unknown';
 	/** 日志目录绝对路径：失败时提示用户手动提交用。 */
 	readonly logDir: string;
-	/** 日志压缩包绝对路径；未附带日志时为 null。 */
-	readonly archive: string | null;
-	/** 压缩包是否成功压缩；false 表示给出的是未压缩副本。 */
-	readonly compressed: boolean;
+	/** 已追加的日志评论条数；未附带日志时为 0。 */
+	readonly commentCount: number;
+	/** 日志评论提交失败的原因；全部成功或未附带日志时为 null。 */
+	readonly commentError: string | null;
 }
 
 /**
@@ -104,30 +109,54 @@ function classify(result: GhRun): { kind: SubmitFeedbackResult['kind']; message:
 	return { kind: 'unknown', message: text === '' ? 'gh 执行失败' : text };
 }
 
+/** 一次读取到的日志：内容、文件名与绝对路径。 */
+interface ReadLog extends LogSource {
+	/** 绝对路径，作为截断说明里的位置。 */
+	readonly path: string;
+}
+
 /**
- * 取用于附带的日志内容。
+ * 取用于提交的日志内容。
+ *
+ * 没有指定文件时取当前启动的那一份；当前还没有写出内容时退回最近的一份。
  *
  * @param options - 提交入参。
- * @returns 日志原文与文件名；不可读取时为 null。
+ * @returns 日志列表，按启动先后排列；一份都读不到时为空数组。
  */
-function readLogForAttach(options: SubmitFeedbackOptions): { text: string; name: string } | null {
-	const path = options.logFile ?? currentLogFile();
-	if (path !== null) {
+function readLogsForAttach(options: SubmitFeedbackOptions): ReadLog[] {
+	const paths = (options.logFiles ?? []).filter((path) => path !== '');
+	const chosen = paths.length > 0
+		? paths
+		: (() => {
+			const current = currentLogFile();
+			if (current !== null) return [current];
+			const recent = recentLogFiles(1);
+			return recent.length === 0 ? [] : [recent[0].path];
+		})();
+	const read: ReadLog[] = [];
+	for (const path of chosen) {
 		try {
-			const name = path.split(/[\\/]/).pop() ?? 'logcat.log';
-			return { text: readFileSync(path, 'utf8'), name };
+			read.push({ path, name: path.split(/[\\/]/).pop() ?? 'logcat.log', text: readFileSync(path, 'utf8') });
 		} catch {
-			return null;
+			/* 读不到的那一份跳过：其余仍可提交 */
 		}
 	}
-	const recent = recentLogFiles(1);
-	if (recent.length === 0) return null;
-	try {
-		return { text: readFileSync(recent[0].path, 'utf8'), name: recent[0].name };
-	} catch {
-		return null;
-	}
+	return read;
 }
+
+/**
+ * 从 issue 地址取 issue 号。
+ *
+ * @param url - `gh issue create` 回投的地址。
+ * @returns issue 号；地址不含编号时为 null。
+ */
+function issueNumberFrom(url: string): string | null {
+	const match = /\/issues\/(\d+)\s*$/.exec(url.trim());
+	return match === null ? null : match[1];
+}
+
+/** 一条评论正文的字符上限，与 GitHub 的 issue 评论正文上限一致。 */
+export const COMMENT_BODY_LIMIT = 65536;
 
 /**
  * 平台描述。
@@ -146,37 +175,48 @@ function platformText(): string {
  */
 export async function submitFeedback(options: SubmitFeedbackOptions): Promise<SubmitFeedbackResult> {
 	const logDir = logRoot();
-	let archive: string | null = null;
-	let compressed = false;
+	let comments: readonly LogComment[] = [];
+	let logs: ReadLog[] = [];
 	let facts: FeedbackFacts = {
 		type: options.type,
 		description: options.description,
 		pluginVersion: options.pluginVersion,
 		platform: platformText(),
 		node: process.version,
-		logFile: null,
+		logFiles: [],
+		logCommentCount: 0,
 		redaction: '',
 		exemptionCount: (options.exemptions ?? []).length,
 	};
 	if (options.attachLogs) {
-		const raw = readLogForAttach(options);
-		if (raw === null) {
-			return { url: '', error: '没有可附带的日志文件。', kind: 'unknown', logDir, archive: null, compressed: false };
+		logs = readLogsForAttach(options);
+		if (logs.length === 0) {
+			return { url: '', error: '没有可附带的日志文件。', kind: 'unknown', logDir, commentCount: 0, commentError: null };
 		}
-		const masked = options.disableRedaction === true
-			? { text: raw.text, counts: { credential: 0, token: 0, user: 0 } }
-			: redactText(raw.text, { username: process.env.USERNAME ?? process.env.USER ?? '', exemptions: options.exemptions ?? [] });
-		const packed = await archiveLog(raw.name, masked.text);
-		archive = packed.path;
-		compressed = packed.compressed;
+		const username = process.env.USERNAME ?? process.env.USER ?? '';
+		const counts = { credential: 0, token: 0, user: 0 };
+		const sources: LogSource[] = [];
+		for (const log of logs) {
+			const masked = options.disableRedaction === true
+				? { text: log.text, counts: { credential: 0, token: 0, user: 0 } }
+				: redactText(log.text, { username, exemptions: options.exemptions ?? [] });
+			counts.credential += masked.counts.credential;
+			counts.token += masked.counts.token;
+			counts.user += masked.counts.user;
+			sources.push({ name: log.name, text: masked.text });
+		}
+		const paths: Record<string, string> = {};
+		for (const log of logs) paths[log.name] = log.path;
+		comments = groupLogComments(sources, COMMENT_BODY_LIMIT, paths);
 		facts = {
 			...facts,
-			logFile: archiveFileName(packed.path),
-			redaction: redactSummary(masked.counts),
+			logFiles: logs.map((log) => log.name),
+			logCommentCount: comments.length,
+			redaction: redactSummary(counts),
 		};
 	}
 	// 正文走 --body-file：长描述与日志说明会让命令行参数超出系统上限。
-	const dir = outboxDir();
+	const dir = issueBodyDir();
 	mkdirSync(dir, { recursive: true });
 	const bodyPath = join(dir, `issue-body-${String(Date.now())}.md`);
 	writeFileSync(bodyPath, buildIssueBody(facts), 'utf8');
@@ -185,10 +225,53 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 		// 提交与仓库无关：面板未选中仓库时用宿主进程的工作目录。
 		options.cwd === '' ? process.cwd() : options.cwd,
 	);
-	if (result.code === 0) {
-		const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
-		return { url, error: null, kind: 'ok', logDir, archive, compressed };
+	rmSync(bodyPath, { force: true });
+	if (result.code !== 0) {
+		const failure = classify(result);
+		return { url: '', error: failure.message, kind: failure.kind, logDir, commentCount: 0, commentError: null };
 	}
-	const failure = classify(result);
-	return { url: '', error: failure.message, kind: failure.kind, logDir, archive, compressed };
+	const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
+	// issue 已建成即算成功：日志评论的失败只回报原因，不重开一条 issue 制造重复。
+	const commentError = await postLogComments(url, comments, options.cwd === '' ? process.cwd() : options.cwd);
+	return { url, error: null, kind: 'ok', logDir, commentCount: comments.length, commentError };
+}
+
+/**
+ * 把日志评论逐条追加到 issue 下。
+ *
+ * 逐条发送而不是一次多发：评论接口没有批量形态，一条失败不影响已发出的。
+ *
+ * @param url - issue 地址。
+ * @param comments - 待发送的评论正文。
+ * @param cwd - 执行 gh 的工作目录。
+ * @returns 失败原因；全部成功或无需发送时为 null。
+ */
+async function postLogComments(url: string, comments: readonly LogComment[], cwd: string): Promise<string | null> {
+	if (comments.length === 0) return null;
+	const issue = issueNumberFrom(url);
+	if (issue === null) return `无法从 issue 地址识别编号：${url}`;
+	const dir = issueBodyDir();
+	mkdirSync(dir, { recursive: true });
+	for (const [index, comment] of comments.entries()) {
+		const path = join(dir, `comment-${String(Date.now())}-${String(index)}.md`);
+		writeFileSync(path, comment.body, 'utf8');
+		const result = await runGh(['issue', 'comment', issue, '--repo', FEEDBACK_REPO, '--body-file', path], cwd);
+		rmSync(path, { force: true });
+		if (result.code !== 0) {
+			const failure = classify(result);
+			return `第 ${String(index + 1)}/${String(comments.length)} 条日志评论发送失败：${failure.message}`;
+		}
+	}
+	return null;
+}
+
+/**
+ * issue 正文与评论正文的暂存目录。
+ *
+ * 载体文件在提交过程内即删；提交中途失败留下的那几个由下次启动的 `cleanLogs()` 整目录清掉。
+ *
+ * @returns 绝对路径。
+ */
+function issueBodyDir(): string {
+	return join(logRoot(), OUTBOX_FOLDER);
 }

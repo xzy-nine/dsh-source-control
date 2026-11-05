@@ -82,5 +82,3 @@
 .fbPathLink:disabled{cursor:default;opacity:0.8}
 
 .fbActions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-
-.fbResult{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-tertiary);word-break:break-all}

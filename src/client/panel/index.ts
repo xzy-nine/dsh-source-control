@@ -63,8 +63,8 @@ export interface GitGraphPanelProps {
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
-	readonly onRevealPath?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
+	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 	/** 打开宿主目录选择器；未装载时为 undefined。 */
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
@@ -657,14 +657,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches,
 	]);
 
-	/** 提交行右键菜单。分支候选需向 git 查询，因此异步打开。 */
+	/** 提交行右键菜单。同步弹出，需要 git 查询的条目随后补齐。 */
 	const openCommitMenuFor = React.useCallback(({ commit, event }: { commit: Commit; event: React.MouseEvent<HTMLElement> }) => {
-		void openCommitMenu(menuDeps, { commit, event, currentHashes: branchHashes });
+		openCommitMenu(menuDeps, { commit, event, currentHashes: branchHashes });
 	}, [menuDeps, branchHashes]);
 
 	/** 引用标记（head / remote / tag / stash）右键菜单；条目按引用类型从同一注册表过滤。 */
 	const openRefMenuFor = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: { type: string; name: string; remote?: string | null }; event: React.MouseEvent<HTMLElement> }) => {
-		void openRefMenu(menuDeps, { commit, refInfo, event, currentHashes: branchHashes });
+		openRefMenu(menuDeps, { commit, refInfo, event, currentHashes: branchHashes });
 	}, [menuDeps, branchHashes]);
 
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */

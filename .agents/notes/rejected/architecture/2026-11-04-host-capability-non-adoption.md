@@ -42,11 +42,11 @@ Status: rejected — 每项在数据模型、作用域或生命周期上与宿�
 
 `ctx.ssh` 是"部署方持有远端执行世界"的连接 owner，配置要求 host、远端 helper 路径与 SHA-256，把 `ctx.fs` / `ctx.subprocess` 整体搬到远端。本插件要的是**本机诊断**（装没装、有哪些私钥、能否认证 github.com），未装载 ssh 包时也要能给出"未安装"。两者方向与前提都不同，`ctx.ssh` 不覆盖 Windows 客户端探测。此外 base bundle 与 desktop profile 都没有安装该包。
 
-### 右键菜单：等上游发版
+### 右键菜单：已改走双轨兼容
 
-`context-menu.ts` 自建右键浮层（`createRoot` + 自定位 + 二级菜单翻向补丁）。
+`context-menu.ts` 现按宿主能力二选一：`ctx.inject(['contextMenus'])` 探测到服务时走宿主共享菜单，否则保留自建浮层。决策与退出条件见[双轨兼容记录](../../implemented/architecture/2026-11-05-dual-track-context-menu.md)。
 
-`ctx.contextMenus`（`open` / `register` / `notify`）所在的 `packages/client/ui-context-menu` 在提交 `411f157983`（2026-10-22）引入主干，但直到 `dsh-v0.2.2-alpha.3`（2026-11-03）才发布：`dsh-v0.2.2-alpha.2` 及更早的 tag 都没有该包，npm 上该包的首次发布也在 2026-11-03。本机运行的 0.2.1-rc.5 里 `contextMenus` / `useContextMenu` 零命中。另：菜单项现由 JSON 元数据加闭包命令式构造，要改成 target 与 contribution 注册模型，10 处调用点全部重写，`hint` 在 `MenuActionView` 无对应字段会丢。恢复条件：engines 下限抬到 `>=0.2.2-alpha.3`。
+本记录只保留当时的判定依据：`ctx.contextMenus`（`open` / `register` / `notify`）所在的 `packages/client/ui-context-menu` 在提交 `411f157983`（2026-10-22）引入主干，直到 `dsh-v0.2.2-alpha.3`（2026-11-03）才随宿主发布；0.2.1-rc.5 里 `contextMenus` / `useContextMenu` 零命中，因此不能直接切换。
 
 ### 其余保留项
 

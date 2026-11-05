@@ -8,5 +8,11 @@
 /** 右键菜单打开时高亮目标行。 */
 export const MENU_TARGET_CLASS = 'ggg-menu-target';
 
-/** 二级菜单展开方向的令牌（`left` / `down`），存在期间才翻转宿主原语的方向。 */
+/**
+ * 二级菜单展开方向的令牌（`left` / `down`）。
+ *
+ * 旧宿主把二级菜单固定为向上、向右展开且不做视口夹取，贴右缘的面板里会被裁掉，因此要由
+ * 这里翻转方向。新宿主的二级菜单用 CSS 锚点自行左翻，属性存在时其样式不依赖这条规则，
+ * 由渲染侧决定是否设置，两侧因此可以共存。
+ */
 export const SUBMENU_FLIP_ATTR = 'data-dsh-source-control-submenu';

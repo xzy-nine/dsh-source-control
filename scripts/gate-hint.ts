@@ -23,6 +23,7 @@ export const GATE_RULES: Readonly<Record<string, string>> = {
   'verify-agent-note-format': '.agents/notes/README.md',
   'verify-archived-agent-notes': '.agents/notes/README.md',
   'verify-skill-invocation-metadata': 'Docs/AGENTS.md',
+  'check:dual-track': 'Docs/实现/构建与测试.md',
 }
 
 /**

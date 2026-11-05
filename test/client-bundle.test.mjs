@@ -144,6 +144,34 @@ test('产物包络注册为包名并只请求外部平台模块', () => {
 	}
 });
 
+test('产物不引入共享菜单包的运行时依赖', () => {
+	// 共享菜单只是可选宿主能力：未提供它的宿主不装该包，实体引用会让插件在半数宿主上加载失败。
+	const source = readFileSync(bundlePath, 'utf8');
+	assert.equal(source.includes('dsh-client-ui-context-menu'), false, '产物不得包含共享菜单包的运行时引用');
+});
+
+test('产物同时携带两代锚点属性', () => {
+	/*
+	 * 宿主的 Menu 分两代：旧宿主认 getAnchorRect 并优先使用它，新宿主认 anchorRef / anchorPoint
+	 * 且完全不读 getAnchorRect。只给一侧会让另一侧拿不到锚点，菜单静默落到视口左下角。
+	 */
+	const source = readFileSync(bundlePath, 'utf8');
+	for (const name of ['getAnchorRect', 'anchorRef', 'anchorPoint']) {
+		assert.ok(source.includes(name), '产物应携带锚点属性：' + name);
+	}
+});
+
+test('产物保留二级菜单的旧宿主翻转补丁', () => {
+	/*
+	 * 旧宿主的子菜单固定向右展开且不夹取，贴右缘的面板里会被裁掉；新宿主用锚点定位自带左翻
+	 * 回退。两侧能力不同，因此补丁留着、按能力只在旧宿主启用。
+	 */
+	const source = readFileSync(bundlePath, 'utf8');
+	assert.ok(source.includes('data-dsh-source-control-submenu'), '产物应保留二级菜单翻转属性');
+	const css = readFileSync(join(root, 'src', 'client', 'css', 'context-menu.module.css'), 'utf8');
+	assert.ok(css.includes("data-dsh-source-control-submenu~='left'"), '样式应保留左翻规则');
+});
+
 test('apply 注册右侧栏页类型与 header 入口', () => {
 	const restore = snapshotGlobals();
 	try {
@@ -157,13 +185,16 @@ test('apply 注册右侧栏页类型与 header 入口', () => {
 		register: (spec) => ({ spec }),
 	};
 	const rightTabs = { register: (spec) => { registered.push(spec.id); return spec; } };
+	const injected = [];
 	const ctx = {
 		slots,
 		sidebarRightTabs: rightTabs,
 		sidebarRight: { openTab: () => {} },
 		effect: (fn) => { effects.push(fn); fn(); },
+		inject: (deps, run) => { injected.push(deps); run({ contextMenus: undefined, effect: () => {} }); },
 	};
 	client.apply(ctx);
+	assert.deepEqual(injected, [['contextMenus']], 'apply 应探测宿主的共享菜单服务');
 	assert.ok(effects.length > 0, 'apply 必须通过 ctx.effect 注册');
 	assert.ok(registered.includes('dsh-source-control/panel'), '应注册面板页类型');
 	assert.ok(registered.includes('dsh-source-control/diff'), '应注册差异页类型');

@@ -61,8 +61,8 @@ export interface SettingsPanelProps {
 	readonly scrollSerial?: number;
 	/** 按绝对路径打开一个文件（复用更改区的文件打开接线）。 */
 	readonly onOpenFile?: ((path: string) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。 */
-	readonly onRevealPath?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
+	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 }
 
 /**

@@ -454,16 +454,18 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.match(workspaceRoutes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
 	});
 
-	t.test('异步打开提交菜单前先取出事件字段', () => {
-		// openCommitMenu 会 await 查询分支；React 的 currentTarget 在 await 之后已失效。
+	t.test('提交菜单同步弹出，查询结果异步补齐', () => {
+		/*
+		 * React 的 currentTarget 只在事件派发期间有效，所以菜单必须在同步段弹出；包含关系要跑
+		 * 几个 git 子进程，不能挡在弹出之前，改为 pendingItems 到达后整份替换菜单项。
+		 */
 		const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-		const body = menu.slice(menu.indexOf('export async function openCommitMenu'));
-		const syncIndex = body.indexOf('const target = event.currentTarget');
-		const awaitIndex = body.indexOf('await makeContext');
-		assert.ok(syncIndex !== -1, '应取出 currentTarget');
-		assert.ok(awaitIndex !== -1, '应有 await 查询');
-		assert.ok(syncIndex < awaitIndex, 'currentTarget 必须在 await 之前取出');
+		const body = menu.slice(menu.indexOf('export function openCommitMenu'));
+		assert.ok(!/export async function openCommitMenu/.test(menu), '提交菜单不应再是异步函数');
+		assert.ok(body.indexOf('const target = event.currentTarget') !== -1, '应取出 currentTarget');
 		assert.match(body, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
+		assert.match(body, /pendingItems: containingOf\(/, '包含关系应经 pendingItems 异步补齐');
+		assert.ok(!/await /.test(body.slice(0, body.indexOf('showContextMenu('))), '弹出前不得 await');
 	});
 
 	t.test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
@@ -575,8 +577,8 @@ parallel('客户端结构与产物契约', (t) => {
 			assert.ok(typeof action.title === 'string' && action.title !== '', `${action.id} 应有菜单名称`);
 			assert.match(menu, new RegExp(`${action.id}: \\(ctx, meta\\) =>`), `${action.id} 应有对应的处理函数`);
 		}
-		assert.match(menu, /export async function openCommitMenu/, '应导出提交菜单');
-		assert.match(menu, /export async function openRefMenu/, '应导出引用菜单');
+		assert.match(menu, /export function openCommitMenu/, '应导出提交菜单');
+		assert.match(menu, /export function openRefMenu/, '应导出引用菜单');
 		assert.match(menu, /action\.refTypes\.includes\(refInfo\.type\)/, '引用菜单应按引用类型过滤');
 		assert.ok(!existsSync(join(panelDir, 'ref-menu.ts')), '不应再保留独立的 ref-menu 模块');
 		// 提交行右键应能直接发起「合并到选中分支」，无需命中分支标签。

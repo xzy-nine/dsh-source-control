@@ -1,0 +1,7 @@
+{
+  "note": "记录双轨退出前的基线；本插件主版本越过 pluginMajor 后，自建浮层必须删除且 engines.dsh 下限必须高于 engineFloor。",
+  "pluginMajor": 1,
+  "pluginVersion": "1.0.0",
+  "engineFloor": "0.2.0-rc.2",
+  "legacyMenu": true
+}

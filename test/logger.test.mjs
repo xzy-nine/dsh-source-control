@@ -97,6 +97,50 @@ test('清理会删除超出保留期的日文件夹', async () => {
 	assert.equal(existsSync(staleDir), false, '过期日文件夹应被删除');
 });
 
+test('写满字符上限时另起一份文件，记录一条不丢', async () => {
+	const { module } = await freshLogger();
+	const { LOG_FILE_CHAR_LIMIT } = await import('../lib/src/source-control/log-retention.js');
+	const first = module.currentLogFile();
+	// 每行 100 字符，写到越限为止：分片后 currentLogFile 必须换人。
+	const payload = 'y'.repeat(90);
+	let written = 0;
+	while (module.currentLogFile() === first && written < 2000) {
+		module.logInfo('split', payload);
+		written += 1;
+	}
+	module.flushSync();
+	const second = module.currentLogFile();
+	assert.notEqual(second, first, '达到上限后应另起一份文件');
+	const firstText = readFileSync(first, 'utf8');
+	const secondText = readFileSync(second, 'utf8');
+	assert.ok(firstText.length <= LOG_FILE_CHAR_LIMIT + 400, '旧文件不应明显越过上限');
+	assert.ok(firstText.includes('在此分片'), '旧文件末尾写明续见哪一份');
+	assert.ok(secondText.includes('接上一份'), '新文件开头写明接的是哪一份');
+	// 分片只切换文件，记录不丢：两侧的行数合计覆盖全部写入。
+	const lines = firstText.trimEnd().split('\n').length + secondText.trimEnd().split('\n').length;
+	assert.ok(lines >= written, `记录应全部保留（写入 ${String(written)} 次，落盘 ${String(lines)} 行）`);
+});
+
+test('启动清理清空反馈暂存目录', async () => {
+	const { home, module } = await freshLogger();
+	const outbox = join(home, 'logs', 'outbox');
+	// 上次会话提交中途失败留下的载体文件。
+	mkdirSync(outbox, { recursive: true });
+	writeFileSync(join(outbox, 'issue-body-1762300000000.md'), '# body', 'utf8');
+	writeFileSync(join(outbox, 'comment-1762300000001-0.md'), '# log', 'utf8');
+	module.cleanLogs(new Date());
+	assert.deepEqual(readdirSync(outbox), [], '暂存目录应被清空');
+});
+
+test('远未到上限时不分片', async () => {
+	const { module } = await freshLogger();
+	const before = module.currentLogFile();
+	for (let i = 0; i < 50; i += 1) module.logInfo('grow', 'z'.repeat(40));
+	module.flushSync();
+	assert.equal(module.currentLogFile(), before, '未到上限时不应分片');
+	assert.equal(readFileSync(before, 'utf8').includes('在此分片'), false);
+});
+
 test('日文件夹超限时清理最旧的文件', async () => {
 	const { home, module } = await freshLogger();
 	module.logInfo('test', 'current');

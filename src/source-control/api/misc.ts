@@ -127,7 +127,7 @@ async function revParseHasParent(repo: string, commitHash: string): Promise<bool
  * @returns 是否已处理；未识别的命令返回 false。
  */
 export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
-	const { msg, repo, str, strOrNull, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
+	const { msg, repo, str, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
 	switch (ctx.command) {
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
@@ -347,7 +347,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			respondResultSync('feedbackInfo', {
 				logDir: logRoot(),
 				currentFile: currentLogFile(),
-				files: recentLogFiles(5),
+				files: recentLogFiles(30),
 			});
 			break;
 		case 'submitFeedback': {
@@ -360,14 +360,14 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				title: str('title'),
 				description: str('description'),
 				attachLogs: bool('attachLogs'),
-				logFile: strOrNull('logFile') ?? undefined,
+				logFiles: arr<string>('logFiles'),
 				disableRedaction: bool('disableRedaction'),
 				exemptions: arr<string>('exemptions'),
 				pluginVersion: str('pluginVersion'),
 				cwd: repo,
 			});
 			if (result.error !== null) logError('feedback', `反馈提交失败，原因分类 ${result.kind}：${result.error}`);
-			else logInfo('feedback', `反馈已提交，issue 地址：${result.url}${result.archive === null ? '（未附带日志）' : `，日志压缩包：${result.archive}`}`);
+			else logInfo('feedback', `反馈已提交，issue 地址：${result.url}${result.commentCount === 0 ? '（未附带日志）' : `，日志评论 ${String(result.commentCount)} 条`}${result.commentError === null ? '' : `，${result.commentError}`}`);
 			respond({ command: 'submitFeedback', ...result });
 			break;
 		}

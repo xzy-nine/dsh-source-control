@@ -38,10 +38,19 @@ export function Dropdown({ options, value, onChange, id, fallbackLabel }: Dropdo
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
 	const current = options.find((option) => option.value === value);
+	/*
+	 * 锚点同时按两代原语给出：新宿主认 `anchorRef`（外部元素即 CSS 锚点），旧宿主认
+	 * `getAnchorRect`（自己量矩形），两者互不认识对方那一个。多传的属性只是被忽略，
+	 * 因此同一份代码在两侧都能正确定位。
+	 */
+	const anchorProps = {
+		anchorRef: triggerRef,
+		getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
+	};
 	return React.createElement(Menu, {
 		open,
 		portal: true,
-		getAnchorRect: () => triggerRef.current?.getBoundingClientRect() ?? null,
+		...anchorProps,
 		selectedId: value,
 		items: options.map((option) => ({ id: option.value, label: option.label, title: option.title })),
 		onSelect: (menuId: string) => { setOpen(false); onChange(menuId); },
