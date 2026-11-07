@@ -1,9 +1,11 @@
 /**
  * 仓库发现与仓库树取数命令：发现、补齐、单仓库与批量领先/落后。
  */
-import { discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from '../repo-discovery.js';
+import { clearDiscoveryCache, discoverWorkspace, enrichRepositories, loadRepoSync, loadReposSync } from '../repo-discovery.js';
 import { watchRepositories, watchWorkspace } from '../repo-watcher.js';
 import { whenLocalSettled } from '../git-exec.js';
+import { initRepository } from '../git-actions.js';
+import { logInfo } from '../logger.js';
 import type { RepoNode } from '../repo-discovery.js';
 import type { ApiContext } from './context.js';
 
@@ -63,6 +65,19 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 				// 补齐结果里的工作树与子模块同样纳入监视：它们的登记项增删要即时反映。
 				watchRepositories(flattenRepoPaths(nodes));
 				return { nodes };
+			});
+			break;
+		case 'initRepository':
+			await respondResult('initRepository', async () => {
+				const error = await initRepository(repo);
+				if (error !== null) throw new Error(error);
+				/*
+				 * 工作区里凭空多出一个仓库：作废发现缓存，否则 60 秒内拿到的仍是「这层没有仓库」的旧结果。
+				 * 结构监视不必在这里挂：客户端随后的重扫走 `discoverRepositories`，那条命令自己挂。
+				 */
+				clearDiscoveryCache();
+				logInfo('repo', `已初始化仓库：${repo}`);
+				return { repo };
 			});
 			break;
 		case 'loadRepoSync':

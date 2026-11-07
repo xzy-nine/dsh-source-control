@@ -373,6 +373,11 @@ function sync(key: string): void {
  */
 function arm(repo: string): void {
 	void (async () => {
+		/*
+		 * 只登记自身就是仓库根的路径。未检出的子模块目录里没有 `.git`，向上解析会拿到外层仓库的
+		 * 公共目录，把句柄挂在父仓库名下并把事件报成该子模块的。
+		 */
+		if (await gitDirAt(repo) === null) return;
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return;
 		// 比较键按规范化的公共目录生成，真实路径另存映射：区分大小写的文件系统上，键值路径可能不存在。
@@ -381,7 +386,7 @@ function arm(repo: string): void {
 		 * 只有磁盘上确实存在 git 目录的路径才登记为已知仓库：目录已删除的路径留在集合里，
 		 * 会让此后每一条名字缺失的事件都判定为仓库集合变化。
 		 */
-		if (await gitDirAt(repo) !== null) knownRepos.add(pathKey(repo));
+		knownRepos.add(pathKey(repo));
 		if (handles.has(key)) return;
 		handles.set(key, new Map());
 		repoOfCommon.set(key, repo);

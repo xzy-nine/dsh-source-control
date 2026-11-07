@@ -614,6 +614,19 @@ export function unsetConfigValue(repo: string, key: string, location: ConfigLoca
 }
 
 /**
+ * 在给定目录初始化一个空仓库。
+ *
+ * 不带参数提交信息与远程：初始分支名由 git 自身的 `init.defaultBranch` 决定。目录已在仓库内时
+ * git 拒绝，错误原文回投。
+ *
+ * @param repo - 目标目录，通常是会话工作区根。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+export function initRepository(repo: string): Promise<ErrorInfo> {
+	return gitErrorInfo(['init'], repo);
+}
+
+/**
  * 清理未跟踪文件。
  *
  * @param repo - 仓库路径。

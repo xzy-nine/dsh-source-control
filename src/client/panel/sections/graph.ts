@@ -19,6 +19,8 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 	? '⌘'
 	: 'Ctrl';
 
+import { WorkspaceEmpty } from './empty-state.ts';
+import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
 import { refreshButton } from './refresh-button.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
@@ -90,6 +92,16 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	readonly refreshing: boolean;
 	/** 「上次刷新」文案；为空串时不显示。 */
 	readonly lastRefresh: string;
+	/**
+	 * 读不到仓库数据时的空态；为 null 时照常渲染提交图。
+	 *
+	 * 与更改区取同一份判据：两处同时显示空态，不会一处空态、另一处停在取数占位。
+	 */
+	readonly empty: WorkspaceEmptyInfo | null;
+	/** 空态动作进行中：只禁用该按钮。 */
+	readonly emptyBusy: boolean;
+	/** 执行空态动作。 */
+	readonly onEmptyAction: () => void;
 }
 
 /**
@@ -105,7 +117,7 @@ function GraphSectionView({
 	translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
 	graphTranslated, graphTranslating, onTranslateVisible, onCancelTranslate,
 	onOpenFilter, filterSummary, filterActive, onGoToHead, onFetch, onRefresh, onResizeStart, formatDate, formatDetail, issueLinking,
-	refreshing, lastRefresh,
+	refreshing, lastRefresh, empty, emptyBusy, onEmptyAction,
 }: GraphSectionProps): React.ReactElement {
 	// 当前可见窗口内的提交；由提交图上报，标题栏的批量翻译据此下发。
 	const [visible, setVisible] = React.useState<readonly { hash: string; text: string }[]>([]);
@@ -160,6 +172,56 @@ function GraphSectionView({
 			}),
 		)
 		: null), [detail, detailCollapsed, busy.read, handleDetailOpen, handleDetailToggle]);
+	/**
+	 * 图形区主体：空态、取数占位与提交图三选一。
+	 *
+	 * 空态排在最前：没有仓库或子模块尚未检出时 `phase` 会停在 loading，按占位渲染会让图形区
+	 * 一直显示「正在加载提交图」。
+	 *
+	 * @returns 主体元素。
+	 */
+	const graphBody = (): React.ReactElement => {
+		if (empty !== null) {
+			return React.createElement(WorkspaceEmpty, { empty, busy: emptyBusy, onAction: onEmptyAction, fill: false, style: { height } });
+		}
+		if (phase === 'loading' && commitCount === 0) {
+			return React.createElement('div', { className: shared.empty, style: { height } }, '正在加载提交图…');
+		}
+		return React.createElement('div', {
+			ref: graphScrollRef,
+			style: { height, display: 'flex', flexDirection: 'column', minHeight: 0 },
+		}, React.createElement(CommitGraph, {
+			commits,
+			head,
+			selectedHash,
+			localTip,
+			remoteTip,
+			baseTip,
+			upstream,
+			onSelect: handleSelect,
+			onLoadMore,
+			moreCommitsAvailable,
+			onContextMenu,
+			formatDate,
+			formatDetail,
+			issueLinking,
+			markdown: settings.markdown,
+			showAvatars: settings.showAvatars,
+			muteMergeCommits: settings.muteMergeCommits,
+			graphColours: settings.graphColours,
+			commitStats: statsByHash,
+			commitMessages: messageByHash,
+			translatedMessages: translatedByHash,
+			translatedFrom: translatedFromByHash,
+			translatingHash,
+			translateReady,
+			onTranslateCommit,
+			onCancelTranslateCommit,
+			onVisibleCommits: setVisible,
+			onHoverCommit,
+			renderDetail,
+		}));
+	};
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.graphSec) },
@@ -214,44 +276,7 @@ function GraphSectionView({
 				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
 			),
 		),
-		open && (
-			phase === 'loading' && commitCount === 0
-				? React.createElement('div', { className: shared.empty, style: { height } }, '正在加载提交图…')
-				: React.createElement('div', {
-					ref: graphScrollRef,
-					style: { height, display: 'flex', flexDirection: 'column', minHeight: 0 },
-				}, React.createElement(CommitGraph, {
-					commits,
-					head,
-					selectedHash,
-					localTip,
-					remoteTip,
-					baseTip,
-					upstream,
-					onSelect: handleSelect,
-					onLoadMore,
-					moreCommitsAvailable,
-					onContextMenu,
-					formatDate,
-					formatDetail,
-					issueLinking,
-					markdown: settings.markdown,
-					showAvatars: settings.showAvatars,
-					muteMergeCommits: settings.muteMergeCommits,
-					graphColours: settings.graphColours,
-					commitStats: statsByHash,
-					commitMessages: messageByHash,
-					translatedMessages: translatedByHash,
-					translatedFrom: translatedFromByHash,
-					translatingHash,
-					translateReady,
-					onTranslateCommit,
-					onCancelTranslateCommit,
-					onVisibleCommits: setVisible,
-					onHoverCommit,
-					renderDetail,
-				}))
-		),
+		open && graphBody(),
 	);
 }
 

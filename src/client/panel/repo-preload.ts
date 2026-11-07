@@ -84,6 +84,13 @@ interface WorkspaceEntry {
 	 */
 	syncedIds: Set<string>;
 	/**
+	 * 上一轮各节点在磁盘上是否存在。
+	 *
+	 * 子模块从「未检出」变成「已检出」时它的领先/落后要重取：未检出时读到的空状态是
+	 * 该目录的事实，检出后就不再成立，而节点 id 没变，只按 id 判「已取过」会一直沿用空值。
+	 */
+	availabilityById: Map<string, boolean>;
+	/**
 	 * 取数进行期间到达的结构重取请求。
 	 *
 	 * 合并连续请求，不丢弃：丢弃会让「创建后立刻移除」这类紧随其后的结构变化永久
@@ -211,6 +218,7 @@ function createEntry(root: string): WorkspaceEntry {
 		refreshedAt: 0,
 		lastFullScanAt: 0,
 		syncedIds: new Set(),
+		availabilityById: new Map(),
 		pendingRefresh: false,
 	};
 }
@@ -412,6 +420,23 @@ export function retryDelayMs(attempt: number): number {
  */
 async function syncAll(entry: WorkspaceEntry, controller: AbortController): Promise<void> {
 	const idsByPath = new Map<string, string[]>();
+	/*
+	 * 可用性变化的节点移出「已取过」集合。
+	 *
+	 * 未检出的子模块没有可读的领先/落后，读到的是空值；检出后节点 id 不变，只按 id 判「已取过」
+	 * 会让那一行一直显示空分支。
+	 */
+	const availability = new Map<string, boolean>();
+	const noteAvailability = (list: readonly RepoNode[]): void => {
+		for (const node of list) {
+			if (entry.availabilityById.get(node.id) === false && node.available) entry.syncedIds.delete(node.id);
+			availability.set(node.id, node.available);
+			noteAvailability(node.children);
+		}
+	};
+	noteAvailability(entry.snapshot.nodes);
+	// 只保留仍在树上的记录：节点消失后它的可用性是过时事实。
+	entry.availabilityById = availability;
 	const collect = (nodes: readonly RepoNode[]): void => {
 		for (const node of nodes) {
 			// 已取过且值仍在快照里：沿用，不重复请求。

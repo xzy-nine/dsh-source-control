@@ -313,6 +313,20 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 }
 
 /**
+ * 判定一个目录自身是否为仓库根：主工作树、链接工作树、子模块检出或裸仓库。
+ *
+ * 与 {@link resolveGitDir} 的区别是不向上查找。子模块尚未检出时目录里没有 `.git`，向上查找
+ * 会命中外层仓库，把外层仓库的分支与检出提交当成这个目录的事实。
+ *
+ * @param dir - 目录。
+ * @returns 该目录自身是仓库根时为 true。
+ */
+export async function isRepoRoot(dir: string): Promise<boolean> {
+	if (await gitDirAt(dir) !== null) return true;
+	return isBareGitDir(resolve(dir));
+}
+
+/**
  * 由 git 目录解析其公共目录。
  *
  * `commondir` 文件给出公共目录相对于该 git 目录的路径；链接工作树与子模块据此回到公共目录。

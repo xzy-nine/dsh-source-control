@@ -101,6 +101,28 @@ async function makeCaller(repo) {
 	});
 }
 
+test('初始化仓库：在空工作区根建仓库，重复执行是无改动的再初始化', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'gg-api-init-'));
+	try {
+		const call = await makeCaller(dir);
+		const created = await call({ command: 'initRepository' });
+		assert.equal(created.error, null, '空目录可初始化');
+		assert.equal(created.command, 'initRepository');
+		assert.equal(existsSync(join(dir, '.git')), true, '应生成 .git 目录');
+		// 不暂存也不提交：git 初始化后工作区仍是空仓库。
+		const head = await call({ command: 'loadCommits', limit: 10, skip: 0, showTags: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
+		assert.deepEqual(head.commits, [], '新仓库没有提交');
+		assert.equal(head.error, null);
+
+		// 已经是仓库时 git 只做再初始化：成功且不改动任何内容，因此面板不必区分首次与重复。
+		const again = await call({ command: 'initRepository' });
+		assert.equal(again.error, null);
+		assert.equal(existsSync(join(dir, '.git')), true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test('暂存与取消暂存：空路径表示全部，走集合命令', async () => {
 	const { repo, git } = makeRepo();
 	try {

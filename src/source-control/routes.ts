@@ -9,7 +9,7 @@ import { onRepositoryWrite } from './git-exec.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { clearDiscoveryCache } from './repo-discovery.js';
 import { closeRepositoryWatchers, onRepositoryTreeChange } from './repo-watcher.js';
-import { resolveGitDir } from './worktree-branches.js';
+import { isRepoRoot } from './worktree-branches.js';
 import { logError, logInfo, logWarn } from './logger.js';
 import { recordCommandCost } from './api/cost.js';
 import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
@@ -151,20 +151,23 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	const arr = <T>(k: string): T[] => (Array.isArray(msg[k]) ? (msg[k] as T[]) : []);
 
 	/**
-	 * 判定目标路径是否在 git 仓库内。
+	 * 判定目标路径自身是否为仓库根。
 	 *
 	 * 只读命令在非仓库路径上必然失败：一次刷新会起五六个必定失败的子进程，日志也被错误填满。
-	 * 判据用文件系统（逐级向上找 `.git`），不起子进程；结果按路径缓存，反复判只读一次盘。
+	 * 判据用文件系统，不起子进程；结果按路径缓存，反复判只读一次盘。
+	 *
+	 * 判据不向上查找：未初始化的子模块目录里没有 `.git`，向上查找会命中外层仓库，把外层仓库的
+	 * 分支、HEAD 与提交当成这个目录的事实。命令的目标路径一律是仓库树里的节点路径，即仓库根。
 	 *
 	 * @param target - 目标路径。
-	 * @returns 在仓库内时为 true。
+	 * @returns 该路径自身是仓库根时为 true。
 	 */
 	const isRepoPath = async (target: string): Promise<boolean> => {
 		if (target === '') return false;
 		const key = target.replace(/[\\/]+$/, '').toLowerCase();
 		const cached = repoPathChecks.get(key);
 		if (cached !== undefined && cached.expiresAt > Date.now()) return cached.value;
-		const value = await resolveGitDir(target) !== null;
+		const value = await isRepoRoot(target);
 		repoPathChecks.set(key, { value, expiresAt: Date.now() + REPO_PATH_TTL_MS });
 		return value;
 	};
