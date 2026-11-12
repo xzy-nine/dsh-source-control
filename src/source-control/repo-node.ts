@@ -28,6 +28,8 @@ export interface RepoNode {
 	readonly head: string | null;
 	/** 路径在磁盘上是否存在。 */
 	readonly available: boolean;
+	/** 该节点所属仓库是否为浅克隆：历史被截断，浅克隆之外的分支与标签不可见。 */
+	readonly shallowClone: boolean;
 	/** 工作树与子模块。 */
 	readonly children: RepoNode[];
 }

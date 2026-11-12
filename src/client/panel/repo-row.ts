@@ -75,6 +75,9 @@ function RepoRowView({ node, depth, active, expanded, sync, onSelect, onToggle, 
 			className: cx(css.repoBranch, onBranchClick !== undefined && !isDetached && css.isClickable),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { if (onBranchClick !== undefined && !isDetached) { event.stopPropagation(); onBranchClick(node, event); } },
 		}, refText),
+		node.shallowClone && React.createElement('span', {
+			className: css.repoShallow, title: '浅克隆：历史被截断，右键可恢复完整历史',
+		}, '浅'),
 		sync !== undefined && (sync.ahead > 0 || sync.behind > 0) && React.createElement(
 			'span',
 			{ className: css.repoSync, title: `领先 ${sync.ahead}、落后 ${sync.behind}` },

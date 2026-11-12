@@ -889,8 +889,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onClone: repoCommands.handleClone, cloneBusy: repoCommands.cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
-			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
-			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
+			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, refreshTree, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
+			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, refreshTree, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
 			onResizeStart: layout.startRepoResize,
 		}),
 

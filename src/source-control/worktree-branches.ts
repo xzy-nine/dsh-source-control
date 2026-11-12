@@ -274,6 +274,20 @@ export async function gitDirAt(dir: string): Promise<string | null> {
 }
 
 /**
+ * 判定一个仓库是否为浅克隆。
+ *
+ * 判据是公共目录下的 `shallow` 文件：git 把被截断的历史起点记在那里，链接工作树与子模块各自
+ * 共用所属公共目录里的这一份。纯文件系统判定，不调用 git。
+ *
+ * @param repo - 仓库根或工作树根路径。
+ * @returns 是浅克隆时为 true。
+ */
+export async function isShallowClone(repo: string): Promise<boolean> {
+	const commonDir = await resolveGitCommonDir(repo);
+	return commonDir !== null && await probePathAt(join(commonDir, 'shallow')) !== null;
+}
+
+/**
  * 判定一个目录自身是否为裸仓库的 git 目录。
  *
  * 裸仓库没有 `.git`，判据与 git 一致：同时含 `HEAD` 文件与 `objects`、`refs` 目录。

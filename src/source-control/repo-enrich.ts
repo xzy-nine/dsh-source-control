@@ -5,7 +5,7 @@ import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
 import { basename, join, resolve } from 'node:path';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { logDebug } from './logger.js';
-import { gitDirAt, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
+import { gitDirAt, isShallowClone, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 import { dedupeCandidates, gitEntryOf, hasGitEntry, nodeId, parseHead } from './repo-node.js';
 import type { RepoNode } from './repo-node.js';
 
@@ -42,6 +42,8 @@ async function worktreesOf(dir: string): Promise<RepoNode[]> {
 	const commonDir = await resolveGitCommonDir(dir);
 	if (commonDir === null) return [];
 	const selfId = nodeId(dir);
+	// 工作树与主仓库共用同一公共目录，浅克隆状态因此相同。
+	const shallowClone = await probePathAt(join(commonDir, 'shallow')) !== null;
 	const nodes: RepoNode[] = [];
 	try {
 		const records = await readWorktrees(commonDir);
@@ -50,7 +52,7 @@ async function worktreesOf(dir: string): Promise<RepoNode[]> {
 			nodes.push({
 				id: nodeId(worktree.path), path: worktree.path, name: basename(worktree.path),
 				kind: 'worktree', depth: 1, branch: worktree.branch, head: worktree.head,
-				available: await gitDirAt(worktree.path) !== null, children: [],
+				available: await gitDirAt(worktree.path) !== null, shallowClone, children: [],
 			});
 		}
 	} catch (error) {
@@ -96,9 +98,11 @@ async function submodulesOf(dir: string, submoduleIds: Set<string>): Promise<Rep
 		for (const relativePath of submodulePathsWithin(dir, parseSubmodulePaths(source))) {
 			const path = resolve(dir, relativePath);
 			submoduleIds.add(nodeId(path));
+			// 未检出的子模块没有自己的 git 目录：向上定位会命中外层仓库，浅克隆状态因此不适用。
+			const present = (await gitEntryOf(path)) !== null;
 			nodes.push({
 				id: nodeId(path), path, name: basename(path), kind: 'submodule', depth: 1,
-				branch: null, head: null, available: (await gitEntryOf(path)) !== null, children: [],
+				branch: null, head: null, available: present, shallowClone: present && await isShallowClone(path), children: [],
 			});
 		}
 	} catch {
@@ -126,7 +130,7 @@ export async function repoNodeOf(
 	const head = await headOf(dir);
 	const node: RepoNode = {
 		id: nodeId(dir), path: dir, name: basename(dir) || dir, kind: 'repo', depth,
-		branch: head.branch, head: head.head, available: true, children: [],
+		branch: head.branch, head: head.head, available: true, shallowClone: await isShallowClone(dir), children: [],
 	};
 	if (shallow) return node;
 	// 枚举工作树

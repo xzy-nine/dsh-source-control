@@ -415,7 +415,7 @@ const READ_ONLY_FORMS: ReadonlyArray<{ subcommand: string; allow?: readonly stri
 	{ subcommand: 'describe' },
 	{ subcommand: 'symbolic-ref' },
 	{ subcommand: 'rev-parse' },
-	{ subcommand: 'remote', deny: ['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'prune', 'update'] },
+	{ subcommand: 'remote', deny: ['add', 'remove', 'rm', 'rename', 'set-url', 'set-branches', 'set-head', 'prune', 'update'] },
 	{ subcommand: 'branch', deny: ['-d', '-D', '-m', '-M', '-c', '-C', '--delete', '--move', '--copy', '--set-upstream-to', '--unset-upstream', '--edit-description'] },
 	{ subcommand: 'tag', deny: ['-d', '-a', '-s', '-m', '-f', '--delete', '--annotate', '--force'] },
 	{ subcommand: 'worktree', deny: ['add', 'remove', 'prune', 'move', 'lock', 'unlock', 'repair'] },

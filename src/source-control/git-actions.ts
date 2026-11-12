@@ -9,6 +9,7 @@ import nodePath from 'node:path';
 import type { ConfigLocation, ErrorInfo, PushMode, ResetMode } from './git-types.js';
 import type { GitResult } from './working-tree.js';
 import { runGit } from './working-tree.js';
+import { isShallowClone } from './worktree-branches.js';
 
 /**
  * 去掉文本末尾的换行符。
@@ -233,6 +234,77 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
  */
 export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet = false): Promise<ErrorInfo> {
 	return fetchRemote(repo, remote, prune, pruneTags, quiet);
+}
+
+/**
+ * 恢复完整历史：把一次浅克隆补成完整仓库。
+ *
+ * 浅克隆由三处设置共同截断，恢复时逐项回退：
+ * - 公共目录下的 `shallow` 文件记录被截断的历史起点，由 `fetch --unshallow` 从远端取回缺失的历史块；
+ * - remote 的 refspec 决定抓哪些分支，`--single-branch` 留下的写法只含一条，需还原成全部远程分支；
+ * - `remote.<name>.tagopt` 决定是否跟随标签，`--no-tags` 留下的取值要清掉，否则后续抓取仍不跟随。
+ *
+ * 一次 `--unshallow` 即补完所有远程共用的历史，因此只有第一个远程需要它；其余远程补一次普通抓取
+ * 把分支与标签取回。任一步失败即返回该步错误，之前已完成的步骤保留，重试时按当前状态继续。
+ *
+ * @param repo - 仓库路径。
+ * @param remotes - 要恢复的远程名；没有远程时历史无从取回。
+ * @returns 成功为 null；失败为 git 的 stderr 文本，远程缺失时为自己的说明。
+ */
+export async function restoreFullHistory(repo: string, remotes: readonly string[]): Promise<ErrorInfo> {
+	/*
+	 * 没有远程时 `git fetch --unshallow` 以退出码 0 结束却不改动任何东西：截断的历史块本地无从补全，
+	 * 因此如实报告，不让界面给出「已恢复」的假结论。
+	 */
+	if (remotes.length === 0) return '该仓库没有远程仓库，浅克隆截断的历史只能从远端取回。';
+	/*
+	 * 判断是否需要 `--unshallow` 取决于仓库当前状态而不是调用次数：已经完整的仓库再跑它会得到
+	 * `--unshallow on a complete repository`，而入口在恢复成功前一直可见，重复点按因此必须走普通抓取。
+	 */
+	let complete = !(await isShallowClone(repo));
+	for (const remote of remotes) {
+		const tracked = await trackAllBranchesOf(repo, remote);
+		if (tracked !== null) return tracked;
+		const tags = await followTagsOf(repo, remote);
+		if (tags !== null) return tags;
+		const args = complete ? ['fetch', '--tags', remote] : ['fetch', '--unshallow', '--tags', remote];
+		const error = await gitErrorInfo(args, repo);
+		if (error !== null) return error;
+		complete = true;
+	}
+	return null;
+}
+
+/**
+ * 把一个远程的抓取范围还原成全部分支。
+ *
+ * 只在这一项确实被收窄时才改配置：已经跟踪全部分支的远程不留改动，避免改写用户自己的 refspec。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+async function trackAllBranchesOf(repo: string, remote: string): Promise<ErrorInfo> {
+	const result = await runGit(['config', '--get-all', `remote.${remote}.fetch`], repo);
+	if (result.code !== 0) return null;
+	const spec = `refs/heads/*:refs/remotes/${remote}/*`;
+	if (result.stdout.split(/\r?\n/).some((line) => line.replace(/^\+/, '').trim() === spec)) return null;
+	return gitErrorInfo(['remote', 'set-branches', remote, '*'], repo);
+}
+
+/**
+ * 让一个远程恢复标签跟随。
+ *
+ * `--no-tags` 由 `remote.<name>.tagopt` 记录；未配置该项的远程本就跟随标签，不动它。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+async function followTagsOf(repo: string, remote: string): Promise<ErrorInfo> {
+	const result = await runGit(['config', '--get', `remote.${remote}.tagopt`], repo);
+	if (result.code !== 0 || result.stdout.trim() !== '--no-tags') return null;
+	return gitErrorInfo(['config', '--unset-all', `remote.${remote}.tagopt`], repo);
 }
 
 /**
