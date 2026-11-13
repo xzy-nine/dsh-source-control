@@ -26,6 +26,26 @@ try {
 const skip = JSDOM === null ? '未安装 jsdom，跳过适配层渲染' : false;
 
 /**
+ * 轮询等待一个条件成立。
+ *
+ * 渲染分多个轮次落地（观察器回执 → 状态更新 → 行落到 DOM），固定延时时长在慢机器上
+ * 会偶发拿到中间态。等条件本身成立，结果与机器速度无关。
+ *
+ * @param predicate - 条件。
+ * @param what - 条件描述，超时时用来说明等的是什么。
+ * @param timeoutMs - 最长等待时间。
+ * @returns 条件成立时结束。
+ */
+async function waitFor(predicate, what, timeoutMs = 8000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error(`等待超时：${what}`);
+}
+
+/**
  * 平台模块的测试替身。
  *
  * ui-primitives 的产物会 `import` CSS 文件，Node 无法直接加载；而本文件要断言的是
@@ -198,22 +218,21 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
 		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
 		const reactRoot = createRoot(document.getElementById('root'));
-		// 在无 IntersectionObserver 的全局下创建，观察器会立即回执，行因此被绘制。
+		// 在无 IntersectionObserver 的全局下创建，观察器立即回执；行在随后的渲染轮次里才落到 DOM，
+		// 因此等它出现而不是等固定时长——CI 机器更慢，固定时长会偶发拿到未绘制的占位盒。
 		const reach = adapter.createSectionReach();
-		await new Promise((resolve, reject) => {
-			reactRoot.render(React.createElement(adapter.ForgeDiffView, {
-				path: 'src/app.ts',
-				content: TEXT_DIFF,
-				scope: { kind: 'worktree', staged: false },
-				split: false,
-				wrap: true,
-				state: { expanded: true, revealed: false, open: new Set() },
-				setState: () => {},
-				reach,
-				addToInput: () => true,
-			}));
-			setTimeout(resolve, 120);
-		}).catch((error) => { throw error; });
+		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
+			path: 'src/app.ts',
+			content: TEXT_DIFF,
+			scope: { kind: 'worktree', staged: false },
+			split: false,
+			wrap: true,
+			state: { expanded: true, revealed: false, open: new Set() },
+			setState: () => {},
+			reach,
+			addToInput: () => true,
+		}));
+		await waitFor(() => document.querySelector('[data-old-line], [data-new-line]') !== null, 'diff lines');
 
 		const html = document.getElementById('root').innerHTML;
 		assert.ok(html.length > 0, '必须渲染出内容');

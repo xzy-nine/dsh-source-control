@@ -114,7 +114,12 @@ async function mountDiff() {
 		reach: adapter.createSectionReach(),
 		addToInput: () => true,
 	}));
-	await new Promise((resolve) => setTimeout(resolve, 150));
+	// 等行真正落到 DOM：观察器回执到绘制之间还有若干渲染轮次，固定延时在慢机器上会偶发偏早。
+	const deadline = Date.now() + 8000;
+	while (document.querySelector('[data-diff-line]') === null) {
+		if (Date.now() > deadline) throw new Error('等待超时：差异行');
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
 
 	/**
 	 * 从一行按下、划过另一行、松开。
