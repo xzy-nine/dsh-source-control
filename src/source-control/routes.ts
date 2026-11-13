@@ -230,6 +230,8 @@ export interface GgRouteContext {
 		kind: 'exact' | 'prefix';
 		path: string;
 		handler: (req: http.IncomingMessage, res: http.ServerResponse) => void;
+		/** 准入策略：面板路由要求宿主认证，未通过凭据验证的请求由宿主拒绝。 */
+		auth: 'required';
 	}): () => void;
 }
 
@@ -331,6 +333,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			webServer.register({
 				kind: 'exact',
 				path,
+				auth: 'required',
 				handler: (req, res) => {
 					if (req.method !== method) {
 						res.writeHead(405, { allow: method });
