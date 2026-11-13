@@ -12,14 +12,25 @@ import { build } from 'esbuild';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
-/** 与 @deepseek-ai/dsh-client-web 的 PLATFORM_MODULES 保持一致的外部模块。 */
+/**
+ * 与 @deepseek-ai/dsh-client-web 的 PLATFORM_MODULES 保持一致的外部模块。
+ *
+ * 只有这张表里的模块由 shell 作为平台单例提供；浏览器模块表的 seed 只含这些，
+ * 视图 require 到表外的包会直接抛错。因此差异视图用到的 zod 走外部化（它本来
+ * 就在平台表里），而 clsx 与 util 包打进产物。
+ */
 const CLIENT_EXTERNALS = [
 	'react',
 	'react/jsx-runtime',
 	'react-dom',
 	'react-dom/client',
+	'@deepseek-ai/cordis',
+	'zod',
+	'@tanstack/react-virtual',
 	'@deepseek-ai/dsh-client-store',
+	'@deepseek-ai/dsh-client-ui-slots',
 	'@deepseek-ai/dsh-client-ui-primitives',
+	'@deepseek-ai/dsh-client-ui-dockkit',
 ];
 
 const bundled = await build({

@@ -33,8 +33,10 @@
 
 .diffTabHash{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:var(--dsw-alias-font-mono,monospace);flex:none}
 
-/* 差异页正文：作为复制来的 FileDiff 的弹性父容器，滚动由后者自己承担。 */
-.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+/* 差异页正文：forge 的 DiffFile 只做横向滚动（`.code` 自带 overflow-x），纵向滚动由这里承担。
+   `min-height:0` 让 flex 子项能收缩，`overflow:auto` 才是可滚动的那个视口；
+   文件头用 position:sticky 贴在这个滚动容器的顶部。 */
+.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;overscroll-behavior:contain}
 
 /* 增减行数：与评审视图同色同字号。 */
 .counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}
@@ -57,3 +59,11 @@
 }
 
 .tool[aria-pressed='true'] .compareIcon{transform:rotate(90deg)}
+/* 差异页的状态行与头部：读取中 / 读取失败 / 二进制的提示，以及文件下拉所在的那一行。 */
+.header{display:flex;flex:0 0 auto;gap:6px;align-items:center;box-sizing:border-box;height:38px;padding:0 6px 0 8px;border-bottom:0.5px solid var(--dsw-alias-border-l3)}
+
+.status{display:flex;gap:12px;align-items:center;margin:0;padding:16px;font-size:13px;color:var(--dsw-alias-label-secondary)}
+
+/* 差异视图里的已审阅标记不属于本插件：没有已审阅状态可存，也无可提交的评审。
+   forge 的 DiffFile 只在这个控件上写 data-disabled，因此这一条只命中它。 */
+.diffTabBody label[data-disabled]{display:none}

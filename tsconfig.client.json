@@ -17,10 +17,37 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
-    "types": []
+    "types": [],
+    "paths": {
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/DiffFile.tsx": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/DiffFile.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/section-reach.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/section-reach.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/locales.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/locales.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/viewed-files.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/viewed-files.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/diff-rows.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/diff-rows.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/ReviewComposer.tsx": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/ReviewComposer.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/review.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/review.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/types": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/types.d.ts"
+      ]
+    }
   },
   "include": [
     "src/client/**/*.ts",
     "src/client/**/*.tsx"
   ]
 }
+
