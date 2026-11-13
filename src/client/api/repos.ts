@@ -108,6 +108,18 @@ function readSyncFields(source: Record<string, unknown>): RepoSync {
 	};
 }
 
+/**
+ * 在工作区根初始化一个空仓库。
+ *
+ * 初始分支名由 git 自身的 `init.defaultBranch` 决定；不暂存、不提交。
+ *
+ * @param cwd - 目标目录，通常是会话工作区根。
+ * @returns 无。
+ */
+export async function initRepository(cwd: string): Promise<void> {
+	await callApi(cwd, { command: 'initRepository' });
+}
+
 /** 工作区快照：变更条目与仓库同步状态。 */
 export interface WorkingTreeSnapshot {
 	readonly entries: WorkingTreeEntry[];

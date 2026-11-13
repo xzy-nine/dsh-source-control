@@ -13,6 +13,8 @@ import { ChangeGroup } from '../changes.ts';
 import { anyBusy } from '../busy.ts';
 import { commitButtonDisabledOf } from '../submit-state.ts';
 import type { AiStats, BusyFlags, ChangeActions, SectionPhase, WorkingTreeEntry } from '../../shared/types.ts';
+import { WorkspaceEmpty } from './empty-state.ts';
+import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
 import { refreshButton } from './refresh-button.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
@@ -82,6 +84,16 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly refreshing: boolean;
 	/** 「上次刷新」文案；为空串时不显示。 */
 	readonly lastRefresh: string;
+	/**
+	 * 读不到仓库数据时的空态；为 null 时照常渲染提交框与变更列表。
+	 *
+	 * 非空时提交框与变更列表都不渲染：此时提交、暂存与丢弃都无处落地。
+	 */
+	readonly empty: WorkspaceEmptyInfo | null;
+	/** 空态动作进行中：只禁用该按钮。 */
+	readonly emptyBusy: boolean;
+	/** 执行空态动作。 */
+	readonly onEmptyAction: () => void;
 }
 
 /** 提交框的属性：更改分区属性中与提交信息、AI 与主按钮有关的部分。 */
@@ -247,6 +259,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 		entries, entriesTruncated, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
 		collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 		stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+		empty, emptyBusy, onEmptyAction,
 	} = props;
 	return React.createElement(
 		'div',
@@ -265,7 +278,11 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 		React.createElement(
 			'div',
 			{ className: css.workspaceBody },
-			React.createElement(CommitBox, {
+			// 空态整体取代提交框与变更列表：没有仓库时这两个控件无处落地。
+			empty !== null
+				? React.createElement(WorkspaceEmpty, { empty, busy: emptyBusy, onAction: onEmptyAction, fill: true })
+				: React.createElement(React.Fragment, null,
+					React.createElement(CommitBox, {
 				entries, busy, phase,
 				head: props.head, message: props.message, onMessageChange: props.onMessageChange,
 				amend: props.amend, onToggleAmend: props.onToggleAmend,
@@ -279,21 +296,22 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 				canSubmit: props.canSubmit, onSubmit: props.onSubmit,
 				hasLocalExclude: props.hasLocalExclude, onShowLocalExclude: props.onShowLocalExclude,
 				merging: props.merging, onSyncContextMenu: props.onSyncContextMenu,
-			}),
-			// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
-			React.createElement(
-				'div',
-				{ className: css.changesScroll },
-				/*
-				 * 加载占位：切换仓库时条目已清空，快照返回前显示占位，避免空白一片。
-				 * 有条目时不显示——刷新期间保留旧数据正是 reconcile 模式的目的。
-				 */
-				phase === 'loading' && entries.length === 0
-					&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
-				React.createElement(ChangeLists, {
-					entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-					stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
 				}),
+				// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
+				React.createElement(
+					'div',
+					{ className: css.changesScroll },
+					/*
+					 * 加载占位：切换仓库时条目已清空，快照返回前显示占位，避免空白一片。
+					 * 有条目时不显示——刷新期间保留旧数据正是 reconcile 模式的目的。
+					 */
+					phase === 'loading' && entries.length === 0
+						&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
+					React.createElement(ChangeLists, {
+						entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+						stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+					}),
+				),
 			),
 		),
 	);

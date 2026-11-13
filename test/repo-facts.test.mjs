@@ -139,8 +139,10 @@ test('提交走执行层后布局缓存被作废', async () => {
 
 test('失效按祖先与后代前缀生效', async () => {
 	const { repo } = makeRepo('gg-facts-prefix-');
+	// 后代条目必须自身是仓库根：布局只认该路径自己的 `.git`，不向上查找。
 	const nested = join(repo, 'nested');
 	mkdirSync(nested, { recursive: true });
+	execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: nested, encoding: 'utf8' });
 	facts.setRepoFactsTtlForTest(10_000);
 	assert.notEqual(await facts.repoLayout(repo), null);
 	assert.notEqual(await facts.repoLayout(nested), null);

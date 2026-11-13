@@ -274,6 +274,20 @@ export async function gitDirAt(dir: string): Promise<string | null> {
 }
 
 /**
+ * 判定一个仓库是否为浅克隆。
+ *
+ * 判据是公共目录下的 `shallow` 文件：git 把被截断的历史起点记在那里，链接工作树与子模块各自
+ * 共用所属公共目录里的这一份。纯文件系统判定，不调用 git。
+ *
+ * @param repo - 仓库根或工作树根路径。
+ * @returns 是浅克隆时为 true。
+ */
+export async function isShallowClone(repo: string): Promise<boolean> {
+	const commonDir = await resolveGitCommonDir(repo);
+	return commonDir !== null && await probePathAt(join(commonDir, 'shallow')) !== null;
+}
+
+/**
  * 判定一个目录自身是否为裸仓库的 git 目录。
  *
  * 裸仓库没有 `.git`，判据与 git 一致：同时含 `HEAD` 文件与 `objects`、`refs` 目录。
@@ -310,6 +324,20 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
 		if (parent === dir) return null;
 		dir = parent;
 	}
+}
+
+/**
+ * 判定一个目录自身是否为仓库根：主工作树、链接工作树、子模块检出或裸仓库。
+ *
+ * 与 {@link resolveGitDir} 的区别是不向上查找。子模块尚未检出时目录里没有 `.git`，向上查找
+ * 会命中外层仓库，把外层仓库的分支与检出提交当成这个目录的事实。
+ *
+ * @param dir - 目录。
+ * @returns 该目录自身是仓库根时为 true。
+ */
+export async function isRepoRoot(dir: string): Promise<boolean> {
+	if (await gitDirAt(dir) !== null) return true;
+	return isBareGitDir(resolve(dir));
 }
 
 /**

@@ -14,7 +14,7 @@ import { getCached, noteRepoCommonDir, putCached } from './host-cache.js';
 import type { CacheEntry } from './host-cache.js';
 import { LruMap, TRIM_RATIO } from '../shared/lru-map.js';
 import { onRepositoryWrite } from './working-tree.js';
-import { gitCommonDirOf, parseHeadRef, readLooseRef, resolveGitDir } from './worktree-branches.js';
+import { gitCommonDirOf, gitDirAt, parseHeadRef, readLooseRef } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
 
 /** 一个仓库的 git 目录布局。 */
@@ -102,11 +102,14 @@ export function parsePackedRefs(source: string): Map<string, string> {
 /**
  * 解析一个仓库的 git 目录与公共目录。
  *
+ * 只认该路径自身的 `.git`，不向上查找：未检出的子模块目录里没有 `.git`，向上查找会命中外层
+ * 仓库，把外层仓库的 `HEAD`、引用与 `MERGE_HEAD` 当成这个路径的事实。
+ *
  * @param repo - 仓库路径。
- * @returns 布局；路径不是仓库时为 null。
+ * @returns 布局；路径自身不是仓库根时为 null。
  */
 async function readLayout(repo: string): Promise<RepoLayout | null> {
-	const gitDir = await resolveGitDir(repo);
+	const gitDir = await gitDirAt(repo);
 	if (gitDir === null) return null;
 	const commonDir = await gitCommonDirOf(gitDir);
 	// 登记公共目录：写命令按它找到共享同一公共目录的其它工作树，一并作废缓存。
@@ -120,7 +123,7 @@ async function readLayout(repo: string): Promise<RepoLayout | null> {
  * 同一仓库的并发读取共享一次解析：布局涉及逐级 `stat`，一次取数里有六处要它。
  *
  * @param repo - 仓库路径。
- * @returns 布局；路径不是仓库时为 null。
+ * @returns 布局；路径自身不是仓库根时为 null。
  */
 export function repoLayout(repo: string): Promise<RepoLayout | null> {
 	if (layoutTtlMs <= 0) return readLayout(repo);

@@ -6,8 +6,9 @@ import {
 	abortMerge, addRemote, addTag, checkoutBranch, checkoutCommit, cherrypickCommit, createBranch,
 	deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag, dropCommit, editRemote, fetch,
 	applyStash, branchFromStash, dropStash, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash, pruneRemote, pullBranch, pushBranchToMultipleRemotes,
-	pushStash, pushTag, pushUpstream, rebase, renameBranch, resetToCommit, revertCommit,
+	pushStash, pushTag, pushUpstream, rebase, renameBranch, resetToCommit, restoreFullHistory, revertCommit,
 } from '../git-actions.js';
+import { isShallowClone } from '../worktree-branches.js';
 import type { MergeMode } from '../git-actions.js';
 import { notifyRepositoryWrite, runGit } from '../git-exec.js';
 import { logDebug, logInfo } from '../logger.js';
@@ -214,6 +215,23 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				})().finally(() => { inFlightFetches.delete(repo); });
 				inFlightFetches.set(repo, promise);
 				return promise;
+			});
+			break;
+		}
+		case 'unshallow': {
+			// 非仓库路径无从判定浅克隆：直接回未变化，不起 git 子进程。
+			if (!(await isRepoPath(repo))) {
+				logDebug('repo', `目标路径不是 git 仓库，跳过恢复完整历史：${repo}`);
+				respondResultSync('unshallow', { repo, shallowClone: false });
+				break;
+			}
+			await respondResult('unshallow', async () => {
+				const remotes = (await runGit(['remote'], repo)).stdout
+					.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '');
+				const error = await restoreFullHistory(repo, remotes);
+				if (error !== null) throw new Error(error);
+				logInfo('repo', `已恢复完整历史：${repo}`);
+				return { repo, shallowClone: await isShallowClone(repo) };
 			});
 			break;
 		}

@@ -332,6 +332,50 @@ test('预加载：节点未变时不重复取领先/落后', async () => {
 	assert.equal(syncCalls, 1, '节点集合未变时不再重取领先/落后');
 });
 
+test('子模块从「未检出」变成「已检出」时重新取领先/落后', async () => {
+	/*
+	 * 未检出的子模块没有可读的领先/落后，读到的是空值。检出后节点 id 不变，若只按 id 判「已取过」，
+	 * 那一行会一直显示空分支。
+	 */
+	const root = '/work/preload-sub-avail';
+	const repo = `${root}/parent`;
+	const sub = `${repo}/lib/dep`;
+	/** 子模块在磁盘上是否存在；用例中途改写。 */
+	const state = { available: false };
+	const synced = [];
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: () => ({
+			command: 'enrichRepositories',
+			nodes: [repoNode(repo, [{
+				id: sub.toLowerCase(), path: sub, name: 'dep', kind: 'submodule', depth: 1,
+				branch: null, head: null, available: state.available, children: [],
+			}])],
+		}),
+		loadReposSync: (body) => {
+			synced.push(...body.repos);
+			return { command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) };
+		},
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) >= 2);
+		assert.deepEqual(synced, [repo, sub], '首轮两个节点各取一次');
+
+		// 检出后按最新结构重取：节点 id 未变，仍要重新取子模块的领先/落后。
+		state.available = true;
+		synced.length = 0;
+		refreshWorkspace(root);
+		await waitFor(() => synced.includes(sub));
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+	assert.deepEqual(synced, [sub], '只有可用性变化的子模块重取，仓库本身沿用旧值');
+});
+
 test('重试退避：按轮次递增且封顶', () => {
 	assert.equal(retryDelayMs(0), 200, '首轮几乎立即重试');
 	assert.equal(retryDelayMs(1), 400);

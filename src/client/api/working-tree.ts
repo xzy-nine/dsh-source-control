@@ -145,6 +145,19 @@ export async function removeWorktree(repo: string, worktreePath: string, force: 
 }
 
 /**
+ * 恢复完整历史：把一个浅克隆补成完整仓库。
+ *
+ * 取回被截断的历史，并把浅克隆时关掉的分支与标签跟随一并还原。该命令访问远端。
+ *
+ * @param repo - 仓库路径。
+ * @returns 恢复后是否仍为浅克隆；没有远程时抛错。
+ */
+export async function restoreFullHistory(repo: string): Promise<boolean> {
+	const payload = await callApi(repo, { command: 'unshallow' });
+	return payload.shallowClone !== false;
+}
+
+/**
  * 初始化一个子模块。
  *
  * 按 `.gitmodules` 与索引里的 gitlink 检出子模块工作区，其内部声明的子模块一并初始化。

@@ -3,7 +3,7 @@
  *
  * 两项都直接组装菜单项与执行体，不持有 React 状态；状态与回调由面板传入。
  */
-import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, throwIfError } from '../api/index.ts';
+import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, restoreFullHistory, throwIfError } from '../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox } from '../ui/dialog.ts';
@@ -42,6 +42,8 @@ export interface RepoMenuDeps {
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 重取仓库树。 */
 	readonly rescan: () => void;
+	/** 按最新状态重取仓库树，不清空已显示的树。 */
+	readonly refreshTree: () => void;
 	/** 推送某仓库的当前分支到其上游。 */
 	readonly pushCurrentBranch: (repoPath?: string, skipHooks?: boolean) => Promise<void>;
 }
@@ -58,12 +60,14 @@ export interface RepoMenuDeps {
  * @returns 无。
  */
 export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.MouseEvent<HTMLElement>): void {
-	const { state, settings, run, refresh, rescan, setState, setSelectedId, selectNodeAndReset, pushCurrentBranch } = deps;
+	const { state, settings, run, refresh, rescan, refreshTree, setState, setSelectedId, selectNodeAndReset, pushCurrentBranch } = deps;
 	const target = event.currentTarget;
 	target.classList.add(MENU_TARGET_CLASS);
 	const branchName = node.branch ?? '';
 	const isLinkedWorktree = node.kind === 'worktree';
 	const isUninitializedSubmodule = node.kind === 'submodule' && !node.available;
+	// 浅克隆的历史被截断，补全只能从远端取：没有工作区的节点没有可读的仓库状态。
+	const isShallowClone = node.shallowClone && node.available;
 	const items: ContextMenuItem[] = [
 		{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path, undefined, { intent: `刷新仓库 ${node.name}` }); } },
 		{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path, undefined, { intent: `抓取仓库 ${node.name}` }); } },
@@ -79,6 +83,24 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 		{ type: 'divider' },
 		{ title: '复制路径', onClick: () => { void writeClipboard(node.path); } },
 	];
+	if (isShallowClone) {
+		items.push({ type: 'divider' }, {
+			title: '恢复完整历史', disabled: isRepoBusy(state.busy, node.path, 'network'),
+			onClick: () => {
+				/*
+				 * 恢复要先补齐远程的分支与标签跟随，再取回截断的历史，都是远端往返，因此按网络影响面记录。
+				 * 仓库结构没变，只需重取节点状态；用不清空树的重取，仓库区因此不闪回占位。
+				 */
+				selectNodeAndReset(node);
+				/** 恢复成功才重取：失败时这一行仍带浅克隆标记与入口。 */
+				let restored = false;
+				void run('network', async () => {
+					if (await restoreFullHistory(node.path)) throw new Error('该仓库仍是浅克隆：远端没有取回完整历史。');
+					restored = true;
+				}, node.path, undefined, { intent: `恢复完整历史 ${node.name}` }).then(() => { if (restored) refreshTree(); });
+			},
+		});
+	}
 	if (isUninitializedSubmodule) {
 		items.push({ type: 'divider' }, {
 			title: '初始化子模块', disabled: isRepoBusy(state.busy, node.path, 'network'),

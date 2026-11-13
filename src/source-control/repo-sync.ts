@@ -5,6 +5,10 @@ import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
 import { createLimiter } from './limiter.js';
 import { logDebug } from './logger.js';
 import { runGit } from './working-tree.js';
+import { isRepoRoot } from './worktree-branches.js';
+
+/** 无法读出自身仓库的节点的同步状态：分支、上游与领先/落后都为空。 */
+const EMPTY_SYNC = { branch: null, upstream: null, ahead: 0, behind: 0 } as const;
 
 /** 仓库树批量领先/落后取数的并发上限。 */
 const SYNC_CONCURRENCY = 5;
@@ -22,12 +26,16 @@ const syncLimiter = createLimiter(SYNC_CONCURRENCY);
  * 常见路径一次 `for-each-ref` 取回全部分支与当前分支的上游跟踪信息；无提交的仓库
  * （`refs/heads` 为空）回退一次 `symbolic-ref`，此时只给出分支名。
  *
+ * 目标路径自身不是仓库根时回空状态：未初始化的子模块目录里没有 `.git`，对它跑 git 会命中
+ * 外层仓库，把外层仓库的分支与领先/落后当成这个节点的事实。
+ *
  * @param repo - 仓库路径。
  * @returns 分支、上游名与领先/落后数；无上游时两者为 0。
  */
 export async function loadRepoSync(repo: string): Promise<{
 	branch: string | null; upstream: string | null; ahead: number; behind: number;
 }> {
+	if (!(await isRepoRoot(repo))) return EMPTY_SYNC;
 	const refs = await runGit(['for-each-ref', '--format=' + BRANCH_SYNC_FORMAT, 'refs/heads'], repo);
 	const sync = parseBranchSync(refs.stdout);
 	if (sync.branch !== null) return sync;

@@ -31,6 +31,8 @@ export interface RepoSectionProps {
 	 * 比仓库树的批量取数新（那一份只在预加载与作废后重取），选中行用它才能与图形区一致。
 	 */
 	readonly selectedSync: RepoSync | null;
+	/** 已加载仓库的路径：与选中行一致时该行才用 `headHash`。 */
+	readonly loadedPath: string | null;
 	readonly headHash: string | null;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
@@ -54,7 +56,7 @@ export interface RepoSectionProps {
  * @returns 分区元素。
  */
 function RepoSectionView({
-	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, selectedSync, headHash,
+	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, selectedSync, loadedPath, headHash,
 	onToggleSection, onOpenSettings, onOpenFeedback, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
 	return React.createElement(
@@ -101,6 +103,7 @@ function RepoSectionView({
 				onToggle,
 				onMoreActions,
 				onBranchClick,
+				loadedPath,
 				headHash,
 			})),
 		),

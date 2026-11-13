@@ -9,9 +9,8 @@
  * 3) 工作区变更、工作树与差异同样由 src/source-control/ 提供。
  * 4) 路由注册后按已持久化的工作区根预扫一次仓库树；预扫 fire-and-forget，失败静默。
  */
-import type http from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
-import { registerGgRoutes } from './source-control/routes.js';
+import { registerGgRoutes, type GgRouteContext } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
 import { openStateStore, pruneWorkspaces, stateDomainFailure } from './source-control/state-store.js';
 import { installHostCapabilities } from './source-control/host-runtime.js';
@@ -21,14 +20,6 @@ export const name = 'source-control';
 export const inject = ['webServer'];
 
 export interface DevGitGraphPluginConfig {}
-
-interface WebServerLike {
-	register(spec: {
-		kind: 'exact' | 'prefix';
-		path: string;
-		handler: (req: http.IncomingMessage, res: http.ServerResponse) => void;
-	}): () => void;
-}
 
 /** 域注册的等待上限：插件加载顺序不保证 storageDomain 先就位。 */
 const DOMAIN_WAIT_ATTEMPTS = 20;
@@ -67,7 +58,7 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 	}
 
 	ctx.inject(['webServer'], (host) => {
-		const webServer = (host as unknown as { webServer: WebServerLike }).webServer;
+		const webServer = (host as unknown as { webServer: GgRouteContext }).webServer;
 		/*
 		 * 宿主能力：子进程、文件读取与目录监视都经 seam。缺一项即抛错让装载失败——插件没有原生
 		 * 回退，读不到仓库或跑不了 git 时早失败比晚失败好定位。

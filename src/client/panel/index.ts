@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {
-	discardPaths, fetchRepo, loadBranchBase, loadRefs,
+	discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
 } from '../api/index.ts';
 import { showCheckbox, showError, showText } from '../ui/dialog.ts';
@@ -37,6 +37,7 @@ import type { RefreshBaseline } from './refresh-status.ts';
 import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
+import { workspaceEmptyOf } from './workspace-empty.ts';
 import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
 import { primaryActionOf } from './submit-state.ts';
 import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
@@ -164,6 +165,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/*
 	 * 取数目标：选中节点优先，其次**当且仅当工作区根本身是仓库**时用它。
 	 *
+	 * 选中节点不可用（尚未检出的子模块、已被删除的工作树）时取数目标为 null，不回退到工作区根：
+	 * 回退会让该目录里没有 `.git` 时 git 向上命中父仓库，把父仓库的分支与提交显示在子模块名下行。
+	 * 这类节点显示空态，见 `workspace-empty.ts`。
+	 *
 	 * 工作区根常常只是一层目录（`E:\GitHubCode` 这类），里面才是各个仓库。对它取数会让
 	 * 每一条 git 命令都以 `not a git repository` 失败：一轮刷新起五六个必然失败的子进程，
 	 * 日志里全是错误。判据是树里有没有该路径的节点——发现层只产出仓库节点。
@@ -176,10 +181,15 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		() => (cwd === undefined ? false : findNodeByPath(repoNodes, cwd) !== null),
 		[repoNodes, cwd],
 	);
-	const workingTreePath = selectedNode !== null && selectedNode.available
-		? selectedNode.path
+	const workingTreePath = selectedNode !== null
+		? (selectedNode.available ? selectedNode.path : null)
 		: (treeStatus === 'loading' || !workspaceIsRepo ? null : (cwd ?? null));
 	const hasWorkspace = cwd !== undefined;
+	/** 读不到仓库数据时的空态；更改区与图形区取同一份判据。 */
+	const workspaceEmpty = React.useMemo(
+		() => workspaceEmptyOf({ hasWorkspace, treeLoading: treeStatus === 'loading', selectedNode, workspaceIsRepo }),
+		[hasWorkspace, treeStatus, selectedNode, workspaceIsRepo],
+	);
 
 	/**
 	 * 已加载的提交数上限。
@@ -451,6 +461,52 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		entries: state.entries, translateReady, commitBusy: busyFlags.commit, onScreen, run,
 		notify,
 	});
+
+	/** 空态动作进行中：只禁用该按钮，不触碰分区里的其它控件。 */
+	const [emptyActionBusy, setEmptyActionBusy] = React.useState(false);
+
+	/**
+	 * 执行空态里的主按钮动作。
+	 *
+	 * 初始化仓库落在会话工作区根：那正是仓库树发现失败的那一层。初始化成功后按最新结构重取仓库树
+	 * 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立，两个分区不再显示空态。
+	 *
+	 * 初始化子模块沿用仓库行菜单的同一条命令：宿主按路径向上找声明它的父仓库，因此子模块尚未
+	 * 检出也能执行；该命令可能访问远端。
+	 *
+	 * @param empty - 当前显示的空态。
+	 * @returns 无。
+	 */
+	const runEmptyAction = React.useCallback((empty: { readonly actionKind: string; readonly path: string }) => {
+		if (emptyActionBusy) return;
+		/** 本次动作的目标与执行体；两种动作只有这两项不同。 */
+		let target: string;
+		let perform: () => Promise<void>;
+		if (empty.actionKind === 'init-workspace') {
+			if (cwd === undefined) return;
+			target = cwd;
+			perform = () => initRepository(target);
+		} else if (empty.actionKind === 'init-submodule') {
+			target = empty.path;
+			perform = () => initSubmodule(target, target);
+		} else {
+			return;
+		}
+		setEmptyActionBusy(true);
+		logClient('I', 'action', `用户操作：${empty.actionKind === 'init-workspace' ? '初始化仓库' : '初始化子模块'}（${target}）`);
+		void (async () => {
+			try {
+				await perform();
+				showToast(empty.actionKind === 'init-workspace' ? '已初始化仓库' : '已初始化子模块', { tone: 'success' });
+			} catch (error) {
+				void showError(error instanceof Error ? error.message : String(error));
+			} finally {
+				setEmptyActionBusy(false);
+			}
+			// 重扫会在发现完成后重算选中，新仓库因此直接成为当前仓库。
+			rescan();
+		})();
+	}, [cwd, emptyActionBusy, rescan]);
 
 	/**
 	 * 在进度条下执行一次不刷新的预备调用。
@@ -818,8 +874,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		React.createElement(RepoSection, {
 			open: layout.repoSecOpen, height: layout.repoHeight, busy: busyFlags,
 			treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById,
-			// 未选中节点时不覆盖：此时 state 里没有对应仓库的值。
-			selectedSync: selectedId === null ? null : selectedSync,
+			/*
+			 * 选中行用快照值；但快照属于**已加载的那个仓库**，选中节点不是它时不得借用。
+			 *
+			 * 未检出的子模块没有可读数据，取数目标为 null，快照仍是上一个仓库的；照搬会让该行显示
+			 * 父仓库的分支。
+			 */
+			selectedSync: selectedNode === null || workingTreePath !== selectedNode.path ? null : selectedSync,
+			loadedPath: workingTreePath,
 			headHash: headCommitHash,
 			onToggleSection: layout.toggleRepoSec,
 			onOpenSettings: openSettingsPanel,
@@ -827,8 +889,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onClone: repoCommands.handleClone, cloneBusy: repoCommands.cloneBusy,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
-			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
-			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
+			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, refreshTree, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
+			onBranchClick: (node, event) => { openRepoBranchMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, refreshTree, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },
 			onResizeStart: layout.startRepoResize,
 		}),
 
@@ -855,6 +917,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			hasLocalExclude: (repoCommands.localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: repoCommands.handleShowLocalExclude,
 			merging: state.merging, onAbortMerge: handleAbortMerge,
 			refreshing: backgroundFlags.entries, lastRefresh: lastRefreshText,
+			empty: workspaceEmpty, emptyBusy: emptyActionBusy,
+			onEmptyAction: () => { if (workspaceEmpty !== null) runEmptyAction(workspaceEmpty); },
 		}),
 
 		// ── 图形 ────────────────────────────────────────────────
@@ -889,6 +953,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			formatDate: dateFmt, formatDetail: dateDetail,
 			issueLinking,
 			refreshing: backgroundFlags.graph, lastRefresh: lastRefreshText,
+			empty: workspaceEmpty, emptyBusy: emptyActionBusy,
+			onEmptyAction: () => { if (workspaceEmpty !== null) runEmptyAction(workspaceEmpty); },
 		}),
 	);
 }

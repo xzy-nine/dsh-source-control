@@ -24,6 +24,13 @@ export interface RepoRowProps {
 	readonly onToggle: (node: RepoNode) => void;
 	readonly onMoreActions?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
 	readonly onBranchClick?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
+	/**
+	 * 已加载仓库的 HEAD 提交哈希：该仓库的分离头指针显示它，其余行不显示。
+	 *
+	 * 它属于「已加载的那个仓库」，不是本行的。套到别的行上会让子模块或别的工作树显示另一个
+	 * 仓库的检出提交。
+	 */
+	readonly loadedPath: string | null;
 	readonly headHash: string | null;
 }
 
@@ -33,15 +40,17 @@ export interface RepoRowProps {
  * @param props - 见 {@link RepoRowProps}。
  * @returns 行元素。
  */
-function RepoRowView({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, headHash }: RepoRowProps): React.ReactElement {
+function RepoRowView({ node, depth, active, expanded, sync, onSelect, onToggle, onMoreActions, onBranchClick, loadedPath, headHash }: RepoRowProps): React.ReactElement {
 	const hasChildren = node.children.length > 0;
 	const isWorktree = node.kind === 'worktree';
 	const isSubmodule = node.kind === 'submodule';
 	const guides: React.ReactElement[] = [];
 	for (let i = 0; i < depth; i++) guides.push(React.createElement('span', { key: i, className: shared.repoGuide }));
 	const branchName = (sync?.branch ?? node.branch) ?? '';
-	const isDetached = branchName === '' && headHash !== null;
-	const refText = isDetached ? headHash.slice(0, 7) : branchName;
+	// 分离头指针的短哈希取本行来源：已加载的仓库用刚读到的 HEAD，其余行用节点自己的。
+	const detachedHash = node.path === loadedPath ? headHash : node.head;
+	const isDetached = branchName === '' && detachedHash !== null;
+	const refText = isDetached ? detachedHash.slice(0, 7) : branchName;
 	return React.createElement(
 		'div',
 		{
@@ -66,6 +75,9 @@ function RepoRowView({ node, depth, active, expanded, sync, onSelect, onToggle, 
 			className: cx(css.repoBranch, onBranchClick !== undefined && !isDetached && css.isClickable),
 			onClick: (event: React.MouseEvent<HTMLSpanElement>) => { if (onBranchClick !== undefined && !isDetached) { event.stopPropagation(); onBranchClick(node, event); } },
 		}, refText),
+		node.shallowClone && React.createElement('span', {
+			className: css.repoShallow, title: '浅克隆：历史被截断，右键可恢复完整历史',
+		}, '浅'),
 		sync !== undefined && (sync.ahead > 0 || sync.behind > 0) && React.createElement(
 			'span',
 			{ className: css.repoSync, title: `领先 ${sync.ahead}、落后 ${sync.behind}` },
