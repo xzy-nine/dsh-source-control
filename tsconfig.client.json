@@ -31,6 +31,15 @@
       "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/viewed-files.ts": [
         "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/viewed-files.d.ts"
       ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/diff-rows.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/diff-rows.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/ReviewComposer.tsx": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/ReviewComposer.d.ts"
+      ],
+      "@deepseek-ai/dsh-experimental-client-ui-forge/src/client/review.ts": [
+        "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/client/review.d.ts"
+      ],
       "@deepseek-ai/dsh-experimental-client-ui-forge/types": [
         "./node_modules/@deepseek-ai/dsh-experimental-client-ui-forge/lib/types/types.d.ts"
       ]
@@ -41,3 +50,4 @@
     "src/client/**/*.tsx"
   ]
 }
+

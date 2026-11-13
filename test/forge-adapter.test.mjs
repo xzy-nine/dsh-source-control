@@ -164,6 +164,17 @@ test('文件记录带齐 forge 要求的字段', () => {
 	assert.equal(typeof file.digest, 'string');
 });
 
+test('评论的终点是输入框，且引用不带代码片段', () => {
+	// 选区与拼接见 line-range.test.mjs 与 comment-reference.test.mjs；
+	// 这里只确认适配层把它交给 forge 评论框时不再夹带差异片段。
+	const source = readFileSync(new URL('../src/client/diff/forge-adapter.tsx', import.meta.url), 'utf8');
+	const call = /formatCommentQuote\(([\s\S]*?)\)\)/.exec(source);
+	assert.ok(call !== null, '应通过 formatCommentQuote 生成引用');
+	assert.ok(!call[1].includes('hunk'), '引用不应把差异片段传给格式化函数');
+	assert.match(source, /addToInput/, '应把引用交给输入框');
+	assert.match(source, /ReviewComposer/, '评论框用 forge 的原生组件');
+});
+
 test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 	const globalKeys = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'IntersectionObserver'];
@@ -187,27 +198,35 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
 		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
 		const reactRoot = createRoot(document.getElementById('root'));
+		// 在无 IntersectionObserver 的全局下创建，观察器会立即回执，行因此被绘制。
+		const reach = adapter.createSectionReach();
 		await new Promise((resolve, reject) => {
 			reactRoot.render(React.createElement(adapter.ForgeDiffView, {
 				path: 'src/app.ts',
 				content: TEXT_DIFF,
+				scope: { kind: 'worktree', staged: false },
 				split: false,
 				wrap: true,
 				state: { expanded: true, revealed: false, open: new Set() },
 				setState: () => {},
-				reach: adapter.createSectionReach(),
+				reach,
+				addToInput: () => true,
 			}));
-			setTimeout(resolve, 80);
+			setTimeout(resolve, 120);
 		}).catch((error) => { throw error; });
 
 		const html = document.getElementById('root').innerHTML;
 		assert.ok(html.length > 0, '必须渲染出内容');
 		assert.match(html, /app\.ts/, '显示文件路径');
 		assert.match(html, /const b = 20/, '显示新增行');
-		// 已审阅复选框在无评审数据时应为禁用，不是可交互的假控件。
-		const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-		assert.ok(checkboxes.length > 0, 'forge 的画法包含已审阅复选框');
-		for (const box of checkboxes) assert.equal(box.disabled, true, '本插件没有已审阅数据，复选框必须禁用');
+		// 已审阅控件（唯一带 data-disabled 的 label）由样式隐藏，DOM 里仍存在但不可见。
+		const viewed = document.querySelector('label[data-disabled]');
+		assert.ok(viewed !== null, 'forge 的画法仍会渲染该控件，由样式隐藏');
+		assert.equal(viewed.querySelector('input[type="checkbox"]')?.disabled, true);
+		// 行由本插件接管选择：每行都带行号属性，供选区读出连续区间。
+		const numbered = document.querySelectorAll('[data-old-line], [data-new-line]');
+		assert.ok(numbered.length > 0, '行应带行号属性，供选区读出区间');
+		assert.equal(document.querySelector('[data-review-side]'), null, 'forge 的行号按钮已撤掉，避免两套手势抢指针');
 		await reactRoot.unmount();
 	} finally {
 		for (const [key, descriptor] of saved) {

@@ -195,7 +195,12 @@ function GitGraphHeaderAction(props) {
  * @returns 差异视图元素。
  */
 function GitDiffTab(props) {
-	const { sessionId, useSessions, useTabInfo, clientContext } = props;
+	const { sessionId, useSessions, useTabInfo, clientContext, inputActions } = props;
+	// 评论的终点是当前会话的输入框：插一条定位引用，用户可先编辑再发送。
+	const addToInput = React.useCallback((text: string): boolean => {
+		if (inputActions === undefined || typeof inputActions.insertQuote !== 'function') return false;
+		return inputActions.insertQuote(text);
+	}, [inputActions]);
 	const hook = typeof useSessions === 'function' ? useSessions : EMPTY_SESSIONS;
 	const tabInfo = typeof useTabInfo === 'function' ? useTabInfo() : null;
 	const tabActions = tabInfo?.tab?.actions;
@@ -305,11 +310,13 @@ function GitDiffTab(props) {
 		return React.createElement(ForgeDiffView, {
 			path: currentPath,
 			content: diffData,
+			scope: scope ?? { kind: 'worktree', staged: false },
 			split,
 			wrap,
 			state: fileState,
 			setState: setFileState,
 			reach,
+			addToInput,
 		});
 	};
 	return React.createElement(

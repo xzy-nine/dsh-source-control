@@ -253,6 +253,24 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.match(adapterSource, /export function ForgeDiffView/, '应导出本插件的差异视图');
 		assert.match(adapterSource, /toForgeFile/, '应有从宿主数据到 forge 文件记录的映射');
 		assert.match(adapterSource, /SectionReach/, '滚动到才绘制需要 forge 的观察器');
+		// forge 的 DiffFile 只做横向滚动，纵向滚动必须由外层正文容器承担，否则长差异无法滚动。
+		const styles = readFileSync(join(cssDir, 'index.module.css'), 'utf8');
+		const bodyRule = /\.diffTabBody\{[^}]*\}/.exec(styles);
+		assert.ok(bodyRule !== null, '应存在差异页正文容器的样式');
+		assert.match(bodyRule[0], /overflow:auto/, '正文容器必须可纵向滚动，DiffFile 自身不承担纵向滚动');
+		assert.ok(!/\.diffTabBody\{[^}]*overflow:hidden/.test(styles), '正文容器不得隐藏溢出，否则长差异滚不动');
+		// forge 的粘性文件头靠 .root 上的 --forge-changes-bg 取背景；本插件只渲染文件段，
+		// 缺这层变量会让标题行透明、代码从下面滚过去。
+		const adapterStyles = readFileSync(join(cssDir, 'forge-adapter.module.css'), 'utf8');
+		assert.match(adapterStyles, /--forge-changes-bg:/, '外层必须补上 forge 的背景变量');
+		assert.match(adapterStyles, /\.ChangesTab_fileHeader/, '必须给粘性文件头设背景');
+		assert.match(adapterStyles, /backdrop-filter/, '半透明背景需要模糊以便读清标题');
+		// 评论框按文档流紧跟文件段；若外层是 flex 列，它会被当成弹性项挤到视图底部。
+		const hostRule = /\.host\{[^}]*\}/.exec(adapterStyles);
+		assert.ok(hostRule !== null, '应存在差异视图外层的样式');
+		assert.match(hostRule[0], /display:block/, '外层必须按块布局排，评论框才紧跟文件段');
+		assert.ok(!/\.host\{[^}]*flex-direction:column/.test(adapterStyles), '外层不得用 flex 列，否则评论框被挤到底部');
+
 		const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(indexSource, /from '\.\/diff\/forge-adapter\.tsx'/, '差异页应引用适配层');
 		assert.ok(!indexSource.includes('file-diff.tsx'), '不应再引用旧的复制实现');

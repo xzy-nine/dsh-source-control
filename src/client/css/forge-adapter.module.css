@@ -1,0 +1,24 @@
+/* 差异视图的外层：只画 forge 的 DiffFile，因此要补上它从中继承变量的那一层。
+   这些变量在 forge 的 `.root`（变更视图整体）上定义，本插件只渲染单个文件段，
+   缺了它们会让粘性文件头没有背景、变透明。 */
+.host{
+  --forge-changes-bg:var(--dsw-alias-bg-base);
+  --forge-fill:var(--dsw-alias-card-fill);
+  --forge-diff-empty:color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 50%,transparent);
+  --forge-files-inset:0px;
+  /* 块布局：forge 的 DiffFile 与评论框都按文档流排，评论框才会紧跟在文件段下面；
+     若用 flex 列，评论框会被当成弹性项挤到底部。flex 只用于在正文容器里撑满宽度。 */
+  display:block;
+  flex:1 0 auto;
+  min-height:0;
+}
+
+/* 粘性文件头要挡住下面滚过的代码，因此背景不能透明；半透明配合背景模糊，
+   既看得见下方内容透出一点，又保证标题清晰可读。 */
+.host :global(.ChangesTab_fileHeader){
+  background:color-mix(in srgb,var(--forge-changes-bg) 82%,transparent);
+  backdrop-filter:blur(6px);
+}
+
+/* 已选中的行：与 forge 选中态同色，覆盖统一行与并排配对两种结构。 */
+.host :global([data-sc-range]){background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}
