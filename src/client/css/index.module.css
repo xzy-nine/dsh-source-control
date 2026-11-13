@@ -57,3 +57,7 @@
 }
 
 .tool[aria-pressed='true'] .compareIcon{transform:rotate(90deg)}
+/* 差异页的状态行与头部：读取中 / 读取失败 / 二进制的提示，以及文件下拉所在的那一行。 */
+.header{display:flex;flex:0 0 auto;gap:6px;align-items:center;box-sizing:border-box;height:38px;padding:0 6px 0 8px;border-bottom:0.5px solid var(--dsw-alias-border-l3)}
+
+.status{display:flex;gap:12px;align-items:center;margin:0;padding:16px;font-size:13px;color:var(--dsw-alias-label-secondary)}

@@ -211,13 +211,12 @@ parallel('客户端结构与产物契约', (t) => {
 	});
 
 	t.test('差异页默认并排且可切换', () => {
-		// 复制来的 FileDiff 支持统一 / 并排两种布局；差异页应默认并排并给出切换。
+		// 视图来自 forge 的 DiffFile，它支持统一 / 并排两种布局；差异页应默认并排并给出切换。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /FileDiff, \{ state, split, wrap, retry: load \}/, '应把 split 传给 FileDiff');
+		assert.match(source, /ForgeDiffView, \{/, '应把比较交给 forge 的差异视图');
+		assert.match(source, /split,/, '应把 split 传下去');
 		// 切换走设置，不再用组件内的 useState：刷新与换浏览器都要保留。
 		assert.match(source, /diffView\.patch\(\{ split: !split \}\)/, '应能切换布局');
-		const css = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
-		assert.match(css, /\.columns/, '并排布局依赖 columns 样式');
 	});
 
 	t.test('普通文件地址用绝对路径', () => {
@@ -246,20 +245,21 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(!/\.folder \.count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
 	});
 
-	t.test('文件差异视图为复制自 DSH 的实现', () => {
-		// ui-deliverables 的 FileDiff 未从 ui-primitives 导出，插件无法引用，故按 MIT 许可复制。
-		const viewSource = readFileSync(join(clientDir, 'diff', 'file-diff.tsx'), 'utf8');
-		assert.match(viewSource, /MIT 许可/, '应标明来源与许可');
-		assert.match(viewSource, /ui-deliverables/, '应写明来源路径');
-		assert.match(viewSource, /export function FileDiff/, '应导出 FileDiff');
-		assert.match(viewSource, /export function hunkRows/, '应保留原实现的行号计算');
-		assert.match(viewSource, /from '[^']*\/file-diff\.module\.css'/, '应通过 CSS 模块引用样式');
-		const cssSource = readFileSync(join(cssDir, 'file-diff.module.css'), 'utf8');
-		assert.match(cssSource, /\.number/, 'CSS 模块应含行号列样式');
-		assert.match(cssSource, /\.hunkHeader/, 'CSS 模块应含 hunk 头样式');
+	t.test('文件差异视图交给 forge 的 DiffFile', () => {
+		// forge 的 DiffFile 是变更视图里的文件段，本插件用适配层把宿主数据喂给它，
+		// 不再维护自己的副本。
+		const adapterSource = readFileSync(join(clientDir, 'diff', 'forge-adapter.tsx'), 'utf8');
+		assert.match(adapterSource, /dsh-experimental-client-ui-forge\/src\/client\/DiffFile\.tsx/, '应引用 forge 的 DiffFile');
+		assert.match(adapterSource, /export function ForgeDiffView/, '应导出本插件的差异视图');
+		assert.match(adapterSource, /toForgeFile/, '应有从宿主数据到 forge 文件记录的映射');
+		assert.match(adapterSource, /SectionReach/, '滚动到才绘制需要 forge 的观察器');
 		const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(indexSource, /from '[^']*\/file-diff\.tsx'/, '差异页应引用复制的视图');
-		assert.ok(!indexSource.includes('DiffBlock'), '不应再使用 ui-primitives 的 DiffBlock');
+		assert.match(indexSource, /from '\.\/diff\/forge-adapter\.tsx'/, '差异页应引用适配层');
+		assert.ok(!indexSource.includes('file-diff.tsx'), '不应再引用旧的复制实现');
+		assert.ok(!indexSource.includes('DiffBlock'), '不应使用 ui-primitives 的 DiffBlock');
+		// 文案直接绑 forge 发布的字典，避免对键改名后在本插件里漂移。
+		const localeSource = readFileSync(join(clientDir, 'diff', 'forge-locales.ts'), 'utf8');
+		assert.match(localeSource, /ForgePanelKey/, '应复用 forge 的键类型');
 		const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
 		assert.match(miscRoutes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
 		assert.match(miscRoutes, /--unified=3/, '宿主应请求带上下文的统一差异');

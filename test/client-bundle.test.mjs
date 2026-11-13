@@ -73,6 +73,31 @@ function loadBundle() {
 		},
 	});
 	/*
+	 * zod 的平台模块桩：forge 的评审记录模块在载入时声明 schema，因此每个构造器
+	 * 都返回一个可继续链式调用、也可当 schema 用的对象。产物在无评审数据时不解析
+	 * 任何东西，这里只需让模块体跑通。
+	 */
+	const zodStub = (() => {
+		const schema = () => {
+			const self = {
+				shape: { source: {}, comment: {} },
+				optional: () => self, nullable: () => self, default: () => self,
+				extend: () => self, array: () => self, int: () => self, positive: () => self,
+				readonly: () => self, describe: () => self,
+				parse: (value) => value, safeParse: (value) => ({ success: true, data: value }),
+			};
+			return self;
+		};
+		const base = new Proxy({}, {
+			get: (_target, name) => {
+				if (name === '__esModule') return false;
+				if (name === 'z') return base;
+				return (..._args) => schema();
+			},
+		});
+		return base;
+	})();
+	/*
 	 * 快照 store 的平台模块桩：产物只用到 createSnapshotStore，取快照与订阅按最小面给出。
 	 * 每个 store 是一个持有当前值的对象，订阅者集合随订阅增减。
 	 */
@@ -94,7 +119,9 @@ function loadBundle() {
 			requested.push(name);
 			if (name === 'react') return { ...react, default: react };
 			if (name === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null, Fragment: Symbol('Fragment') };
+			if (name === 'react-dom') return { flushSync: (fn) => fn() };
 			if (name === 'react-dom/client') return { createRoot: () => ({ render: () => {}, unmount: () => {} }) };
+			if (name === 'zod') return zodStub;
 			if (name === '@deepseek-ai/dsh-client-store') return clientStore;
 			if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
 			throw new Error(`未预期的外部模块请求：${name}`);
@@ -122,19 +149,23 @@ function loadBundle() {
 	return { requested, registrations, client: captured ?? module.exports };
 }
 
-test('产物包络注册为包名并只请求外部平台模块', () => {
+test('产物包络注册为包名并只请求平台模块表内的模块', () => {
+	// 浏览器模块表的 seed 只含 DSH 的平台模块；请求表外的包会直接抛错，因此这张
+	// 清单必须与 @deepseek-ai/dsh-client-web 的 PLATFORM_MODULES 一致。
+	const PLATFORM_MODULES = [
+		'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+		'zod', '@tanstack/react-virtual',
+		'@deepseek-ai/dsh-client-store',
+		'@deepseek-ai/dsh-client-ui-slots',
+		'@deepseek-ai/dsh-client-ui-primitives',
+		'@deepseek-ai/dsh-client-ui-dockkit',
+	];
 	const restore = snapshotGlobals();
 	try {
 		const { requested, registrations } = loadBundle();
 		assert.deepEqual(registrations, ['dsh-source-control']);
 		for (const name of requested) {
-			assert.ok(
-				[
-					'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
-					'@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-primitives',
-				].includes(name),
-				`产物请求了未外部化的模块：${name}`,
-			);
+			assert.ok(PLATFORM_MODULES.includes(name), `产物请求了平台模块表之外的模块：${name}`);
 		}
 		assert.ok(requested.includes('react'), '产物应请求 react');
 		assert.ok(requested.includes('@deepseek-ai/dsh-client-store'), '产物应请求 client-store');

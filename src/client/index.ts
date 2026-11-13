@@ -14,7 +14,8 @@ import {
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
-import { FileDiff, type ChangesDiffState } from './diff/file-diff.tsx';
+import { ForgeDiffView, type DiffFileState } from './diff/forge-adapter.tsx';
+import { SectionReach } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/section-reach.ts';
 import { diffStats } from './diff/diff-stats.ts';
 import { useDiffView } from './diff/use-diff-view.ts';
 import {
@@ -29,7 +30,6 @@ import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import { activeWorkspaceOf, getWorkspaceSnapshot, isSessionDisplayed, preloadWorkspace } from './panel/repo-preload.ts';
 import css from './css/index.module.css';
-import diffCss from './css/file-diff.module.css';
 import shared from './css/shared.module.css';
 /** 页类型身份：正文与标题席位都用它当键。 */
 const TAB_ID = 'dsh-source-control/panel';
@@ -185,7 +185,9 @@ function GitGraphHeaderAction(props) {
 /**
  * git-diff 侧栏页正文：解析地址，取差异内容，渲染文件差异视图。
  *
- * 视图是复制自 DSH ui-deliverables 的 FileDiff（见 ./file-diff.tsx）。
+ * 视图用 DSH forge 变更视图的 DiffFile（见 ./forge-adapter.tsx）：它与 DSH 面板
+ * 共用同一份实现，因此行号、hunk 头、并排/单栏、代码高亮、未变更行折叠都随 DSH
+ * 一起演进，不再由本插件维护副本。
  *
  * @param props.sessionId - 席位给出的会话 id。
  * @param props.useSessions - session 作用域席位的标准快照 hook。
@@ -224,6 +226,18 @@ function GitDiffTab(props) {
 	const [menuOpen, setMenuOpen] = React.useState(false);
 	const [diffData, setDiffData] = React.useState<FileDiffContent | null>(null);
 	const [loading, setLoading] = React.useState(true);
+	// forge 的 DiffFile 要展开状态、已展开的未变更行区段与行绘制观察器；单文件页各自持有。
+	const [fileState, setFileState] = React.useState<DiffFileState>({ expanded: true, revealed: false, open: new Set() });
+	const reach = React.useMemo(() => new SectionReach(), []);
+	const scrollRoot = React.useRef<HTMLDivElement | null>(null);
+	React.useEffect(() => {
+		reach.attach(scrollRoot.current);
+		return () => { reach.attach(null); };
+	}, [reach]);
+	// 换文件时重置该文件的展开状态与已展开区段，避免把上一个文件的下标带过来。
+	React.useEffect(() => {
+		setFileState({ expanded: true, revealed: false, open: new Set() });
+	}, [currentPath, commitHash, staged, baseHash]);
 	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
 	const diffView = useDiffView(typeof cwd === 'string' ? cwd : null);
 	const wrap = diffView.choice.wrap;
@@ -255,18 +269,6 @@ function GitDiffTab(props) {
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
-	// 比较状态：加载中、无法读取、二进制，或可绘制的文本比较。
-	const state: ChangesDiffState = loading
-		? 'loading'
-		: diffData === null
-			? 'error'
-			: diffData.binary
-				? { kind: 'binary', path: currentPath }
-				: {
-					kind: 'text', path: currentPath,
-					before: diffData.oldText !== null, after: diffData.newText !== null,
-					hunks: diffData.hunks, coarse: false,
-				};
 	const counts = diffData !== null && !diffData.binary ? diffStats(diffData.hunks) : null;
 	/** 原生打开使用的绝对路径：仓库根（或会话工作区根）加仓库相对路径。 */
 	const absoluteDiffPath = (() => {
@@ -285,10 +287,35 @@ function GitDiffTab(props) {
 			void error;
 		}
 	};
+	/**
+	 * 绘制正文：读取中、读取失败、二进制各给一行说明，文本比较交给 forge 的 DiffFile。
+	 *
+	 * 这几条状态文案与 DSH 差异视图一致，因此与 forge 面板里同样的失败看起来没有差别。
+	 *
+	 * @returns 正文元素。
+	 */
+	const renderDiffBody = () => {
+		if (loading) return React.createElement('p', { className: css.status, role: 'status' }, '正在读取改动…');
+		if (diffData === null) {
+			return React.createElement('div', { className: css.status },
+				React.createElement('span', null, '无法读取改动'),
+				React.createElement('button', { type: 'button', className: css.tool, onClick: load }, '重试'));
+		}
+		if (diffData.binary) return React.createElement('p', { className: css.status }, '二进制文件，无法显示改动');
+		return React.createElement(ForgeDiffView, {
+			path: currentPath,
+			content: diffData,
+			split,
+			wrap,
+			state: fileState,
+			setState: setFileState,
+			reach,
+		});
+	};
 	return React.createElement(
 		'div',
 		{ className: css.diffTab },
-		React.createElement('div', { className: diffCss.header },
+		React.createElement('div', { className: css.header },
 			// 左侧是文件下拉：列出本次比较涉及的同类文件，选中即在同一页里切换。
 			files.length > 1
 				? React.createElement(Menu, {
@@ -349,8 +376,8 @@ function GitDiffTab(props) {
 		),
 		React.createElement(
 			'div',
-			{ className: css.diffTabBody },
-			React.createElement(FileDiff, { state, split, wrap, retry: load }),
+			{ className: css.diffTabBody, ref: scrollRoot },
+			renderDiffBody(),
 		),
 	);
 }
@@ -623,3 +650,4 @@ export function apply(ctx) {
  * 缺一项会抛 `cannot get property "remote.session" without inject`。
  */
 export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];
+export { __forgeAdapter } from './diff/forge-adapter.tsx';
