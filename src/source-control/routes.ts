@@ -249,6 +249,28 @@ function languageDirective(language: string): string {
 }
 
 /**
+ * 把适配器给出的结束原因拼成一句可读文本。
+ *
+ * 只取原因自身携带的字段（`kind` 与失败三元组），不按取值分类：结束原因是可合并扩展的，
+ * 新增取值原样显示比在这里猜含义更可靠。
+ *
+ * @param reason - 适配器给出的结束原因。
+ * @returns 可直接展示的文本。
+ */
+function finishReasonText(reason: Record<string, unknown>): string {
+	const kind = typeof reason.kind === 'string' && reason.kind !== '' ? reason.kind : '未知原因';
+	const failure = reason.failure !== null && typeof reason.failure === 'object' ? reason.failure as Record<string, unknown> : null;
+	if (failure === null) return kind;
+	const parts = [kind];
+	for (const key of ['code', 'message']) {
+		const value = failure[key];
+		if (typeof value === 'string' && value !== '') parts.push(value);
+	}
+	if (typeof failure.status === 'number') parts.push(`HTTP ${String(failure.status)}`);
+	return parts.join(' ');
+}
+
+/**
  * 查模型是否声明了 `off` 推理档位。
  * @param llm - llm 服务。
  * @param provider - 供应商 id。
@@ -420,12 +442,15 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				+ (rules.length > 0 ? '\n\n' + rules : '');
 			const off = await canDisableReasoning(llm, provider, model);
 			const request = buildCommitRequest(collected, amend);
+			/*
+			 * 不传 maxTokens：输出上限取模型的适配器默认值。推理 token 与正文共用该上限，
+			 * 写死一个小值会让带默认思考的模型在正文中途被截停。
+			 */
 			const streamOpts: Record<string, unknown> = {
 				provider,
 				model,
 				system: systemPrompt,
 				messages: [{ role: 'user', content: [{ type: 'text', text: request }] }],
-				maxTokens: 512,
 				temperature: 0,
 			};
 			if (off) streamOpts.reasoningEffort = 'off';
@@ -451,6 +476,8 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			 * 输出：`usage.outputTokens` 包含推理 token。
 			 */
 			let firstOutputTime: number | null = null;
+			/** 适配器给出的终止结束原因；未收到 finish 时为 null。原样透传，不在此处解释。 */
+			let finishReason = null as null | Record<string, unknown>;
 			let usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | null = null;
 			try {
 				const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
@@ -461,10 +488,12 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 					} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
 						if (firstOutputTime === null) firstOutputTime = Date.now();
 					} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
-					else if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
-						const f = chunk.reason.failure;
-						const parts = [f?.code, f?.status === undefined ? undefined : `HTTP ${f.status}`, f?.message].filter((x): x is string => typeof x === 'string' && x.length > 0);
-						sse('error', parts.length > 0 ? parts.join(' ') : '模型返回错误');
+					else if (chunk.type === 'finish' && chunk.reason !== undefined) {
+						/*
+						 * 记下任何一种终止结束原因，不只挑错误那一档：适配器可合并扩展枚举，
+						 * 在此按已知取值分类会给新增取值套上错误含义。异常结束统一在流结束后播报。
+						 */
+						finishReason = chunk.reason;
 					}
 				}
 				const endTime = Date.now();
@@ -477,6 +506,18 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 				const elapsedSec = totalSec - ttftSec;
 				const outTok = usage?.outputTokens ?? 0;
 				const tps = elapsedSec > 0 && outTok > 0 ? Math.round(outTok / elapsedSec) : 0;
+				if (finishReason !== null && finishReason.kind !== 'stop') {
+					/*
+					 * 非正常结束一律播报：结束原因由适配器定义且可扩展，这里只把其中的字符串原样
+					 * 拼出来，不按已知取值套含义，新增原因也能显示。错误档走错误通道，其余走告警行。
+					 */
+					const detail = finishReasonText(finishReason);
+					if (finishReason.kind === 'error') sse('error', detail);
+					else {
+						sse('warning', `生成被模型终止（${detail}），结果可能不完整`);
+						logWarn('ai', `生成被模型终止（${detail}），共 ${String(outTok)} token`);
+					}
+				}
 				sse('stats', {
 					tps,
 					elapsed: elapsedSec.toFixed(1) + 's',

@@ -60,6 +60,17 @@ parallel('生成任务归属', (t) => {
 		assert.equal(generationStateOf('/repo/a').text, '半截', '仍在生成时文本保留');
 	});
 
+	t.test('截断告警与结果一同交付，交付后清空', (t) => {
+		fresh(t);
+		beginGeneration('/repo/a');
+		appendGeneration('/repo/a', 'feat: 半截');
+		warnGeneration('/repo/a', '生成结果因输出上限被截断');
+		endGeneration('/repo/a');
+		assert.equal(generationStateOf('/repo/a').warning, '生成结果因输出上限被截断', '结束时告警仍在');
+		assert.equal(takeGenerationText('/repo/a'), 'feat: 半截', '截断的文本仍然交付');
+		assert.equal(generationStateOf('/repo/a').warning, '', '交付后告警清空，不留给下一次');
+	});
+
 	t.test('告警与统计同样按仓库归属', (t) => {
 		fresh(t);
 		beginGeneration('/repo/a');
