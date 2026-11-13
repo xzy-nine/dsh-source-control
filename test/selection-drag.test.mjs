@@ -79,7 +79,12 @@ const TEXT_DIFF = {
 	}],
 };
 
-test('松开鼠标后区间保持，不塌回起始行', async () => {
+/**
+ * 装一个差异视图，并把手势需要的全局与指针事件工具一并给出。
+ *
+ * @returns 视图、行元素、拖拽函数与清理函数。
+ */
+async function mountDiff() {
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 	const keys = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'getComputedStyle',
 		'requestAnimationFrame', 'cancelAnimationFrame', 'IntersectionObserver', 'PointerEvent', 'MouseEvent', 'Event'];
@@ -95,24 +100,49 @@ test('松开鼠标后区间保持，不塌回起始行', async () => {
 	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
 	setGlobal('IntersectionObserver', undefined);
 
-	try {
-		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
-		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
-		const reactRoot = createRoot(document.getElementById('root'));
-		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
-			path: 'src/app.ts',
-			content: TEXT_DIFF,
-			scope: { kind: 'worktree', staged: false },
-			split: false,
-			wrap: true,
-			state: { expanded: true, revealed: false, open: new Set() },
-			setState: () => {},
-			reach: adapter.createSectionReach(),
-			addToInput: () => true,
-		}));
-		await new Promise((resolve) => setTimeout(resolve, 150));
+	const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
+	const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
+	const reactRoot = createRoot(document.getElementById('root'));
+	reactRoot.render(React.createElement(adapter.ForgeDiffView, {
+		path: 'src/app.ts',
+		content: TEXT_DIFF,
+		scope: { kind: 'worktree', staged: false },
+		split: false,
+		wrap: true,
+		state: { expanded: true, revealed: false, open: new Set() },
+		setState: () => {},
+		reach: adapter.createSectionReach(),
+		addToInput: () => true,
+	}));
+	await new Promise((resolve) => setTimeout(resolve, 150));
 
-		const rows = [...document.querySelectorAll('[data-diff-line]')];
+	/**
+	 * 从一行按下、划过另一行、松开。
+	 * @param from - 起始行元素。
+	 * @param to - 结束行元素。
+	 */
+	const drag = async (from, to) => {
+		from.dispatchEvent(new dom.window.PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1, pointerId: 1 }));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		to.dispatchEvent(new dom.window.PointerEvent('pointerover', { bubbles: true, buttons: 1, pointerId: 1 }));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		window.dispatchEvent(new dom.window.PointerEvent('pointerup', { bubbles: true, buttons: 0, pointerId: 1 }));
+		await new Promise((resolve) => setTimeout(resolve, 60));
+	};
+	const dispose = async () => {
+		await reactRoot.unmount();
+		for (const [key, descriptor] of saved) {
+			if (descriptor === undefined) delete globalThis[key];
+			else Object.defineProperty(globalThis, key, descriptor);
+		}
+		dom.window.close();
+	};
+	return { dom, rows: [...document.querySelectorAll('[data-diff-line]')], drag, dispose };
+}
+
+test('松开鼠标后区间保持，不塌回起始行', async () => {
+	const { dom, rows, drag, dispose } = await mountDiff();
+	try {
 		assert.ok(rows.length >= 3, `行应已绘制，实际 ${rows.length}`);
 		const [first, , third] = rows;
 
@@ -120,8 +150,9 @@ test('松开鼠标后区间保持，不塌回起始行', async () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		third.dispatchEvent(new dom.window.PointerEvent('pointerover', { bubbles: true, buttons: 1, pointerId: 1 }));
 		await new Promise((resolve) => setTimeout(resolve, 20));
-		// 拖动过程中应有多行高亮。
+		// 拖动过程中应有多行高亮，但不应出现评论框——评论框只在松手后出现。
 		assert.equal(document.querySelectorAll('[data-sc-range]').length, 3, '拖动中应选中三行');
+		assert.equal(document.querySelector('[data-forge-comment]'), null, '拖动中不应显示评论框');
 		window.dispatchEvent(new dom.window.PointerEvent('pointerup', { bubbles: true, buttons: 0, pointerId: 1 }));
 		await new Promise((resolve) => setTimeout(resolve, 60));
 
@@ -133,17 +164,33 @@ test('松开鼠标后区间保持，不塌回起始行', async () => {
 		assert.ok(composer !== null, '应弹出 forge 的评论框');
 		assert.equal(composer.getAttribute('data-forge-comment'), 'R10-12', '评论框应显示跨多行的区间');
 
-		// 评论框按文档流紧跟文件段，不应用 flex 挤到底部。
+		// 评论框是悬浮层：绝对定位贴在选区靠指针反侧的那条边上。
 		const host = document.querySelector('[data-sc-host]');
 		assert.ok(host !== null, '外层应带标记以便断言布局');
 		assert.equal(host.firstElementChild?.hasAttribute('data-forge-diff-file') ?? false, true, '第一个子元素应是文件段');
-		assert.ok(host.contains(composer), '评论框应在外层之内、紧跟文件段');
-		await reactRoot.unmount();
+		const floating = document.querySelector('[data-sc-composer]');
+		assert.ok(floating !== null, '评论框应有悬浮容器');
+		assert.ok(floating.contains(composer), '评论框应在悬浮容器内');
+		assert.equal(floating.style.top === '', false, '悬浮位置应已量出并写入');
+		// 向下拖：指针停在选区下方，评论框浮在选区上缘。
+		assert.equal(floating.getAttribute('data-sc-side'), 'above', '向下拖时评论框应浮在选区上方');
 	} finally {
-		for (const [key, descriptor] of saved) {
-			if (descriptor === undefined) delete globalThis[key];
-			else Object.defineProperty(globalThis, key, descriptor);
-		}
-		dom.window.close();
+		await dispose();
+	}
+});
+
+test('向上拖动时评论框浮在选区下方', async () => {
+	const { dom, rows, drag, dispose } = await mountDiff();
+	try {
+		assert.ok(rows.length >= 3, `行应已绘制，实际 ${rows.length}`);
+		// 从第三行向上拖到第一行：指针停在选区上方。
+		await drag(rows[2], rows[0]);
+		assert.equal(document.querySelectorAll('[data-sc-range]').length, 3, '向上拖也应选中三行');
+		const floating = document.querySelector('[data-sc-composer]');
+		assert.ok(floating !== null, '评论框应有悬浮容器');
+		assert.equal(floating.getAttribute('data-sc-side'), 'below', '向上拖时评论框应浮在选区下方');
+		assert.equal(floating.style.transform, '', '浮在下方时不需要上移自身');
+	} finally {
+		await dispose();
 	}
 });

@@ -7,7 +7,7 @@
  * 评论的终点换成「插进对话输入框的定位引用」，而不是代码托管平台的评审。
  */
 
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { DiffFile, type DiffFileHandlers, type DiffFileProps } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/DiffFile.tsx';
 import type { ForgeDiffFile } from '@deepseek-ai/dsh-experimental-client-ui-forge/types';
 import { ReviewComposer, type ReviewActions } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/ReviewComposer.tsx';
@@ -184,7 +184,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 	const file = toForgeFile(path, content);
 	const { handlers } = createDiffFileHandlers(state, setState, reach);
 	const t = forgePanelCopy();
-	const [range, setRange] = useState<{ readonly low: number; readonly high: number } | null>(null);
+	const [range, setRange] = useState<{ readonly low: number; readonly high: number; readonly forward: boolean } | null>(null);
 	const host = useRef<HTMLDivElement | null>(null);
 	// 评论终点是当前会话的输入框：forge 的评论框只给 addToInput，其余（发布、草稿）都不提供。
 	const reviewActions = useMemo<ReviewActions>(() => ({
@@ -209,7 +209,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 	const paint = useCallback((low: number | null, high: number | null) => {
 		markRange(rows(), low, high);
 	}, [rows]);
-	/** 按当前起点与终点落定区间；两者相同即单行。 */
+	/** 按当前起点与终点落定区间；两者相同即单行。`forward` 记下拖动方向供评论框选边。 */
 	const settle = useCallback(() => {
 		const from = anchor.current;
 		anchor.current = null;
@@ -219,7 +219,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		const low = Math.min(from, to);
 		const high = Math.max(from, to);
 		paint(low, high);
-		setRange({ low, high });
+		setRange({ low, high, forward: to >= from });
 	}, [paint]);
 	useEffect(() => {
 		const element = host.current;
@@ -237,7 +237,8 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 			anchor.current = index;
 			head.current = index;
 			paint(index, index);
-			setRange({ low: index, high: index });
+			// 拖动期间只画高亮：评论框等松手后再出现，免得跟着指针闪。
+			setRange(null);
 		};
 		/** 划过另一行时扩展区间，行号跨 hunk 也能连成一片。 */
 		const over = (event: PointerEvent): void => {
@@ -248,10 +249,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 			const index = rows().indexOf(row);
 			if (index < 0) return;
 			head.current = index;
-			const low = Math.min(anchor.current, index);
-			const high = Math.max(anchor.current, index);
-			paint(low, high);
-			setRange({ low, high });
+			paint(Math.min(anchor.current, index), Math.max(anchor.current, index));
 		};
 		/** 松开时按最后落到的行锁定区间。 */
 		const up = (): void => { settle(); };
@@ -289,22 +287,51 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		t,
 	};
 	// 评论框用 forge 自己的 ReviewComposer：样式、按钮与文案全部来自库。
-	// 它按设计就近显示在所选代码之下，因此紧跟在文件段之后、处于同一文档流里，
-	// 而不是作为 flex 子项被挤到视图底部。
+	// 它悬浮在选区之下（绝对定位，不占文档流）：插入文档流会撑高内容，
+	// 它的自动聚焦还会把视口滚走。
 	const selection = chosen === null ? null : {
 		source: reviewActions.source,
 		comment: { path, side: chosen.side, startLine: chosen.startLine, endLine: chosen.endLine, hunk: '', body: '' },
 	};
+	const [offset, setOffset] = useState<number | null>(null);
+	useLayoutEffect(() => {
+		const element = host.current;
+		if (element === null || range === null) { setOffset(null); return; }
+		/**
+		 * 量出评论框该落的位置：总在指针的反侧，免得挡住刚选过的代码。
+		 * 向下拖（指针停在选区下方）就浮在选区上缘，向上拖就浮在选区下缘。
+		 */
+		const measure = (): void => {
+			const list = selectableRows(element);
+			// 末行可能已被折叠或尚未绘制，此时不给位置，评论框不出现。
+			if (range.high >= list.length) { setOffset(null); return; }
+			const hostBox = element.getBoundingClientRect();
+			const edgeRow = list[range.forward ? range.low : range.high];
+			const rowBox = edgeRow.getBoundingClientRect();
+			const base = element.scrollTop - hostBox.top;
+			setOffset(range.forward ? rowBox.top + base : rowBox.bottom + base);
+		};
+		measure();
+		// 窗口尺寸变化后重新量；滚动不必跟：外层位置由绝对定位相对它自己决定。
+		window.addEventListener('resize', measure);
+		return () => { window.removeEventListener('resize', measure); };
+	}, [range, split, wrap, state]);
 	return createElement(
 		'div',
 		{ className: css.host, 'data-sc-host': '', ref: host },
 		createElement(DiffFile, view),
-		selection !== null && createElement(ReviewComposer, {
-			selection,
-			actions: reviewActions,
-			close: clear,
-			t,
-		}),
+		selection !== null && offset !== null && createElement(
+			'div',
+			{
+				className: css.floating,
+				'data-sc-composer': '',
+				'data-sc-side': range?.forward === true ? 'above' : 'below',
+				// 浮在选区上缘时，上用到底即贴住上缘，故整体上移自身高度；
+				// 浮在下缘时直接从该处往下排。
+				style: { top: offset, transform: range?.forward === true ? 'translateY(-100%)' : undefined },
+			},
+			createElement(ReviewComposer, { selection, actions: reviewActions, close: clear, t }),
+		),
 	);
 }
 
