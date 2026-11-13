@@ -18,7 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
-import { serial } from './harness.mjs';
+import { CASE_INSENSITIVE_FS, serial } from './harness.mjs';
 
 /* 本文件的用例必须串行执行：真实 fs.watch 句柄由模块级注册表承载，收尾会关掉同进程全部句柄 */
 
@@ -187,10 +187,10 @@ serial('同一工作区的不同路径写法只挂一套句柄', async () => {
 	const seen = [];
 	const unsubscribe = onRepositoryTreeChange((changed) => { seen.push(changed); });
 	try {
-		// 分隔符与大小写都不同的写法指向同一目录：只应挂一个句柄，因此只报一条事件。
+		// 分隔符不同的写法总是指向同一目录；大小写变体只在文件系统不区分大小写时才指向它。
 		watchWorkspace(root);
 		watchWorkspace(root.replace(/\\/g, '/'));
-		watchWorkspace(root.toUpperCase());
+		if (CASE_INSENSITIVE_FS) watchWorkspace(root.toUpperCase());
 		await new Promise((done) => setTimeout(done, 400));
 
 		const nested = join(root, 'new-repo');

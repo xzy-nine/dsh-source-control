@@ -6,10 +6,29 @@
  * 变化，而共享进程级状态的文件一旦被并发执行就会间歇性失败。
  */
 
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+
+/**
+ * 本机文件系统是否把大小写不同的路径当成同一个。
+ *
+ * Linux 的 ext4 等区分大小写：按另一种大小写打开同一个文件会失败。用例里「大小写
+ * 变体指向同一目录」这类前提只在大小写不敏感时才成立，按平台名判断会漏掉容器与
+ * 挂载卷上的例外，因此直接探测一次真实行为。
+ *
+ * @returns 大小写不敏感时为 true。
+ */
+export const CASE_INSENSITIVE_FS = (() => {
+	const dir = mkdtempSync(join(tmpdir(), 'dsh-case-'));
+	try {
+		writeFileSync(join(dir, 'probe'), '');
+		return existsSync(join(dir, 'PROBE'));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+})();
 
 /**
  * 把一个文件的用例声明为一个并发执行的组。

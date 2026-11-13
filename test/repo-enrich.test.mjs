@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -28,6 +28,7 @@ const statePath = join(root, 'lib', 'src', 'source-control', 'state-store.js');
 
 /** 临时目录登记表；文件级 after 统一删除。 */
 const temps = [];
+
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 	// 还原模块级桩：本文件覆写了 spawn 与隔离根，不还原会让同进程后续用例看到本文件的桩。
@@ -266,8 +267,12 @@ test('loadReposSync：空数组返回空、path 原样回显、重复入参去�
 	const cased = spelled.toLowerCase() === spelled ? spelled.toUpperCase() : spelled.toLowerCase();
 	const variants = await loadReposSync([spelled, cased]);
 	assert.deepEqual(variants.map((entry) => entry.path), [spelled, cased], '大小写变体各自回显');
-	assert.equal(variants[0].branch, 'main', '大小写不影响仓库读取');
-	assert.equal(variants[1].branch, 'main');
+	assert.equal(variants[0].branch, 'main', '原样路径不受大小写影响');
+	// 路径按字面读取：变体能否读到仓库取决于文件系统是否区分大小写，
+	// 因此用同一路径实测可达性来定期望，而不是假定某一种平台行为。
+	const reachable = existsSync(cased);
+	assert.equal(variants[1].branch, reachable ? 'main' : null,
+		reachable ? '变体在该文件系统上指向同一目录，应读到同一仓库' : '变体在该文件系统上不存在，应读不到仓库');
 });
 
 test('loadReposSync：单个仓库失败以空值兜底', async () => {
