@@ -399,7 +399,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 					const index = typeof record.index === 'number' ? record.index : Number(record.index);
 					const choice = typeof record.choice === 'string' ? record.choice : '';
 					if (!Number.isInteger(index) || index < 0) continue;
-					if (choice !== 'ours' && choice !== 'theirs' && choice !== 'both' && choice !== 'base' && choice !== 'none') continue;
+					// 取舍只有「一侧覆盖另一侧」两种；其余取值按无效丢弃。
+					if (choice !== 'ours' && choice !== 'theirs') continue;
 					choices.set(index, choice);
 				}
 			}

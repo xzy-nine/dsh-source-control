@@ -31,6 +31,8 @@ import {
 	type FileDiffContent, type FileHunk, type MergeContentsPayload,
 } from './api/index.ts';
 import { MergeView } from './diff/merge-view.ts';
+import { formatMergeComment } from './diff/comment-reference.ts';
+import type { LineRange } from './diff/line-range.ts';
 import { HunkBar } from './diff/hunk-bar.ts';
 import { analyzeMerge, type MergeChoice } from '../shared/merge-ranges.ts';
 import { showMessage } from './ui/dialog.ts';
@@ -352,6 +354,18 @@ function GitDiffTab(props) {
 		});
 	}, []);
 	/**
+	 * 把合并视图里的一段评论插进对话输入框。
+	 *
+	 * 评论带着「哪一份内容第几行」的定位：模型据此能自己去读对应版本，不必把代码抄进消息。
+	 *
+	 * @param range - 选区（我方或对方的行号）。
+	 * @param body - 评论正文。
+	 * @returns 无。
+	 */
+	const handleMergeComment = React.useCallback((range: LineRange, body: string): void => {
+		addToInput(formatMergeComment(currentPath, range.side === 'R' ? 'theirs' : 'ours', range.startLine, range.endLine, body));
+	}, [addToInput, currentPath]);
+	/**
 	 * 把当前选择表写回工作区，并在没有任何冲突残留时标记为已解决。
 	 *
 	 * @returns 无。
@@ -457,6 +471,7 @@ function GitDiffTab(props) {
 				hunkBar,
 				React.createElement(MergeView, {
 					analysis, choices, wrap, busy: mergeBusy, onChoose: handleChoose,
+					onComment: handleMergeComment,
 				}),
 				React.createElement('div', { className: css.mergeFooter },
 					React.createElement('span', { className: css.mergeFooterText },

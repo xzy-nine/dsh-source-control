@@ -358,9 +358,9 @@ test('jsdom 里渲染合并区间：每段中间有取舍按钮，点击回投�
 		assert.equal(rows.length, 2);
 		// 非冲突段只给该侧的采纳按钮。
 		const actions = [...rows[0].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
-		assert.deepEqual(actions, ['ours'], '只有我方改动时只给「采纳我方」');
+		assert.deepEqual(actions, ['theirs', 'ours'], '非冲突段也给两个方向');
 		const actions2 = [...rows[1].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
-		assert.deepEqual(actions2, ['theirs'], '只有对方改动时只给「采纳对方」');
+		assert.deepEqual(actions2, ['theirs', 'ours'], '两个方向始终都在');
 
 		rows[0].querySelector('[data-sc-range-action="ours"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
 		assert.equal(choices.get(0), 'ours', '点击回投第 0 段与我方');
@@ -369,7 +369,7 @@ test('jsdom 里渲染合并区间：每段中间有取舍按钮，点击回投�
 	}
 });
 
-test('jsdom 里渲染冲突段：五个取舍按钮与已处理状态', { skip }, async () => {
+test('jsdom 里渲染冲突段：两个覆盖方向与已处理状态', { skip }, async () => {
 	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
 	const analysis = analyzeMerge('a\nb\nc\n', 'a\nOURS\nc\n', 'a\nTHEIRS\nc\n');
 	assert.equal(analysis.ranges[0].conflicting, true);
@@ -386,8 +386,11 @@ test('jsdom 里渲染冲突段：五个取舍按钮与已处理状态', { skip }
 	);
 	try {
 		const row = document.querySelector('[data-sc-range="0"]');
+		// 只有两个方向：左箭头把对方覆盖我方，右箭头反之。
 		const actions = [...row.querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
-		assert.deepEqual(actions, ['ours', 'theirs', 'both', 'base', 'none'], '冲突段给五种取舍');
+		assert.deepEqual(actions, ['theirs', 'ours'], '冲突段给两个覆盖方向');
+		const marks = [...row.querySelectorAll('[data-sc-range-action]')].map((n) => n.textContent);
+		assert.deepEqual(marks, ['《', '》'], '用书名号表示覆盖方向');
 		assert.equal(row.getAttribute('data-handled'), '1', '已选择后标记为已处理');
 		assert.match(document.getElementById('root').textContent, /OURS/);
 		assert.match(document.getElementById('root').textContent, /THEIRS/);
@@ -410,4 +413,47 @@ test('jsdom 里渲染：三方一致时给出无改动说明', { skip }, async (
 	} finally {
 		await env.cleanup();
 	}
+});
+test('jsdom 里渲染合并视图：选中行后浮出评论框并给出该侧行号', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\nc\n', 'a\nOURS\nc\n', 'a\nTHEIRS\nc\n');
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis, choices: new Map(), wrap: true, busy: false,
+			onChoose: () => {},
+			onComment: () => {},
+		}),
+		'[data-sc-range]',
+	);
+	try {
+		// 两栏的行都要能被选中：左栏带 ours 行号，右栏带 theirs 行号。
+		const oursRow = document.querySelector('[data-ours-line][data-diff-line]');
+		const theirsRow = document.querySelector('[data-theirs-line][data-diff-line]');
+		assert.ok(oursRow !== null, '我方行要带行号属性');
+		assert.ok(theirsRow !== null, '对方行要带行号属性');
+
+		oursRow.dispatchEvent(new env.dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+		env.dom.window.dispatchEvent(new env.dom.window.MouseEvent('pointerup', { bubbles: true }));
+
+		await waitFor(() => document.querySelector('[data-sc-merge-comment]') !== null, 'comment box');
+		const box = document.querySelector('[data-sc-merge-comment]');
+		assert.match(box.textContent, /评论：我方第 \d+ 行/, '选区落在我方栏时注明我方与行号');
+		assert.ok(box.querySelector('textarea') !== null, '评论框要有正文输入');
+		assert.ok(box.querySelector('[data-sc-comment-submit]') !== null, '评论框要有插入对话按钮');
+		// 选区高亮落在被选中的行上。
+		assert.ok(oursRow.hasAttribute('data-sc-range'), '选中的行要标出来');
+	} finally {
+		await env.cleanup();
+	}
+});
+
+
+test('合并评论的定位写明是哪一份内容', async () => {
+	const { formatMergeComment } = await import('../src/client/diff/comment-reference.ts');
+	const ours = formatMergeComment('a/b.md', 'ours', 3, 5, '要改为另一种写法');
+	assert.match(ours, /合并冲突 a\/b\.md 我方第 3-5 行/);
+	assert.match(ours, /要改为另一种写法/);
+	const theirs = formatMergeComment('a/b.md', 'theirs', 7, 7, '');
+	assert.match(theirs, /对方第 7 行/);
+	assert.doesNotMatch(theirs, /\n/, '没有正文时只给一行定位');
 });

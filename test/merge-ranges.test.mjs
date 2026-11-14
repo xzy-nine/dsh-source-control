@@ -75,15 +75,10 @@ parallel('合并区间', (t) => {
 		assert.equal(analysis.ranges[1].conflicting, false);
 	});
 
-	t.test('取舍：取一侧 / 两边都留 / 保留基线', () => {
+	t.test('取舍：一侧覆盖另一侧', () => {
 		const analysis = analyzeMerge(text('a', 'b', 'c'), text('a', 'O', 'c'), text('a', 'T', 'c'));
-		const range = analysis.ranges[0];
 		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'ours']])), ['a', 'O', 'c']);
 		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'theirs']])), ['a', 'T', 'c']);
-		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'both']])), ['a', 'O', 'T', 'c']);
-		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'base']])), ['a', 'b', 'c']);
-		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'none']])), ['a', 'c']);
-		void range;
 	});
 
 	t.test('未处理的区间保留基线内容', () => {

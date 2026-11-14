@@ -1,60 +1,57 @@
 /**
- * 合并区间视图：左我方、右对方，每个可冲突区间给一行「采纳 / 两者都留 / 忽略」。
+ * 合并区间视图：左我方、右对方，每个冲突区间中间给两个按钮把一侧覆盖给另一侧。
  *
- * 照 VS Code 合并编辑器的布局分层：输入侧（我方 / 对方）各自成栏、按块着色，
- * 结果由选择表推出而不直接编辑；两栏之间的分栏列承载该区间的动作，因此动作属于
- * 「这一段」而不是整个文件。区间之外的未改动行按整行显示。
+ * 布局照 VS Code 合并编辑器分层（两个输入侧各自成栏、区间按块着色），但取舍只有
+ * 两个方向：
  *
- * 与 VS Code 的差别只在承载：那边是三个 Monaco 编辑器加 view zone，这里用一份
- * 只读的区间表渲染，样式取本仓库的 ui 变量。
+ * - `《` 把右（对方）覆盖到左（我方）
+ * - `》` 把左（我方）覆盖到右（对方）
+ *
+ * 视图面向的是「看清冲突并给出编辑指导」，不是完整的合并编辑器，因此不提供并集、
+ * 基线或两边都丢弃。区间之外未改动的行按整行显示。
+ *
+ * 行选区与评论复用差异页的同一套机制：每行带行号属性，拖动选连续行后可在本页
+ * 直接写评论，评论按「哪一份内容第几行」插进对话输入框。
  */
 import React from 'react';
 import type { MergeAnalysis, MergeChoice, MergeRange } from '../../shared/merge-ranges.js';
+import { markRange, ROW_SELECTOR, type LineRange } from './line-range.ts';
 import css from '../css/merge-view.module.css';
 
-/** 每段可用的动作。 */
+/** 一个区间的覆盖方向。 */
 interface RangeAction {
 	readonly choice: MergeChoice;
 	/** 悬停与无障碍名称。 */
 	readonly title: string;
-	/** 按钮上的短标记。 */
+	/** 按钮上的标记。 */
 	readonly mark: string;
+	/** 覆盖方向：`left` 表示把右侧覆盖到左侧。 */
+	readonly direction: 'left' | 'right';
 }
 
-/**
- * 动作表：两侧都有改动时给「采纳我方 / 采纳对方 / 两者都留 / 忽略」；
- * 只有一侧改动时只给该侧的采纳，另一侧本来就是基线。
- */
-function actionsOf(range: MergeRange): RangeAction[] {
-	if (!range.conflicting) {
-		return range.ours.changed
-			? [{ choice: 'ours', title: '采纳我方这一处', mark: '左' }]
-			: [{ choice: 'theirs', title: '采纳对方这一处', mark: '右' }];
-	}
-	return [
-		{ choice: 'ours', title: '采纳我方这一处', mark: '左' },
-		{ choice: 'theirs', title: '采纳对方这一处', mark: '右' },
-		{ choice: 'both', title: '两边的改动都留下', mark: '合' },
-		{ choice: 'base', title: '保留基线内容', mark: '基' },
-		{ choice: 'none', title: '两边都不要', mark: '删' },
-	];
-}
+/** 每个区间可用的两个方向。 */
+const RANGE_ACTIONS: readonly RangeAction[] = [
+	{ choice: 'theirs', title: '用对方内容覆盖我方这一处', mark: '《', direction: 'left' },
+	{ choice: 'ours', title: '用我方内容覆盖对方这一处', mark: '》', direction: 'right' },
+];
 
 /** 视图属性。 */
 export interface MergeViewProps {
 	/** 解析结果。 */
 	readonly analysis: MergeAnalysis;
-	/** 各区间已选定的取舍。 */
+	/** 各区间已选定的覆盖方向。 */
 	readonly choices: ReadonlyMap<number, MergeChoice>;
 	/** 是否自动换行。 */
 	readonly wrap: boolean;
-	/** 选择一个区间的取舍。 */
+	/** 选择一个区间的覆盖方向。 */
 	readonly onChoose: (index: number, choice: MergeChoice) => void;
 	/** 动作进行中。 */
 	readonly busy: boolean;
+	/** 选中一段连续行后调用；`body` 为评论正文。 */
+	readonly onComment: (range: LineRange, body: string) => void;
 }
 
-/** 结果视图里显示的一行：普通行、区间标题或区间内容。 */
+/** 视图里显示的一行：普通行或区间。 */
 type ViewRow =
 	| { readonly kind: 'common'; readonly lines: readonly string[] }
 	| { readonly kind: 'range'; readonly range: MergeRange };
@@ -82,37 +79,50 @@ export function rowsOfAnalysis(analysis: MergeAnalysis): ViewRow[] {
 }
 
 /**
- * 一栏内容：行号 + 行文本。
+ * 一栏内容：该区间在这一侧的行。
  *
- * @param props - 行、起始行号与是否标出空侧。
+ * @param props - 行、起始行号与所属侧。侧决定行号属性名，供选区读出（`ours` / `theirs`）。
  * @returns 该栏元素。
  */
-function Column({ lines, from, side }: { readonly lines: readonly string[]; readonly from: number; readonly side?: 'ours' | 'theirs' }): React.ReactElement {
+function Column({ lines, from, side }: {
+	readonly lines: readonly string[];
+	readonly from: number;
+	readonly side: 'ours' | 'theirs';
+}): React.ReactElement {
 	return React.createElement(
 		'div',
 		{ className: css.column, 'data-side': side },
 		lines.length === 0
-			? React.createElement('div', { className: css.emptySide }, '（此处被删除）')
-			: renderLines(lines, from),
+			? React.createElement('div', { className: css.emptySide }, '（此处为空）')
+			: renderLines(lines, from, side),
 	);
 }
 
 /**
  * 把若干行画成「行号 + 文本」的一串行。
  *
- * 三处都要这一种画法：我方栏、对方栏、以及区间之外的公共行。
+ * 每行带 `data-diff-line` 与 `data-ours-line` / `data-theirs-line`：选区按侧读行号，
+ * 因此评论能说清「这是哪一份内容的第几行」。
  *
  * @param lines - 行内容。
  * @param from - 起始行号。
+ * @param side - 所属侧；缺省表示两侧一致的普通行。
  * @returns 行元素数组。
  */
-function renderLines(lines: readonly string[], from: number): React.ReactNode[] {
-	return lines.map((line, offset) => React.createElement(
-		'div',
-		{ key: offset, className: css.row },
-		React.createElement('span', { className: css.lineNo }, String(from + offset)),
-		React.createElement('span', { className: css.lineText }, line === '' ? '\u00a0' : line),
-	));
+function renderLines(lines: readonly string[], from: number, side?: 'ours' | 'theirs'): React.ReactNode[] {
+	return lines.map((line, offset) => {
+		const number = from + offset;
+		const attrs: Record<string, unknown> = { key: offset, className: css.row, 'data-diff-line': '' };
+		if (side === 'ours') attrs['data-ours-line'] = number;
+		else if (side === 'theirs') attrs['data-theirs-line'] = number;
+		else { attrs['data-ours-line'] = number; attrs['data-theirs-line'] = number; }
+		return React.createElement(
+			'div',
+			attrs,
+			React.createElement('span', { className: css.lineNo }, String(number)),
+			React.createElement('span', { className: css.lineText }, line === '' ? '\u00a0' : line),
+		);
+	});
 }
 
 /**
@@ -121,11 +131,110 @@ function renderLines(lines: readonly string[], from: number): React.ReactNode[] 
  * @param props - 见 {@link MergeViewProps}。
  * @returns 视图元素。
  */
-export function MergeView({ analysis, choices, wrap, onChoose, busy }: MergeViewProps): React.ReactElement {
+export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }: MergeViewProps): React.ReactElement {
 	const rows = React.useMemo(() => rowsOfAnalysis(analysis), [analysis]);
+	const host = React.useRef<HTMLDivElement | null>(null);
+	const anchor = React.useRef<number | null>(null);
+	const head = React.useRef<number | null>(null);
+	const [selection, setSelection] = React.useState<LineRange | null>(null);
+	const [body, setBody] = React.useState('');
+
+	/** 容器里可选中的行，按显示顺序。 */
+	const selectable = React.useCallback((): Element[] => {
+		if (host.current === null) return [];
+		return [...host.current.querySelectorAll(ROW_SELECTOR)];
+	}, []);
+	const paint = React.useCallback((low: number | null, high: number | null): void => {
+		markRange(selectable(), low, high);
+	}, [selectable]);
+	/**
+	 * 读出一段选区属于哪一侧、哪几行。
+	 *
+	 * 选区可能跨栏（左右都选到），此时按「起点所在的行」定侧：评论锚定在用户按下的那一栏。
+	 *
+	 * @param from - 起始下标。
+	 * @param to - 结束下标。
+	 * @returns 侧与行号区间；读不到行号时为 null。
+	 */
+	const rangeOf = React.useCallback((from: number, to: number): LineRange | null => {
+		const list = selectable();
+		const low = Math.min(from, to);
+		const rowsInRange = list.slice(low, Math.max(from, to) + 1);
+		// 起点所在的行决定评论锚定在哪一栏：只有对方行号的是对方栏（R），其余算我方（L）。
+		const first = list.length === 0 ? null : list[Math.min(from, to)];
+		const side: LineRange['side'] = first !== null && first.hasAttribute('data-theirs-line') && !first.hasAttribute('data-ours-line')
+			? 'R' : 'L';
+		// 行号属性在行元素**自身**上（差异页那边在行内的编号元素上，两者不通用），
+		// 因此直接读属性，不能 querySelector。
+		const attr = side === 'R' ? 'data-theirs-line' : 'data-ours-line';
+		const numbers = rowsInRange
+			.map((row) => Number(row.getAttribute(attr) ?? 'NaN'))
+			.filter((value) => Number.isSafeInteger(value));
+		if (numbers.length === 0) return null;
+		return { side, startLine: Math.min(...numbers), endLine: Math.max(...numbers) };
+	}, [selectable]);
+
+	React.useEffect(() => {
+		const element = host.current;
+		if (element === null) return undefined;
+		const down = (event: PointerEvent): void => {
+			if (event.button !== 0 || !(event.target instanceof Element)) return;
+			const row = event.target.closest(ROW_SELECTOR);
+			if (row === null || !element.contains(row)) return;
+			const list = selectable();
+			const index = list.indexOf(row);
+			if (index < 0) return;
+			event.preventDefault();
+			anchor.current = index;
+			head.current = index;
+			paint(index, index);
+			setSelection(null);
+		};
+		const over = (event: PointerEvent): void => {
+			if (anchor.current === null || event.buttons !== 1) return;
+			if (!(event.target instanceof Element)) return;
+			const row = event.target.closest(ROW_SELECTOR);
+			if (row === null || !element.contains(row)) return;
+			const index = selectable().indexOf(row);
+			if (index < 0) return;
+			head.current = index;
+			paint(Math.min(anchor.current, index), Math.max(anchor.current, index));
+		};
+		const up = (): void => {
+			const from = anchor.current;
+			anchor.current = null;
+			if (from === null) return;
+			const to = head.current ?? from;
+			head.current = null;
+			const range = rangeOf(from, to);
+			paint(range === null ? null : Math.min(from, to), range === null ? null : Math.max(from, to));
+			setSelection(range);
+			if (range !== null) setBody('');
+		};
+		element.addEventListener('pointerdown', down);
+		element.addEventListener('pointerover', over);
+		window.addEventListener('pointerup', up);
+		return () => {
+			element.removeEventListener('pointerdown', down);
+			element.removeEventListener('pointerover', over);
+			window.removeEventListener('pointerup', up);
+		};
+	}, [paint, rangeOf, selectable]);
+
+	/** 取消评论：清掉选区与正文。 */
+	const clear = React.useCallback((): void => {
+		paint(null, null);
+		setSelection(null);
+		setBody('');
+	}, [paint]);
+
 	const chosenCount = React.useMemo(
 		() => analysis.ranges.filter((range) => choices.has(range.index)).length,
 		[analysis.ranges, choices],
+	);
+	const conflictingCount = React.useMemo(
+		() => analysis.ranges.filter((range) => range.conflicting).length,
+		[analysis.ranges],
 	);
 	if (analysis.ranges.length === 0) {
 		return React.createElement('div', { className: css.mergeView, 'data-sc-merge-view': '' },
@@ -138,19 +247,18 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy }: MergeView
 		React.createElement(
 			'div',
 			{ className: css.toolbar },
-			React.createElement('span', { className: css.progress },
-				`已处理 ${String(chosenCount)} / ${String(analysis.ranges.filter((range) => range.conflicting).length)} 处冲突`),
+			React.createElement('span', { className: css.progress }, `已覆盖 ${String(chosenCount)} / ${String(conflictingCount)} 处冲突`),
 		),
 		React.createElement(
 			'div',
 			{ className: css.heads },
 			React.createElement('div', { className: css.head }, '我方'),
-			React.createElement('div', { className: cxHead(css.head, css.headActions) }, '取舍'),
+			React.createElement('div', { className: `${css.head} ${css.headActions}` }, '覆盖'),
 			React.createElement('div', { className: css.head }, '对方'),
 		),
 		React.createElement(
 			'div',
-			{ className: css.body },
+			{ className: css.body, ref: host },
 			...rows.map((row, index) => {
 				if (row.kind === 'common') {
 					const from = baseLine;
@@ -165,58 +273,59 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy }: MergeView
 				const start = baseLine + 1;
 				baseLine += range.baseLength;
 				const choice = choices.get(range.index);
+				const oursLines = range.ours.changed ? range.ours.lines : analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength);
+				const theirsLines = range.theirs.changed ? range.theirs.lines : analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength);
 				return React.createElement(
 					'div',
 					{
 						key: `r${range.index}`,
-						className: cxRange(css.rangeRow, range.conflicting, choice !== undefined),
+						className: [css.rangeRow, range.conflicting ? css.conflict : '', choice === undefined ? '' : css.handled].filter(Boolean).join(' '),
 						'data-sc-range': range.index,
 						'data-conflicting': range.conflicting ? '1' : '0',
 						'data-handled': choice === undefined ? '0' : '1',
 					},
 					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, {
-							lines: range.ours.changed ? range.ours.lines : analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength),
-							from: start, side: 'ours',
-						})),
+						React.createElement(Column, { lines: oursLines, from: start, side: 'ours' })),
 					React.createElement(
 						'div',
 						{ className: css.actions },
-						...actionsOf(range).map((action) => React.createElement('button', {
+						...RANGE_ACTIONS.map((action) => React.createElement('button', {
 							key: action.choice,
 							type: 'button',
-							className: activeAction(css.actionButton, choice === action.choice),
+							className: choice === action.choice ? `${css.actionButton} ${css.active}` : css.actionButton,
 							title: action.title,
 							'aria-label': action.title,
 							'aria-pressed': choice === action.choice,
 							disabled: busy,
 							'data-sc-range-action': action.choice,
+							'data-direction': action.direction,
 							'data-index': range.index,
 							onClick: () => { onChoose(range.index, action.choice); },
 						}, action.mark)),
 					),
 					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, {
-							lines: range.theirs.changed ? range.theirs.lines : analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength),
-							from: start, side: 'theirs',
-						})),
+						React.createElement(Column, { lines: theirsLines, from: start, side: 'theirs' })),
 				);
 			}),
 		),
+		selection === null ? null : React.createElement(
+			'div',
+			{ className: css.composer, 'data-sc-merge-comment': '' },
+			React.createElement('div', { className: css.composerHead },
+				`评论：${selection.side === 'R' ? '对方' : '我方'}第 ${String(selection.startLine)}${selection.startLine === selection.endLine ? '' : `-${String(selection.endLine)}`} 行`),
+			React.createElement('textarea', {
+				className: css.composerInput,
+				value: body,
+				placeholder: '写下要改什么；这条评论会带着定位插进对话输入框',
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setBody(event.currentTarget.value); },
+			}),
+			React.createElement('div', { className: css.composerActions },
+				React.createElement('button', { type: 'button', className: css.composerButton, onClick: clear }, '取消'),
+				React.createElement('button', {
+					type: 'button', className: `${css.composerButton} ${css.primary}`,
+					'data-sc-comment-submit': '',
+					onClick: () => { onComment(selection, body); clear(); },
+				}, '插入对话')),
+		),
 	);
-}
-
-/** 拼类名。 */
-function cxHead(...names: string[]): string {
-	return names.filter(Boolean).join(' ');
-}
-
-/** 区间行的类名：冲突 / 已处理各自一档。 */
-function cxRange(base: string, conflicting: boolean, handled: boolean): string {
-	return [base, conflicting ? css.conflict : '', handled ? css.handled : ''].filter(Boolean).join(' ');
-}
-
-/** 动作按钮的类名：当前已选中的那一档加高亮。 */
-function activeAction(base: string, active: boolean): string {
-	return active ? `${base} ${css.active}` : base;
 }

@@ -5,6 +5,9 @@
  * 加上两侧各自换成什么。两个差异区间在基线上相交或相邻就并成同一个合并区间，
  * 因此「双方改了同一处」自然落在同一段里，而相隔较远的改动各自成段。
  *
+ * 取舍只有「一侧覆盖另一侧」两种：视图面向的是冲突区间的判断与指导，不是完整的合并
+ * 编辑器，因此不提供并集、基线或两侧都丢弃。
+ *
  * 行差异与区间对齐同处一个模块：共享模块不互相 import（两侧的模块解析规则不同），
  * 而这几段只服务合并视图。
  *
@@ -65,7 +68,7 @@ export function diffLines(base: readonly string[], other: readonly string[]): Li
 	if (a.length * b.length > LCS_BUDGET) {
 		return [{ baseStart: prefix, baseLength: a.length, otherStart: prefix, otherLength: b.length }];
 	}
-	return lcsChanges(a, b, prefix, suffix);
+	return lcsChanges(a, b, prefix);
 }
 
 /**
@@ -77,10 +80,9 @@ export function diffLines(base: readonly string[], other: readonly string[]): Li
  * @param a - 左侧中段。
  * @param b - 右侧中段。
  * @param offset - 公共前缀长度。
- * @param suffix - 公共后缀长度；用于把右侧下标还原到全文坐标系。
  * @returns 替换区间。
  */
-function lcsChanges(a: readonly string[], b: readonly string[], offset: number, suffix: number): LineChange[] {
+function lcsChanges(a: readonly string[], b: readonly string[], offset: number): LineChange[] {
 	const n = a.length;
 	const m = b.length;
 	// 长度表：table[i][j] = a[i..] 与 b[j..] 的最长公共子序列长度。
@@ -115,7 +117,6 @@ function lcsChanges(a: readonly string[], b: readonly string[], offset: number, 
 			otherLength: j - startJ,
 		});
 	}
-	void suffix;
 	return changes;
 }
 
@@ -234,7 +235,7 @@ export function analyzeMerge(baseText: string, oursText: string, theirsText: str
  *
  * @param existing - 已有差异。
  * @param next - 新增差异。
- * @returns 合并后的差异；两侧都是 0 长度时保留先到的。
+ * @returns 合并后的差异。
  */
 function mergeChanges(existing: LineChange | null, next: LineChange): LineChange {
 	if (existing === null) return next;
@@ -248,8 +249,8 @@ function mergeChanges(existing: LineChange | null, next: LineChange): LineChange
 	};
 }
 
-/** 取哪一侧。 */
-export type MergeChoice = 'ours' | 'theirs' | 'both' | 'base' | 'none';
+/** 取哪一侧：只有一侧覆盖另一侧两种取舍。 */
+export type MergeChoice = 'ours' | 'theirs';
 
 /**
  * 取一个区间按选择换上的行。
@@ -259,14 +260,7 @@ export type MergeChoice = 'ours' | 'theirs' | 'both' | 'base' | 'none';
  * @returns 替换进结果的行。
  */
 export function linesForChoice(range: MergeRange, choice: MergeChoice): string[] {
-	switch (choice) {
-		case 'ours': return [...range.ours.lines];
-		case 'theirs': return [...range.theirs.lines];
-		case 'both': return [...range.ours.lines, ...range.theirs.lines];
-		case 'base': return [];
-		case 'none': return [];
-		default: return [];
-	}
+	return choice === 'ours' ? [...range.ours.lines] : [...range.theirs.lines];
 }
 
 /**
@@ -285,13 +279,9 @@ export function resultLinesOf(analysis: MergeAnalysis, choices: ReadonlyMap<numb
 	for (const range of analysis.ranges) {
 		out.push(...analysis.baseLines.slice(at, range.baseStart));
 		const choice = choices.get(range.index);
-		if (choice === undefined) {
-			out.push(...analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength));
-		} else if (choice === 'base') {
-			out.push(...analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength));
-		} else {
-			out.push(...linesForChoice(range, choice));
-		}
+		out.push(...(choice === undefined
+			? analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength)
+			: linesForChoice(range, choice)));
 		at = range.baseStart + range.baseLength;
 	}
 	out.push(...analysis.baseLines.slice(at));

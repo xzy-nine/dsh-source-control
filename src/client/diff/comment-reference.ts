@@ -82,3 +82,24 @@ export function formatCommentQuote(path: string, scope: GitDiffScope, range: Com
 	const note = body.trim();
 	return note === '' ? header : `${header}\n${note}`;
 }
+
+/**
+ * 构造合并视图里的评论引用。
+ *
+ * 合并视图里两栏是**两份不同的内容**（我方提交与对方提交），行号各按自己那份编号，
+ * 因此必须写明是「我方」还是「对方」，不能套用差异页的新侧 / 旧侧。
+ *
+ * @param path - 文件路径，相对仓库根。
+ * @param side - `ours` 或 `theirs`。
+ * @param startLine - 起始行号。
+ * @param endLine - 结束行号。
+ * @param body - 用户写的评论正文。
+ * @returns 可插入对话输入框的文本。
+ */
+export function formatMergeComment(path: string, side: 'ours' | 'theirs', startLine: number, endLine: number, body: string): string {
+	const lines = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
+	const label = side === 'ours' ? '我方' : '对方';
+	const header = `合并冲突 ${path} ${label}第 ${lines} 行（行号为该侧内容自身的行号）`;
+	const note = body.trim();
+	return note === '' ? header : `${header}\n${note}`;
+}
