@@ -6,7 +6,7 @@
  * 并按当前作用域给出「暂存」或「取消暂存」。
  */
 import React from 'react';
-import type { FileHunk } from '../api/conflict-sections.ts';
+import type { FileHunk } from '../api/merge.ts';
 import css from '../css/hunk-bar.module.css';
 
 /** 分段暂存条的属性。 */

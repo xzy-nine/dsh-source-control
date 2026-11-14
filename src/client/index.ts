@@ -26,14 +26,13 @@ import { installOverlay } from './ui/overlay-host.ts';
 import { useSharedContextMenu } from './ui/context-menu.ts';
 import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
 import {
-	API_PATH, applyHunk as applyHunkCommand, fileDiffContent, installClientLog, loadFileHunks, logClient,
-	resolveAllConflictSections as resolveAllSectionsCommand,
-	resolveConflictSection as resolveConflictSectionCommand,
-	type FileDiffContent, type FileHunk,
+	API_PATH, applyHunk as applyHunkCommand, applyMergeChoices, fileDiffContent, installClientLog,
+	loadFileHunks, loadMergeContents, logClient, resolveConflict,
+	type FileDiffContent, type FileHunk, type MergeContentsPayload,
 } from './api/index.ts';
-import { ConflictView } from './diff/conflict-view.ts';
-import type { SectionSide } from './diff/conflict-view.ts';
+import { MergeView } from './diff/merge-view.ts';
 import { HunkBar } from './diff/hunk-bar.ts';
+import { analyzeMerge, type MergeChoice } from '../shared/merge-ranges.ts';
 import { showMessage } from './ui/dialog.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
@@ -53,6 +52,18 @@ const HEADER_ACTION_ORDER = -5;
 /** git-diff 页类型身份。 */
 const DIFF_TAB_ID = 'dsh-source-control/diff';
 const DIFF_TAB_KIND = 'devGitGraphDiff';
+
+/**
+ * 把一次失败报成标题为「操作失败」的弹窗。
+ *
+ * 差异页里多处动作只关心「成功就重取、失败就说清原因」，错误文案的整理因此收在一处。
+ *
+ * @param error - 捕获到的异常。
+ * @returns 无。
+ */
+async function reportFailure(error: unknown): Promise<void> {
+	await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
+}
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
 const EMPTY_SESSIONS = (selector) => selector({ byId: {} });
@@ -296,21 +307,71 @@ function GitDiffTab(props) {
 		setResolving(true);
 		operation()
 			.then(() => { load(); })
-			.catch(async (error: unknown) => {
-				await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
-			})
+			.catch(reportFailure)
 			.finally(() => { setResolving(false); setHunkBusy(false); });
 	}, [load]);
-	/** 按段解决当前文件的一处冲突；另一处的标记与内容原样保留。 */
-	const handleResolveSection = React.useCallback((index: number, side: SectionSide): void => {
+	/*
+	 * 三方内容与区间取舍：冲突文件不读工作区里的冲突标记，而是把基线 / 我方 / 对方
+	 * 三份文本取来、在页面里算区间，再按选择表把结果写回。这与 VS Code 合并编辑器一致，
+	 * 也避免标记被人手工改过之后整份视图失真。
+	 */
+	const [mergePayload, setMergePayload] = React.useState<MergeContentsPayload | null>(null);
+	const [choices, setChoices] = React.useState<ReadonlyMap<number, MergeChoice>>(new Map());
+	const [mergeBusy, setMergeBusy] = React.useState(false);
+	const analysis = React.useMemo(
+		() => (mergePayload === null
+			? null
+			: analyzeMerge(mergePayload.base ?? '', mergePayload.ours ?? '', mergePayload.theirs ?? '')),
+		[mergePayload],
+	);
+	const loadMerge = React.useCallback(() => {
+		if (typeof gitCwd !== 'string' || currentPath === '') return;
+		loadMergeContents(gitCwd, currentPath)
+			.then((payload) => { setMergePayload(payload); })
+			.catch(() => { setMergePayload(null); });
+	}, [gitCwd, currentPath]);
+	React.useEffect(() => {
+		if (diffData === null || !diffData.conflict) { setMergePayload(null); setChoices(new Map()); return; }
+		setChoices(new Map());
+		loadMerge();
+	}, [diffData, loadMerge]);
+	/**
+	 * 选择一处区间的取舍：只更新本地选择表，写回由提交时统一做。
+	 *
+	 * 与 VS Code 合并编辑器一样，结果文档是选择表的纯映射，因此连续选择不会反复读写文件。
+	 *
+	 * @param index - 区间序号。
+	 * @param choice - 取舍。
+	 * @returns 无。
+	 */
+	const handleChoose = React.useCallback((index: number, choice: MergeChoice): void => {
+		setChoices((previous) => {
+			const next = new Map(previous);
+			next.set(index, choice);
+			return next;
+		});
+	}, []);
+	/**
+	 * 把当前选择表写回工作区，并在没有任何冲突残留时标记为已解决。
+	 *
+	 * @returns 无。
+	 */
+	const handleApplyMerge = React.useCallback((): void => {
 		if (typeof gitCwd !== 'string' || parsed === null) return;
-		runResolve(() => resolveConflictSectionCommand(gitCwd, currentPath, index, side));
-	}, [gitCwd, parsed, currentPath, runResolve]);
-	/** 把当前文件里剩余的全部冲突按同一侧处理。 */
-	const handleResolveAllSections = React.useCallback((side: SectionSide): void => {
-		if (typeof gitCwd !== 'string' || parsed === null) return;
-		runResolve(() => resolveAllSectionsCommand(gitCwd, currentPath, side));
-	}, [gitCwd, parsed, currentPath, runResolve]);
+		setMergeBusy(true);
+		applyMergeChoices(gitCwd, currentPath, choices)
+			.then(async (unresolved) => {
+				if (unresolved === 0) {
+					// 全部处理完：落索引，冲突条目随之离开「合并冲突」分组。
+					const report = await resolveConflict(gitCwd, [currentPath], 'markResolved');
+					if (report.errors.length > 0) await showMessage({ title: '标记已解决失败', message: report.errors.join('\n') });
+				}
+				load();
+				loadMerge();
+			})
+			.catch(reportFailure)
+			.finally(() => { setMergeBusy(false); });
+	}, [gitCwd, parsed, currentPath, choices, load, loadMerge]);
 	/** 文件当前的补丁块；分段暂存条据此列出可处理的块。 */
 	const [hunks, setHunks] = React.useState<FileHunk[]>([]);
 	React.useEffect(() => {
@@ -386,16 +447,28 @@ function GitDiffTab(props) {
 		const hunkBar = hunks.length === 0
 			? null
 			: React.createElement(HunkBar, { hunks, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk });
-		if (diffData.conflict && diffData.newText !== null) {
+		if (diffData.conflict) {
+			if (analysis === null) {
+				return React.createElement('p', { className: css.status, role: 'status' }, '正在读取三方内容…');
+			}
+			const conflicting = analysis.ranges.filter((range) => range.conflicting).length;
+			const handled = analysis.ranges.filter((range) => range.conflicting && choices.has(range.index)).length;
 			return React.createElement(React.Fragment, null,
 				hunkBar,
-				React.createElement(ConflictView, {
-					text: diffData.newText,
-					wrap,
-					busy: resolving,
-					onResolveSection: handleResolveSection,
-					onResolveAll: handleResolveAllSections,
-				}));
+				React.createElement(MergeView, {
+					analysis, choices, wrap, busy: mergeBusy, onChoose: handleChoose,
+				}),
+				React.createElement('div', { className: css.mergeFooter },
+					React.createElement('span', { className: css.mergeFooterText },
+						conflicting === 0
+							? '双方改动没有重叠，可直接写回。'
+							: `已处理 ${String(handled)} / ${String(conflicting)} 处冲突`),
+					React.createElement('button', {
+						type: 'button', className: css.primaryButton, disabled: mergeBusy,
+						title: '把当前取舍写成结果文件', 'data-sc-apply-merge': '',
+						onClick: handleApplyMerge,
+					}, '写回结果'),
+				));
 		}
 		return React.createElement(React.Fragment, null,
 			hunkBar,
@@ -751,10 +824,10 @@ export function apply(ctx) {
 export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];
 export { __forgeAdapter } from './diff/forge-adapter.tsx';
 /**
- * 分栏视图与分段条的可测面。
+ * 合并视图与分段条的可测面。
  *
  * 客户端测试跑在 Node 里，而 Node 的类型剥离不处理 TSX/JSX 之外的部分也要走产物，
  * 因此这两份实现从构建产物取，断言的就是页面会跑的那份。
  */
-export { ConflictView, rowsOf as __rowsOf } from './diff/conflict-view.ts';
+export { MergeView, rowsOfAnalysis } from './diff/merge-view.ts';
 export { HunkBar } from './diff/hunk-bar.ts';

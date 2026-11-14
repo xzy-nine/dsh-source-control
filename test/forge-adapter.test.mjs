@@ -292,15 +292,24 @@ const TWO_SECTION_TEXT = [
 	'line12',
 	'',
 ].join('\n');
+/** 一份两处冲突的三方文本。 */
+const MERGE_BASE = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n') + '\n';
+const MERGE_OURS = ['1', 'A', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n') + '\n';
+const MERGE_THEIRS = ['1', '2', '3', '4', '5', '6', '7', '8', 'B', '10'].join('\n') + '\n';
 
-test('jsdom 里渲染逐段左右对照：每段中间都有动作，点击回投该段下标', { skip }, async () => {
-	const view = clientModule;
-	assert.ok(view !== undefined, '分栏视图必须从产物里导出，供测试与页面复用');
-	const calls = [];
-	const allCalls = [];
+/** 环境变量表，用于在 jsdom 里覆写全局。 */
+const DOM_KEYS = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame'];
+
+/**
+ * 在 jsdom 里渲染一个元素，返回 DOM 与清理函数。
+ *
+ * @param element - 要渲染的元素。
+ * @param selector - 出现即视为渲染完成的选择器。
+ * @returns jsdom 与清理函数。
+ */
+async function renderDom(element, selector) {
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
-	const saved = new Map(['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame']
-		.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	const saved = new Map(DOM_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
 	setGlobal('window', dom.window);
 	setGlobal('document', dom.window.document);
@@ -310,86 +319,95 @@ test('jsdom 里渲染逐段左右对照：每段中间都有动作，点击回�
 	setGlobal('Node', dom.window.Node);
 	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
 	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
-	try {
-		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
-		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
-		const reactRoot = createRoot(document.getElementById('root'));
-		reactRoot.render(React.createElement(clientModule.ConflictView, {
-			text: TWO_SECTION_TEXT,
+	const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
+	const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
+	const reactRoot = createRoot(document.getElementById('root'));
+	reactRoot.render(typeof element === 'function' ? element(React) : element);
+	await waitFor(() => document.querySelector(selector) !== null, selector);
+	return {
+		dom, React,
+		cleanup: async () => {
+			await reactRoot.unmount();
+			for (const [key, descriptor] of saved) {
+				if (descriptor === undefined) delete globalThis[key];
+				else Object.defineProperty(globalThis, key, descriptor);
+			}
+			dom.window.close();
+		},
+	};
+}
+
+test('jsdom 里渲染合并区间：每段中间有取舍按钮，点击回投该段下标', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge(MERGE_BASE, MERGE_OURS, MERGE_THEIRS);
+	assert.equal(analysis.ranges.length, 2, '两处改动各自成段');
+
+	const choices = new Map();
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis,
+			choices,
 			wrap: true,
 			busy: false,
-			onResolveSection: (index, side) => { calls.push([index, side]); },
-			onResolveAll: (side) => { allCalls.push(side); },
-		}));
-		await waitFor(() => document.querySelector('[data-sc-section]') !== null, 'section rows');
+			onChoose: (index, choice) => { choices.set(index, choice); },
+		}),
+		'[data-sc-range]',
+	);
+	try {
+		const rows = [...document.querySelectorAll('[data-sc-range]')];
+		assert.equal(rows.length, 2);
+		// 非冲突段只给该侧的采纳按钮。
+		const actions = [...rows[0].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions, ['ours'], '只有我方改动时只给「采纳我方」');
+		const actions2 = [...rows[1].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions2, ['theirs'], '只有对方改动时只给「采纳对方」');
 
-		const sections = [...document.querySelectorAll('[data-sc-section]')];
-		assert.equal(sections.length, 2, '两处冲突各自成段');
-
-		// 每段中间五个动作：左 / 右 / 合 / 基 / 删。
-		const firstActions = [...sections[0].querySelectorAll('[data-sc-section-action]')].map((node) => node.getAttribute('data-sc-section-action'));
-		assert.deepEqual(firstActions, ['ours', 'theirs', 'both', 'base', 'none'], '中间一列是本段的动作');
-
-		// 段落两侧各显示自己那一侧的内容。
-		const html = document.getElementById('root').innerHTML;
-		assert.match(html, /line2-OURS/);
-		assert.match(html, /line2-THEIRS/);
-		assert.ok(!html.includes('<<<<<<<'), '标记行不直接画出来');
-		assert.match(html, /line1/, '冲突之外的普通行照常显示');
-
-		// 点第一段的「取对方」，回投的是第 0 段。
-		sections[0].querySelector('[data-sc-section-action="theirs"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-		assert.deepEqual(calls, [[0, 'theirs']]);
-
-		// 点第二段的「取我方」，回投第 1 段：证明动作按段而非按文件。
-		sections[1].querySelector('[data-sc-section-action="ours"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-		assert.deepEqual(calls, [[0, 'theirs'], [1, 'ours']]);
-
-		// 顶部「全部取我方」是整文件入口。
-		const allButton = [...document.querySelectorAll('button')].find((node) => node.textContent === '全部取我方');
-		assert.ok(allButton !== undefined, '整文件入口仍在');
-		allButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-		assert.deepEqual(allCalls, ['ours']);
-
-		await reactRoot.unmount();
+		rows[0].querySelector('[data-sc-range-action="ours"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
+		assert.equal(choices.get(0), 'ours', '点击回投第 0 段与我方');
 	} finally {
-		for (const [key, descriptor] of saved) {
-			if (descriptor === undefined) delete globalThis[key];
-			else Object.defineProperty(globalThis, key, descriptor);
-		}
-		dom.window.close();
+		await env.cleanup();
 	}
 });
 
-test('没有冲突标记时给出已解决说明', { skip }, async () => {
-	const view = clientModule;
-	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
-	const saved = new Map(['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame']
-		.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
-	setGlobal('window', dom.window);
-	setGlobal('document', dom.window.document);
-	setGlobal('navigator', dom.window.navigator);
-	setGlobal('HTMLElement', dom.window.HTMLElement);
-	setGlobal('Element', dom.window.Element);
-	setGlobal('Node', dom.window.Node);
-	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
-	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
+test('jsdom 里渲染冲突段：五个取舍按钮与已处理状态', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\nc\n', 'a\nOURS\nc\n', 'a\nTHEIRS\nc\n');
+	assert.equal(analysis.ranges[0].conflicting, true);
+
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis,
+			choices: new Map([[0, 'theirs']]),
+			wrap: true,
+			busy: false,
+			onChoose: () => {},
+		}),
+		'[data-sc-range]',
+	);
 	try {
-		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
-		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
-		const reactRoot = createRoot(document.getElementById('root'));
-		reactRoot.render(React.createElement(clientModule.ConflictView, {
-			text: 'a\nb\n', wrap: true, busy: false, onResolveSection: () => {}, onResolveAll: () => {},
-		}));
-		await waitFor(() => document.querySelector('[data-sc-conflict-view]') !== null, 'conflict view');
-		assert.match(document.getElementById('root').textContent, /已没有冲突标记/);
-		await reactRoot.unmount();
+		const row = document.querySelector('[data-sc-range="0"]');
+		const actions = [...row.querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions, ['ours', 'theirs', 'both', 'base', 'none'], '冲突段给五种取舍');
+		assert.equal(row.getAttribute('data-handled'), '1', '已选择后标记为已处理');
+		assert.match(document.getElementById('root').textContent, /OURS/);
+		assert.match(document.getElementById('root').textContent, /THEIRS/);
 	} finally {
-		for (const [key, descriptor] of saved) {
-			if (descriptor === undefined) delete globalThis[key];
-			else Object.defineProperty(globalThis, key, descriptor);
-		}
-		dom.window.close();
+		await env.cleanup();
+	}
+});
+
+test('jsdom 里渲染：三方一致时给出无改动说明', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\n', 'a\nb\n', 'a\nb\n');
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis, choices: new Map(), wrap: true, busy: false, onChoose: () => {},
+		}),
+		'[data-sc-merge-view]',
+	);
+	try {
+		assert.match(document.getElementById('root').textContent, /没有需要处理的改动/);
+	} finally {
+		await env.cleanup();
 	}
 });

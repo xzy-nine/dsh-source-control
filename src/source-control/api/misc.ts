@@ -16,9 +16,10 @@ import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, C
 import { conflictKindOfPair } from '../../shared/conflict-kind.js';
 import type { ConflictAction, ConflictStages } from '../conflict-ops.js';
 import type { ConflictKind } from '../../shared/conflict-kind.js';
-import { resolveAllConflictSections, resolveConflictSection } from '../conflict-sections.js';
-import type { SectionSide } from '../conflict-sections.js';
 import { applyHunks, hunkListOf } from '../hunk-ops.js';
+import { applyMergeChoices, mergeContentsOf, readWorktreeText } from '../merge-ops.js';
+import { analyzeMerge } from '../../shared/merge-ranges.js';
+import type { MergeChoice } from '../../shared/merge-ranges.js';
 import { invalidateRepo } from '../host-cache.js';
 import { submitFeedback } from '../feedback.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
@@ -26,8 +27,6 @@ import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
 import type { ApiContext } from './context.js';
 
-/** 分段解决可取的侧。 */
-const SECTION_SIDES: ReadonlySet<string> = new Set(['ours', 'theirs', 'both', 'base', 'none']);
 
 /**
  * 取官方 translator 服务；未装载时返回 undefined。
@@ -169,7 +168,7 @@ async function conflictLookup(repo: string, filePath: string): Promise<ConflictL
  * @returns 是否已处理；未识别的命令返回 false。
  */
 export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
-	const { msg, repo, str, bool, num, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
+	const { msg, repo, str, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
 	switch (ctx.command) {
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
@@ -363,30 +362,52 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			});
 			break;
 		}
-		case 'resolveConflictSection': {
+		case 'mergeContents': {
 			const filePath = str('filePath');
-			const index = num('index', -1);
-			const side = str('side');
-			if (filePath === '' || index < 0) { sendBadRequest('缺少 filePath 或 index'); break; }
-			if (!SECTION_SIDES.has(side)) { sendBadRequest('未知的分段解决方式'); break; }
-			await respondResult('resolveConflictSection', async () => {
-				const outcome = await resolveConflictSection(repo, filePath, index, side as SectionSide);
-				if (outcome.error !== null) throw new Error(outcome.error);
-				logInfo('repo', `冲突分段解决：${filePath} 第 ${String(index + 1)} 段取 ${side}`);
-				return { repo, hasMarkers: outcome.hasMarkers };
+			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			await respondResult('mergeContents', async () => {
+				const contents = await mergeContentsOf(repo, filePath);
+				const worktree = await readWorktreeText(repo, filePath);
+				const analysis = analyzeMerge(contents.base ?? '', contents.ours ?? '', contents.theirs ?? '');
+				return {
+					repo,
+					base: contents.base,
+					ours: contents.ours,
+					theirs: contents.theirs,
+					worktree,
+					ranges: analysis.ranges.map((range) => ({
+						index: range.index,
+						baseStart: range.baseStart,
+						baseLength: range.baseLength,
+						conflicting: range.conflicting,
+						oursChanged: range.ours.changed,
+						theirsChanged: range.theirs.changed,
+					})),
+				};
 			});
 			break;
 		}
-		case 'resolveAllConflictSections': {
+		case 'applyMerge': {
 			const filePath = str('filePath');
-			const side = str('side');
 			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
-			if (!SECTION_SIDES.has(side)) { sendBadRequest('未知的分段解决方式'); break; }
-			await respondResult('resolveAllConflictSections', async () => {
-				const outcome = await resolveAllConflictSections(repo, filePath, side as SectionSide);
+			const rawChoices = msg.choices;
+			const choices = new Map<number, MergeChoice>();
+			if (Array.isArray(rawChoices)) {
+				for (const item of rawChoices as unknown[]) {
+					if (item === null || typeof item !== 'object') continue;
+					const record = item as Record<string, unknown>;
+					const index = typeof record.index === 'number' ? record.index : Number(record.index);
+					const choice = typeof record.choice === 'string' ? record.choice : '';
+					if (!Number.isInteger(index) || index < 0) continue;
+					if (choice !== 'ours' && choice !== 'theirs' && choice !== 'both' && choice !== 'base' && choice !== 'none') continue;
+					choices.set(index, choice);
+				}
+			}
+			await respondResult('applyMerge', async () => {
+				const outcome = await applyMergeChoices(repo, filePath, choices);
 				if (outcome.error !== null) throw new Error(outcome.error);
-				logInfo('repo', `冲突整文件解决：${filePath} 全部取 ${side}`);
-				return { repo, hasMarkers: outcome.hasMarkers };
+				logInfo('repo', `合并写回：${filePath}，已处理 ${String(choices.size)} 段，剩余冲突 ${String(outcome.unresolved)}`);
+				return { repo, unresolved: outcome.unresolved };
 			});
 			break;
 		}
