@@ -101,7 +101,7 @@ test('未跟踪、已修改、已暂存与重命名各自的 XY 状态', () => {
 
 		const snap = snapshot(repo);
 		const byPath = new Map(snap.entries.map((entry) => [entry.path, entry]));
-		assert.deepEqual(byPath.get('b.txt'), { path: 'b.txt', origPath: null, index: 'M', worktree: ' ' });
+		assert.deepEqual(byPath.get('b.txt'), { path: 'b.txt', origPath: null, index: 'M', worktree: ' ' }, '普通条目不带未合并标记');
 		assert.deepEqual(byPath.get('renamed.txt'), { path: 'renamed.txt', origPath: 'a.txt', index: 'R', worktree: ' ' });
 		assert.deepEqual(byPath.get('untracked.txt'), { path: 'untracked.txt', origPath: null, index: '?', worktree: '?' });
 		assert.equal(snap.entries.length, 3, '重命名的旧路径不作为独立条目');
@@ -219,6 +219,7 @@ test('未合并记录按 XY 两列给出', () => {
 		assert.notEqual(entry, undefined);
 		assert.equal(entry.index, 'U');
 		assert.equal(entry.worktree, 'U');
+		assert.equal(entry.unmerged, true, '未合并记录要带上标记，分组与差异页据此处理');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}

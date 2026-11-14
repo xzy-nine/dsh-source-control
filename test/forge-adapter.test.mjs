@@ -256,3 +256,100 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 	}
 });
 
+/** 一份冲突差异：新侧是工作区全文，带三行冲突标记。 */
+const CONFLICT_DIFF = {
+	path: 'conflict.txt',
+	oldText: 'base\n',
+	newText: '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> side\n',
+	binary: false,
+	conflict: true,
+	conflictKind: 'both-modified',
+	conflictStages: { base: true, ours: true, theirs: true },
+	hunks: [
+		{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 5, lines: ['-base', '+<<<<<<< HEAD', '+ours', '+=======', '+theirs', '+>>>>>>> side'] },
+	],
+};
+
+test('冲突文件的状态按冲突种类判定', () => {
+	assert.equal(adapter.statusOf(CONFLICT_DIFF), 'modified');
+	// 双方都删的冲突两侧都没有内容：不能读成新增。
+	assert.equal(adapter.statusOf({ ...CONFLICT_DIFF, oldText: null, newText: null, conflictKind: 'both-deleted' }), 'deleted');
+});
+
+test('jsdom 里渲染冲突操作条与标记行着色', { skip }, async () => {
+	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+	const globalKeys = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'IntersectionObserver', 'MutationObserver'];
+	const saved = new Map(globalKeys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
+	setGlobal('window', dom.window);
+	setGlobal('document', dom.window.document);
+	setGlobal('navigator', dom.window.navigator);
+	setGlobal('HTMLElement', dom.window.HTMLElement);
+	setGlobal('Element', dom.window.Element);
+	setGlobal('Node', dom.window.Node);
+	setGlobal('getComputedStyle', dom.window.getComputedStyle.bind(dom.window));
+	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
+	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
+	setGlobal('IntersectionObserver', undefined);
+	setGlobal('MutationObserver', dom.window.MutationObserver);
+
+	const resolved = [];
+	try {
+		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
+		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
+		const reactRoot = createRoot(document.getElementById('root'));
+		const reach = adapter.createSectionReach();
+		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
+			path: 'conflict.txt',
+			content: CONFLICT_DIFF,
+			scope: { kind: 'worktree', staged: false },
+			split: false,
+			wrap: true,
+			state: { expanded: true, revealed: false, open: new Set() },
+			setState: () => {},
+			reach,
+			addToInput: () => true,
+			conflictLabel: '冲突：双方修改',
+			conflictActions: [
+				{ action: 'ours', title: '采用我方版本', enabled: true },
+				{ action: 'theirs', title: '采用对方版本', enabled: false },
+			],
+			onResolveConflict: (action) => { resolved.push(action); },
+		}));
+		await waitFor(() => document.querySelector('[data-sc-conflict]') !== null, 'conflict markers');
+
+		const bar = document.querySelector('[data-sc-conflict-bar]');
+		assert.ok(bar !== null, '冲突文件要显示操作条');
+		assert.match(bar.textContent, /冲突：双方修改/);
+		const oursButton = bar.querySelector('[data-sc-conflict-action="ours"]');
+		assert.equal(oursButton.disabled, false);
+		assert.equal(bar.querySelector('[data-sc-conflict-action="theirs"]').disabled, true, '不可用的动作要禁用');
+		oursButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+		assert.deepEqual(resolved, ['ours'], '点击动作回到调用方');
+
+		const marks = [...document.querySelectorAll('[data-sc-conflict]')].map((row) => row.getAttribute('data-sc-conflict'));
+		assert.deepEqual(marks, ['ours', 'sep', 'theirs'], '三行标记各自打标');
+
+		// 非冲突文件不显示操作条。
+		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
+			path: 'src/app.ts',
+			content: TEXT_DIFF,
+			scope: { kind: 'worktree', staged: false },
+			split: false,
+			wrap: true,
+			state: { expanded: true, revealed: false, open: new Set() },
+			setState: () => {},
+			reach,
+			addToInput: () => true,
+			conflictLabel: null,
+		}));
+		await waitFor(() => document.querySelector('[data-sc-conflict-bar]') === null, 'no conflict bar');
+		await reactRoot.unmount();
+	} finally {
+		for (const [key, descriptor] of saved) {
+			if (descriptor === undefined) delete globalThis[key];
+			else Object.defineProperty(globalThis, key, descriptor);
+		}
+		dom.window.close();
+	}
+});

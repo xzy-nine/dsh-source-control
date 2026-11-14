@@ -33,3 +33,43 @@
 
 /* 已选中的行：与 forge 选中态同色，覆盖统一行与并排配对两种结构。 */
 .host :global([data-sc-range]){background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}
+/* 冲突操作条：种类文案 + 解决动作，贴在文件段上方、随正文一起滚动。 */
+.conflictBar{
+  display:flex;
+  flex:none;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  padding:8px 10px;
+  background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);
+  border-bottom:0.5px solid var(--dsw-alias-border-l3);
+  font-size:12px;
+}
+
+.conflictLabel{color:var(--dsw-alias-state-warn-primary);font-weight:600}
+
+.conflictActions{display:inline-flex;flex-wrap:wrap;gap:4px;margin-left:auto}
+
+.conflictAction{
+  padding:2px 8px;
+  border:1px solid var(--dsw-alias-border-l2);
+  border-radius:var(--dsw-radius-sm);
+  background:var(--dsw-alias-card-fill);
+  color:var(--dsw-alias-label-primary);
+  font:inherit;
+  font-size:12px;
+  line-height:18px;
+  cursor:pointer;
+}
+
+.conflictAction:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+
+.conflictAction:disabled{opacity:0.45;cursor:default}
+
+/* 冲突标记行：我方区段起于 <<<<<<<，分隔行是整行等号，对方区段止于 >>>>>>>。
+   三者都落在新侧，染成同一族的三种色阶，读者一眼能看出区段边界。 */
+.host :global([data-sc-conflict='ours']){background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent)}
+
+.host :global([data-sc-conflict='sep']){background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 16%,transparent)}
+
+.host :global([data-sc-conflict='theirs']){background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent)}

@@ -12,6 +12,10 @@ import { gitOrThrow, runGit } from '../git-exec.js';
 import { getConfig, getRepoInfo } from '../git-query.js';
 import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
+import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, CONFLICT_ACTIONS, resolveConflicts } from '../conflict-ops.js';
+import { conflictKindOfPair } from '../../shared/conflict-kind.js';
+import type { ConflictAction, ConflictStages } from '../conflict-ops.js';
+import type { ConflictKind } from '../../shared/conflict-kind.js';
 import { invalidateRepo } from '../host-cache.js';
 import { submitFeedback } from '../feedback.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
@@ -118,6 +122,38 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 async function revParseHasParent(repo: string, commitHash: string): Promise<boolean> {
 	const result = await runGit(['rev-parse', '--verify', '--quiet', `${commitHash}^`], repo);
 	return result.code === 0;
+}
+
+/** 一次冲突取数的结果：种类、阶段与两侧正文，供 `fileDiffContent` 使用。 */
+interface ConflictLookup {
+	readonly kind: ConflictKind;
+	readonly stages: ConflictStages;
+	readonly oldText: string | null;
+	readonly newText: string | null;
+}
+
+/**
+ * 判断一个路径是否仍是未合并条目，并取它的种类与阶段。
+ *
+ * @param repo - 仓库路径。
+ * @param filePath - 文件路径，相对仓库根。
+ * @returns 冲突种类、阶段与两侧正文；不是未合并条目时为 null。
+ */
+async function conflictLookup(repo: string, filePath: string): Promise<ConflictLookup | null> {
+	let stages: ConflictStages;
+	try {
+		stages = await conflictStagesOf(repo, filePath);
+	} catch {
+		return null;
+	}
+	if (!stages.base && !stages.ours && !stages.theirs) return null;
+	const status = await runGit(['status', '--porcelain', '-z', '--', filePath], repo);
+	if (status.code !== 0 || status.stdout.length < 2) return null;
+	const kind = conflictKindOfPair(status.stdout.slice(0, 1), status.stdout.slice(1, 2));
+	if (kind === null) return null;
+	const sources = conflictSourcesOf(kind, stages);
+	const texts = await conflictTextsOf(repo, filePath, sources);
+	return { kind, stages, ...texts };
 }
 
 /**
@@ -242,6 +278,22 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			const commitHash = str('commitHash');
 			const baseHash = str('baseHash');
 			const staged = bool('staged');
+			/*
+			 * 冲突条目没有 stage 0：`show :<路径>` 与 `restore` 一律失败，`diff` 还会退化成
+			 * `--cc` 三路输出而无 hunk。因此先判未合并，命中时按阶段取两侧内容与差异。
+			 */
+			const conflict = await conflictLookup(repo, filePath);
+			if (conflict !== null) {
+				const sources = conflictSourcesOf(conflict.kind, conflict.stages);
+				const { diffText, binary } = await conflictDiffOf(repo, filePath, sources);
+				respond({
+					command: 'fileDiffContent', path: filePath,
+					oldText: conflict.oldText, newText: conflict.newText,
+					hunks: parseUnifiedDiffHunks(diffText), binary,
+					conflict: true, conflictKind: conflict.kind, conflictStages: conflict.stages,
+				});
+				break;
+			}
 			try {
 				let oldText: string | null = null;
 				let newText: string | null = null;
@@ -287,6 +339,34 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			} catch (e) {
 				respond({ command: 'fileDiffContent', path: filePath, oldText: null, newText: null, hunks: [], binary: false, error: e instanceof Error ? e.message : String(e) });
 			}
+			break;
+		}
+		case 'conflictStages': {
+			await respondResult('conflictStages', async () => {
+				const paths = arr<string>('paths');
+				const stages: Array<{ path: string; base: boolean; ours: boolean; theirs: boolean }> = [];
+				for (const path of paths) {
+					try {
+						const found = await conflictStagesOf(repo, path);
+						if (found.base || found.ours || found.theirs) stages.push({ path, ...found });
+					} catch {
+						/* 路径已不在索引里：按已解决处理，不出现在结果中 */
+					}
+				}
+				return { repo, stages };
+			});
+			break;
+		}
+		case 'resolveConflict': {
+			const action = str('action');
+			if (!CONFLICT_ACTIONS.has(action)) { sendBadRequest('未知的冲突解决方式'); break; }
+			const paths = arr<string>('paths');
+			if (paths.length === 0) { sendBadRequest('缺少 paths'); break; }
+			await respondResult('resolveConflict', async () => {
+				const outcome = await resolveConflicts(repo, paths, action as ConflictAction);
+				logInfo('repo', `冲突解决（${action}）：已处置 ${String(outcome.resolved.length)} 个路径${outcome.errors.length === 0 ? '' : `，${String(outcome.errors.length)} 个失败`}`);
+				return { repo, ...outcome };
+			});
 			break;
 		}
 		case 'rescanForRepos':

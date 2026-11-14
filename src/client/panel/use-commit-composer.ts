@@ -13,6 +13,7 @@ import type { HooksState } from '../api/index.ts';
 import { draftKeyOf, loadSessionValue, saveSessionValue } from './storage.ts';
 import { interfaceLanguage, showTranslateEntry, translateCommitMessage } from './language.ts';
 import { canSubmitOf, commitButtonDisabledOf } from './submit-state.ts';
+import { stagedCountOf, unresolvedConflictCountOf } from './conflicts.ts';
 import { commitEntries } from './optimistic.ts';
 import {
 	appendGeneration, beginGeneration, endGeneration, generationStateOf, noteGenerationStats, subscribeGeneration, takeGenerationText, warnGeneration,
@@ -98,6 +99,8 @@ export interface CommitComposer {
 	readonly showTranslate: boolean;
 	/** 提交按钮可用。 */
 	readonly canSubmit: boolean;
+	/** 未解决的冲突条目数；大于零时提交按钮禁用并给出原因。 */
+	readonly unresolvedConflicts: number;
 	/** 切换修补勾选。 */
 	readonly toggleAmend: (checked: boolean) => void;
 	/** 提交暂存区。 */
@@ -265,8 +268,10 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 			.catch(() => { /* 取不到正文时保留标题 */ });
 	}, [commits, workingTreePath]);
 
-	const stagedCount = React.useMemo(() => entries.filter((entry) => { const staged = entry.index !== ' ' && entry.index !== '?'; return staged; }).length, [entries]);
-	const canSubmit = canSubmitOf({ stagedCount, amend, merging });
+	// 未合并条目不算已暂存：冲突未解决时它们既不进提交，也不能让提交按钮变为可用。
+	const stagedCount = React.useMemo(() => stagedCountOf(entries), [entries]);
+	const unresolvedConflicts = React.useMemo(() => unresolvedConflictCountOf(entries), [entries]);
+	const canSubmit = canSubmitOf({ stagedCount, amend, merging, unresolvedConflicts });
 
 	/**
 	 * 提交暂存区。
@@ -352,7 +357,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	return {
 		message, setMessage, amend, runHooks, setRunHooks, hooksState,
 		hooksActive: hooksState.commit || hooksState.push,
-		aiBusy, aiWarning, aiStats, translateBusy, translateReady, showTranslate, canSubmit,
+		aiBusy, aiWarning, aiStats, translateBusy, translateReady, showTranslate, canSubmit, unresolvedConflicts,
 		toggleAmend, submit, handleAiCommit, handleTranslate,
 	};
 }

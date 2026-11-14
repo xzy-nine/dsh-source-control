@@ -6,6 +6,7 @@
  * - `status-parse.ts`：`git status` 输出的纯解析
  * - `worktree-ops.ts`：读取变更、暂存、取消暂存、提交
  * - `discard.ts`：丢弃改动（含子模块条目）
+ * - `conflict-ops.ts`：未合并条目的阶段、差异取源与解决动作
  * - `worktree-remove.ts`：移除链接工作树
  * - `submodule-ops.ts`：初始化子模块与声明路径解析
  */
@@ -20,5 +21,7 @@ export { pickByDepth } from './depth-limit.js';
 export { loadWorkingTree, stagePaths, unstagePaths, commitStaged } from './worktree-ops.js';
 export type { SubmoduleDiscardStatus, SubmoduleDiscardOutcome, DiscardOutcome } from './discard.js';
 export { discardPaths } from './discard.js';
+export type { ConflictAction, ConflictDiff, ConflictSide, ConflictSources, ConflictStages, ResolveOutcome } from './conflict-ops.js';
+export { CONFLICT_ACTIONS, conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, resolveConflicts } from './conflict-ops.js';
 export { removeWorktree } from './worktree-remove.js';
 export { initSubmodule } from './submodule-ops.js';

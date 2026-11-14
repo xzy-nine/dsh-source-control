@@ -25,7 +25,11 @@ import { NativeOpenControl } from './ui/native-open.ts';
 import { installOverlay } from './ui/overlay-host.ts';
 import { useSharedContextMenu } from './ui/context-menu.ts';
 import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
-import { API_PATH, fileDiffContent, installClientLog, logClient, type FileDiffContent } from './api/index.ts';
+import { API_PATH, fileDiffContent, installClientLog, logClient, resolveConflict, type FileDiffContent } from './api/index.ts';
+import { conflictActionsOf } from './panel/conflicts.ts';
+import { conflictEntryOf, CONFLICT_KIND_TEXT } from '../shared/conflict-kind.ts';
+import type { ConflictAction } from './shared/types.ts';
+import { showMessage } from './ui/dialog.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
 import { activeWorkspaceOf, getWorkspaceSnapshot, isSessionDisplayed, preloadWorkspace } from './panel/repo-preload.ts';
@@ -271,6 +275,28 @@ function GitDiffTab(props) {
 	React.useEffect(() => {
 		load();
 	}, [load]);
+	/**
+	 * 在差异页上解决当前文件的冲突。
+	 *
+	 * 解决后重取本页数据：条目从工作区作用域换成「已按某一侧解决」的内容，重取才能看到结果。
+	 * 未能处置的路径由宿主逐条回投，这里汇总成一条提示。
+	 *
+	 * @param action - 解决动作。
+	 * @returns 无。
+	 */
+	const handleResolveDiff = React.useCallback((action: ConflictAction): void => {
+		if (typeof gitCwd !== 'string' || parsed === null) return;
+		setLoading(true);
+		resolveConflict(gitCwd, [currentPath], action)
+			.then(async (report) => {
+				if (report.errors.length > 0) await showMessage({ title: '冲突未解决', message: report.errors.join('\n') });
+				load();
+			})
+			.catch(async (error: unknown) => {
+				setLoading(false);
+				await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
+			});
+	}, [gitCwd, parsed, currentPath, load]);
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
@@ -307,6 +333,7 @@ function GitDiffTab(props) {
 				React.createElement('button', { type: 'button', className: css.tool, onClick: load }, '重试'));
 		}
 		if (diffData.binary) return React.createElement('p', { className: css.status }, '二进制文件，无法显示改动');
+		const conflictKind = diffData.conflictKind;
 		return React.createElement(ForgeDiffView, {
 			path: currentPath,
 			content: diffData,
@@ -317,6 +344,11 @@ function GitDiffTab(props) {
 			setState: setFileState,
 			reach,
 			addToInput,
+			conflictLabel: conflictKind === null ? null : CONFLICT_KIND_TEXT[conflictKind],
+			conflictActions: diffData.conflict && conflictKind !== null
+				? conflictActionsOf(conflictEntryOf(currentPath, conflictKind), diffData.conflictStages)
+				: undefined,
+			onResolveConflict: diffData.conflict ? handleResolveDiff : undefined,
 		});
 	};
 	return React.createElement(

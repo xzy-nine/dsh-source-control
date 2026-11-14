@@ -3,6 +3,7 @@
  *
  * 纯解析，不调用 git、不读写文件系统，可直接单测。
  */
+import { conflictKindOfPair } from '../shared/conflict-kind.js';
 import { pickByDepth } from './depth-limit.js';
 /**
  * 工作区变更的解析上限。
@@ -22,6 +23,8 @@ export interface WorkingTreeEntry {
 	readonly index: string;
 	/** 工作区状态码（第二列）。 */
 	readonly worktree: string;
+	/** 是否是未合并（冲突）条目：两列组成七种冲突组合之一。 */
+	readonly unmerged?: boolean;
 }
 
 /**
@@ -120,6 +123,24 @@ export function forEachStatusRecord(
 }
 
 /**
+ * 构造一条工作区条目。
+ *
+ * 未合并标记在两列解析处补上：冲突条目在分组、差异页与提交判据里都要单独处理。
+ *
+ * @param path - 当前路径。
+ * @param origPath - 重命名/复制前的路径。
+ * @param index - 索引状态码。
+ * @param worktree - 工作区状态码。
+ * @returns 条目。
+ */
+function entryOf(path: string, origPath: string | null, index: string, worktree: string): WorkingTreeEntry {
+	const unmerged = conflictKindOfPair(index, worktree) !== null;
+	return unmerged
+		? { path, origPath, index, worktree, unmerged }
+		: { path, origPath, index, worktree };
+}
+
+/**
  * 解析 `git status --porcelain -z` 的输出。
  *
  * 记录格式为 `XY PATH`，重命名/复制时追加 `ORIG` 记录；`-z` 以 NUL 分隔，路径不做转义。
@@ -133,7 +154,7 @@ export function forEachStatusRecord(
 export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEntry[] {
 	const entries: WorkingTreeEntry[] = [];
 	forEachStatusRecord(stdout, Number.POSITIVE_INFINITY, (record) => {
-		entries.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
+		entries.push(entryOf(record.path, record.origPath, record.index, record.worktree));
 	});
 	return entries.length > limit ? pickByDepth(entries, limit, (entry) => entry.path) : entries;
 }
@@ -212,7 +233,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		}
 		const kind = token.slice(0, 1);
 		if (kind === '?') {
-			collect({ path: token.slice(2), origPath: null, index: '?', worktree: '?' });
+			collect(entryOf(token.slice(2), null, '?', '?'));
 			continue;
 		}
 		if (kind !== '1' && kind !== '2' && kind !== 'u') continue;
@@ -227,7 +248,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			origPath = cursor.next();
 		}
 		/* v2 用 `.` 表示该侧无改动，统一按空列输出，与 v1 的两列语义一致。 */
-		collect({ path, origPath, index: column(xy.slice(0, 1)), worktree: column(xy.slice(1, 2)) });
+		collect(entryOf(path, origPath, column(xy.slice(0, 1)), column(xy.slice(1, 2))));
 	}
 	const truncated = entries.length > limit;
 	return {

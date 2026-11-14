@@ -8,6 +8,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, pickByDepth, runGit } from './working-tree.js';
 import type { WorkingTreeEntry, WorkingTreeSnapshot } from './working-tree.js';
+import { conflictKindOfPair } from '../shared/conflict-kind.js';
 import { readHeadRef } from './worktree-branches.js';
 import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -390,7 +391,7 @@ export async function getStatus(repo: string, limit = DETAIL_FILE_LIMIT): Promis
 		const isDeleted = record.index === 'D' || record.worktree === 'D';
 		const isUntracked = record.index === '?' || record.worktree === '?';
 		if (!isDeleted && !isUntracked) return;
-		matched.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree });
+		matched.push({ path: record.path, origPath: record.origPath, index: record.index, worktree: record.worktree, unmerged: conflictKindOfPair(record.index, record.worktree) !== null });
 	}, true);
 	// 上限按完整深度取：浅层路径优先保留，与快照的截断规则一致。
 	const truncated = matched.length > limit;

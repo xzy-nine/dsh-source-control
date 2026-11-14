@@ -1,6 +1,30 @@
 /**
  * 客户端领域类型：宿主返回的数据形状与面板内部使用的结构。
  */
+import type { ConflictKind } from '../../shared/conflict-kind.ts';
+
+export type { ConflictKind };
+
+/** 可执行的冲突解决动作。 */
+export type ConflictAction = 'ours' | 'theirs' | 'delete' | 'markResolved' | 'restoreMarkers';
+
+/** 一个未合并路径在索引里的三个阶段是否存在。 */
+export interface ConflictStages {
+	/** 基线（共同祖先）。 */
+	readonly base: boolean;
+	/** 我方（当前分支）。 */
+	readonly ours: boolean;
+	/** 对方（被合并的一侧）。 */
+	readonly theirs: boolean;
+}
+
+/** 一次冲突解决的结局。 */
+export interface ConflictReport {
+	/** 已处置的路径。 */
+	readonly resolved: readonly string[];
+	/** 未能处置的路径与原因，按 git 原文。 */
+	readonly errors: readonly string[];
+}
 
 /** 提交引用标记（分支/远程/标签）。 */
 export interface CommitTag {
@@ -52,6 +76,8 @@ export interface WorkingTreeEntry {
 	readonly index: string;
 	/** 工作区状态码。 */
 	readonly worktree: string;
+	/** 是否是未合并（冲突）条目：两列组成七种冲突组合之一。 */
+	readonly unmerged?: boolean;
 }
 
 /** 提交改动文件。 */
@@ -227,6 +253,8 @@ export interface ChangeActions {
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<DiscardReport>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
+	/** 对未合并条目执行一个解决动作，并把未完成的路径原因回报给用户。 */
+	readonly resolveConflict: (repo: string, paths: readonly string[], action: ConflictAction) => Promise<ConflictReport>;
 	/** 把路径加入 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;
 	/** 把路径加入本地排除文件。 */

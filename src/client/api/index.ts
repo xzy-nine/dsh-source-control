@@ -9,6 +9,8 @@ export * from './http.ts';
 export * from './repos.ts';
 export * from './state.ts';
 export * from './working-tree.ts';
+export * from './conflicts.ts';
+export * from './conflict-stages.ts';
 export * from './ignore.ts';
 export * from './commits.ts';
 export * from './branches.ts';
