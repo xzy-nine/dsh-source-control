@@ -275,11 +275,32 @@ test('冲突文件的状态按冲突种类判定', () => {
 	// 双方都删的冲突两侧都没有内容：不能读成新增。
 	assert.equal(adapter.statusOf({ ...CONFLICT_DIFF, oldText: null, newText: null, conflictKind: 'both-deleted' }), 'deleted');
 });
+/** 一段两处冲突的全文：用来证明「按段」而不是「整文件」处理。 */
+const TWO_SECTION_TEXT = [
+	'line1',
+	'<<<<<<< HEAD',
+	'line2-OURS',
+	'=======',
+	'line2-THEIRS',
+	'>>>>>>> side',
+	'line3',
+	'<<<<<<< HEAD',
+	'line10-OURS',
+	'=======',
+	'line10-THEIRS',
+	'>>>>>>> side',
+	'line12',
+	'',
+].join('\n');
 
-test('jsdom 里渲染冲突操作条与标记行着色', { skip }, async () => {
+test('jsdom 里渲染逐段左右对照：每段中间都有动作，点击回投该段下标', { skip }, async () => {
+	const view = clientModule;
+	assert.ok(view !== undefined, '分栏视图必须从产物里导出，供测试与页面复用');
+	const calls = [];
+	const allCalls = [];
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
-	const globalKeys = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'IntersectionObserver', 'MutationObserver'];
-	const saved = new Map(globalKeys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	const saved = new Map(['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame']
+		.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
 	setGlobal('window', dom.window);
 	setGlobal('document', dom.window.document);
@@ -287,63 +308,82 @@ test('jsdom 里渲染冲突操作条与标记行着色', { skip }, async () => {
 	setGlobal('HTMLElement', dom.window.HTMLElement);
 	setGlobal('Element', dom.window.Element);
 	setGlobal('Node', dom.window.Node);
-	setGlobal('getComputedStyle', dom.window.getComputedStyle.bind(dom.window));
 	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
 	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
-	setGlobal('IntersectionObserver', undefined);
-	setGlobal('MutationObserver', dom.window.MutationObserver);
-
-	const resolved = [];
 	try {
 		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
 		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
 		const reactRoot = createRoot(document.getElementById('root'));
-		const reach = adapter.createSectionReach();
-		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
-			path: 'conflict.txt',
-			content: CONFLICT_DIFF,
-			scope: { kind: 'worktree', staged: false },
-			split: false,
+		reactRoot.render(React.createElement(clientModule.ConflictView, {
+			text: TWO_SECTION_TEXT,
 			wrap: true,
-			state: { expanded: true, revealed: false, open: new Set() },
-			setState: () => {},
-			reach,
-			addToInput: () => true,
-			conflictLabel: '冲突：双方修改',
-			conflictActions: [
-				{ action: 'ours', title: '采用我方版本', enabled: true },
-				{ action: 'theirs', title: '采用对方版本', enabled: false },
-			],
-			onResolveConflict: (action) => { resolved.push(action); },
+			busy: false,
+			onResolveSection: (index, side) => { calls.push([index, side]); },
+			onResolveAll: (side) => { allCalls.push(side); },
 		}));
-		await waitFor(() => document.querySelector('[data-sc-conflict]') !== null, 'conflict markers');
+		await waitFor(() => document.querySelector('[data-sc-section]') !== null, 'section rows');
 
-		const bar = document.querySelector('[data-sc-conflict-bar]');
-		assert.ok(bar !== null, '冲突文件要显示操作条');
-		assert.match(bar.textContent, /冲突：双方修改/);
-		const oursButton = bar.querySelector('[data-sc-conflict-action="ours"]');
-		assert.equal(oursButton.disabled, false);
-		assert.equal(bar.querySelector('[data-sc-conflict-action="theirs"]').disabled, true, '不可用的动作要禁用');
-		oursButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-		assert.deepEqual(resolved, ['ours'], '点击动作回到调用方');
+		const sections = [...document.querySelectorAll('[data-sc-section]')];
+		assert.equal(sections.length, 2, '两处冲突各自成段');
 
-		const marks = [...document.querySelectorAll('[data-sc-conflict]')].map((row) => row.getAttribute('data-sc-conflict'));
-		assert.deepEqual(marks, ['ours', 'sep', 'theirs'], '三行标记各自打标');
+		// 每段中间五个动作：左 / 右 / 合 / 基 / 删。
+		const firstActions = [...sections[0].querySelectorAll('[data-sc-section-action]')].map((node) => node.getAttribute('data-sc-section-action'));
+		assert.deepEqual(firstActions, ['ours', 'theirs', 'both', 'base', 'none'], '中间一列是本段的动作');
 
-		// 非冲突文件不显示操作条。
-		reactRoot.render(React.createElement(adapter.ForgeDiffView, {
-			path: 'src/app.ts',
-			content: TEXT_DIFF,
-			scope: { kind: 'worktree', staged: false },
-			split: false,
-			wrap: true,
-			state: { expanded: true, revealed: false, open: new Set() },
-			setState: () => {},
-			reach,
-			addToInput: () => true,
-			conflictLabel: null,
+		// 段落两侧各显示自己那一侧的内容。
+		const html = document.getElementById('root').innerHTML;
+		assert.match(html, /line2-OURS/);
+		assert.match(html, /line2-THEIRS/);
+		assert.ok(!html.includes('<<<<<<<'), '标记行不直接画出来');
+		assert.match(html, /line1/, '冲突之外的普通行照常显示');
+
+		// 点第一段的「取对方」，回投的是第 0 段。
+		sections[0].querySelector('[data-sc-section-action="theirs"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+		assert.deepEqual(calls, [[0, 'theirs']]);
+
+		// 点第二段的「取我方」，回投第 1 段：证明动作按段而非按文件。
+		sections[1].querySelector('[data-sc-section-action="ours"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+		assert.deepEqual(calls, [[0, 'theirs'], [1, 'ours']]);
+
+		// 顶部「全部取我方」是整文件入口。
+		const allButton = [...document.querySelectorAll('button')].find((node) => node.textContent === '全部取我方');
+		assert.ok(allButton !== undefined, '整文件入口仍在');
+		allButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+		assert.deepEqual(allCalls, ['ours']);
+
+		await reactRoot.unmount();
+	} finally {
+		for (const [key, descriptor] of saved) {
+			if (descriptor === undefined) delete globalThis[key];
+			else Object.defineProperty(globalThis, key, descriptor);
+		}
+		dom.window.close();
+	}
+});
+
+test('没有冲突标记时给出已解决说明', { skip }, async () => {
+	const view = clientModule;
+	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+	const saved = new Map(['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame']
+		.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
+	setGlobal('window', dom.window);
+	setGlobal('document', dom.window.document);
+	setGlobal('navigator', dom.window.navigator);
+	setGlobal('HTMLElement', dom.window.HTMLElement);
+	setGlobal('Element', dom.window.Element);
+	setGlobal('Node', dom.window.Node);
+	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
+	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
+	try {
+		const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
+		const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
+		const reactRoot = createRoot(document.getElementById('root'));
+		reactRoot.render(React.createElement(clientModule.ConflictView, {
+			text: 'a\nb\n', wrap: true, busy: false, onResolveSection: () => {}, onResolveAll: () => {},
 		}));
-		await waitFor(() => document.querySelector('[data-sc-conflict-bar]') === null, 'no conflict bar');
+		await waitFor(() => document.querySelector('[data-sc-conflict-view]') !== null, 'conflict view');
+		assert.match(document.getElementById('root').textContent, /已没有冲突标记/);
 		await reactRoot.unmount();
 	} finally {
 		for (const [key, descriptor] of saved) {

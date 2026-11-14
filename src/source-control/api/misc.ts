@@ -16,12 +16,18 @@ import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, C
 import { conflictKindOfPair } from '../../shared/conflict-kind.js';
 import type { ConflictAction, ConflictStages } from '../conflict-ops.js';
 import type { ConflictKind } from '../../shared/conflict-kind.js';
+import { resolveAllConflictSections, resolveConflictSection } from '../conflict-sections.js';
+import type { SectionSide } from '../conflict-sections.js';
+import { applyHunks, hunkListOf } from '../hunk-ops.js';
 import { invalidateRepo } from '../host-cache.js';
 import { submitFeedback } from '../feedback.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
 import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
 import type { ApiContext } from './context.js';
+
+/** 分段解决可取的侧。 */
+const SECTION_SIDES: ReadonlySet<string> = new Set(['ours', 'theirs', 'both', 'base', 'none']);
 
 /**
  * 取官方 translator 服务；未装载时返回 undefined。
@@ -163,7 +169,7 @@ async function conflictLookup(repo: string, filePath: string): Promise<ConflictL
  * @returns 是否已处理；未识别的命令返回 false。
  */
 export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
-	const { msg, repo, str, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
+	const { msg, repo, str, bool, num, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
 	switch (ctx.command) {
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
@@ -355,6 +361,53 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				}
 				return { repo, stages };
 			});
+			break;
+		}
+		case 'resolveConflictSection': {
+			const filePath = str('filePath');
+			const index = num('index', -1);
+			const side = str('side');
+			if (filePath === '' || index < 0) { sendBadRequest('缺少 filePath 或 index'); break; }
+			if (!SECTION_SIDES.has(side)) { sendBadRequest('未知的分段解决方式'); break; }
+			await respondResult('resolveConflictSection', async () => {
+				const outcome = await resolveConflictSection(repo, filePath, index, side as SectionSide);
+				if (outcome.error !== null) throw new Error(outcome.error);
+				logInfo('repo', `冲突分段解决：${filePath} 第 ${String(index + 1)} 段取 ${side}`);
+				return { repo, hasMarkers: outcome.hasMarkers };
+			});
+			break;
+		}
+		case 'resolveAllConflictSections': {
+			const filePath = str('filePath');
+			const side = str('side');
+			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			if (!SECTION_SIDES.has(side)) { sendBadRequest('未知的分段解决方式'); break; }
+			await respondResult('resolveAllConflictSections', async () => {
+				const outcome = await resolveAllConflictSections(repo, filePath, side as SectionSide);
+				if (outcome.error !== null) throw new Error(outcome.error);
+				logInfo('repo', `冲突整文件解决：${filePath} 全部取 ${side}`);
+				return { repo, hasMarkers: outcome.hasMarkers };
+			});
+			break;
+		}
+		case 'applyHunk': {
+			const filePath = str('filePath');
+			const direction = str('direction') === 'unstage' ? 'unstage' : 'stage';
+			const indexes = arr<number>('indexes').filter((value) => Number.isInteger(value) && value >= 0);
+			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			await respondResult('applyHunk', async () => {
+				const outcome = await applyHunks(repo, filePath, indexes, direction);
+				if (outcome.error !== null) throw new Error(outcome.error);
+				logInfo('repo', `分段${direction === 'stage' ? '暂存' : '取消暂存'}：${filePath} 共 ${String(outcome.hunks.length)} 块`);
+				return { repo, path: outcome.path, hunks: outcome.hunks };
+			});
+			break;
+		}
+		case 'fileHunks': {
+			const filePath = str('filePath');
+			const staged = bool('staged');
+			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			await respondResult('fileHunks', async () => ({ repo, hunks: await hunkListOf(repo, filePath, staged) }));
 			break;
 		}
 		case 'resolveConflict': {

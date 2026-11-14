@@ -19,7 +19,6 @@ import { formatCommentQuote } from './comment-reference.ts';
 import { markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
 import type { GitDiffScope } from './resource-path.ts';
 import type { FileDiffContent } from '../api/commits.ts';
-import type { ConflictAction } from '../shared/types.ts';
 import css from '../css/forge-adapter.module.css';
 
 export { SectionReach };
@@ -149,44 +148,6 @@ export function createDiffFileHandlers(
 	return { handlers, state };
 }
 
-/** 冲突解决工具栏的属性。 */
-export interface ConflictToolbarProps {
-	/** 冲突种类文案。 */
-	readonly label: string;
-	/** 可用动作与当前是否成立。 */
-	readonly actions: ReadonlyArray<{ readonly action: ConflictAction; readonly title: string; readonly enabled: boolean }>;
-	/** 执行一个动作。 */
-	readonly onResolve: (action: ConflictAction) => void;
-}
-
-/**
- * 冲突操作条：种类文案与可用的解决动作。
- *
- * 只在冲突文件上出现；动作按阶段禁用，避免点了才失败。
- *
- * @param props - 见 {@link ConflictToolbarProps}。
- * @returns 操作条元素。
- */
-function ConflictToolbar({ label, actions, onResolve }: ConflictToolbarProps): ReactNode {
-	return createElement(
-		'div',
-		{ className: css.conflictBar, 'data-sc-conflict-bar': '' },
-		createElement('span', { className: css.conflictLabel }, label),
-		createElement(
-			'span',
-			{ className: css.conflictActions },
-			...actions.map((item) => createElement('button', {
-				key: item.action,
-				type: 'button',
-				className: css.conflictAction,
-				disabled: !item.enabled,
-				'data-sc-conflict-action': item.action,
-				onClick: () => { if (item.enabled) onResolve(item.action); },
-			}, item.title)),
-		),
-	);
-}
-
 /** `DiffFile` 的渲染入参，供差异页直接交给组件。 */
 export interface ForgeDiffViewProps {
 	/** 文件路径，用作文件段标题。 */
@@ -207,12 +168,6 @@ export interface ForgeDiffViewProps {
 	readonly reach: SectionReach;
 	/** 把一段引用文本插进当前会话的输入框；成功返回 true。 */
 	readonly addToInput: (text: string) => boolean;
-	/** 冲突种类文案；非冲突文件为 null。 */
-	readonly conflictLabel?: string | null;
-	/** 冲突可用的解决动作；非冲突文件为 undefined。 */
-	readonly conflictActions?: ConflictToolbarProps['actions'] | undefined;
-	/** 执行一个冲突解决动作。 */
-	readonly onResolveConflict?: ((action: ConflictAction) => void) | undefined;
 }
 
 /**
@@ -227,7 +182,7 @@ export interface ForgeDiffViewProps {
  * @returns 视图元素。
  */
 export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
-	const { path, content, scope, split, wrap, state, setState, reach, addToInput, conflictLabel, conflictActions, onResolveConflict } = props;
+	const { path, content, scope, split, wrap, state, setState, reach, addToInput } = props;
 	const file = toForgeFile(path, content);
 	const { handlers } = createDiffFileHandlers(state, setState, reach);
 	const t = forgePanelCopy();
@@ -309,34 +264,6 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 			window.removeEventListener('pointerup', up);
 		};
 	}, [settle, paint, rows]);
-	/*
-	 * 冲突标记着色：冲突差异的新侧是工作区全文，`<<<<<<< / ======= / >>>>>>>` 作为普通行
-	 * 出现在差异里。这里按行首文本给行元素打标，样式据此给三种标记行各自的底色；
-	 * 行元素由 forge 生成，因此按容器内的行属性查询，随内容变化重扫。
-	 */
-	useEffect(() => {
-		const element = host.current;
-		if (element === null) return undefined;
-		if (conflictLabel === null || conflictLabel === undefined) return undefined;
-		const mark = (): void => {
-			for (const row of selectableRows(element)) {
-				const code = row.querySelector('[data-review-code]');
-				const text = code?.textContent ?? '';
-				const kind = text.startsWith('<<<<<<<') ? 'ours'
-					: text.startsWith('>>>>>>>') ? 'theirs'
-						: text === '=======' || text === '=======\r' ? 'sep'
-							: null;
-				if (kind === null) continue;
-				row.setAttribute('data-sc-conflict', kind);
-			}
-		};
-		mark();
-		// 行在绘制回执后才落到 DOM：观察容器子树的变化再扫一次。
-		const observer = new MutationObserver(mark);
-		observer.observe(element, { childList: true, subtree: true });
-		return () => { observer.disconnect(); };
-	}, [conflictLabel, content, state.open]);
-
 	const chosen = range === null ? null : rangeBetween(rows(), range.low, range.high);
 	/** 取消评论：清掉选区，视图回到未选择状态。 */
 	const clear = useCallback((): void => {
@@ -394,8 +321,6 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 	return createElement(
 		'div',
 		{ className: css.host, 'data-sc-host': '', ref: host },
-		conflictLabel !== null && conflictLabel !== undefined && conflictActions !== undefined && onResolveConflict !== undefined
-			&& createElement(ConflictToolbar, { label: conflictLabel, actions: conflictActions, onResolve: onResolveConflict }),
 		createElement(DiffFile, view),
 		selection !== null && offset !== null && createElement(
 			'div',
@@ -423,7 +348,6 @@ export const __forgeAdapter = {
 	toForgeFile,
 	countLines,
 	statusOf,
-	ConflictToolbar,
 	createDiffFileHandlers,
 	ForgeDiffView,
 	createSectionReach: () => new SectionReach(),

@@ -25,10 +25,15 @@ import { NativeOpenControl } from './ui/native-open.ts';
 import { installOverlay } from './ui/overlay-host.ts';
 import { useSharedContextMenu } from './ui/context-menu.ts';
 import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
-import { API_PATH, fileDiffContent, installClientLog, logClient, resolveConflict, type FileDiffContent } from './api/index.ts';
-import { conflictActionsOf } from './panel/conflicts.ts';
-import { conflictEntryOf, CONFLICT_KIND_TEXT } from '../shared/conflict-kind.ts';
-import type { ConflictAction } from './shared/types.ts';
+import {
+	API_PATH, applyHunk as applyHunkCommand, fileDiffContent, installClientLog, loadFileHunks, logClient,
+	resolveAllConflictSections as resolveAllSectionsCommand,
+	resolveConflictSection as resolveConflictSectionCommand,
+	type FileDiffContent, type FileHunk,
+} from './api/index.ts';
+import { ConflictView } from './diff/conflict-view.ts';
+import type { SectionSide } from './diff/conflict-view.ts';
+import { HunkBar } from './diff/hunk-bar.ts';
 import { showMessage } from './ui/dialog.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
 import { PluginLogoIcon } from './ui/plugin-icon.ts';
@@ -275,28 +280,68 @@ function GitDiffTab(props) {
 	React.useEffect(() => {
 		load();
 	}, [load]);
+	/** 逐段动作进行中：禁用全部段落按钮，避免两次点击撞在一起。 */
+	const [resolving, setResolving] = React.useState(false);
+	/** 分段暂存进行中。 */
+	const [hunkBusy, setHunkBusy] = React.useState(false);
 	/**
-	 * 在差异页上解决当前文件的冲突。
+	 * 执行一次冲突处理并重取本页。
 	 *
-	 * 解决后重取本页数据：条目从工作区作用域换成「已按某一侧解决」的内容，重取才能看到结果。
-	 * 未能处置的路径由宿主逐条回投，这里汇总成一条提示。
+	 * 逐段与整文件两种粒度共用这条收尾：动作只改工作区文件，重取才能看到剩余段落。
 	 *
-	 * @param action - 解决动作。
+	 * @param operation - 要执行的处理。
 	 * @returns 无。
 	 */
-	const handleResolveDiff = React.useCallback((action: ConflictAction): void => {
-		if (typeof gitCwd !== 'string' || parsed === null) return;
-		setLoading(true);
-		resolveConflict(gitCwd, [currentPath], action)
-			.then(async (report) => {
-				if (report.errors.length > 0) await showMessage({ title: '冲突未解决', message: report.errors.join('\n') });
-				load();
-			})
+	const runResolve = React.useCallback((operation: () => Promise<unknown>): void => {
+		setResolving(true);
+		operation()
+			.then(() => { load(); })
 			.catch(async (error: unknown) => {
-				setLoading(false);
 				await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
-			});
-	}, [gitCwd, parsed, currentPath, load]);
+			})
+			.finally(() => { setResolving(false); setHunkBusy(false); });
+	}, [load]);
+	/** 按段解决当前文件的一处冲突；另一处的标记与内容原样保留。 */
+	const handleResolveSection = React.useCallback((index: number, side: SectionSide): void => {
+		if (typeof gitCwd !== 'string' || parsed === null) return;
+		runResolve(() => resolveConflictSectionCommand(gitCwd, currentPath, index, side));
+	}, [gitCwd, parsed, currentPath, runResolve]);
+	/** 把当前文件里剩余的全部冲突按同一侧处理。 */
+	const handleResolveAllSections = React.useCallback((side: SectionSide): void => {
+		if (typeof gitCwd !== 'string' || parsed === null) return;
+		runResolve(() => resolveAllSectionsCommand(gitCwd, currentPath, side));
+	}, [gitCwd, parsed, currentPath, runResolve]);
+	/** 文件当前的补丁块；分段暂存条据此列出可处理的块。 */
+	const [hunks, setHunks] = React.useState<FileHunk[]>([]);
+	React.useEffect(() => {
+		// 提交与对比作用域没有「暂存这一块」的语义：只对工作区与暂存区两个作用域取块。
+		if (typeof gitCwd !== 'string' || currentPath === '' || commitHash !== '*') { setHunks([]); return undefined; }
+		const cancelled = { current: false };
+		void (async () => {
+			try {
+				const list = await loadFileHunks(gitCwd, currentPath, staged);
+				if (!cancelled.current) setHunks(list);
+			} catch {
+				if (!cancelled.current) setHunks([]);
+			}
+		})();
+		return () => { cancelled.current = true; };
+	}, [gitCwd, currentPath, staged, commitHash, diffData]);
+	/**
+	 * 暂存或取消暂存若干补丁块。
+	 *
+	 * @param indexes - 块下标；空数组表示全部块。
+	 * @returns 无。
+	 */
+	const handleApplyHunk = React.useCallback((indexes: readonly number[]): void => {
+		if (typeof gitCwd !== 'string') return;
+		setHunkBusy(true);
+		// 分段命令把失败原因放在返回值里（逐块处理允许部分成功），因此这里额外判一次。
+		runResolve(async () => {
+			const error = await applyHunkCommand(gitCwd, currentPath, indexes, staged ? 'unstage' : 'stage');
+			if (error !== null) throw new Error(error);
+		});
+	}, [gitCwd, currentPath, staged, runResolve]);
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
@@ -333,23 +378,38 @@ function GitDiffTab(props) {
 				React.createElement('button', { type: 'button', className: css.tool, onClick: load }, '重试'));
 		}
 		if (diffData.binary) return React.createElement('p', { className: css.status }, '二进制文件，无法显示改动');
-		const conflictKind = diffData.conflictKind;
-		return React.createElement(ForgeDiffView, {
-			path: currentPath,
-			content: diffData,
-			scope: scope ?? { kind: 'worktree', staged: false },
-			split,
-			wrap,
-			state: fileState,
-			setState: setFileState,
-			reach,
-			addToInput,
-			conflictLabel: conflictKind === null ? null : CONFLICT_KIND_TEXT[conflictKind],
-			conflictActions: diffData.conflict && conflictKind !== null
-				? conflictActionsOf(conflictEntryOf(currentPath, conflictKind), diffData.conflictStages)
-				: undefined,
-			onResolveConflict: diffData.conflict ? handleResolveDiff : undefined,
-		});
+		/*
+		 * 冲突走逐段左右对照：处理粒度是「这一段取哪边」，动作在中间一列，而不是在顶栏
+		 * 对整个文件取一边。非冲突文件仍交给 forge 的 DiffFile，并在它上方挂分段暂存条。
+		 */
+		// 分段条对冲突与普通文件都要：冲突改完仍需按块进出索引。
+		const hunkBar = hunks.length === 0
+			? null
+			: React.createElement(HunkBar, { hunks, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk });
+		if (diffData.conflict && diffData.newText !== null) {
+			return React.createElement(React.Fragment, null,
+				hunkBar,
+				React.createElement(ConflictView, {
+					text: diffData.newText,
+					wrap,
+					busy: resolving,
+					onResolveSection: handleResolveSection,
+					onResolveAll: handleResolveAllSections,
+				}));
+		}
+		return React.createElement(React.Fragment, null,
+			hunkBar,
+			React.createElement(ForgeDiffView, {
+				path: currentPath,
+				content: diffData,
+				scope: scope ?? { kind: 'worktree', staged: false },
+				split,
+				wrap,
+				state: fileState,
+				setState: setFileState,
+				reach,
+				addToInput,
+			}));
 	};
 	return React.createElement(
 		'div',
@@ -690,3 +750,11 @@ export function apply(ctx) {
  */
 export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];
 export { __forgeAdapter } from './diff/forge-adapter.tsx';
+/**
+ * 分栏视图与分段条的可测面。
+ *
+ * 客户端测试跑在 Node 里，而 Node 的类型剥离不处理 TSX/JSX 之外的部分也要走产物，
+ * 因此这两份实现从构建产物取，断言的就是页面会跑的那份。
+ */
+export { ConflictView, rowsOf as __rowsOf } from './diff/conflict-view.ts';
+export { HunkBar } from './diff/hunk-bar.ts';

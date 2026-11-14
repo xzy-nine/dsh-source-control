@@ -170,7 +170,7 @@ export async function conflictTextsOf(repo: string, path: string, sources: Confl
  * @param path - 文件路径，相对仓库根。
  * @returns 文件内容；不存在或读不了时为 null。
  */
-async function worktreeText(repo: string, path: string): Promise<string | null> {
+export async function worktreeText(repo: string, path: string): Promise<string | null> {
 	try {
 		return await fs.readFile(nodePath.join(repo, ...path.split('/')), 'utf8');
 	} catch {
