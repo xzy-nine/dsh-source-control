@@ -6,22 +6,20 @@
   --forge-fill:var(--dsw-alias-card-fill);
   --forge-diff-empty:color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 50%,transparent);
   --forge-files-inset:0px;
-  /* 块布局：forge 的 DiffFile 按文档流排；评论框悬浮在其上，不占文档流。 */
+  /* 块布局：forge 的 DiffFile 按文档流排；评论框按 fixed 定位到视口，不占文档流。 */
   display:block;
   flex:1 0 auto;
   min-height:0;
-  position:relative;
 }
 
-/* 评论框悬浮层：绝对定位贴在选区靠指针反侧的那条边上，不撑高内容、也不参与滚动。
-   位置由适配层量出后写入内联 top 与 translateY。 */
+/* 评论框悬浮层：按 fixed 定位到视口，位置与高度上限由适配层算好后写入内联样式。
+   用 fixed 而不是 absolute：滚动视口（overflow:auto）与文件段（overflow:clip）都会
+   裁掉超出自身的内容，贴着选区边缘的浮窗会被切掉一截。 */
 .floating{
-  position:absolute;
-  inset-inline:10px;
-  z-index:4;
-  /* 贴在上缘时整体上移自身高度；高度受限，避免越过视图顶端被裁掉。 */
-  max-height:60vh;
+  position:fixed;
+  z-index:60;
   overflow:auto;
+  box-sizing:border-box;
 }
 
 /* 粘性文件头要挡住下面滚过的代码，因此背景不能透明；半透明配合背景模糊，

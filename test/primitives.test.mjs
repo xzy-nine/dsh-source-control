@@ -269,12 +269,12 @@ parallel('客户端结构与产物契约', (t) => {
 		const hostRule = /\.host\{[^}]*\}/.exec(adapterStyles);
 		assert.ok(hostRule !== null, '应存在差异视图外层的样式');
 		assert.match(hostRule[0], /display:block/, '外层必须按块布局排');
-		assert.match(hostRule[0], /position:relative/, '外层要作悬浮评论框的定位上下文');
 		assert.ok(!/\.host\{[^}]*flex-direction:column/.test(adapterStyles), '外层不得用 flex 列');
-		// 评论框必须悬浮：插入文档流会撑高内容，其自动聚焦还会把视口滚走。
+		// 评论框必须悬浮，且不受祖先裁切：插入文档流会撑高内容、自动聚焦还会把视口滚走；
+		// absolute 则会被滚动视口（overflow:auto）与文件段（overflow:clip）裁掉一截。
 		const floatingRule = /\.floating\{[^}]*\}/.exec(adapterStyles);
 		assert.ok(floatingRule !== null, '应存在评论框悬浮层的样式');
-		assert.match(floatingRule[0], /position:absolute/, '评论框必须绝对定位悬浮，不占文档流');
+		assert.match(floatingRule[0], /position:fixed/, '评论框必须 fixed 定位，既不占文档流也不被祖先裁切');
 
 		const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(indexSource, /from '\.\/diff\/forge-adapter\.tsx'/, '差异页应引用适配层');
