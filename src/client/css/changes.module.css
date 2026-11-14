@@ -88,3 +88,8 @@
 .status[data-type='C']{color:var(--dsw-alias-brand-primary)}
 
 .status[data-type='!']{color:var(--dsw-alias-state-error-primary)}
+/* 冲突条目的状态字符是两列原码（UU / AA / DU…），与单字符状态同列同色偏警示。 */
+.conflictStatus{font-size:10px;letter-spacing:-0.5px;color:var(--dsw-alias-state-warn-primary)}
+
+/* 冲突行的行内动作按钮：沿用悬停才出现的 .changeBtn，文字按钮需要一点内宽。 */
+.conflictActionText{font-size:11px;line-height:1}

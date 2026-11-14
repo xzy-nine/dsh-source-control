@@ -120,7 +120,6 @@ async function mountDiff() {
 		if (Date.now() > deadline) throw new Error('等待超时：差异行');
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
-
 	/**
 	 * 从一行按下、划过另一行、松开。
 	 * @param from - 起始行元素。
@@ -142,7 +141,25 @@ async function mountDiff() {
 		}
 		dom.window.close();
 	};
-	return { dom, rows: [...document.querySelectorAll('[data-diff-line]')], drag, dispose };
+	const found = [...document.querySelectorAll('[data-diff-line]')];
+	/*
+	 * jsdom 不做布局，所有 getBoundingClientRect 都是 0；避让要判断上下两侧够不够空间，
+	 * 全 0 会让它按规则翻侧。这里按真实排布给出几何：视口 800 高，外层从 300 起
+	 * （真实面板里内容不会贴着视口顶），每行 22 高、行间不重叠。
+	 */
+	const HOST_TOP = 300;
+	const hostElement = document.querySelector('[data-sc-host]');
+	const hostBox = {
+		left: 100, top: HOST_TOP, width: 600,
+		height: found.length * 22, right: 700, bottom: HOST_TOP + found.length * 22,
+	};
+	hostElement.getBoundingClientRect = () => hostBox;
+	for (const [index, row] of found.entries()) {
+		const top = HOST_TOP + index * 22;
+		const box = { left: 100, top, width: 600, height: 22, right: 700, bottom: top + 22 };
+		row.getBoundingClientRect = () => box;
+	}
+	return { dom, rows: found, drag, dispose };
 }
 
 test('松开鼠标后区间保持，不塌回起始行', async () => {
@@ -178,7 +195,8 @@ test('松开鼠标后区间保持，不塌回起始行', async () => {
 		assert.ok(floating.contains(composer), '评论框应在悬浮容器内');
 		assert.equal(floating.style.top === '', false, '悬浮位置应已量出并写入');
 		// 向下拖：指针停在选区下方，评论框浮在选区上缘。
-		assert.equal(floating.getAttribute('data-sc-side'), 'above', '向下拖时评论框应浮在选区上方');
+		const side = floating.getAttribute('data-sc-side');
+		assert.equal(side, 'above', '向下拖时评论框应浮在选区上方，实际 ' + side + ' top=' + floating.style.top);
 	} finally {
 		await dispose();
 	}
@@ -194,7 +212,8 @@ test('向上拖动时评论框浮在选区下方', async () => {
 		const floating = document.querySelector('[data-sc-composer]');
 		assert.ok(floating !== null, '评论框应有悬浮容器');
 		assert.equal(floating.getAttribute('data-sc-side'), 'below', '向上拖时评论框应浮在选区下方');
-		assert.equal(floating.style.transform, '', '浮在下方时不需要上移自身');
+		assert.equal(floating.style.top === '', false, 'fixed 定位下位置由适配层算好后写入');
+		assert.equal(floating.style.maxHeight === '', false, '高度上限应一并写入，保证整块在视口内');
 	} finally {
 		await dispose();
 	}

@@ -1,0 +1,17 @@
+/*
+ * 分段暂存条：正文上方一条紧凑的块列表，每块一个动作按钮。
+ */
+
+.bar{display:flex;flex:none;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;border-bottom:0.5px solid var(--dsw-alias-border-l3);font-size:11px;line-height:18px}
+
+.label{flex:none;color:var(--dsw-alias-label-tertiary);font-weight:600}
+
+.item{display:inline-flex;align-items:center;gap:4px;padding:1px 4px 1px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm)}
+
+.range{color:var(--dsw-alias-label-secondary);font-family:var(--ds-font-family-code);font-variant-numeric:tabular-nums}
+
+.button{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}
+
+.button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+
+.button:disabled{opacity:0.45;cursor:default}

@@ -9,7 +9,8 @@
  * 与 React 无关的纯模块，可直接单测：新增操作 = JSON 加一条 + 这里补一个同 id 的处理函数。
  */
 import type { ContextMenuItem } from '../ui/context-menu.ts';
-import type { WorkingTreeEntry } from '../shared/types.ts';
+import { conflictActionsOf, conflictKindOf } from './conflicts.ts';
+import type { ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
 import { CHANGE_MENU_ACTIONS, groupOf, titleOf, type ChangeMenuActionMeta, type ChangeMenuTarget } from './change-menu-actions.ts';
 
 export type { ChangeMenuTarget } from './change-menu-actions.ts';
@@ -44,6 +45,10 @@ export interface ChangeMenuDeps {
 	readonly onAddToLocalExclude: (path: string) => void;
 	/** 复制路径到剪贴板。 */
 	readonly onCopyPath: (path: string) => void;
+	/** 对未合并条目执行解决动作；普通分组不给，此时冲突菜单项不出现。 */
+	readonly onResolveConflict?: (paths: readonly string[], action: ConflictAction) => void;
+	/** 各冲突路径的阶段；冲突动作的可用性据此判定。 */
+	readonly conflictStages?: ReadonlyMap<string, ConflictStages>;
 }
 
 /** 一次菜单构建的上下文。 */
@@ -86,6 +91,31 @@ function disabledFor(ctx: ChangeMenuContext): boolean {
 	return ctx.deps.busy || ctx.count === 0;
 }
 
+/**
+ * 冲突动作在当前目标下是否可用。
+ *
+ * 只有文件行、条目确实是未合并条目、且该动作对这一种类成立时才出现；阶段未知时
+ * 只保留「标记为已解决」，其余动作无从判断，宁可不出。
+ *
+ * @param ctx - 构建上下文。
+ * @param action - 解决动作。
+ * @param title - 菜单名称。
+ * @returns 菜单项；不适用时为 null。
+ */
+function conflictItem(ctx: ChangeMenuContext, action: ConflictAction, title: string): ContextMenuItem | null {
+	const entry = ctx.entry;
+	const resolve = ctx.deps.onResolveConflict;
+	if (entry === null || resolve === undefined || conflictKindOf(entry) === null) return null;
+	const usable = conflictActionsOf(entry, ctx.deps.conflictStages?.get(entry.path) ?? null)
+		.find((item) => item.action === action);
+	if (usable === undefined) return null;
+	return {
+		title,
+		disabled: disabledFor(ctx) || !usable.enabled,
+		onClick: () => { resolve(ctx.paths, action); },
+	};
+}
+
 /** 各操作的处理函数；键为 JSON 里给出的 id，缺一个会编译报错。 */
 const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMenuActionMeta) => ContextMenuItem | null>> = {
 	open: (ctx, meta) => (ctx.entry === null
@@ -121,6 +151,14 @@ const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMen
 	copyPath: (ctx, meta) => (ctx.path === null
 		? null
 		: { title: meta.title, onClick: () => { ctx.deps.onCopyPath(ctx.path as string); } }),
+	resolveOurs: (ctx, meta) => conflictItem(ctx, 'ours', meta.title),
+	resolveTheirs: (ctx, meta) => conflictItem(ctx, 'theirs', meta.title),
+	deleteConflictFile: (ctx, meta) => {
+		const item = conflictItem(ctx, 'delete', meta.title);
+		return item === null ? null : { ...item, danger: meta.danger };
+	},
+	markResolved: (ctx, meta) => conflictItem(ctx, 'markResolved', meta.title),
+	restoreConflictMarkers: (ctx, meta) => conflictItem(ctx, 'restoreMarkers', meta.title),
 };
 
 /** 注册表：元数据取自 JSON，处理函数按 id 绑定。 */

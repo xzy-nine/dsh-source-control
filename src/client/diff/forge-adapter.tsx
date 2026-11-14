@@ -17,6 +17,7 @@ import { textLines } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/cli
 import { forgePanelCopy } from './forge-locales.ts';
 import { formatCommentQuote } from './comment-reference.ts';
 import { markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
+import { placeComposer, sameBox, type ComposerBox } from './composer-placement.ts';
 import type { GitDiffScope } from './resource-path.ts';
 import type { FileDiffContent } from '../api/commits.ts';
 import css from '../css/forge-adapter.module.css';
@@ -67,6 +68,8 @@ export function countLines(content: FileDiffContent): { readonly additions: numb
  * @returns forge 的文件状态。
  */
 export function statusOf(content: FileDiffContent): ForgeDiffFile['status'] {
+	// 双方都删除的冲突两侧都没有内容：按删除呈现，否则会被读成新增。
+	if (content.conflictKind === 'both-deleted') return 'deleted';
 	if (content.oldText === null) return 'added';
 	if (content.newText === null) return 'deleted';
 	return 'modified';
@@ -287,48 +290,55 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		t,
 	};
 	// 评论框用 forge 自己的 ReviewComposer：样式、按钮与文案全部来自库。
-	// 它悬浮在选区之下（绝对定位，不占文档流）：插入文档流会撑高内容，
-	// 它的自动聚焦还会把视口滚走。
+	// 它悬浮在选区靠指针反侧的那条边上（fixed 定位，不占文档流）：
+	// 插入文档流会撑高内容，它的自动聚焦还会把视口滚走。
 	const selection = chosen === null ? null : {
 		source: reviewActions.source,
 		comment: { path, side: chosen.side, startLine: chosen.startLine, endLine: chosen.endLine, hunk: '', body: '' },
 	};
-	const [offset, setOffset] = useState<number | null>(null);
+	const [box, setBox] = useState<ComposerBox | null>(null);
+	const floating = useRef<HTMLDivElement | null>(null);
+	const [forward, setForward] = useState(range?.forward ?? true);
+	useLayoutEffect(() => {
+		if (range !== null) setForward(range.forward);
+	}, [range]);
 	useLayoutEffect(() => {
 		const element = host.current;
-		if (element === null || range === null) { setOffset(null); return; }
+		if (element === null || range === null || selection === null) { setBox(null); return; }
 		/**
-		 * 量出评论框该落的位置：总在指针的反侧，免得挡住刚选过的代码。
-		 * 向下拖（指针停在选区下方）就浮在选区上缘，向上拖就浮在选区下缘。
+		 * 重排一次。
+		 *
+		 * 只在结果真的变化时写状态：写入会让浮窗尺寸变化，进而再触发一次量算，值相等比较
+		 * 是这条回路的终止条件。
 		 */
 		const measure = (): void => {
-			const list = selectableRows(element);
-			// 末行可能已被折叠或尚未绘制，此时不给位置，评论框不出现。
-			if (range.high >= list.length) { setOffset(null); return; }
-			const hostBox = element.getBoundingClientRect();
-			const edgeRow = list[range.forward ? range.low : range.high];
-			const rowBox = edgeRow.getBoundingClientRect();
-			const base = element.scrollTop - hostBox.top;
-			setOffset(range.forward ? rowBox.top + base : rowBox.bottom + base);
+			const next = placeComposer({
+				host: element,
+				rows: selectableRows(element),
+				range,
+				forward,
+				height: floating.current?.getBoundingClientRect().height ?? 0,
+			});
+			setBox((previous) => (sameBox(previous, next) ? previous : next));
 		};
 		measure();
-		// 窗口尺寸变化后重新量；滚动不必跟：外层位置由绝对定位相对它自己决定。
+		// 视口尺寸变化后重排；滚动不必跟：浮窗按 fixed 定位，相对视口而不是内容。
 		window.addEventListener('resize', measure);
 		return () => { window.removeEventListener('resize', measure); };
-	}, [range, split, wrap, state]);
+	}, [range, forward, selection, split, wrap, state]);
 	return createElement(
 		'div',
 		{ className: css.host, 'data-sc-host': '', ref: host },
 		createElement(DiffFile, view),
-		selection !== null && offset !== null && createElement(
+		selection !== null && createElement(
 			'div',
 			{
 				className: css.floating,
 				'data-sc-composer': '',
-				'data-sc-side': range?.forward === true ? 'above' : 'below',
-				// 浮在选区上缘时，上用到底即贴住上缘，故整体上移自身高度；
-				// 浮在下缘时直接从该处往下排。
-				style: { top: offset, transform: range?.forward === true ? 'translateY(-100%)' : undefined },
+				'data-sc-side': box?.side ?? (forward ? 'above' : 'below'),
+				// fixed 定位让浮窗脱离滚动视口与文件段的裁切；位置与高度上限由避让结果决定。
+				style: box === null ? { visibility: 'hidden' } : { top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight },
+				ref: floating,
 			},
 			createElement(ReviewComposer, { selection, actions: reviewActions, close: clear, t }),
 		),

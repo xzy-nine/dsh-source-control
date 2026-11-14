@@ -256,3 +256,204 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 	}
 });
 
+/** 一份冲突差异：新侧是工作区全文，带三行冲突标记。 */
+const CONFLICT_DIFF = {
+	path: 'conflict.txt',
+	oldText: 'base\n',
+	newText: '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> side\n',
+	binary: false,
+	conflict: true,
+	conflictKind: 'both-modified',
+	conflictStages: { base: true, ours: true, theirs: true },
+	hunks: [
+		{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 5, lines: ['-base', '+<<<<<<< HEAD', '+ours', '+=======', '+theirs', '+>>>>>>> side'] },
+	],
+};
+
+test('冲突文件的状态按冲突种类判定', () => {
+	assert.equal(adapter.statusOf(CONFLICT_DIFF), 'modified');
+	// 双方都删的冲突两侧都没有内容：不能读成新增。
+	assert.equal(adapter.statusOf({ ...CONFLICT_DIFF, oldText: null, newText: null, conflictKind: 'both-deleted' }), 'deleted');
+});
+/** 一段两处冲突的全文：用来证明「按段」而不是「整文件」处理。 */
+const TWO_SECTION_TEXT = [
+	'line1',
+	'<<<<<<< HEAD',
+	'line2-OURS',
+	'=======',
+	'line2-THEIRS',
+	'>>>>>>> side',
+	'line3',
+	'<<<<<<< HEAD',
+	'line10-OURS',
+	'=======',
+	'line10-THEIRS',
+	'>>>>>>> side',
+	'line12',
+	'',
+].join('\n');
+/** 一份两处冲突的三方文本。 */
+const MERGE_BASE = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n') + '\n';
+const MERGE_OURS = ['1', 'A', '3', '4', '5', '6', '7', '8', '9', '10'].join('\n') + '\n';
+const MERGE_THEIRS = ['1', '2', '3', '4', '5', '6', '7', '8', 'B', '10'].join('\n') + '\n';
+
+/** 环境变量表，用于在 jsdom 里覆写全局。 */
+const DOM_KEYS = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame'];
+
+/**
+ * 在 jsdom 里渲染一个元素，返回 DOM 与清理函数。
+ *
+ * @param element - 要渲染的元素。
+ * @param selector - 出现即视为渲染完成的选择器。
+ * @returns jsdom 与清理函数。
+ */
+async function renderDom(element, selector) {
+	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
+	const saved = new Map(DOM_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	const setGlobal = (key, value) => { Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); };
+	setGlobal('window', dom.window);
+	setGlobal('document', dom.window.document);
+	setGlobal('navigator', dom.window.navigator);
+	setGlobal('HTMLElement', dom.window.HTMLElement);
+	setGlobal('Element', dom.window.Element);
+	setGlobal('Node', dom.window.Node);
+	setGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
+	setGlobal('cancelAnimationFrame', (id) => clearTimeout(id));
+	const React = await import(pathToFileURL(join(root, 'node_modules', 'react', 'index.js')).href);
+	const { createRoot } = await import(pathToFileURL(join(root, 'node_modules', 'react-dom', 'client.js')).href);
+	const reactRoot = createRoot(document.getElementById('root'));
+	reactRoot.render(typeof element === 'function' ? element(React) : element);
+	await waitFor(() => document.querySelector(selector) !== null, selector);
+	return {
+		dom, React,
+		cleanup: async () => {
+			await reactRoot.unmount();
+			for (const [key, descriptor] of saved) {
+				if (descriptor === undefined) delete globalThis[key];
+				else Object.defineProperty(globalThis, key, descriptor);
+			}
+			dom.window.close();
+		},
+	};
+}
+
+test('jsdom 里渲染合并区间：每段中间有取舍按钮，点击回投该段下标', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge(MERGE_BASE, MERGE_OURS, MERGE_THEIRS);
+	assert.equal(analysis.ranges.length, 2, '两处改动各自成段');
+
+	const choices = new Map();
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis,
+			choices,
+			wrap: true,
+			busy: false,
+			onChoose: (index, choice) => { choices.set(index, choice); },
+		}),
+		'[data-sc-range]',
+	);
+	try {
+		const rows = [...document.querySelectorAll('[data-sc-range]')];
+		assert.equal(rows.length, 2);
+		// 非冲突段只给该侧的采纳按钮。
+		const actions = [...rows[0].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions, ['theirs', 'ours'], '非冲突段也给两个方向');
+		const actions2 = [...rows[1].querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions2, ['theirs', 'ours'], '两个方向始终都在');
+
+		rows[0].querySelector('[data-sc-range-action="ours"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
+		assert.equal(choices.get(0), 'ours', '点击回投第 0 段与当前更改');
+	} finally {
+		await env.cleanup();
+	}
+});
+
+test('jsdom 里渲染冲突段：两个采用方向与已处理状态', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\nc\n', 'a\nOURS\nc\n', 'a\nTHEIRS\nc\n');
+	assert.equal(analysis.ranges[0].conflicting, true);
+
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis,
+			choices: new Map([[0, 'theirs']]),
+			wrap: true,
+			busy: false,
+			onChoose: () => {},
+		}),
+		'[data-sc-range]',
+	);
+	try {
+		const row = document.querySelector('[data-sc-range="0"]');
+		// 两个方向：`《` 采用传入的更改，`》` 采用当前更改。
+		const actions = [...row.querySelectorAll('[data-sc-range-action]')].map((n) => n.getAttribute('data-sc-range-action'));
+		assert.deepEqual(actions, ['theirs', 'ours'], '冲突段给两个采用方向');
+		const marks = [...row.querySelectorAll('[data-sc-range-action]')].map((n) => n.textContent);
+		assert.deepEqual(marks, ['《', '》'], '用书名号表示采用方向');
+		assert.equal(row.getAttribute('data-handled'), '1', '已选择后标记为已处理');
+		assert.match(document.getElementById('root').textContent, /OURS/);
+		assert.match(document.getElementById('root').textContent, /THEIRS/);
+	} finally {
+		await env.cleanup();
+	}
+});
+
+test('jsdom 里渲染：三方一致时给出无改动说明', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\n', 'a\nb\n', 'a\nb\n');
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis, choices: new Map(), wrap: true, busy: false, onChoose: () => {},
+		}),
+		'[data-sc-merge-view]',
+	);
+	try {
+		assert.match(document.getElementById('root').textContent, /没有需要处理的改动/);
+	} finally {
+		await env.cleanup();
+	}
+});
+test('jsdom 里渲染合并视图：选中行后浮出评论框并给出该侧行号', { skip }, async () => {
+	const { analyzeMerge } = await import('../src/shared/merge-ranges.ts');
+	const analysis = analyzeMerge('a\nb\nc\n', 'a\nOURS\nc\n', 'a\nTHEIRS\nc\n');
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.MergeView, {
+			analysis, choices: new Map(), wrap: true, busy: false,
+			onChoose: () => {},
+			onComment: () => {},
+		}),
+		'[data-sc-range]',
+	);
+	try {
+		// 两栏的行都要能被选中：左栏带 ours 行号，右栏带 theirs 行号。
+		const oursRow = document.querySelector('[data-ours-line][data-diff-line]');
+		const theirsRow = document.querySelector('[data-theirs-line][data-diff-line]');
+		assert.ok(oursRow !== null, '当前更改的行要带行号属性');
+		assert.ok(theirsRow !== null, '传入的更改的行要带行号属性');
+
+		oursRow.dispatchEvent(new env.dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+		env.dom.window.dispatchEvent(new env.dom.window.MouseEvent('pointerup', { bubbles: true }));
+
+		await waitFor(() => document.querySelector('[data-sc-merge-comment]') !== null, 'comment box');
+		const box = document.querySelector('[data-sc-merge-comment]');
+		assert.match(box.textContent, /评论：当前更改第 \d+ 行/, '选区落在左栏时注明该栏与行号');
+		assert.ok(box.querySelector('textarea') !== null, '评论框要有正文输入');
+		assert.ok(box.querySelector('[data-sc-comment-submit]') !== null, '评论框要有插入对话按钮');
+		// 选区高亮落在被选中的行上。
+		assert.ok(oursRow.hasAttribute('data-sc-range'), '选中的行要标出来');
+	} finally {
+		await env.cleanup();
+	}
+});
+
+
+test('合并评论的定位写明是哪一份内容', async () => {
+	const { formatMergeComment } = await import('../src/client/diff/comment-reference.ts');
+	const ours = formatMergeComment('a/b.md', 'ours', 3, 5, '要改为另一种写法');
+	assert.match(ours, /合并冲突 a\/b\.md 当前更改第 3-5 行/);
+	assert.match(ours, /要改为另一种写法/);
+	const theirs = formatMergeComment('a/b.md', 'theirs', 7, 7, '');
+	assert.match(theirs, /传入的更改第 7 行/);
+	assert.doesNotMatch(theirs, /\n/, '没有正文时只给一行定位');
+});

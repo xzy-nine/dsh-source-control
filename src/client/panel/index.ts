@@ -9,7 +9,9 @@ import React from 'react';
 import {
 	discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
+	resolveConflict as resolveConflictCommand, loadConflictStagesOf, CONFLICT_ACTION_TEXT,
 } from '../api/index.ts';
+import { unresolvedConflictCountOf } from './conflicts.ts';
 import { showCheckbox, showError, showText } from '../ui/dialog.ts';
 import { RefFilterDialog } from './ref-filter-dialog.ts';
 import { ChangesSection, GraphSection, RepoSection } from './sections.ts';
@@ -48,7 +50,7 @@ import { useRepoCommands } from './use-repo-commands.ts';
 import { useCommitSelection } from './use-commit-selection.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
-import type { BusyScope, Commit, PanelRun, RefInfo, RefItem, RepoSync, Settings } from '../shared/types.ts';
+import type { BusyScope, Commit, ConflictAction, ConflictStages, PanelRun, RefInfo, RefItem, RepoSync, Settings } from '../shared/types.ts';
 import css from '../css/panel.module.css';
 import shared from '../css/shared.module.css';
 
@@ -122,10 +124,14 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const [branchBase, setBranchBase] = React.useState<{ repo: string; branch: string; base: string | null } | null>(null);
 	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；窗口级、不持久化。
 	// detail 是图形区内展开块的文件夹集合。
-	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; detail: Set<string> }>(
-		() => ({ staged: new Set(), unstaged: new Set(), detail: new Set() }),
+	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; conflict: Set<string>; detail: Set<string> }>(
+		() => ({ staged: new Set(), unstaged: new Set(), conflict: new Set(), detail: new Set() }),
 	);
-	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean }>(() => ({ staged: true, unstaged: true }));
+	const [groupExpanded, setGroupExpanded] = React.useState<{ staged: boolean; unstaged: boolean; conflict: boolean }>(
+		() => ({ staged: true, unstaged: true, conflict: true }),
+	);
+	/** 各冲突路径的阶段；分组的动作可用性据此判定，随条目变化重取。 */
+	const [conflictStages, setConflictStages] = React.useState<ReadonlyMap<string, ConflictStages>>(new Map());
 	/*
 	 * 宿主状态预取。
 	 *
@@ -268,6 +274,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
+	/** 未解决的冲突条目数：大于零时提交按钮禁用，冲突分组据此显示。 */
+	const unresolvedConflicts = React.useMemo(() => unresolvedConflictCountOf(state.entries), [state.entries]);
 	/** 翻译服务是否可用：提交框与图形区共用同一判据。 */
 	const translateReady = useTranslateReady(workingTreePath);
 	const {
@@ -372,7 +380,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	const toggleChange = React.useCallback((key: string, path: string) => {
 		setCollapsedByGroup((previous) => {
-			const current = previous[key as 'staged' | 'unstaged' | 'detail'];
+			const current = previous[key as 'staged' | 'unstaged' | 'conflict' | 'detail'];
 			const next = new Set(current);
 			if (next.has(path)) next.delete(path);
 			else next.add(path);
@@ -381,7 +389,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, []);
 
 	const toggleGroup = React.useCallback((key: string) => {
-		setGroupExpanded((previous) => ({ ...previous, [key]: !previous[key as 'staged' | 'unstaged'] }));
+		setGroupExpanded((previous) => ({ ...previous, [key]: !previous[key as 'staged' | 'unstaged' | 'conflict'] }));
 	}, []);
 
 	/**
@@ -567,6 +575,59 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		return report;
 	}, [notify, announce]);
 
+	/*
+	 * 冲突阶段的取数：条目里出现未合并路径时按批重取一次。
+	 *
+	 * 阶段决定某一侧是否还有内容，只在冲突集合本身变化时重取；普通改动不影响它。
+	 */
+	const conflictPathsKey = React.useMemo(
+		() => state.entries.filter((entry) => entry.unmerged === true).map((entry) => entry.path).join('\n'),
+		[state.entries],
+	);
+	/**
+	 * 取一组冲突路径的阶段。
+	 *
+	 * 阶段决定「采用我方/采用对方」是否成立：某侧在索引里没有内容时该动作对这条路径
+	 * 不适用，界面据此禁用而不必先点一次看报错。
+	 */
+	const loadConflictStages = React.useCallback(async (repo: string, paths: readonly string[]): Promise<void> => {
+		if (paths.length === 0) { setConflictStages(new Map()); return; }
+		try {
+			const stages = await loadConflictStagesOf(repo, paths);
+			setConflictStages(stages);
+		} catch {
+			setConflictStages(new Map());
+		}
+	}, []);
+
+	React.useEffect(() => {
+		const paths = conflictPathsKey === '' ? [] : conflictPathsKey.split('\n');
+		if (workingTreePath === null) { setConflictStages(new Map()); return; }
+		void loadConflictStages(workingTreePath, paths);
+	}, [conflictPathsKey, workingTreePath, loadConflictStages]);
+
+	/**
+	 * 对未合并条目执行一个解决动作。
+	 *
+	 * 解决只改索引与工作区，不动引用与提交历史，因此按 commit 影响面对账、只重取工作区快照。
+	 * 未能处置的路径逐条报出原因：一批里某个种类不适用的条目不该被静默吞掉。
+	 *
+	 * @param paths - 文件路径，相对仓库根。
+	 * @param action - 解决动作。
+	 * @returns 无。
+	 */
+	const handleResolveConflict = React.useCallback((paths: readonly string[], action: ConflictAction): void => {
+		const label = CONFLICT_ACTION_TEXT[action];
+		void (async () => {
+			const target = workingTreePath;
+			if (target === null) return;
+			await run('commit', async () => {
+				const report = await resolveConflictCommand(target, paths, action);
+				if (report.errors.length > 0) await notify(report.errors.join('\n'));
+			}, undefined, undefined, { historyChanged: false, intent: `${label}（${String(paths.length)} 个路径）` });
+		})();
+	}, [run, workingTreePath, notify]);
+
 	/** 中止进行中的合并，把工作区恢复到合并前。已解决的冲突改动会一并丢弃，因此先确认。 */
 	const handleAbortMerge = React.useCallback(() => {
 		void (async () => {
@@ -604,6 +665,10 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		scrollToHeadOnLoad: settings.onRepoLoadScrollToHead,
 	});
 	const { openDiff, openLogFile, toggleCommit, goToHead, headCommitHash } = selection;
+	/** 打开冲突文件的差异页：冲突恒按工作区作用域打开，暂存区那边只会给出 `* Unmerged path`。 */
+	const handleOpenConflict = React.useCallback((entry: { path: string }): void => {
+		void openDiff('*', entry.path, false, false);
+	}, [openDiff]);
 	/** 当前分支可达的提交哈希集合；重置这类改写当前分支的操作据此显示。 */
 	const branchHashes = React.useMemo(() => currentBranchHashes(state.commits, state.head), [state.commits, state.head]);
 
@@ -912,6 +977,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			canSubmit: composer.canSubmit, onSubmit: composer.submit, onRefresh: refreshAll,
 			onSyncContextMenu: overwriteChoicesAvailable ? remoteSync.handleSyncContextMenu : undefined,
 			collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
+			resolveConflict: async (repo, paths, action) => resolveConflictCommand(repo, paths, action),
+			onResolveConflict: handleResolveConflict,
+			unresolvedConflicts: unresolvedConflicts,
+			conflictStages,
+			onOpenConflict: handleOpenConflict,
 			stagePaths, unstagePaths, discardPaths: handleDiscardPaths, openDiff,
 			onAddToGitignore: repoCommands.handleAddToGitignore, onAddToLocalExclude: repoCommands.handleAddToLocalExclude,
 			hasLocalExclude: (repoCommands.localExclude?.entries.length ?? 0) > 0, onShowLocalExclude: repoCommands.handleShowLocalExclude,

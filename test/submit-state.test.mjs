@@ -40,10 +40,21 @@ parallel('提交框判据', (t) => {
 	});
 
 	t.test('提交可用性：有暂存改动、修补或合并中', () => {
-		assert.equal(canSubmitOf({ stagedCount: 1, amend: false, merging: false }), true);
-		assert.equal(canSubmitOf({ stagedCount: 0, amend: true, merging: false }), true);
-		assert.equal(canSubmitOf({ stagedCount: 0, amend: false, merging: true }), true);
-		assert.equal(canSubmitOf({ stagedCount: 0, amend: false, merging: false }), false);
+		assert.equal(canSubmitOf({ stagedCount: 1, amend: false, merging: false, unresolvedConflicts: 0 }), true);
+		assert.equal(canSubmitOf({ stagedCount: 0, amend: true, merging: false, unresolvedConflicts: 0 }), true);
+		assert.equal(canSubmitOf({ stagedCount: 0, amend: false, merging: true, unresolvedConflicts: 0 }), true);
+		assert.equal(canSubmitOf({ stagedCount: 0, amend: false, merging: false, unresolvedConflicts: 0 }), false);
+	});
+
+	t.test('提交可用性：还有未解决冲突时一律不可提交', () => {
+		for (const input of [
+			{ stagedCount: 1, amend: false, merging: false },
+			{ stagedCount: 0, amend: true, merging: false },
+			{ stagedCount: 0, amend: false, merging: true },
+		]) {
+			assert.equal(canSubmitOf({ ...input, unresolvedConflicts: 1 }), false, `${JSON.stringify(input)} 有冲突时不能提交`);
+		}
+		assert.equal(canSubmitOf({ stagedCount: 1, amend: false, merging: false, unresolvedConflicts: 0 }), true, '冲突清零后恢复');
 	});
 
 	t.test('提交按钮禁用：合并中不因信息为空而禁用', () => {

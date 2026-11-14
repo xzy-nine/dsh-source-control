@@ -1,0 +1,80 @@
+/*
+ * 合并区间视图：三列网格——我方 / 取舍 / 对方，行高对齐。
+ *
+ * 配色取 VS Code 合并编辑器的语义（未处理 / 已处理 / 输入侧底色），但用本仓库的
+ * dsw 变量，因此与其它界面同色系。
+ */
+
+.mergeView{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;font-family:var(--ds-font-family-code);font-size:12px;line-height:18px}
+
+.toolbar{display:flex;flex:none;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 10px;border-bottom:0.5px solid var(--dsw-alias-border-l3);font-family:inherit;font-size:12px}
+
+.progress{color:var(--dsw-alias-label-secondary)}
+
+.heads{display:grid;grid-template-columns:minmax(0,1fr) 96px minmax(0,1fr);flex:none;border-bottom:0.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-card-fill)}
+
+.head{position:sticky;top:0;z-index:1;padding:4px 8px;font-family:inherit;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
+
+.headActions{text-align:center;padding:4px 0}
+
+.body{display:grid;grid-template-columns:minmax(0,1fr) 96px minmax(0,1fr);align-items:start;overflow:auto}
+
+/* 区间之外的未改动行横跨三列：两份内容一致，重复画没有意义。 */
+.commonRow{grid-column:1 / -1;padding:0 8px;color:var(--dsw-alias-label-secondary)}
+
+.row{display:flex;gap:8px;min-width:0}
+
+.lineNo{flex:none;width:4ch;text-align:right;color:var(--dsw-alias-label-tertiary);user-select:none;font-variant-numeric:tabular-nums}
+
+.lineText{flex:1 1 auto;min-width:0;white-space:pre}
+
+.mergeView:not([data-wrap]) .lineText{white-space:pre;overflow-x:auto}
+
+/* 一个区间横跨三列，内部仍是同一个三列网格，因此两栏的行与中间的按钮同高。 */
+.rangeRow{grid-column:1 / -1;display:grid;grid-template-columns:minmax(0,1fr) 96px minmax(0,1fr);align-items:stretch;border-block:1px solid var(--dsw-alias-border-l1)}
+
+/* 未处理的冲突用警告色描边，与 VS Code 的 unhandled 边框对应。 */
+.rangeRow.conflict{border-color:var(--dsw-alias-state-warn-primary)}
+
+.rangeRow.conflict:not(.handled){background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 7%,transparent)}
+
+.rangeRow.handled{border-color:var(--dsw-alias-border-l2);opacity:0.85}
+
+.sideCell{min-width:0;padding:4px 8px;overflow-x:auto}
+
+.sideCell[data-side='ours']{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 5%,transparent)}
+
+.sideCell[data-side='theirs']{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 5%,transparent)}
+
+.column{display:flex;flex-direction:column}
+
+.emptySide{color:var(--dsw-alias-label-tertiary);font-family:inherit;font-style:italic}
+
+/* 两个方向的按钮纵向排列在中间一列。 */
+.actions{display:flex;flex-direction:column;justify-content:center;gap:3px;padding:4px 0}
+
+.actionButton{width:44px;height:22px;margin:0 auto;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:1;cursor:pointer}
+
+.actionButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.actionButton:disabled{opacity:0.4;cursor:default}
+
+/* 已选中的取舍：实心，避免与「未处理」混淆。 */
+.actionButton.active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}
+
+.note{padding:16px;font-family:inherit;font-size:13px;color:var(--dsw-alias-label-secondary)}
+/* 行选区高亮：与差异页同色，选中后浮出评论框。 */
+.mergeView :global([data-sc-range]){background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}
+
+/* 评论框：贴在合并视图底部，不遮挡内容。 */
+.composer{display:flex;flex:none;flex-direction:column;gap:6px;padding:8px 10px;border-top:0.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-card-fill);font-family:inherit}
+
+.composerHead{font-size:12px;color:var(--dsw-alias-label-secondary)}
+
+.composerInput{box-sizing:border-box;width:100%;min-height:56px;max-height:30vh;padding:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;resize:vertical}
+
+.composerActions{display:flex;gap:6px;justify-content:flex-end}
+
+.composerButton{padding:2px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+
+.composerButton.primary{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}

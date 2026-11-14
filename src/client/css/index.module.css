@@ -67,3 +67,11 @@
 /* 差异视图里的已审阅标记不属于本插件：没有已审阅状态可存，也无可提交的评审。
    forge 的 DiffFile 只在这个控件上写 data-disabled，因此这一条只命中它。 */
 .diffTabBody label[data-disabled]{display:none}
+/* 合并视图底部：处理进度与「写回结果」。固定在本页底部，不随内容滚动。 */
+.mergeFooter{display:flex;flex:none;gap:10px;align-items:center;padding:8px 10px;border-top:0.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-card-fill)}
+
+.mergeFooterText{font-size:12px;color:var(--dsw-alias-label-secondary)}
+
+.primaryButton{margin-left:auto;padding:3px 12px;border:1px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+
+.primaryButton:disabled{opacity:0.45;cursor:default}

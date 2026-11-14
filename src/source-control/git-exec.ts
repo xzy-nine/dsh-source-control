@@ -510,7 +510,7 @@ const writeListeners = new Set<(repo: string, surface: WriteSurface) => void>();
 export type WriteSurface = 'history' | 'index';
 
 /** 只影响索引与工作区的写子命令；不在表内的一律按 `history`。 */
-const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv']);
+const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv', 'checkout-index']);
 
 /**
  * 判定一条写命令的影响面。
