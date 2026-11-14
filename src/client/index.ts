@@ -313,9 +313,9 @@ function GitDiffTab(props) {
 			.finally(() => { setResolving(false); setHunkBusy(false); });
 	}, [load]);
 	/*
-	 * 三方内容与区间取舍：冲突文件不读工作区里的冲突标记，而是把基线 / 我方 / 对方
-	 * 三份文本取来、在页面里算区间，再按选择表把结果写回。这与 VS Code 合并编辑器一致，
-	 * 也避免标记被人手工改过之后整份视图失真。
+	 * 三方内容与区间取舍：冲突文件不读工作区里的冲突标记，而是把基线 / 当前更改 /
+	 * 传入的更改三份文本取来、在页面里算区间，再按选择表把结果写回。这与 VS Code
+	 * 合并编辑器一致，也避免标记被人手工改过之后整份视图失真。
 	 */
 	const [mergePayload, setMergePayload] = React.useState<MergeContentsPayload | null>(null);
 	const [choices, setChoices] = React.useState<ReadonlyMap<number, MergeChoice>>(new Map());
@@ -358,7 +358,7 @@ function GitDiffTab(props) {
 	 *
 	 * 评论带着「哪一份内容第几行」的定位：模型据此能自己去读对应版本，不必把代码抄进消息。
 	 *
-	 * @param range - 选区（我方或对方的行号）。
+	 * @param range - 选区（当前更改或传入的更改的行号）。
 	 * @param body - 评论正文。
 	 * @returns 无。
 	 */

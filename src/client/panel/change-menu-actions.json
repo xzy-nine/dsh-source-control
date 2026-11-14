@@ -78,7 +78,7 @@
 				"file"
 			],
 			"group": "conflict",
-			"title": "采用我方版本"
+			"title": "采用当前更改"
 		},
 		{
 			"id": "resolveTheirs",
@@ -86,7 +86,7 @@
 				"file"
 			],
 			"group": "conflict",
-			"title": "采用对方版本"
+			"title": "采用传入的更改"
 		},
 		{
 			"id": "deleteConflictFile",

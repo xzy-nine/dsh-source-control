@@ -118,8 +118,8 @@ const AVAILABILITY: Readonly<Record<ConflictKind, readonly ConflictAction[]>> = 
 
 /** 动作文案。 */
 const ACTION_TITLE: Readonly<Record<ConflictAction, string>> = {
-	ours: '采用我方版本',
-	theirs: '采用对方版本',
+	ours: '采用当前更改',
+	theirs: '采用传入的更改',
 	delete: '删除文件',
 	markResolved: '标记为已解决',
 	restoreMarkers: '重新生成冲突标记',
@@ -128,7 +128,7 @@ const ACTION_TITLE: Readonly<Record<ConflictAction, string>> = {
 /**
  * 取一个条目的可用解决动作。
  *
- * 「采用我方/采用对方」要求该侧在索引里有内容；「重新生成冲突标记」要求三个阶段齐备，
+ * 「采用当前更改/采用传入的更改」要求该侧在索引里有内容；「重新生成冲突标记」要求三个阶段齐备，
  * 因此阶段信息缺失时按不可用处理。
  *
  * @param entry - 工作区条目。

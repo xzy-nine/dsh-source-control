@@ -1,14 +1,11 @@
 /**
- * 合并区间视图：左我方、右对方，每个冲突区间中间给两个按钮把一侧覆盖给另一侧。
+ * 合并区间视图：左侧「当前更改」、右侧「传入的更改」，每个冲突区间中间给两个按钮
+ * 把一侧替换成另一侧。
  *
- * 布局照 VS Code 合并编辑器分层（两个输入侧各自成栏、区间按块着色），但取舍只有
- * 两个方向：
- *
- * - `《` 把右（对方）覆盖到左（我方）
- * - `》` 把左（我方）覆盖到右（对方）
- *
- * 视图面向的是「看清冲突并给出编辑指导」，不是完整的合并编辑器，因此不提供并集、
- * 基线或两边都丢弃。区间之外未改动的行按整行显示。
+ * 命名与动作取 git 与 VS Code 的既有说法（`:2:`/`Current` 为当前分支，
+ * `:3:`/`Incoming` 为被合入的一侧）。视图面向的是「看清冲突并给出编辑指导」，
+ * 不是完整的合并编辑器，因此不提供并集、基线或两边都丢弃。区间之外未改动的行
+ * 按整行显示。
  *
  * 行选区与评论复用差异页的同一套机制：每行带行号属性，拖动选连续行后可在本页
  * 直接写评论，评论按「哪一份内容第几行」插进对话输入框。
@@ -29,10 +26,15 @@ interface RangeAction {
 	readonly direction: 'left' | 'right';
 }
 
-/** 每个区间可用的两个方向。 */
+/**
+ * 每个区间可用的两个方向。
+ *
+ * 措辞取 git 与 VS Code 的既有说法：`Current` 为当前分支（`:2:`，`ours`），
+ * `Incoming` 为被合入的一侧（`:3:`，`theirs`），动词用「采用」。
+ */
 const RANGE_ACTIONS: readonly RangeAction[] = [
-	{ choice: 'theirs', title: '用对方内容覆盖我方这一处', mark: '《', direction: 'left' },
-	{ choice: 'ours', title: '用我方内容覆盖对方这一处', mark: '》', direction: 'right' },
+	{ choice: 'theirs', title: '采用传入的更改（右侧替换左侧）', mark: '《', direction: 'left' },
+	{ choice: 'ours', title: '采用当前更改（左侧替换右侧）', mark: '》', direction: 'right' },
 ];
 
 /** 视图属性。 */
@@ -160,7 +162,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		const list = selectable();
 		const low = Math.min(from, to);
 		const rowsInRange = list.slice(low, Math.max(from, to) + 1);
-		// 起点所在的行决定评论锚定在哪一栏：只有对方行号的是对方栏（R），其余算我方（L）。
+		// 起点所在的行决定评论锚定在哪一栏：只有传入侧行号的是右侧（R），其余算左侧（L）。
 		const first = list.length === 0 ? null : list[Math.min(from, to)];
 		const side: LineRange['side'] = first !== null && first.hasAttribute('data-theirs-line') && !first.hasAttribute('data-ours-line')
 			? 'R' : 'L';
@@ -247,14 +249,14 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		React.createElement(
 			'div',
 			{ className: css.toolbar },
-			React.createElement('span', { className: css.progress }, `已覆盖 ${String(chosenCount)} / ${String(conflictingCount)} 处冲突`),
+			React.createElement('span', { className: css.progress }, `已采用 ${String(chosenCount)} / ${String(conflictingCount)} 处冲突`),
 		),
 		React.createElement(
 			'div',
 			{ className: css.heads },
-			React.createElement('div', { className: css.head }, '我方'),
-			React.createElement('div', { className: `${css.head} ${css.headActions}` }, '覆盖'),
-			React.createElement('div', { className: css.head }, '对方'),
+			React.createElement('div', { className: css.head }, '当前更改'),
+			React.createElement('div', { className: `${css.head} ${css.headActions}` }, '采用'),
+			React.createElement('div', { className: css.head }, '传入的更改'),
 		),
 		React.createElement(
 			'div',
@@ -312,7 +314,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 			'div',
 			{ className: css.composer, 'data-sc-merge-comment': '' },
 			React.createElement('div', { className: css.composerHead },
-				`评论：${selection.side === 'R' ? '对方' : '我方'}第 ${String(selection.startLine)}${selection.startLine === selection.endLine ? '' : `-${String(selection.endLine)}`} 行`),
+				`评论：${selection.side === 'R' ? '传入的更改' : '当前更改'}第 ${String(selection.startLine)}${selection.startLine === selection.endLine ? '' : `-${String(selection.endLine)}`} 行`),
 			React.createElement('textarea', {
 				className: css.composerInput,
 				value: body,
