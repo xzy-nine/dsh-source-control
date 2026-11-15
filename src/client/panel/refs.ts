@@ -164,7 +164,8 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 	const head = context.head === null || context.head === '' ? context.headHash ?? null : `refs/heads/${context.head}`;
 	if (head !== null && head !== '') starts.push(head);
 	const upstream = context.upstream;
-	if (upstream !== null && upstream !== '') starts.push(`refs/remotes/${upstream}`);
+	// 上游可以是远程跟踪引用，也可以是本地分支（branch.X.remote 为 .）：后者已带 refs/ 前缀，不能再套一层。
+	if (upstream !== null && upstream !== '') starts.push(upstream.startsWith('refs/') ? upstream : `refs/remotes/${upstream}`);
 	// 分叉来源与上游或当前分支是同一个引用时不再重复。
 	if (context.base !== null && context.base !== '' && context.base !== upstream && context.base !== context.head) starts.push(context.base);
 	return starts;

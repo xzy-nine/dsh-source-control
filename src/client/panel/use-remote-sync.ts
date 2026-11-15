@@ -69,7 +69,8 @@ export interface RemoteSync {
  * @returns 完整引用名。
  */
 function remoteTrackingRef(upstream: string): string {
-	return 'refs/remotes/' + upstream;
+	// 上游也可能是本地分支（branch.X.remote 为 .），那时它已经是一个完整引用。
+	return upstream.startsWith('refs/') ? upstream : 'refs/remotes/' + upstream;
 }
 
 /**
@@ -112,8 +113,8 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	 * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
 	 * @returns 无。
 	 */
-	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false): Promise<void> => {
-		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks);
+	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false, cancelKey = ''): Promise<void> => {
+		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks, cancelKey);
 		if (error === null) return;
 		if (/no configured push destination|no configured remote/i.test(error)) {
 			throw new Error('未配置远程仓库，请先在设置中添加远程。');
@@ -332,6 +333,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		const parts = upstreamPartsOf(currentSync?.upstream ?? null);
 		void run('network', async (cancelKey, reportPhase) => {
 			// 三个阶段各自声明：等待时能看出卡在哪一段，而不是只看到「同步」。
+			// 每个阶段都用同一个停止键登记，用户在任意一段停止都能落到当时在跑的那个进程上。
 			reportPhase('抓取');
 			if (parts === null) {
 				await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
@@ -340,11 +342,11 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			}
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				reportPhase('合并');
-				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream)), checkoutFailureText);
+				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream), false, false, false, cancelKey), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
 				reportPhase('推送');
-				await pushCurrentBranch(undefined, skipHooks);
+				await pushCurrentBranch(undefined, skipHooks, cancelKey);
 			}
 		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）', cancellable: true }).finally(() => { setRunHooks(true); });
 	};

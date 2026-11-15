@@ -43,8 +43,13 @@ export const REF_FIELD_COUNT = 4;
 /** 引用列表的格式串。 */
 export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(objecttype)'].join('%00');
 
-/** 分支同步的格式串；`%(HEAD)` 标出当前分支。 */
-export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+/**
+ * 分支同步的格式串；`%(HEAD)` 标出当前分支。
+ *
+ * 本地分支名按固定层数剥掉引用命名空间（`refs/heads/`），不用 `%(refname:short)`：
+ * 存在同名远程跟踪引用时，短名会带上 `heads/` 或 `remotes/` 前缀来消歧，分支名因此出错。
+ */
+export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:lstrip=2)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
 
 /**
  * 把 git 报出的上游名收敛成远程分支短名。

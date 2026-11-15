@@ -13,6 +13,18 @@ import { runGit } from './working-tree.js';
 import { isShallowClone } from './worktree-branches.js';
 
 /**
+ * 把 `<远程>/<分支>` 短名写成完整的远程跟踪引用。
+ *
+ * @param remoteBranch - 远程分支短名。
+ * @returns 完整引用名；名字不含斜杠时原样返回，交给 git 自行判定。
+ */
+function remoteTrackingRefOf(remoteBranch: string): string {
+	const at = remoteBranch.indexOf('/');
+	if (at <= 0 || at === remoteBranch.length - 1) return remoteBranch;
+	return 'refs/remotes/' + remoteBranch;
+}
+
+/**
  * 去掉文本末尾的换行符。
  *
  * @param text - 待处理文本。
@@ -254,7 +266,13 @@ export function fetch(repo: string, remote: string | null, prune: boolean, prune
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function fetchRemoteBranch(repo: string, remote: string, branch: string, quiet = false, cancelKey = ''): Promise<ErrorInfo> {
-	return gitErrorInfo(['fetch', remote, branch, '--recurse-submodules=on-demand'], repo, { quietWrite: quiet, cancelKey });
+	/*
+	 * 显式写出去向：短名抓取是否更新远程跟踪引用取决于该远程的 refspec 配置，
+	 * 单分支克隆留下的写法下不会更新，后续的领先/落后与合并就拿不到新提交。
+	 * 信源限定在 refs/heads 之下，同名标签不会参与匹配。
+	 */
+	const refspec = 'refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch;
+	return gitErrorInfo(['fetch', remote, refspec, '--recurse-submodules=on-demand'], repo, { quietWrite: quiet, cancelKey });
 }
 
 /**
@@ -357,10 +375,10 @@ export function pushBranch(repo: string, branchName: string, remote: string, set
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function pushUpstream(repo: string, skipHooks = false): Promise<ErrorInfo> {
+export function pushUpstream(repo: string, skipHooks = false, cancelKey = ''): Promise<ErrorInfo> {
 	const args = ['push'];
 	if (skipHooks) args.push('--no-verify');
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(args, repo, { cancelKey });
 }
 
 /**
@@ -455,7 +473,15 @@ async function branchUpstream(repo: string, branchName: string): Promise<string 
  */
 export async function checkoutBranch(repo: string, branchName: string, remoteBranch: string | null): Promise<ErrorInfo> {
 	if (remoteBranch === null) return gitErrorInfo(['checkout', branchName], repo);
-	const created = await gitErrorInfo(['checkout', '-b', branchName, remoteBranch], repo);
+	/*
+	 * 起点写成完整引用、并显式要求建立跟踪。
+	 *
+	 * 短名起点在有同名本地分支时会被解析到那个本地分支；不显式 --track 时是否建立上游取决于
+	 * branch.autoSetupMerge，取 simple 且本地名与远端名不同就无法复用这个分支。
+	 */
+	const created = await gitErrorInfo([
+		'checkout', '-b', branchName, '--track', remoteTrackingRefOf(remoteBranch),
+	], repo);
 	if (created === null || !/already exists/i.test(created)) return created;
 	const upstream = await branchUpstream(repo, branchName);
 	return upstream === remoteBranch ? gitErrorInfo(['checkout', branchName], repo) : created;
@@ -580,13 +606,13 @@ export function renameBranch(repo: string, oldName: string, newName: string): Pr
  * @param noCommit - 是否使用 `--no-commit`。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean): Promise<ErrorInfo> {
+export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean, cancelKey = ''): Promise<ErrorInfo> {
 	const args = ['merge', obj];
 	if (squash) args.push('--squash');
 	else if (createNewCommit) args.push('--no-ff');
 	if (noCommit) args.push('--no-commit');
 
-	const mergeError = await gitErrorInfo(args, repo);
+	const mergeError = await gitErrorInfo(args, repo, { cancelKey });
 	if (mergeError !== null) return mergeError;
 	return squash && !noCommit ? commitSquashIfStagedChangesExist(repo, obj, actionOn) : null;
 }

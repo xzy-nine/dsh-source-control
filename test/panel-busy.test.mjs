@@ -138,8 +138,21 @@ parallel('忙碌分级', (t) => {
 		assert.equal(entries.length, 1, '只移除指定的那一次');
 		assert.equal(cancellableEntriesOf(entries)[0].cancelKey, 'k1', '另一次仍在停止清单里');
 
-		// 不给键时仍按影响面移除一份，保持既有调用方的语义。
+		/*
+		 * 不带键的移除只认同样没有键的记录：它属于不可停止的操作，若按影响面随手摘一条，
+		 * 会把还在跑、仍带停止入口的那次一并去掉。
+		 */
 		entries = removeBusy(entries, '/repo/a', 'network');
-		assert.equal(entries.length, 0);
+		assert.equal(entries.length, 1, '带键的记录不被不带键的移除波及');
+		assert.equal(cancellableEntriesOf(entries)[0].cancelKey, 'k1');
+	});
+
+	t.test('不带键的移除只摘不带键的记录', () => {
+		let entries = addBusy([], '/repo/a', 'network');
+		entries = addBusy(entries, '/repo/a', 'network', { cancelKey: 'k1', label: '抓取' });
+
+		entries = removeBusy(entries, '/repo/a', 'network');
+		assert.equal(entries.length, 1, '只摘掉不带键的那一份');
+		assert.equal(cancellableEntriesOf(entries)[0].cancelKey, 'k1', '带键的仍在停止清单里');
 	});
 });

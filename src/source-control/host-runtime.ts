@@ -124,6 +124,24 @@ export function cancellableKeys(): string[] {
 }
 
 /**
+ * 让一个停止键共享另一个停止键名下的子进程。
+ *
+ * 并发到达的同一次抓取会共用一条在途请求，子进程只起一次、登记在发起方的键下。后来者
+ * 若各自带自己的停止键，停止请求会落空；这里把后来者的键指向同一组子进程，两者都能终止它。
+ *
+ * @param aliasKey - 后来者的停止键。
+ * @param primaryKey - 已在跑的停止键。
+ * @returns 共享成功时为 true；主键下没有在跑的子进程时为 false。
+ */
+export function shareCancellable(aliasKey: string, primaryKey: string): boolean {
+	if (aliasKey === '' || aliasKey === primaryKey) return false;
+	const handles = cancellable.get(primaryKey);
+	if (handles === undefined) return false;
+	cancellable.set(aliasKey, handles);
+	return true;
+}
+
+/**
  * 登记宿主能力。
  *
  * 服务缺失时抛错：插件没有原生回退，缺一项就无法读取仓库或运行 git，早失败比晚失败好定位。
@@ -286,8 +304,11 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 		liveHandles.delete(handle);
 		if (registered !== undefined) {
 			registered.delete(handle);
-			if (registered.size === 0 && cancellable.get(spec.cancelKey as string) === registered) {
-				cancellable.delete(spec.cancelKey as string);
+			if (registered.size === 0) {
+				// 别名键与主键指向同一个集合，一并摘掉，避免留下指向空集合的陈旧登记。
+				for (const [key, handles] of cancellable) {
+					if (handles === registered) cancellable.delete(key);
+				}
 			}
 		}
 	}

@@ -11,6 +11,7 @@ import {
 import { isShallowClone } from '../worktree-branches.js';
 import type { MergeMode } from '../git-actions.js';
 import { notifyRepositoryWrite, runGit } from '../git-exec.js';
+import { shareCancellable } from '../host-runtime.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
 
@@ -41,8 +42,13 @@ async function refsSignature(repo: string): Promise<string> {
 	return result.code === 0 ? result.stdout : '';
 }
 
-/** 在途的抓取：同一目标并发请求共享一次 git fetch，避免多面板各起一遍。 */
-const inFlightFetches = new Map<string, Promise<{ repo: string; changed: boolean }>>();
+/**
+ * 在途的抓取：同一目标并发请求共享一次 git fetch，避免多面板各起一遍。
+ *
+ * 同时记下发起方使用的停止键：后来者共享这次抓取时，把自己的停止键指向同一组子进程，
+ * 否则它的停止请求找不到任何进程。
+ */
+const inFlightFetches = new Map<string, { readonly promise: Promise<{ repo: string; changed: boolean }>; readonly cancelKey: string }>();
 
 /**
  * 在途抓取的键。
@@ -131,7 +137,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			});
 			break;
 		case 'pushUpstream':
-			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks')));
+			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks'), str('cancelKey')));
 			break;
 
 		/* --- 提交操作 --- */
@@ -152,7 +158,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		case 'merge': {
 			const obj = str('obj');
-			const error = await merge(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit'));
+			const error = await merge(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit'), str('cancelKey'));
 			if (error === null) logInfo('repo', `已合并：${obj}`);
 			respond({
 				command: 'merge',
@@ -233,9 +239,15 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				break;
 			}
 			await respondResult('fetch', async () => {
+				// 去重按抓取目标；取消登记按请求方给的键：两者不是一回事，不能互相顶替。
 				const key = fetchKeyOf(repo, remoteName, remoteBranch);
+				const requestKey = str('cancelKey');
 				const existing = inFlightFetches.get(key);
-				if (existing !== undefined) return existing;
+				if (existing !== undefined) {
+					// 共享这次抓取，同时让请求方的停止键也能终止它名下的子进程。
+					if (requestKey !== '') shareCancellable(requestKey, existing.cancelKey);
+					return existing.promise;
+				}
 				const promise = (async () => {
 					/*
 					 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
@@ -245,8 +257,8 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					 */
 					const before = await refsSignature(repo);
 					const error = remoteBranch === null
-						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true, key)
-						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true, key);
+						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true, requestKey)
+						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true, requestKey);
 					if (error !== null) throw new Error(error);
 					const after = await refsSignature(repo);
 					const changed = before !== after;
@@ -255,7 +267,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					logInfo('repo', `已抓取${fetchTargetText(remoteName, remoteBranch)}${changed ? '，引用有更新' : '，引用无变化'}`);
 					return { repo, changed };
 				})().finally(() => { inFlightFetches.delete(key); });
-				inFlightFetches.set(key, promise);
+				inFlightFetches.set(key, { promise, cancelKey: requestKey });
 				return promise;
 			});
 			break;

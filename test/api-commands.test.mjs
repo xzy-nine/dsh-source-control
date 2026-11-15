@@ -291,6 +291,9 @@ test('按分支抓取：只取指定远程的指定分支，其他远程与分�
 			execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
 			git('push', '-q', bare, 'main');
 		}
+		// kept 上多留一个非 main 分支：抓 main 时它不该被一起取回。
+		git('branch', 'side', 'main');
+		git('push', '-q', kept, 'side');
 		git('remote', 'add', 'kept', kept);
 		git('remote', 'add', 'skipped', skipped);
 		const call = await makeCaller(repo);
@@ -300,6 +303,7 @@ test('按分支抓取：只取指定远程的指定分支，其他远程与分�
 		assert.equal(fetched.error ?? null, null, '按分支抓取应成功');
 		assert.match(git('for-each-ref', '--format=%(refname)', 'refs/remotes'), /refs\/remotes\/kept\/main/);
 		assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/remotes/skipped'), '', '未被指定的远程不应被访问');
+		assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/remotes/kept/side'), '', '同一远程的其他分支也不该被取回');
 
 		// 清理选项作用于整个远程，与按分支抓取不同时成立：直接拒绝，不起 git fetch。
 		const rejected = await call({ command: 'fetch', name: 'kept', prune: true, pruneTags: false, branch: 'main' });
@@ -315,22 +319,47 @@ test('按分支抓取：只取指定远程的指定分支，其他远程与分�
 });
 
 test('停止操作：按停止键终止在跑的 git 子进程', async () => {
-	const { repo } = makeRepo();
+	const { repo, git } = makeRepo();
+	const bare = tempPath('gg-api-cancel-remote-');
 	try {
+		execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+		git('remote', 'add', 'origin', bare);
+		// 先建立上游并推一次，此时还没有阻塞用的钩子。
+		git('push', '-q', '-u', 'origin', 'main');
+
+		/*
+		 * 再制造一个可控的长任务：pre-push 钩子睡住，推送到结束前 git 一直不返回，
+		 * 停止键因此有真实的子进程可终止。留一个待推的新提交，否则 git 会直接报 up-to-date 而不跑钩子。
+		 */
+		writeFileSync(join(repo, 'pending.txt'), 'pending\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'pending push');
+		writeHook(join(repo, '.git', 'hooks'), 'pre-push', '#!/bin/sh\nsleep 8\n');
+
 		const call = await makeCaller(repo);
 
 		// 没有该键对应的操作时返回 0：停止一个已经结束的操作属正常情况。
 		const idle = await call({ command: 'cancelOperation', key: 'no-such-key' });
 		assert.equal(idle.stopped, 0);
-
-		// 空键不指向任何操作。
+		assert.equal(idle.error ?? null, null, '停止是用户主动行为，命令本身恒成功');
 		const empty = await call({ command: 'cancelOperation', key: '' });
 		assert.equal(empty.stopped, 0);
 
-		// 命令本身恒成功：停止是用户主动行为，不是失败。
-		assert.equal(idle.error ?? null, null);
+		// 起一次真实推送：它会被钩子挡住，等到子进程登记完成再停止。
+		const pending = call({ command: 'pushUpstream', skipHooks: false, cancelKey: 'cancel-test-key' });
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		const stopped = await call({ command: 'cancelOperation', key: 'cancel-test-key' });
+		assert.ok(stopped.stopped >= 1, '应终止在跑的 git 子进程，实际 ' + String(stopped.stopped));
+
+		// 被终止的推送以失败回投，不会假装成功。
+		const pushed = await pending;
+		assert.notEqual(pushed.error ?? null, null, '被停止的推送应报错');
+		// 登记随之清理：同一个键再停一次没有进程可终止。
+		const again = await call({ command: 'cancelOperation', key: 'cancel-test-key' });
+		assert.equal(again.stopped, 0, '结束后登记应已清理');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
+		rmSync(bare, { recursive: true, force: true });
 	}
 });
 

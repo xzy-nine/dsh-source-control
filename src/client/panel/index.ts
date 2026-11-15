@@ -822,9 +822,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	);
 
 	/** 本地分支名集合：远程标记的合并与变基据此判断短名是否与本地分支撞名。 */
+	/**
+	 * 本地分支名清单。
+	 *
+	 * 清单或它的仓库对不上时给 null 而不是空集合：空集合既表示「确认没有同名分支」，也会让
+	 * 调用方误以为撞名不可能，两者含义不同。
+	 */
 	const localBranchNames = React.useMemo(
-		() => new Set((refItems !== null && refItems.repo === workingTreePath ? refItems.items : [])
-			.filter((item) => item.type === 'branch').map((item) => item.name)),
+		() => (refItems !== null && refItems.repo === workingTreePath
+			? new Set(refItems.items.filter((item) => item.type === 'branch').map((item) => item.name))
+			: null),
 		[refItems, workingTreePath],
 	);
 
@@ -1023,7 +1030,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		}),
 
 		// ── 可停止操作的行内入口（非阻塞型）──────────────
-		React.createElement(CancelRow, { busy: state.busy, onCancel: handleCancelOperation }),
+		React.createElement(CancelRow, {
+			busy: state.busy, onCancel: handleCancelOperation,
+			// 弹窗被「继续等待」收起时改由行内入口承载，停止入口始终可见。
+			extraRowKeys: cancelDialogDismissed === null ? [] : [cancelDialogDismissed],
+		}),
 
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {

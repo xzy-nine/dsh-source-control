@@ -18,6 +18,12 @@ export interface CancelBannerProps {
 	readonly busy: readonly BusyEntry[];
 	/** 停止一次操作。 */
 	readonly onCancel: (cancelKey: string) => void;
+	/**
+	 * 需要额外用行内形式呈现的停止键。
+	 *
+	 * 阻塞型操作收起弹窗后归到这里：它仍然在跑，不能再让它没有任何可见的停止入口。
+	 */
+	readonly extraRowKeys?: readonly string[];
 }
 
 /**
@@ -42,8 +48,8 @@ async function confirmCancel(entry: CancellableEntry, onCancel: (cancelKey: stri
  * @param props - 见 {@link CancelBannerProps}。
  * @returns 行元素；没有可停止的非阻塞操作时返回 null。
  */
-export function CancelRow({ busy, onCancel }: CancelBannerProps): React.ReactElement | null {
-	const rows = cancellableEntriesOf(busy).filter((entry) => entry.surface === 'row');
+export function CancelRow({ busy, onCancel, extraRowKeys = [] }: CancelBannerProps): React.ReactElement | null {
+	const rows = cancellableEntriesOf(busy).filter((entry) => entry.surface === 'row' || extraRowKeys.includes(entry.cancelKey));
 	if (rows.length === 0) return null;
 	return React.createElement(
 		React.Fragment,

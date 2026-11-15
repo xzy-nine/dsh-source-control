@@ -218,10 +218,12 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 		if (step === 'stop') pendingRef.current = null;
 	}, [state.commits, state.more, jumpTick]);
 
-	/** 换仓库时丢弃上一次的定位：目标哈希与已取页都只对上一个仓库成立。 */
+	/** 换仓库时丢弃上一次的定位：目标哈希、已取页与已发出的滚动请求都只对上一个仓库成立。 */
 	React.useEffect(() => {
 		pendingRef.current = null;
 		pagedForRef.current = null;
+		// 滚动请求也要清掉：新仓库里可能有同一个提交，留着会让它在重新挂载后抢走一次定位。
+		setScrollTo(null);
 	}, [workingTreePath]);
 
 	/** 加载仓库后自动滚动到 HEAD。 */

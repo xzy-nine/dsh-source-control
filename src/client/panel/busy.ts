@@ -29,9 +29,14 @@ export function addBusy(entries: readonly BusyEntry[], repo: string, scope: Busy
  * @returns 新记录；没有匹配记录时原样返回。
  */
 export function removeBusy(entries: readonly BusyEntry[], repo: string, scope: BusyScope, cancelKey?: string): readonly BusyEntry[] {
-	// 给出停止键时按它精确移除：同仓库同影响面可能并行着多个可停止操作，错删别人的会让停止入口失效。
+	/*
+	 * 同仓库同影响面可以并行多份记录，只移除属于这一次的那一份。
+	 *
+	 * 给出停止键时按键精确匹配；不给键的调用方（不可停止的操作）只认同样没有键的记录 ——
+	 * 否则它结束时会把一个仍在跑、还带着停止入口的操作记录一并摘掉。
+	 */
 	const at = entries.findIndex((entry) => entry.repo === repo && entry.scope === scope
-		&& (cancelKey === undefined || entry.cancelKey === cancelKey));
+		&& (cancelKey === undefined ? entry.cancelKey === undefined : entry.cancelKey === cancelKey));
 	return at === -1 ? entries : [...entries.slice(0, at), ...entries.slice(at + 1)];
 }
 
