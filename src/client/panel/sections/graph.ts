@@ -9,6 +9,7 @@ import {
 	IconGoalOutlineRegular, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../../graph/index.ts';
+import type { ScrollToRowRequest } from '../../graph/use-graph-windowing.ts';
 import { RepoIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { GitGraphIcon } from '../../ui/plugin-icon.ts';
 import { CommitDetail } from '../changes.ts';
@@ -38,6 +39,8 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	readonly commits: readonly Commit[];
 	readonly head: string | null;
 	readonly selectedHash: string | null;
+	/** 提交图的定位请求：把目标提交所在行滚到可视区顶部。 */
+	readonly scrollTo: ScrollToRowRequest | null;
 	/** 领先/落后标记：云端领先的上游尖端与本地领先的 HEAD。 */
 	readonly localTip: string | null;
 	readonly remoteTip: string | null;
@@ -111,7 +114,7 @@ export interface GraphSectionProps extends CommitCacheMaps {
  * @returns 分区元素。
  */
 function GraphSectionView({
-	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash,
+	open, height, busy, phase, commitCount, selectedNode, graphScrollRef, commits, head, selectedHash, scrollTo,
 	localTip, remoteTip, baseTip, upstream, moreCommitsAvailable, statsByHash, messageByHash, detail, detailCollapsed, settings,
 	onToggleSection, onToggleChange, onOpenDiff, onToggleCommit, onLoadMore, onContextMenu, onHoverCommit,
 	translatedByHash, translatedFromByHash, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
@@ -198,6 +201,7 @@ function GraphSectionView({
 			remoteTip,
 			baseTip,
 			upstream,
+			scrollTo,
 			onSelect: handleSelect,
 			onLoadMore,
 			moreCommitsAvailable,

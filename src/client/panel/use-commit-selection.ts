@@ -6,7 +6,8 @@
  */
 import React from 'react';
 import { compareCommits, loadCommitFiles } from '../api/index.ts';
-import { ROW_HEIGHT } from '../graph/lanes.ts';
+import type { ScrollToRowRequest } from '../graph/use-graph-windowing.ts';
+import { headTargetOf, jumpStepOf } from './graph-target.ts';
 import { changeOf } from './changes.ts';
 import { reportError } from './errors.ts';
 import type { Commit, CommitFile, PanelState } from '../shared/types.ts';
@@ -19,12 +20,12 @@ export interface CommitSelectionDeps {
 	readonly state: PanelState;
 	/** 面板状态写入器。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
-	/** 图形区的滚动容器。 */
-	readonly graphScrollRef: React.RefObject<HTMLDivElement | null>;
 	/** 打开差异页。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
 	/** 是否在加载仓库后自动滚动到 HEAD。 */
 	readonly scrollToHeadOnLoad: boolean;
+	/** 追加下一页提交；定位尚未加载的目标时据它补齐。 */
+	readonly loadMore: () => Promise<void>;
 }
 
 /** 提交选择与详情。 */
@@ -37,8 +38,10 @@ export interface CommitSelection {
 	readonly selectCommit: (hash: string, baseHash?: string) => Promise<void>;
 	/** 点击提交行。 */
 	readonly toggleCommit: (hash: string, additive?: boolean) => void;
-	/** 转到 HEAD 提交所在行。 */
+	/** 转到 HEAD 提交所在行；目标尚未加载时先补齐提交窗口。 */
 	readonly goToHead: () => void;
+	/** 提交图的定位请求；无待执行请求时为 null。 */
+	readonly scrollTo: ScrollToRowRequest | null;
 	/** 选中仓库的 HEAD 提交哈希。 */
 	readonly headCommitHash: string | null;
 }
@@ -50,7 +53,11 @@ export interface CommitSelection {
  * @returns 提交选择与详情。
  */
 export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
-	const { workingTreePath, state, setState, graphScrollRef, onOpenDiff, scrollToHeadOnLoad } = deps;
+	const { workingTreePath, state, setState, onOpenDiff, scrollToHeadOnLoad, loadMore } = deps;
+
+	/** 当前状态的引用：定位在回调里读最新值，不必让它随每次渲染重建。 */
+	const stateRef = React.useRef(state);
+	stateRef.current = state;
 
 	/** 选中仓库的 HEAD 提交哈希；查找是 O(提交数)，随滚动逐帧重渲染时须记忆化。 */
 	const headCommitHash = React.useMemo(
@@ -162,24 +169,60 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 		void selectCommit(hash);
 	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
 
+	/** 待定位的目标提交哈希；null 表示没有进行中的定位。 */
+	const pendingRef = React.useRef<string | null>(null);
+	/** 已为其发出翻页请求的提交列表：同一份列表上不重复取同一页。 */
+	const pagedForRef = React.useRef<readonly Commit[] | null>(null);
+	/** 定位请求；提交图按它滚动到目标行。 */
+	const [scrollTo, setScrollTo] = React.useState<ScrollToRowRequest | null>(null);
+	/** 请求计数：同一目标重复定位靠它再触发一次。 */
+	const [jumpTick, setJumpTick] = React.useState(0);
+	const loadMoreRef = React.useRef(loadMore);
+	loadMoreRef.current = loadMore;
+
 	/**
-	 * 转到当前 HEAD 提交：把滚动容器定位到该提交所在行。
+	 * 转到当前 HEAD 提交。
 	 *
-	 * 图形区按可视区窗口化渲染，目标行可能尚未挂载，因此不能靠 `querySelector` 找行；
-	 * 直接按行号算出偏移并设置滚动位置，窗口随之把该行渲染出来。
+	 * 只定出目标并推动一轮定位：目标可能在已加载窗口之外（当前分支落后于上游时，HEAD 之前排着
+	 * 几百条别的分支的提交），那时先补齐提交窗口，加载到之后再交给提交图滚动。
 	 */
 	const goToHead = React.useCallback(() => {
-		const headCommit = state.commits.find((commit) => commit.hash !== '*' && (commit.heads ?? []).includes(state.head ?? ''));
-		const target = headCommit ?? state.commits.find((commit) => commit.hash !== '*');
-		if (target === undefined) return;
-		const container = graphScrollRef.current;
-		if (container === null) return;
-		const index = state.commits.indexOf(target);
-		if (index < 0) return;
-		// 真正滚动的是图区内部元素（`graphScrollRef` 给的是外层容器）。
-		const scroller = container.querySelector('[data-graph-scroll]') ?? container;
-		scroller.scrollTo({ top: index * ROW_HEIGHT, behavior: 'smooth' });
-	}, [state.commits, state.head, graphScrollRef]);
+		pendingRef.current = headTargetOf(stateRef.current.commits, stateRef.current.head, stateRef.current.headHash);
+		// 新一轮定位允许再取一页：上一次取数失败或中断时，同一份列表上不该永远停在「等这一页」。
+		pagedForRef.current = null;
+		setJumpTick((previous) => previous + 1);
+	}, []);
+
+	/**
+	 * 推进定位。
+	 *
+	 * 目标已加载就发出滚动请求（行下标由提交图按它自己的行布局算：虚拟指示行与未提交行都插在
+	 * 列表里，提交下标不等于行下标）；尚未加载且还有更早的提交可取就先取下一页，一页一回，
+	 * 取回后由提交列表变化推进下一页；取完仍没有该提交（当前筛选不含它）则放弃。
+	 */
+	React.useEffect(() => {
+		const target = pendingRef.current;
+		if (target === null) return;
+		const step = jumpStepOf(target, state.commits, state.more, pagedForRef.current === state.commits);
+		if (step === 'scroll') {
+			pendingRef.current = null;
+			setScrollTo((previous) => ({ hash: target, serial: (previous?.serial ?? 0) + 1 }));
+			return;
+		}
+		if (step === 'page') {
+			// 记下「已为这份列表取过」：取回前列表不变，effect 因别的状态重跑时不该再发一次。
+			pagedForRef.current = state.commits;
+			void loadMoreRef.current();
+			return;
+		}
+		if (step === 'stop') pendingRef.current = null;
+	}, [state.commits, state.more, jumpTick]);
+
+	/** 换仓库时丢弃上一次的定位：目标哈希与已取页都只对上一个仓库成立。 */
+	React.useEffect(() => {
+		pendingRef.current = null;
+		pagedForRef.current = null;
+	}, [workingTreePath]);
 
 	/** 加载仓库后自动滚动到 HEAD。 */
 	const didAutoScrollRef = React.useRef(false);
@@ -193,7 +236,7 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 	}, [scrollToHeadOnLoad, state.phase, state.commits, goToHead]);
 	React.useEffect(() => { didAutoScrollRef.current = false; }, [workingTreePath]);
 
-	return { openDiff, openLogFile, selectCommit, toggleCommit, goToHead, headCommitHash };
+	return { openDiff, openLogFile, selectCommit, toggleCommit, goToHead, scrollTo, headCommitHash };
 }
 
 /**

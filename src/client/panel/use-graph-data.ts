@@ -527,6 +527,9 @@ export function useGraphData({
 		}
 	}, [maxCommits, settings, branchesKey]);
 
+	/** 翻页请求是否在途：触底续取与定位补齐共用同一条偏移分页。 */
+	const loadMorePendingRef = React.useRef(false);
+
 	/**
 	 * 追加下一页。
 	 *
@@ -538,6 +541,10 @@ export function useGraphData({
 	 */
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
+		// 一次请求在途期间不再发起第二次：触底续取与「转到当前历史」的补齐可能同时要下一页，
+		// 两次请求的偏移取自同一份状态，会取回同一页，后回来的那次把 `more` 收成 false、分页就此停摆。
+		if (loadMorePendingRef.current) return;
+		loadMorePendingRef.current = true;
 		/*
 		 * 偏移量用宿主上一窗口给出的 `nextSkip`。
 		 *
@@ -577,6 +584,8 @@ export function useGraphData({
 			});
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
+		} finally {
+			loadMorePendingRef.current = false;
 		}
 	}, [workingTreePath, maxCommits, settings, branchesKey]);
 
