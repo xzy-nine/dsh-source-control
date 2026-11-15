@@ -228,7 +228,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		case 'sshStatus':
 			await respondResult('sshStatus', async () => ({
-				status: await sshStatus(str('host') === '' ? 'github.com' : str('host'), str('refresh') === 'true'),
+				status: await sshStatus(str('host') === '' ? 'github.com' : str('host'), str('refresh') === 'true', str('sshUrl')),
 			}));
 			break;
 		case 'openExtensionSettings':

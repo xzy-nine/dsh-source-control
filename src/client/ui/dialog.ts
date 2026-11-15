@@ -9,11 +9,22 @@ import {
 	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, writeClipboard, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Dropdown, type DropdownOption } from './dropdown.ts';
+import { AnsiText } from './ansi.ts';
 import { pushDialog, removeDialog } from './overlay-host.ts';
 import css from '../css/dialog.module.css';
 import { cx } from '../css/cx.ts';
 
 export type { DropdownOption };
+
+/**
+ * 说明文字节点：按 ANSI 颜色渲染探测与命令的输出，纯文本原样呈现。
+ *
+ * @param message - 说明文字。
+ * @returns 节点。
+ */
+function messageText(message: string): React.ReactElement {
+	return React.createElement(AnsiText, { text: message });
+}
 
 /**
  * 构造弹窗主体：可选说明文字在前，其余节点依次排列。
@@ -26,7 +37,7 @@ function dialogBody(message: string, ...children: React.ReactNode[]): React.Reac
 	return React.createElement(
 		React.Fragment,
 		null,
-		message !== '' && React.createElement('div', { className: css.dialogHint }, message),
+		message !== '' && React.createElement('div', { className: css.dialogHint }, messageText(message)),
 		...children,
 	);
 }
@@ -48,7 +59,7 @@ function dialogNodes(...children: React.ReactNode[]): React.ReactElement {
  * @returns 节点或 false。
  */
 function hintNode(message: string): React.ReactNode {
-	return message !== '' && React.createElement('div', { className: css.dialogHint }, message);
+	return message !== '' && React.createElement('div', { className: css.dialogHint }, messageText(message));
 }
 
 /**
@@ -140,7 +151,7 @@ export function showConfirmation({ title, message, confirmLabel = '确认', canc
 			return dialogModal(
 				title,
 				() => { finish(false); },
-				React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, message),
+				React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, messageText(message)),
 				confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger),
 			);
 		}
@@ -170,7 +181,7 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 			return dialogModal(
 				title,
 				() => { finish(undefined); },
-				React.createElement('div', { className: css.dialogHint }, message),
+				React.createElement('div', { className: css.dialogHint }, messageText(message)),
 				React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, closeLabel),
 			);
 		}
@@ -264,7 +275,7 @@ export function showError(message: string): Promise<void> {
 				React.createElement(
 					'div',
 					{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
-					message,
+					messageText(message),
 				),
 				React.createElement(
 					React.Fragment,

@@ -47,7 +47,7 @@ export interface RemoteSyncDeps {
 /** 远程动作。 */
 export interface RemoteSync {
 	/** 读取本地 SSH 状态。 */
-	readonly handleCheckSsh: (host: string, refresh?: boolean) => Promise<SshStatusInfo | null>;
+	readonly handleCheckSsh: (host: string, sshUrl: string, refresh?: boolean) => Promise<SshStatusInfo | null>;
 	/** 发布当前本地分支。 */
 	readonly handlePublish: () => void;
 	/** 同步：抓取后按领先/落后合并或推送。 */
@@ -97,24 +97,26 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	}, [workingTreePath]);
 
 	/**
-	 * 读取本地 SSH 状态；结果由宿主按主机缓存，设置面板与发布流程共用这一入口。
+	 * 读取本地 SSH 状态；结果由宿主按探测目标缓存，设置面板与发布流程共用这一入口。
 	 *
 	 * @param host - 目标主机名。
+	 * @param sshUrl - 该主机的 SSH 远程地址；空串时宿主退回 ssh 握手探测。
 	 * @param refresh - 为 true 时忽略宿主缓存重新探测。
 	 * @returns SSH 状态；没有工作区或请求失败时为 null。
 	 */
-	const handleCheckSsh = React.useCallback(async (host: string, refresh = false) => (
-		workingTreePath === null ? null : withProgress('network', () => sshStatus(workingTreePath, host, refresh))
+	const handleCheckSsh = React.useCallback(async (host: string, sshUrl: string, refresh = false) => (
+		workingTreePath === null ? null : withProgress('network', () => sshStatus(workingTreePath, host, refresh, sshUrl))
 	), [workingTreePath, withProgress]);
 
 	/**
 	 * 校验目标主机的 SSH 可用性：客户端、私钥与认证。
 	 *
 	 * @param host - 目标主机名。
+	 * @param sshUrl - 该主机的 SSH 远程地址；空串时按主机名探测。
 	 * @returns 就绪时为 true；否则说明原因并返回 false。
 	 */
-	const ensureSshReady = React.useCallback(async (host: string): Promise<boolean> => {
-		const status = await handleCheckSsh(host);
+	const ensureSshReady = React.useCallback(async (host: string, sshUrl: string): Promise<boolean> => {
+		const status = await handleCheckSsh(host, sshUrl);
 		if (status !== null && status.ready) return true;
 		await showMessage({
 			title: 'SSH 未就绪',
@@ -206,7 +208,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			const owner = form.accountType === 'org' && chosenOrg !== '' ? chosenOrg : user;
 			if (owner === '') return null;
 			// 选 SSH 时先确认本机可认证，避免仓库已建好却推送失败。
-			if (form.protocol === 'ssh' && !await ensureSshReady('github.com')) return null;
+			if (form.protocol === 'ssh' && !await ensureSshReady('github.com', '')) return null;
 			return {
 				kind: 'github',
 				owner,
@@ -226,7 +228,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 				return null;
 			}
 			const host = remoteHostOf(url);
-			if (sshUrl !== url && !await ensureSshReady(host === '' ? 'github.com' : host)) return null;
+			if (sshUrl !== url && !await ensureSshReady(host === '' ? 'github.com' : host, sshUrl)) return null;
 			url = sshUrl;
 		} else {
 			// 选择 HTTPS 时把 SSH 形态的地址换算回 HTTPS；不可换算的地址按原样使用。

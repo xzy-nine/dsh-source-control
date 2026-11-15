@@ -43,8 +43,11 @@ export interface SettingsPanelProps {
 	readonly onDeleteRemote: (name: string) => void;
 	readonly onAddRemote?: (name: string, url: string, pushUrl: string | null) => void;
 	readonly onEditRemote?: (nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void;
-	/** 读取本地 SSH 状态；refresh 为 true 时忽略宿主缓存，返回 null 表示检测失败。 */
-	readonly onCheckSsh?: (host: string, refresh?: boolean) => Promise<SshStatusInfo | null>;
+	/**
+	 * 读取本地 SSH 状态；sshUrl 为该主机的 SSH 远程地址（可省略），refresh 为 true 时忽略宿主缓存，
+	 * 返回 null 表示检测失败。
+	 */
+	readonly onCheckSsh?: (host: string, sshUrl: string, refresh?: boolean) => Promise<SshStatusInfo | null>;
 	readonly onExportConfig?: () => void;
 	readonly userDetails: UserDetails | null;
 	readonly onEditUserDetails: (name: string, email: string, location: string, deleteLocalName: boolean, deleteLocalEmail: boolean) => void;

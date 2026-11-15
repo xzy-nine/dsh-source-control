@@ -42,7 +42,7 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 	onDeleteRemote: (name: string) => void;
 	onAddRemote?: ((name: string, url: string, pushUrl: string | null) => void) | undefined;
 	onEditRemote?: ((nameOld: string, nameNew: string, urlOld: string | null, urlNew: string | null, pushUrlOld: string | null, pushUrlNew: string | null) => void) | undefined;
-	onCheckSsh?: ((host: string, refresh?: boolean) => Promise<SshStatusInfo | null>) | undefined;
+	onCheckSsh?: ((host: string, sshUrl: string, refresh?: boolean) => Promise<SshStatusInfo | null>) | undefined;
 }): React.ReactElement {
 	const [adding, setAdding] = React.useState(false);
 	const [editing, setEditing] = React.useState<Remote | null>(null);
@@ -56,17 +56,18 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 	/**
 	 * 检测本地 SSH 状态。
 	 *
-	 * 结果由宿主按主机缓存，转换前的校验直接复用；显式检测时绕过缓存重新探测。
+	 * 结果由宿主按探测目标缓存，转换前的校验直接复用；显式检测时绕过缓存重新探测。
 	 *
 	 * @param host - 目标主机名。
+	 * @param sshUrl - 该主机的 SSH 远程地址；空串时宿主退回 ssh 握手探测。
 	 * @param refresh - 为 true 时忽略宿主缓存重新探测。
 	 * @returns 就绪时为 true；未就绪时说明原因并返回 false。
 	 */
-	const checkSsh = async (host: string, refresh = false): Promise<boolean> => {
+	const checkSsh = async (host: string, sshUrl: string, refresh = false): Promise<boolean> => {
 		if (onCheckSsh === undefined) return true;
 		setSshBusy(true);
 		try {
-			const status = await onCheckSsh(host, refresh);
+			const status = await onCheckSsh(host, sshUrl, refresh);
 			if (status === null) {
 				setSshNote('SSH：检测失败');
 				await showMessage({ title: 'SSH 状态未知', message: '无法获取本地 SSH 状态，请稍后重试。' });
@@ -101,7 +102,7 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		}
 		if (next === value.trim() || target === 'https') return next;
 		const host = remoteHostOf(value);
-		return (await checkSsh(host === '' ? 'github.com' : host)) ? next : null;
+		return (await checkSsh(host === '' ? 'github.com' : host, next)) ? next : null;
 	};
 
 	/**
@@ -179,7 +180,9 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
 		),
 	);
-	const probeHost = remotes.map((remote) => remoteHostOf(remote.url ?? '')).find((host) => host !== '') ?? 'github.com';
+	const probeTarget = remotes
+		.map((remote) => ({ host: remoteHostOf(remote.url ?? ''), sshUrl: toSshRemoteUrl(remote.url ?? '') }))
+		.find((item) => item.host !== '') ?? { host: 'github.com', sshUrl: null };
 	return React.createElement(
 		'div',
 		null,
@@ -214,7 +217,7 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, {
 				variant: 'toolbar', size: 'sm', disabled: sshBusy,
-				onClick: () => { void checkSsh(probeHost, true); },
+				onClick: () => { void checkSsh(probeTarget.host, probeTarget.sshUrl ?? '', true); },
 			}, '检测 SSH 状态'),
 		),
 		sshNote !== null && React.createElement('div', { className: css.setNote }, sshNote),

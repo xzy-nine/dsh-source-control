@@ -1,8 +1,9 @@
 /**
  * 本地 SSH 状态检测：ssh 客户端、`~/.ssh` 私钥与对目标主机的认证结果。
  *
- * 探测一律非交互（`BatchMode=yes`）并带连接超时，避免在缺少凭据时挂起等待输入；
- * 检测不写入 `known_hosts` 等本地状态。
+ * 认证判定只取退出码，不解析输出文字：远端横幅的措辞、颜色与退出码由对方决定。
+ * 有远程地址时用它跑 `git ls-remote`，走一遍 git 真实取数路径；只有主机名时退回 `ssh` 握手。
+ * 探测一律非交互并带连接超时，避免缺少凭据时挂起等待输入。
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -23,10 +24,8 @@ export interface SshStatus {
 	readonly authenticated: boolean;
 	/** 是否可直接用于 SSH 远程操作：客户端可用且认证通过。 */
 	readonly ready: boolean;
-	/** 未就绪时的原因说明；就绪时为 null。 */
+	/** 未就绪时的说明：探测输出原文，没有输出时为兜底一句；就绪时为 null。 */
 	readonly message: string | null;
-	/** 探测输出的原文，供排查。 */
-	readonly detail: string;
 }
 
 /** `~/.ssh` 中不作为私钥列出的文件名。 */
@@ -34,12 +33,18 @@ const NON_KEY_NAMES = new Set([
 	'agent', 'authorized_keys', 'config', 'environment', 'known_hosts', 'known_hosts.old', 'rc', 'ssh_config',
 ]);
 
-/** 一次 ssh 调用的结果。 */
-interface SshResult {
+/** 一次探测中一次调用的结果。 */
+interface ProbeOutput {
 	readonly code: number;
 	readonly stdout: string;
 	readonly stderr: string;
 }
+
+/** 探测方式：`git` 用远程地址跑 `git ls-remote`，`ssh` 只用主机名跑 `ssh -T`。 */
+export type SshProbeMode = 'git' | 'ssh';
+
+/** 认证探测的超时毫秒数。 */
+const PROBE_TIMEOUT_MS = 20_000;
 
 /**
  * 运行一次 ssh。
@@ -51,13 +56,32 @@ interface SshResult {
  * @param timeoutMs - 超时毫秒数。
  * @returns 退出码与输出。
  */
-function runSsh(args: readonly string[], timeoutMs: number): Promise<SshResult> {
+function runSsh(args: readonly string[], timeoutMs: number): Promise<ProbeOutput> {
 	return runCollect({
 		command: 'ssh',
 		args,
 		env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
 		timeoutMs,
 		timeoutMessage: 'SSH 探测超时',
+	});
+}
+
+/**
+ * 运行一次 `git ls-remote`。
+ *
+ * 用远程地址本身探测，因此本机 git 与 ssh 配置、代理与传输设置都参与其中，探测结果与真实取数一致。
+ *
+ * @param url - SSH 形态的远程地址。
+ * @param timeoutMs - 超时毫秒数。
+ * @returns 退出码与输出。
+ */
+function runGitProbe(url: string, timeoutMs: number): Promise<ProbeOutput> {
+	return runCollect({
+		command: 'git',
+		args: ['ls-remote', '--heads', '--', url],
+		env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+		timeoutMs,
+		timeoutMessage: 'git ls-remote 探测超时',
 	});
 }
 
@@ -89,55 +113,38 @@ export function sshKeyNames(entries: readonly string[]): string[] {
 		.sort();
 }
 
-/** 探测结论的种类；界面据此选图标与后续动作，测试按它断言而不是按文案。 */
-export type SshProbeKind = 'authenticated' | 'host-key' | 'publickey' | 'network' | 'other';
-
-/** 一次探测的结论。 */
-export interface SshProbeVerdict {
-	/** 是否认证通过。 */
-	readonly authenticated: boolean
-	/** 结论种类。 */
-	readonly kind: SshProbeKind
-	/** 未通过时的原因说明；通过时为 null。 */
-	readonly message: string | null
+/**
+ * 退出码是否表示认证通过。
+ *
+ * `git ls-remote` 成功即以 0 结束。`ssh -T` 的退出码取自远端命令：认证通过后远端拒绝该命令，
+ * 退出码由对方决定（github 为 1、gitee 为 0），只有 ssh 自身出错才用 255（man ssh：ssh exits
+ * with the exit status of the remote command or with 255 if an error occurred），因此 255 之外
+ * 都算认证通过。
+ *
+ * @param mode - 探测方式。
+ * @param code - 探测的退出码。
+ * @returns 认证通过时为 true。
+ */
+export function isAuthenticated(mode: SshProbeMode, code: number): boolean {
+	return mode === 'git' ? code === 0 : code !== 255;
 }
 
-/** 认证探测的结论说明。文案归此处，调用方与测试都按引用取用。 */
-export const SSH_TEXT = {
-	/** 主机指纹未确认；`{host}` 为目标主机。 */
-	hostKey: '目标主机 {host} 的指纹尚未确认：请先在终端执行 ssh -T git@{host} 并确认指纹。',
-	/** 公钥未被接受；`{host}` 为目标主机。 */
-	publickey: 'SSH 公钥未被 {host} 接受：请确认公钥已添加到该主机的账号或部署密钥，或先用 ssh-add 加载私钥。',
-	/** 网络不可达；`{host}` 为目标主机。 */
-	network: '无法连接 {host}：请检查网络、代理或 SSH 配置。',
-	/** 无匹配规则且输出为空时的兜底；`{host}` 为目标主机。 */
-	fallback: 'SSH 认证未通过（{host}）。',
-} as const;
+/** 探测没有任何输出时的兜底说明；`{host}` 为目标主机。 */
+const FAILED_WITHOUT_OUTPUT = 'SSH 认证未通过（{host}）。';
 
 /**
- * 归类认证探测的输出。
+ * 未就绪时的说明。
+ *
+ * 取探测输出原文，ANSI 转义序列原样保留，由界面按颜色渲染；没有任何输出时给兜底一句。
  *
  * @param stdout - 探测的标准输出。
  * @param stderr - 探测的标准错误。
  * @param host - 探测的目标主机名。
- * @returns 是否认证通过、结论种类，以及未通过时的原因说明。
+ * @returns 说明文本。
  */
-export function classifySshProbe(stdout: string, stderr: string, host: string): SshProbeVerdict {
+export function sshFailureMessage(stdout: string, stderr: string, host: string): string {
 	const text = `${stdout}\n${stderr}`.trim();
-	if (/successfully authenticated/i.test(text)) return { authenticated: true, kind: 'authenticated', message: null };
-	if (/host key verification failed|no .* host key is known|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(text)) {
-		return { authenticated: false, kind: 'host-key', message: SSH_TEXT.hostKey.replaceAll('{host}', host) };
-	}
-	if (/permission denied|no supported authentication methods|publickey/i.test(text)) {
-		return { authenticated: false, kind: 'publickey', message: SSH_TEXT.publickey.replaceAll('{host}', host) };
-	}
-	if (/could not resolve hostname|connection timed out|connection refused|network is unreachable|operation timed out/i.test(text)) {
-		return { authenticated: false, kind: 'network', message: SSH_TEXT.network.replaceAll('{host}', host) };
-	}
-	return {
-		authenticated: false, kind: 'other',
-		message: text === '' ? SSH_TEXT.fallback.replaceAll('{host}', host) : text,
-	};
+	return text === '' ? FAILED_WITHOUT_OUTPUT.replace('{host}', host) : text;
 }
 
 /**
@@ -151,8 +158,20 @@ function safeHost(host: string): string {
 	return /^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(text) ? text : 'github.com';
 }
 
-/** 探测结果缓存；一次探测含一次 ssh 连接，同一进程内不重复请求。 */
-let cache: { at: number; host: string; value: SshStatus } | null = null;
+/**
+ * `ssh` 握手探测的参数。
+ *
+ * `BatchMode=yes` 与 `StrictHostKeyChecking=yes` 让探测不等待输入、也不写入 `known_hosts`。
+ *
+ * @param host - 目标主机名。
+ * @returns 参数数组。
+ */
+function sshProbeArgs(host: string): string[] {
+	return ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', `git@${host}`];
+}
+
+/** 探测结果缓存；一次探测含一次远端连接，同一目标的重复请求不重新探测。 */
+let cache: { at: number; key: string; value: SshStatus } | null = null;
 
 /** 就绪结果的缓存时长（毫秒）。 */
 const STATUS_TTL_MS = 5 * 60_000;
@@ -163,21 +182,24 @@ const STATUS_FAILURE_TTL_MS = 15_000;
 /**
  * 检测本地 SSH 状态。
  *
- * 依次检测 ssh 客户端、`~/.ssh` 私钥与对目标主机的认证；客户端不可用时不发起网络探测。
- * 结果在进程内按主机缓存，同一主机的重复请求不重新探测。
+ * 依次检测 ssh 客户端、`~/.ssh` 私钥与目标主机的认证；客户端不可用时不发起网络探测。
+ * 结果在进程内按探测目标缓存——给了远程地址时按地址，否则按主机名——同一目标的重复请求不重新探测。
  *
  * @param host - 目标主机名，默认 github.com。
  * @param refresh - 为 true 时忽略缓存，重新探测。
+ * @param sshUrl - 目标主机的 SSH 远程地址；给定时用它跑 `git ls-remote`，省略时退回 `ssh` 握手。
  * @returns 检测结果。
  */
-export async function sshStatus(host = 'github.com', refresh = false): Promise<SshStatus> {
+export async function sshStatus(host = 'github.com', refresh = false, sshUrl = ''): Promise<SshStatus> {
 	const target = safeHost(host);
-	if (!refresh && cache !== null && cache.host === target) {
+	const url = sshUrl.trim();
+	const key = url === '' ? target : url;
+	if (!refresh && cache !== null && cache.key === key) {
 		const ttl = cache.value.ready ? STATUS_TTL_MS : STATUS_FAILURE_TTL_MS;
 		if (Date.now() - cache.at < ttl) return cache.value;
 	}
-	const value = await sshStatusUncached(target);
-	cache = { at: Date.now(), host: target, value };
+	const value = await sshStatusUncached(target, url);
+	cache = { at: Date.now(), key, value };
 	return value;
 }
 
@@ -185,9 +207,10 @@ export async function sshStatus(host = 'github.com', refresh = false): Promise<S
  * 探测实现：不带缓存。
  *
  * @param target - 已规范化的目标主机名。
+ * @param sshUrl - SSH 远程地址；空串时退回 `ssh` 握手探测。
  * @returns 检测结果。
  */
-async function sshStatusUncached(target: string): Promise<SshStatus> {
+async function sshStatusUncached(target: string, sshUrl: string): Promise<SshStatus> {
 	const versionResult = await runSsh(['-V'], 8000);
 	const versionLine = parseSshVersion(versionResult.stdout, versionResult.stderr);
 	const installed = versionResult.code === 0 && versionLine !== null && /^OpenSSH/i.test(versionLine);
@@ -203,23 +226,21 @@ async function sshStatusUncached(target: string): Promise<SshStatus> {
 		return {
 			installed: false, version: null, keys, host: target, authenticated: false, ready: false,
 			message: '未找到 OpenSSH 客户端（ssh），请先安装并加入 PATH。',
-			detail: versionResult.stderr.trim(),
 		};
 	}
 
-	const probe = await runSsh(
-		['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', `git@${target}`],
-		20000,
-	);
-	const verdict = classifySshProbe(probe.stdout, probe.stderr, target);
+	const mode: SshProbeMode = sshUrl === '' ? 'ssh' : 'git';
+	const output = mode === 'git'
+		? await runGitProbe(sshUrl, PROBE_TIMEOUT_MS)
+		: await runSsh(sshProbeArgs(target), PROBE_TIMEOUT_MS);
+	const authenticated = isAuthenticated(mode, output.code);
 	return {
 		installed: true,
 		version: versionLine,
 		keys,
 		host: target,
-		authenticated: verdict.authenticated,
-		ready: verdict.authenticated,
-		message: verdict.authenticated ? null : verdict.message,
-		detail: `${probe.stdout}\n${probe.stderr}`.trim(),
+		authenticated,
+		ready: authenticated,
+		message: authenticated ? null : sshFailureMessage(output.stdout, output.stderr, target),
 	};
 }
