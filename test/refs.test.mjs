@@ -76,7 +76,10 @@ parallel('引用筛选状态', (t) => {
 	});
 
 	t.test('取数起点：全部为 null，自动与手选给引用名', () => {
-		const context = { head: 'feature', headHash: 'h1', upstream: 'origin/feature', base: 'origin/main' };
+		const context = {
+			head: 'feature', headHash: 'h1',
+			upstream: 'origin/feature', upstreamRef: 'refs/remotes/origin/feature', base: 'origin/main',
+		};
 		assert.equal(filterBranchesOf({ mode: 'all', ids: [] }, context), null);
 		assert.deepEqual(filterBranchesOf({ mode: 'auto', ids: [] }, context), ['refs/heads/feature', 'refs/remotes/origin/feature', 'origin/main']);
 		assert.deepEqual(
@@ -84,13 +87,19 @@ parallel('引用筛选状态', (t) => {
 			['refs/heads/dev', 'refs/tags/v1'],
 		);
 		// 自动模式的上下文为空时退回全部，避免空取数。
-		assert.equal(filterBranchesOf({ mode: 'auto', ids: [] }, { head: null, headHash: null, upstream: null, base: null }), null);
+		assert.equal(
+			filterBranchesOf({ mode: 'auto', ids: [] }, { head: null, headHash: null, upstream: null, upstreamRef: null, base: null }),
+			null,
+		);
 	});
 
 	t.test('取数起点：当前分支与上游同名时两者都取', () => {
 		// 本地分支名形如远程分支短名时它不再是上游的去重对象：两个尖端都要进窗口。
 		assert.deepEqual(
-			filterBranchesOf({ mode: 'auto', ids: [] }, { head: 'other/main', headHash: 'h1', upstream: 'other/main', base: null }),
+			filterBranchesOf({ mode: 'auto', ids: [] }, {
+				head: 'other/main', headHash: 'h1',
+				upstream: 'other/main', upstreamRef: 'refs/remotes/other/main', base: null,
+			}),
 			['refs/heads/other/main', 'refs/remotes/other/main'],
 		);
 	});
@@ -115,7 +124,9 @@ parallel('引用筛选状态', (t) => {
 			ref('refs/remotes/origin/main', 'origin/main', 'remote'),
 			ref('refs/heads/dev', 'dev', 'branch'),
 		];
-		const context = { head: 'main', headHash: 'h1', upstream: 'origin/main', base: null };
+		const context = {
+			head: 'main', headHash: 'h1', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', base: null,
+		};
 		assert.deepEqual([...checkedRefIds({ mode: 'all', ids: [] }, refs, context)], refs.map((item) => item.id));
 		assert.deepEqual(
 			[...checkedRefIds({ mode: 'auto', ids: [] }, refs, context)],

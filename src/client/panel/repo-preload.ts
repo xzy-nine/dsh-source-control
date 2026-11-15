@@ -458,7 +458,8 @@ async function syncAll(entry: WorkspaceEntry, controller: AbortController): Prom
 	const next = new Map(entry.snapshot.syncById);
 	for (const result of results) {
 		const sync: RepoSync = {
-			branch: result.branch, upstream: result.upstream, ahead: result.ahead, behind: result.behind,
+			branch: result.branch, upstream: result.upstream,
+			upstreamRef: result.upstreamRef ?? null, ahead: result.ahead, behind: result.behind,
 		};
 		for (const id of idsByPath.get(result.path) ?? []) {
 			next.set(id, sync);
@@ -523,7 +524,8 @@ async function syncPath(entry: WorkspaceEntry, path: string, ids: readonly strin
 	const result = results[0];
 	const next = new Map(entry.snapshot.syncById);
 	const sync: RepoSync = {
-		branch: result.branch, upstream: result.upstream, ahead: result.ahead, behind: result.behind,
+		branch: result.branch, upstream: result.upstream,
+		upstreamRef: result.upstreamRef ?? null, ahead: result.ahead, behind: result.behind,
 	};
 	for (const id of ids) {
 		// 仍在树上才写入：重取期间节点可能已被移除。

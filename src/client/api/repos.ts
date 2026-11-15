@@ -103,6 +103,7 @@ function readSyncFields(source: Record<string, unknown>): RepoSync {
 	return {
 		branch: typeof source.branch === 'string' ? source.branch : null,
 		upstream: typeof source.upstream === 'string' ? source.upstream : null,
+		upstreamRef: typeof source.upstreamRef === 'string' ? source.upstreamRef : null,
 		ahead: typeof source.ahead === 'number' ? source.ahead : 0,
 		behind: typeof source.behind === 'number' ? source.behind : 0,
 	};
@@ -127,6 +128,8 @@ export interface WorkingTreeSnapshot {
 	readonly head: string | null;
 	readonly branch: string | null;
 	readonly upstream: string | null;
+	/** 上游的完整引用；无上游时为 null。 */
+	readonly upstreamRef: string | null;
 	readonly ahead: number;
 	readonly behind: number;
 	/** 是否处于未完成的合并：有冲突待解决，或无冲突但尚未提交。 */
@@ -155,6 +158,7 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal,
 		head: typeof payload.head === 'string' ? payload.head : null,
 		branch: typeof payload.branch === 'string' ? payload.branch : null,
 		upstream: typeof payload.upstream === 'string' ? payload.upstream : null,
+		upstreamRef: typeof payload.upstreamRef === 'string' ? payload.upstreamRef : null,
 		ahead: typeof payload.ahead === 'number' ? payload.ahead : 0,
 		behind: typeof payload.behind === 'number' ? payload.behind : 0,
 		merging: payload.merging === true,
@@ -348,10 +352,13 @@ export async function loadRefs(cwd: string, showRemoteBranches = true, signal?: 
  * @param signal - 取消信号。
  * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
  */
-export async function loadBranchBase(cwd: string, signal?: AbortSignal): Promise<{ branch: string | null; base: string | null }> {
+export async function loadBranchBase(cwd: string, signal?: AbortSignal): Promise<{
+	branch: string | null; base: string | null; baseRef: string | null;
+}> {
 	const payload = await callApi(cwd, { command: 'loadBranchBase' }, signal);
 	return {
 		branch: typeof payload.branch === 'string' ? payload.branch : null,
 		base: typeof payload.base === 'string' ? payload.base : null,
+		baseRef: typeof payload.baseRef === 'string' ? payload.baseRef : null,
 	};
 }

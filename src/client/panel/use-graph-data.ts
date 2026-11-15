@@ -171,11 +171,11 @@ export function useGraphData({
 		if (remembered !== undefined) {
 			return {
 			...remembered,
-			headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null,
+			headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null, upstreamRef: remembered.upstreamRef ?? null,
 		};
 		}
 		return {
-			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
+			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint, upstreamRef: null,
 			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
 			entries: [], entriesTruncated: false, selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
@@ -204,9 +204,9 @@ export function useGraphData({
 	const graphBranches = React.useMemo(
 		() => filterBranchesOf(filter, {
 			head: headName, headHash: state.headHash ?? null,
-			upstream: upstreamName, base: baseRef,
+			upstream: upstreamName, upstreamRef: state.upstreamRef, base: baseRef,
 		}),
-		[filter, headName, state.headHash, upstreamName, baseRef],
+		[filter, headName, state.headHash, upstreamName, state.upstreamRef, baseRef],
 	);
 	/** 取数起点的稳定编码：作为依赖与「起点是否变化」的判据。 */
 	const branchesKey = graphBranches === null ? '*' : JSON.stringify(graphBranches);
@@ -280,7 +280,8 @@ export function useGraphData({
 		 */
 		const requestBranches = repoChanged
 			? filterBranchesOf(hintRef.current.filter, {
-				head: hintRef.current.head, headHash: null, upstream: hintRef.current.upstream, base: null,
+				head: hintRef.current.head, headHash: null,
+				upstream: hintRef.current.upstream, upstreamRef: null, base: null,
 			})
 			: branchesRef.current;
 		const requestKey = requestBranches === null ? '*' : JSON.stringify(requestBranches);
@@ -325,7 +326,7 @@ export function useGraphData({
 			setState((previous) => ({
 				...previous,
 				phase: 'loading', entriesPhase: 'loading', error: null,
-				commits: [], entries: [], head: null, headHash: null, upstream: null, more: false, nextSkip: 0,
+				commits: [], entries: [], head: null, headHash: null, upstream: null, upstreamRef: null, more: false, nextSkip: 0,
 				detail: null, selectedHash: null,
 			}));
 		} else if (branchesChanged) {
@@ -417,7 +418,7 @@ export function useGraphData({
 					...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
 					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
+					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? settled.remotes : graph.remotes,
 					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
@@ -512,7 +513,7 @@ export function useGraphData({
 					phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
 					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
+					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,

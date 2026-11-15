@@ -12,6 +12,8 @@ import {
 import type { SshStatusInfo } from '../api/index.ts';
 import { showCheckbox, showMessage, showSelect, showTabbedForm, type FormPage } from '../ui/dialog.ts';
 import { showContextMenu } from '../ui/context-menu.ts';
+import { refIdOf } from '../shared/ref-id.ts';
+import { upstreamPartsFromRef, upstreamPartsFromShortName } from '../../shared/upstream-ref.ts';
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
@@ -68,9 +70,9 @@ export interface RemoteSync {
  * @param upstream - 上游短名。
  * @returns 完整引用名。
  */
-function remoteTrackingRef(upstream: string): string {
-	// 上游也可能是本地分支（branch.X.remote 为 .），那时它已经是一个完整引用。
-	return upstream.startsWith('refs/') ? upstream : 'refs/remotes/' + upstream;
+function remoteTrackingRef(sync: RepoSync): string {
+	// 完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。
+	return sync.upstreamRef ?? refIdOf(sync.upstream ?? '', 'remote');
 }
 
 /**
@@ -82,11 +84,13 @@ function remoteTrackingRef(upstream: string): string {
  * @param upstream - 上游引用名；null 表示没有上游。
  * @returns 远程名与该远程上的分支名。
  */
-export function upstreamPartsOf(upstream: string | null): { remote: string; branch: string } | null {
-	if (upstream === null) return null;
-	const at = upstream.indexOf('/');
-	if (at <= 0 || at === upstream.length - 1) return null;
-	return { remote: upstream.slice(0, at), branch: upstream.slice(at + 1) };
+export function upstreamPartsOf(sync: RepoSync | undefined): { remote: string; branch: string } | null {
+	if (sync === undefined) return null;
+	// 优先用完整引用：远程名与源分支由 git 给出，不必从短名猜种类或拆前缀。
+	const fromRef = upstreamPartsFromRef(sync.upstreamRef);
+	if (fromRef !== null) return fromRef.remote === null ? null : { remote: fromRef.remote, branch: fromRef.branch };
+	// 宿主未给出完整引用时退回短名拆分。
+	return upstreamPartsFromShortName(sync.upstream);
 }
 
 /**
@@ -330,7 +334,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
 		const skipHooks = pushHookActive && !runHooks;
-		const parts = upstreamPartsOf(currentSync?.upstream ?? null);
+		const parts = upstreamPartsOf(currentSync);
 		void run('network', async (cancelKey, reportPhase) => {
 			// 三个阶段各自声明：等待时能看出卡在哪一段，而不是只看到「同步」。
 			// 每个阶段都用同一个停止键登记，用户在任意一段停止都能落到当时在跑的那个进程上。
@@ -342,7 +346,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			}
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				reportPhase('合并');
-				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream), false, false, false, cancelKey), checkoutFailureText);
+				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync), false, false, false, cancelKey), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
 				reportPhase('推送');
@@ -360,7 +364,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	 */
 	const overwriteTarget = (): { readonly sync: RepoSync; readonly path: string; readonly parts: { remote: string; branch: string } } | null => {
 		const sync = currentSync;
-		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		const parts = upstreamPartsOf(sync);
 		if (sync === undefined || workingTreePath === null || parts === null || sync.branch === null) return null;
 		return { sync, path: workingTreePath, parts };
 	};
@@ -405,7 +409,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			await run('history', async () => {
 				// 只抓要被采用的那一个远程分支：整包抓取会把它名下其他分支的缺失对象一并下载。
 				await fetchRepo(path, parts.remote, false, false, parts.branch);
-				const error = await resetToCommit(path, remoteTrackingRef(upstream), 'hard');
+				const error = await resetToCommit(path, remoteTrackingRef(sync), 'hard');
 				if (error !== null) throw new Error(error);
 			}, undefined, undefined, { intent: '用远程覆盖本地（硬重置）' });
 		})();

@@ -81,7 +81,9 @@ test('分叉来源：reflog 的创建来源解析到上游远程分支', async (
 	withRemote(git);
 	git('checkout', '-q', '-b', 'feature');
 
-	assert.deepEqual(await getBranchBase(repo), { branch: 'feature', base: 'origin/main' });
+	assert.deepEqual(await getBranchBase(repo), {
+		branch: 'feature', base: 'origin/main', baseRef: 'refs/remotes/origin/main',
+	});
 });
 
 test('分叉来源：显式配置优先于 reflog', async () => {
@@ -92,7 +94,9 @@ test('分叉来源：显式配置优先于 reflog', async () => {
 	git('checkout', '-q', '-b', 'topic', 'main');
 	git('config', 'branch.topic.vscode-merge-base', 'origin/dev');
 
-	assert.deepEqual(await getBranchBase(repo), { branch: 'topic', base: 'origin/dev' });
+	assert.deepEqual(await getBranchBase(repo), {
+		branch: 'topic', base: 'origin/dev', baseRef: 'refs/remotes/origin/dev',
+	});
 });
 
 test('分叉来源：无远程时退回本地来源分支', async () => {
@@ -100,14 +104,16 @@ test('分叉来源：无远程时退回本地来源分支', async () => {
 	git('branch', 'side');
 	git('checkout', '-q', '-b', 'topic', 'side');
 
-	assert.deepEqual(await getBranchBase(repo), { branch: 'topic', base: 'side' });
+	assert.deepEqual(await getBranchBase(repo), {
+		branch: 'topic', base: 'side', baseRef: 'refs/heads/side',
+	});
 });
 
 test('分叉来源：分离头指针没有来源', async () => {
 	const { repo, git } = makeRepo('gg-filter-detached-');
 	git('checkout', '-q', '--detach', 'HEAD');
 
-	assert.deepEqual(await getBranchBase(repo), { branch: null, base: null });
+	assert.deepEqual(await getBranchBase(repo), { branch: null, base: null, baseRef: null });
 });
 /**
  * 取一条经真实路由 handler 发请求的调用函数。

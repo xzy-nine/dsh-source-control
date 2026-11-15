@@ -18,7 +18,7 @@ import type { PanelState, RepoSync } from '../shared/types.ts';
  */
 export function syncOfSnapshot(snapshot: WorkingTreeSnapshot): RepoSync {
 	return {
-		branch: snapshot.branch, upstream: snapshot.upstream,
+		branch: snapshot.branch, upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef,
 		ahead: snapshot.ahead, behind: snapshot.behind,
 	};
 }

@@ -35,10 +35,14 @@ export interface AutoFilterContext {
 	readonly head: string | null;
 	/** 当前 HEAD 的提交哈希；分离头指针时用作取数起点。 */
 	readonly headHash?: string | null;
-	/** 上游远程跟踪分支短名。 */
+	/** 上游短名。 */
 	readonly upstream: string | null;
+	/** 上游的完整引用；以它为准判定种类与取数起点。 */
+	readonly upstreamRef: string | null;
 	/** 分叉来源引用短名（VS Code 图形视图的 base 引用）。 */
 	readonly base: string | null;
+	/** 分叉来源的完整引用；以它为准定位与勾选，短名只管显示。 */
+	readonly baseRef?: string | null;
 }
 
 /**
@@ -163,11 +167,18 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 	const starts: string[] = [];
 	const head = context.head === null || context.head === '' ? context.headHash ?? null : `refs/heads/${context.head}`;
 	if (head !== null && head !== '') starts.push(head);
-	const upstream = context.upstream;
-	// 上游可以是远程跟踪引用，也可以是本地分支（branch.X.remote 为 .）：后者已带 refs/ 前缀，不能再套一层。
-	if (upstream !== null && upstream !== '') starts.push(upstream.startsWith('refs/') ? upstream : `refs/remotes/${upstream}`);
+	const upstream = context.upstreamRef;
+	// 上游的完整引用由宿主给出：本地分支与远程跟踪引用各自是它们本来的引用名，无需按短名判断种类。
+	if (upstream !== null && upstream !== '') starts.push(upstream);
+	else if (context.upstream !== null && context.upstream !== '') {
+		// 宿主未给出完整引用时退回短名按远程跟踪引用处理：少一个起点会让图形区静默少显示一段历史。
+		starts.push(refIdOf(context.upstream, 'remote'));
+	}
 	// 分叉来源与上游或当前分支是同一个引用时不再重复。
-	if (context.base !== null && context.base !== '' && context.base !== upstream && context.base !== context.head) starts.push(context.base);
+	if (context.base !== null && context.base !== '' && context.base !== upstream && context.base !== context.head) {
+		// 用完整引用交给 git log：短名与标签撞名时会被解析到别处。
+		starts.push(context.baseRef ?? context.base);
+	}
 	return starts;
 }
 
@@ -244,8 +255,24 @@ export function revalidatedFilter(filter: RefFilter, refs: readonly RefItem[]): 
 export function checkedRefIds(filter: RefFilter, refs: readonly RefItem[], context: AutoFilterContext): Set<string> {
 	if (filter.mode === 'manual') return new Set(filter.ids);
 	if (filter.mode === 'all') return new Set(refs.map((ref) => ref.id));
-	const names = new Set(autoRefNames(context));
-	return new Set(refs.filter((ref) => names.has(ref.name)).map((ref) => ref.id));
+	/*
+	 * 自动模式的勾选按引用 id 而不是短名：短名会撞车，同名标签会被一并勾上。
+	 * 当前分支与上游的种类是确定的（本地分支 / 完整上游引用），据此直接得到 id；
+	 * 分叉来源只有短名、种类无法判定，仍按名字匹配。
+	 */
+	const ids = new Set<string>();
+	if (context.head !== null && context.head !== '') ids.add(refIdOf(context.head, 'branch'));
+	if (context.upstreamRef !== null && context.upstreamRef !== '') ids.add(context.upstreamRef);
+	const baseRef = context.baseRef;
+	if (baseRef !== null && baseRef !== undefined && baseRef !== '') ids.add(baseRef);
+	else {
+		// 宿主未给出完整引用时退回短名匹配：这类非空判定属旧宿主兼容，不影响已就绪的判定。
+		const baseName = context.base;
+		if (baseName !== null && baseName !== '') {
+			for (const ref of refs) if (ref.name === baseName) ids.add(ref.id);
+		}
+	}
+	return new Set(refs.filter((ref) => ids.has(ref.id)).map((ref) => ref.id));
 }
 
 /**

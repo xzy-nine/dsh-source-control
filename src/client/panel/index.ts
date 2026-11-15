@@ -123,7 +123,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 引用清单的作废计数：分支/标签/远程变化后递增，手选筛选据此重新校验。 */
 	const [refsRevision, setRefsRevision] = React.useState(0);
 	/** 自动筛选的分叉来源；记录所属仓库与分支，供取数与弹窗使用。 */
-	const [branchBase, setBranchBase] = React.useState<{ repo: string; branch: string; base: string | null } | null>(null);
+	const [branchBase, setBranchBase] = React.useState<{
+		repo: string; branch: string; base: string | null; baseRef: string | null;
+	} | null>(null);
 	// 分组各自的「已折叠」文件夹集合（默认空＝全部展开）；窗口级、不持久化。
 	// detail 是图形区内展开块的文件夹集合。
 	const [collapsedByGroup, setCollapsedByGroup] = React.useState<{ staged: Set<string>; unstaged: Set<string>; conflict: Set<string>; detail: Set<string> }>(
@@ -338,7 +340,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		 * 另起一个分支全在本地没有的远程时每轮都要整包下载，把后台抓取拖到超时。
 		 */
 		fetch: async (path) => {
-			const parts = upstreamPartsOf(state.upstream);
+			const parts = upstreamPartsOf({ branch: state.head, upstream: state.upstream, upstreamRef: state.upstreamRef, ahead: state.ahead, behind: state.behind });
 			return parts === null
 				? await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags)
 				: await fetchRepo(path, parts.remote, false, false, parts.branch);
@@ -599,8 +601,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 仓库树的批量取数（loadReposSync）另走一条路，只供未选中行显示；选中行也以本值为准。
 	 */
 	const selectedSync = React.useMemo<RepoSync>(
-		() => ({ branch: state.head, upstream: state.upstream, ahead: state.ahead, behind: state.behind }),
-		[state.head, state.upstream, state.ahead, state.behind],
+		() => ({
+			branch: state.head, upstream: state.upstream, upstreamRef: state.upstreamRef,
+			ahead: state.ahead, behind: state.behind,
+		}),
+		[state.head, state.upstream, state.upstreamRef, state.ahead, state.behind],
 	);
 
 	/* 远程相关动作：SSH 校验、发布、同步、双向覆盖与同步按钮的右键菜单。 */
@@ -924,7 +929,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			try {
 				const result = await loadBranchBase(repo);
 				if (cancelled.current) return;
-				setBranchBase(result.branch === branch ? { repo, branch, base: result.base } : null);
+				setBranchBase(result.branch === branch ? { repo, branch, base: result.base, baseRef: result.baseRef } : null);
 			} catch {
 				if (!cancelled.current) setBranchBase(null);
 			}
@@ -943,12 +948,17 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 取数已按筛选在宿主侧完成（引用起点交给 `git log`），这里只整理弹窗要用的引用与勾选态。
 	 * 弹窗列出仓库的全部引用，与提交窗口无关。
 	 */
-	const filterBase = branchBase !== null && branchBase.repo === workingTreePath && branchBase.branch === state.head
-		? branchBase.base
+	const matchedBase = branchBase !== null && branchBase.repo === workingTreePath && branchBase.branch === state.head
+		? branchBase
 		: null;
+	const filterBase = matchedBase?.base ?? null;
+	const filterBaseRef = matchedBase?.baseRef ?? null;
 	const filterContext = React.useMemo<AutoFilterContext>(
-		() => ({ head: state.head, headHash: state.headHash, upstream: state.upstream, base: filterBase }),
-		[state.head, state.headHash, state.upstream, filterBase],
+		() => ({
+			head: state.head, headHash: state.headHash,
+			upstream: state.upstream, upstreamRef: state.upstreamRef, base: filterBase, baseRef: filterBaseRef,
+		}),
+		[state.head, state.headHash, state.upstream, state.upstreamRef, filterBase, filterBaseRef],
 	);
 	const dialogRefs = React.useMemo(() => {
 		const items = refItems !== null && refItems.repo === workingTreePath ? refItems.items : [];

@@ -125,7 +125,10 @@ export interface RepoNode {
 /** 仓库领先/落后信息。 */
 export interface RepoSync {
 	readonly branch: string | null;
+	/** 上游短名，供显示。 */
 	readonly upstream: string | null;
+	/** 上游的完整引用，如 `refs/remotes/origin/main`：抓取范围与合并目标都按它判定。 */
+	readonly upstreamRef: string | null;
 	readonly ahead: number;
 	readonly behind: number;
 }
@@ -390,8 +393,10 @@ export interface PanelState {
 	head: string | null;
 	/** 当前 HEAD 指向的提交哈希；尚无提交时为 null。 */
 	headHash: string | null;
-	/** 上游远程跟踪分支名；无上游时为 null。 */
+	/** 上游短名；无上游时为 null。 */
 	upstream: string | null;
+	/** 上游的完整引用；无上游时为 null。 */
+	upstreamRef: string | null;
 	/**
 	 * 相对上游领先的提交数。
 	 *
