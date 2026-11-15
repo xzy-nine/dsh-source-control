@@ -314,6 +314,26 @@ test('按分支抓取：只取指定远程的指定分支，其他远程与分�
 	}
 });
 
+test('停止操作：按停止键终止在跑的 git 子进程', async () => {
+	const { repo } = makeRepo();
+	try {
+		const call = await makeCaller(repo);
+
+		// 没有该键对应的操作时返回 0：停止一个已经结束的操作属正常情况。
+		const idle = await call({ command: 'cancelOperation', key: 'no-such-key' });
+		assert.equal(idle.stopped, 0);
+
+		// 空键不指向任何操作。
+		const empty = await call({ command: 'cancelOperation', key: '' });
+		assert.equal(empty.stopped, 0);
+
+		// 命令本身恒成功：停止是用户主动行为，不是失败。
+		assert.equal(idle.error ?? null, null);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
 test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活时为 false', async () => {
 	const { repo } = makeRepo();
 	try {

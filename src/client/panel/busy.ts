@@ -14,8 +14,8 @@ import type { BusyEntry, BusyFlags, BusyScope } from '../shared/types.ts';
  * @param scope - 操作的影响面。
  * @returns 新记录。
  */
-export function addBusy(entries: readonly BusyEntry[], repo: string, scope: BusyScope): readonly BusyEntry[] {
-	return entries.concat([{ repo, scope }]);
+export function addBusy(entries: readonly BusyEntry[], repo: string, scope: BusyScope, cancel?: { readonly cancelKey: string; readonly label: string }): readonly BusyEntry[] {
+	return entries.concat([cancel === undefined ? { repo, scope } : { repo, scope, cancelKey: cancel.cancelKey, label: cancel.label }]);
 }
 
 /**
@@ -28,8 +28,10 @@ export function addBusy(entries: readonly BusyEntry[], repo: string, scope: Busy
  * @param scope - 操作的影响面。
  * @returns 新记录；没有匹配记录时原样返回。
  */
-export function removeBusy(entries: readonly BusyEntry[], repo: string, scope: BusyScope): readonly BusyEntry[] {
-	const at = entries.findIndex((entry) => entry.repo === repo && entry.scope === scope);
+export function removeBusy(entries: readonly BusyEntry[], repo: string, scope: BusyScope, cancelKey?: string): readonly BusyEntry[] {
+	// 给出停止键时按它精确移除：同仓库同影响面可能并行着多个可停止操作，错删别人的会让停止入口失效。
+	const at = entries.findIndex((entry) => entry.repo === repo && entry.scope === scope
+		&& (cancelKey === undefined || entry.cancelKey === cancelKey));
 	return at === -1 ? entries : [...entries.slice(0, at), ...entries.slice(at + 1)];
 }
 
@@ -66,6 +68,47 @@ const BLOCKING_SCOPES: ReadonlySet<BusyScope> = new Set<BusyScope>(['read', 'com
 export function isReadBlocked(entries: readonly BusyEntry[], repo: string | null): boolean {
 	if (repo === null) return false;
 	return entries.some((entry) => entry.repo === repo && BLOCKING_SCOPES.has(entry.scope));
+}
+
+/**
+ * 一次可停止的操作在界面上的呈现方式。
+ *
+ * 两类操作对用户的干扰不同，呈现也随之不同：会挡住其他功能的长任务用弹窗，让用户明确
+ * 知道界面为何不可用；不挡功能的长任务只在面板里占一行，不打断用户继续操作。
+ */
+export type CancelSurface = 'dialog' | 'row';
+
+/** 一条可停止操作的展示信息。 */
+export interface CancellableEntry {
+	/** 停止键，交给宿主终止对应子进程。 */
+	readonly cancelKey: string;
+	/** 面向用户的操作名。 */
+	readonly label: string;
+	/** 目标仓库路径。 */
+	readonly repo: string;
+	/** 呈现方式。 */
+	readonly surface: CancelSurface;
+}
+
+/**
+ * 从忙碌记录中挑出可停止的那些，并按影响面决定呈现方式。
+ *
+ * @param entries - 现有忙碌记录。
+ * @returns 可停止操作列表，保持记录顺序。
+ */
+export function cancellableEntriesOf(entries: readonly BusyEntry[]): CancellableEntry[] {
+	const result: CancellableEntry[] = [];
+	for (const entry of entries) {
+		if (entry.cancelKey === undefined) continue;
+		result.push({
+			cancelKey: entry.cancelKey,
+			label: entry.label ?? '操作',
+			repo: entry.repo,
+			// 挡住后台读取的影响面会让整个面板停摆，必须弹窗；其余只占一行。
+			surface: BLOCKING_SCOPES.has(entry.scope) ? 'dialog' : 'row',
+		});
+	}
+	return result;
 }
 
 /**

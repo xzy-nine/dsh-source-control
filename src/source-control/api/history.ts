@@ -245,8 +245,8 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					 */
 					const before = await refsSignature(repo);
 					const error = remoteBranch === null
-						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true)
-						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true);
+						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true, key)
+						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true, key);
 					if (error !== null) throw new Error(error);
 					const after = await refsSignature(repo);
 					const changed = before !== after;

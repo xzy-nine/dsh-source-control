@@ -112,7 +112,7 @@ export interface RepoNode {
 	readonly depth: number;
 	/** 当前分支；分离头指针为 null。 */
 	readonly branch: string | null;
-	/** 提交短哈希；仅工作树枚举提供。 */
+	/** 分离头指针提交的短哈希；已检出的子模块也带这一项。 */
 	readonly head: string | null;
 	/** 路径在磁盘上是否存在。 */
 	readonly available: boolean;
@@ -302,16 +302,40 @@ export type BusyScope = 'read' | 'commit' | 'history' | 'network';
  */
 export type PanelRun = (
 	scope: BusyScope,
-	operation: () => Promise<void>,
+	/**
+	 * 操作体。
+	 *
+	 * 可停止的操作经入参拿到本次的停止键，并把它传给宿主侧对应的 git 调用；不可停止的操作
+	 * 忽略该入参即可。
+	 */
+	operation: (cancelKey: string) => Promise<void>,
 	repo?: string,
 	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: { readonly historyChanged?: boolean; readonly intent?: string },
+	options?: {
+		readonly historyChanged?: boolean;
+		readonly intent?: string;
+		/**
+		 * 允许用户手动停止本次操作。
+		 *
+		 * 给出时该操作进入可停止清单，用户从停止入口主动终止；不给时只能等它自己结束。
+		 * 只有确信「停下不留下半截状态」的操作才该给。
+		 */
+		readonly cancellable?: boolean;
+	},
 ) => Promise<void>;
 
-/** 一条进行中的操作：目标仓库路径与影响面。 */
+/**
+ * 一条进行中的操作：目标仓库路径、影响面与可停止信息。
+ *
+ * `cancelKey` 只在这次操作可被用户手动停止时给出；`label` 是给用户看的动作名。
+ */
 export interface BusyEntry {
 	readonly repo: string;
 	readonly scope: BusyScope;
+	/** 停止键；与宿主侧子进程登记键一致。不可停止时为 undefined。 */
+	readonly cancelKey?: string | undefined;
+	/** 面向用户的操作名，用于停止入口的说明。 */
+	readonly label?: string | undefined;
 }
 
 /** 某个仓库四个影响面各自的忙碌标志；供分区按控件用途取用。 */

@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {
-	discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
+	cancelOperation, discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
 	resolveConflict as resolveConflictCommand, loadConflictStagesOf, CONFLICT_ACTION_TEXT,
 } from '../api/index.ts';
@@ -48,6 +48,8 @@ import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { upstreamPartsOf, useRemoteSync } from './use-remote-sync.ts';
 import { useRepoCommands } from './use-repo-commands.ts';
 import { useCommitSelection } from './use-commit-selection.ts';
+import { CancelDialog, CancelRow } from './cancel-banner.ts';
+import { cancellableEntriesOf } from './busy.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 import type { BusyScope, Commit, ConflictAction, ConflictStages, PanelRun, RefInfo, RefItem, RepoSync, Settings } from '../shared/types.ts';
@@ -429,9 +431,12 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		const intent = options?.intent ?? `${scope} 操作`;
 		logClient('I', 'action', `用户操作：${intent}（仓库 ${target}）`);
 		const startedAt = Date.now();
-		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope), error: null }));
+		// 可停止的操作各带一个键：同仓库同影响面并行时，停止其中一次不能连带另一次。
+		const cancelKey = options?.cancellable === true ? `${target}\u0000${scope}\u0000${String(startedAt)}\u0000${String(Math.random()).slice(2, 10)}` : undefined;
+		const cancelInfo = cancelKey === undefined ? undefined : { cancelKey, label: intent };
+		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope, cancelInfo), error: null }));
 		try {
-			await operation();
+			await operation(cancelKey ?? '');
 			logClient('I', 'action', `操作完成：${intent}，耗时 ${String(Date.now() - startedAt)} ms`);
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
@@ -456,9 +461,38 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			logClient('E', 'action', `操作失败：${intent}：${message}`);
 			reportError(setState, message);
 		} finally {
-			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope) }));
+			setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, target, scope, cancelKey) }));
 		}
 	}, [workingTreePath, refresh, refreshEntries, setState]);
+
+	/**
+	 * 停止一次可停止的操作。
+	 *
+	 * 只是把停止请求交给宿主：真正的终止发生在宿主侧的子进程登记表里，这里随即把忙碌记录
+	 * 撤掉，界面不必等子进程退出。
+	 */
+	const handleCancelOperation = React.useCallback((cancelKey: string) => {
+		const target = workingTreePath;
+		if (target === null) return;
+		logClient('W', 'action', `用户停止操作：${cancelKey}`);
+		void cancelOperation(target, cancelKey).catch((error: unknown) => {
+			logClient('E', 'action', `停止操作失败：${error instanceof Error ? error.message : String(error)}`);
+		});
+	}, [workingTreePath]);
+
+	/**
+	 * 阻塞型可停止操作的弹窗：用户可暂时收起，收起后仍以行为单位提供停止入口。
+	 */
+	const [cancelDialogDismissed, setCancelDialogDismissed] = React.useState<string | null>(null);
+	const blockingCancellable = React.useMemo(
+		() => cancellableEntriesOf(state.busy).find((entry) => entry.surface === 'dialog') ?? null,
+		[state.busy],
+	);
+	// 新的阻塞操作开始时重新弹出：收起只对当次有效。
+	React.useEffect(() => {
+		if (blockingCancellable === null) { setCancelDialogDismissed(null); return; }
+		setCancelDialogDismissed((previous) => (previous !== null && previous !== blockingCancellable.cancelKey ? null : previous));
+	}, [blockingCancellable]);
 
 	/** 失败提示：说明失败原因，或当前条件下操作无法进行的原因；正文可复制。 */
 	const notify = React.useCallback((message: string): Promise<void> => {
@@ -670,10 +704,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, [run, workingTreePath]);
 	/* 提交详情与选择：打开差异、选中提交、对比两个提交、滚动到 HEAD。 */
 	const selection = useCommitSelection({
-		workingTreePath, state, setState, graphScrollRef, onOpenDiff,
+		workingTreePath, state, setState, onOpenDiff,
 		scrollToHeadOnLoad: settings.onRepoLoadScrollToHead,
+		loadMore,
 	});
-	const { openDiff, openLogFile, toggleCommit, goToHead, headCommitHash } = selection;
+	const { openDiff, openLogFile, toggleCommit, goToHead, headCommitHash, scrollTo } = selection;
 	/** 打开冲突文件的差异页：冲突恒按工作区作用域打开，暂存区那边只会给出 `* Unmerged path`。 */
 	const handleOpenConflict = React.useCallback((entry: { path: string }): void => {
 		void openDiff('*', entry.path, false, false);
@@ -833,11 +868,11 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const loadMoreCommits = React.useCallback(() => {
 		void loadMore();
 	}, [loadMore]);
-	/** 从所有远程抓取。 */
+	/** 从所有远程抓取。抓取可能长时间无响应，因此允许用户手动停止。 */
 	const fetchAll = React.useCallback(() => {
-		void run('network', async () => {
-			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
-		}, undefined, undefined, { intent: '从所有远程抓取' });
+		void run('network', async (cancelKey) => {
+			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
+		}, undefined, undefined, { intent: '从所有远程抓取', cancellable: true });
 	}, [run, workingTreePath, settings.fetchAndPrune, settings.fetchAndPruneTags]);
 	/** 打开设置面板。 */
 	const openSettingsPanel = React.useCallback(() => { setSettingsTab('repo'); setSettingsOpen(true); }, []);
@@ -976,6 +1011,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onResizeStart: layout.startRepoResize,
 		}),
 
+		// ── 可停止操作的行内入口（非阻塞型）──────────────
+		React.createElement(CancelRow, { busy: state.busy, onCancel: handleCancelOperation }),
+
 		// ── 更改 ──────────────────────────────────────────────
 		React.createElement(ChangesSection, {
 			entries: state.entries, entriesTruncated: state.entriesTruncated, busy: busyFlags, phase: state.entriesPhase,
@@ -1013,7 +1051,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			open: layout.graphSecOpen, height: layout.graphHeight, busy: busyFlags, phase: state.phase,
 			commitCount: state.commits.length, selectedNode, graphScrollRef,
 			commits: state.commits,
-			head: state.head, selectedHash: state.selectedHash,
+			head: state.head, selectedHash: state.selectedHash, scrollTo,
 			localTip: syncMarkers.localTip, remoteTip: syncMarkers.remoteTip, baseTip: syncMarkers.baseHash,
 			upstream: state.upstream,
 			moreCommitsAvailable: state.more, statsByHash, messageByHash,
@@ -1043,5 +1081,13 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			empty: workspaceEmpty, emptyBusy: emptyActionBusy,
 			onEmptyAction: () => { if (workspaceEmpty !== null) runEmptyAction(workspaceEmpty); },
 		}),
+
+		// ── 阻塞型可停止操作的弹窗：只覆盖插件面板，不干预 DSH 本体 ──
+		blockingCancellable !== null && cancelDialogDismissed !== blockingCancellable.cancelKey
+			? React.createElement(CancelDialog, {
+				busy: state.busy, onCancel: handleCancelOperation,
+				onClose: () => { setCancelDialogDismissed(blockingCancellable.cancelKey); },
+			})
+			: null,
 	);
 }

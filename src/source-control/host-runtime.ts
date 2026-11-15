@@ -86,6 +86,43 @@ let installedSubprocess: SubprocessLike | undefined;
 /** 在跑的受管子进程；宿主退出时逐个终止。 */
 const liveHandles = new Set<{ terminate(): void }>();
 
+/** 可停止子进程的登记：停止键 -> 该键下的子进程集合。 */
+const cancellable = new Map<string, Set<{ terminate(): void }>>();
+
+/**
+ * 终止某个停止键下的全部子进程。
+ *
+ * 一次操作可能起多个子进程（例如抓取后跟随的子模块抓取各起一个）；用户停止的是这次操作，
+ * 因此按键整组终止。
+ *
+ * @param key - 停止键。
+ * @returns 实际终止的子进程数；该键没有在跑的子进程时为 0。
+ */
+export function terminateCancellable(key: string): number {
+	const handles = cancellable.get(key);
+	if (handles === undefined) return 0;
+	let count = 0;
+	for (const handle of handles) {
+		try {
+			handle.terminate();
+			count += 1;
+		} catch {
+			/* 进程已退出 */
+		}
+	}
+	cancellable.delete(key);
+	return count;
+}
+
+/**
+ * 当前登记在跑的停止键。
+ *
+ * @returns 停止键列表。
+ */
+export function cancellableKeys(): string[] {
+	return [...cancellable.keys()];
+}
+
 /**
  * 登记宿主能力。
  *
@@ -150,6 +187,13 @@ export interface CollectSpec {
 	readonly timeoutMessage?: string | undefined;
 	/** 送进标准输入的内容；省略时关闭标准输入。 */
 	readonly input?: string | undefined;
+	/**
+	 * 可停止的登记键。
+	 *
+	 * 给出时把本次子进程登记到一个可停止的集合里，用户据此终止某次操作；省略时不登记，
+	 * 只能由宿主退出统一终止。
+	 */
+	readonly cancelKey?: string | undefined;
 }
 
 /**
@@ -210,6 +254,12 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 		return { code: -1, stdout: '', stderr: message };
 	}
 	liveHandles.add(handle);
+	let registered: Set<{ terminate(): void }> | undefined;
+	if (spec.cancelKey !== undefined) {
+		registered = cancellable.get(spec.cancelKey);
+		if (registered === undefined) { registered = new Set(); cancellable.set(spec.cancelKey, registered); }
+		registered.add(handle);
+	}
 	try {
 		const outcome = await handle.done;
 		const stdout = handle.collected.stdout?.readFrom(0) ?? { text: '', lossy: false };
@@ -234,6 +284,12 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 	} finally {
 		if (timer !== undefined) clearTimeout(timer);
 		liveHandles.delete(handle);
+		if (registered !== undefined) {
+			registered.delete(handle);
+			if (registered.size === 0 && cancellable.get(spec.cancelKey as string) === registered) {
+				cancellable.delete(spec.cancelKey as string);
+			}
+		}
 	}
 }
 

@@ -330,11 +330,11 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		if (busyFlags.network || workingTreePath === null) return;
 		const skipHooks = pushHookActive && !runHooks;
 		const parts = upstreamPartsOf(currentSync?.upstream ?? null);
-		void run('network', async () => {
+		void run('network', async (cancelKey) => {
 			if (parts === null) {
-				await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
+				await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
 			} else {
-				await fetchRepo(workingTreePath, parts.remote, false, false, parts.branch);
+				await fetchRepo(workingTreePath, parts.remote, false, false, parts.branch, cancelKey);
 			}
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
 				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream)), checkoutFailureText);
@@ -342,7 +342,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
 				await pushCurrentBranch(undefined, skipHooks);
 			}
-		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）' }).finally(() => { setRunHooks(true); });
+		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）', cancellable: true }).finally(() => { setRunHooks(true); });
 	};
 
 	/**
