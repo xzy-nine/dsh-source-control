@@ -282,6 +282,38 @@ test('检出远程分支：本地同名分支的归属决定检出还是报告�
 	}
 });
 
+test('按分支抓取：只取指定远程的指定分支，其他远程与分支不动', async () => {
+	const { repo, git } = makeRepo();
+	const kept = tempPath('gg-api-keep-');
+	const skipped = tempPath('gg-api-skip-');
+	try {
+		for (const bare of [kept, skipped]) {
+			execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+			git('push', '-q', bare, 'main');
+		}
+		git('remote', 'add', 'kept', kept);
+		git('remote', 'add', 'skipped', skipped);
+		const call = await makeCaller(repo);
+
+		// 只抓 kept 的 main：不产生 skipped 的任何远程跟踪引用。
+		const fetched = await call({ command: 'fetch', name: 'kept', prune: false, pruneTags: false, branch: 'main' });
+		assert.equal(fetched.error ?? null, null, '按分支抓取应成功');
+		assert.match(git('for-each-ref', '--format=%(refname)', 'refs/remotes'), /refs\/remotes\/kept\/main/);
+		assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/remotes/skipped'), '', '未被指定的远程不应被访问');
+
+		// 清理选项作用于整个远程，与按分支抓取不同时成立：直接拒绝，不起 git fetch。
+		const rejected = await call({ command: 'fetch', name: 'kept', prune: true, pruneTags: false, branch: 'main' });
+		assert.match(rejected.error, /不能同时清理/);
+		// 没有远程名就无从判定抓哪一个：同样拒绝。
+		const noRemote = await call({ command: 'fetch', name: null, prune: false, pruneTags: false, branch: 'main' });
+		assert.match(noRemote.error, /必须指定远程名/);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(kept, { recursive: true, force: true });
+		rmSync(skipped, { recursive: true, force: true });
+	}
+});
+
 test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活时为 false', async () => {
 	const { repo } = makeRepo();
 	try {

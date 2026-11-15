@@ -6,14 +6,18 @@ import { callApi, callApiRaw, commandError, errorList } from './http.ts';
 /**
  * 抓取远端引用。
  *
+ * 给出 `branch` 时只抓该远程上的这一个分支：抓整个远程会把它名下所有分支的缺失对象
+ * 一并下载，另起一个分支全在本地没有的远程时一次就是整包传输。
+ *
  * @param cwd - 会话工作区路径。
  * @param name - 远程名；null 表示全部远程。
  * @param prune - 是否修剪已删除的远程分支。
  * @param pruneTags - 是否修剪远程标签。
+ * @param branch - 该远程上的分支名；给出时只抓这一个，此时 `name` 必填且两个清理选项须为 false。
  * @returns 引用是否发生变化；无变化时调用方不必重取。
  */
-export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false): Promise<boolean> {
-	const payload = await callApi(cwd, { command: 'fetch', name, prune, pruneTags });
+export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false, branch: string | null = null): Promise<boolean> {
+	const payload = await callApi(cwd, { command: 'fetch', name, prune, pruneTags, branch });
 	// 宿主编比较了抓取前后的引用：无变化时重取一遍拿到的还是旧数据。
 	return payload.changed === true;
 }

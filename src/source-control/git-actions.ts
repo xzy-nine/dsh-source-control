@@ -238,6 +238,25 @@ export function fetch(repo: string, remote: string | null, prune: boolean, prune
 }
 
 /**
+ * 只抓取某个远程上的一个分支。
+ *
+ * 抓取整个远程会把它名下所有分支的缺失对象一并下载：另起的一个远程若分支全在本地没有，
+ * 一次抓取即整包传输，耗时可达数分钟并卡住整条抓取链。只需要当前分支的上游时用本函数，
+ * 传输量按该分支的新提交计。
+ *
+ * 同时把远端该分支的最新提交写入它的远程跟踪引用：后续的领先/落后与合并都靠这条引用。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名。
+ * @param branch - 该远程上的分支名。
+ * @param quiet - 为 true 时按静默写操作执行。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+export function fetchRemoteBranch(repo: string, remote: string, branch: string, quiet = false): Promise<ErrorInfo> {
+	return gitErrorInfo(['fetch', remote, branch], repo, { quietWrite: quiet });
+}
+
+/**
  * 恢复完整历史：把一次浅克隆补成完整仓库。
  *
  * 浅克隆由三处设置共同截断，恢复时逐项回退：

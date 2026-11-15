@@ -4,7 +4,7 @@
  */
 import {
 	abortMerge, addRemote, addTag, checkoutBranch, checkoutCommit, cherrypickCommit, createBranch,
-	deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag, dropCommit, editRemote, fetch,
+	deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag, dropCommit, editRemote, fetch, fetchRemoteBranch,
 	applyStash, branchFromStash, dropStash, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash, pruneRemote, pullBranch, pushBranchToMultipleRemotes,
 	pushStash, pushTag, pushUpstream, rebase, renameBranch, resetToCommit, restoreFullHistory, revertCommit,
 } from '../git-actions.js';
@@ -41,8 +41,37 @@ async function refsSignature(repo: string): Promise<string> {
 	return result.code === 0 ? result.stdout : '';
 }
 
-/** 在途的抓取：同仓库并发请求共享一次 git fetch，避免多面板各起一遍。 */
+/** 在途的抓取：同一目标并发请求共享一次 git fetch，避免多面板各起一遍。 */
 const inFlightFetches = new Map<string, Promise<{ repo: string; changed: boolean }>>();
+
+/**
+ * 在途抓取的键。
+ *
+ * 只抓一个分支与抓整个远程是两次不同的传输，不能互相复用；同一仓库的不同抓取范围
+ * 各占一个键，互不阻塞。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名；null 表示全部远程。
+ * @param branch - 该远程上的分支名；null 表示该远程的全部分支。
+ * @returns 键。
+ */
+function fetchKeyOf(repo: string, remote: string | null, branch: string | null): string {
+	if (remote === null) return repo + '\u0000*';
+	return repo + '\u0000' + remote + (branch === null ? '' : '\u0000' + branch);
+}
+
+/**
+ * 抓取目标的展示文本。
+ *
+ * @param remote - 远程名；null 表示全部远程。
+ * @param branch - 该远程上的分支名；null 表示该远程的全部分支。
+ * @returns 展示文本。
+ */
+function fetchTargetText(remote: string | null, branch: string | null): string {
+	if (remote === null) return '远程（全部）';
+	if (branch === null) return '远程：' + remote;
+	return '远程分支：' + remote + '/' + branch;
+}
 
 /**
  * 处理分支、提交、标签与远程写操作的一条命令。
@@ -187,14 +216,25 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			const remoteName = strOrNull('name');
 			const pruneRemotes = bool('prune');
 			const pruneAllTags = bool('pruneTags');
+			const remoteBranch = strOrNull('branch');
 			// 非仓库路径抓不了：直接回未变化，不起 git fetch 与两次 for-each-ref。
 			if (!(await isRepoPath(repo))) {
 				logDebug('repo', `目标路径不是 git 仓库，跳过抓取：${repo}`);
 				respondResultSync('fetch', { repo, changed: false });
 				break;
 			}
+			// 清理选项作用于整个远程，与按分支抓取不同时成立。
+			if (remoteBranch !== null && remoteName === null) {
+				respond({ command: 'fetch', error: '按分支抓取时必须指定远程名。' });
+				break;
+			}
+			if (remoteBranch !== null && (pruneRemotes || pruneAllTags)) {
+				respond({ command: 'fetch', error: '按分支抓取时不能同时清理远程分支或标签。' });
+				break;
+			}
 			await respondResult('fetch', async () => {
-				const existing = inFlightFetches.get(repo);
+				const key = fetchKeyOf(repo, remoteName, remoteBranch);
+				const existing = inFlightFetches.get(key);
 				if (existing !== undefined) return existing;
 				const promise = (async () => {
 					/*
@@ -204,16 +244,18 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
 					 */
 					const before = await refsSignature(repo);
-					const error = await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true);
+					const error = remoteBranch === null
+						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true)
+						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true);
 					if (error !== null) throw new Error(error);
 					const after = await refsSignature(repo);
 					const changed = before !== after;
 					// 抓取以 quietWrite 执行：确有改动才补发写事件，否则面板不会白刷新。
 					if (changed) notifyRepositoryWrite(repo);
-					logInfo('repo', `已抓取远程${remoteName === null ? '（全部）' : `：${remoteName}`}${changed ? '，引用有更新' : '，引用无变化'}`);
+					logInfo('repo', `已抓取${fetchTargetText(remoteName, remoteBranch)}${changed ? '，引用有更新' : '，引用无变化'}`);
 					return { repo, changed };
-				})().finally(() => { inFlightFetches.delete(repo); });
-				inFlightFetches.set(repo, promise);
+				})().finally(() => { inFlightFetches.delete(key); });
+				inFlightFetches.set(key, promise);
 				return promise;
 			});
 			break;

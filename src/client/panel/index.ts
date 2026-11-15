@@ -45,7 +45,7 @@ import { primaryActionOf } from './submit-state.ts';
 import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
-import { useRemoteSync } from './use-remote-sync.ts';
+import { upstreamPartsOf, useRemoteSync } from './use-remote-sync.ts';
 import { useRepoCommands } from './use-repo-commands.ts';
 import { useCommitSelection } from './use-commit-selection.ts';
 import { openRepoBranchMenu, openRepoMenu } from './repo-menu.ts';
@@ -331,7 +331,16 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		enabled: settings.autoFetch,
 		periodSeconds: settings.autoFetchPeriod,
 		busyRef,
-		fetch: async (path) => await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags),
+		/*
+		 * 只抓当前分支的上游那一个远程分支。抓全部远程会连同无关远程的全部分支一起传输，
+		 * 另起一个分支全在本地没有的远程时每轮都要整包下载，把后台抓取拖到超时。
+		 */
+		fetch: async (path) => {
+			const parts = upstreamPartsOf(state.upstream);
+			return parts === null
+				? await fetchRepo(path, null, settings.fetchAndPrune, settings.fetchAndPruneTags)
+				: await fetchRepo(path, parts.remote, false, false, parts.branch);
+		},
 		/*
 		 * 抓取拉回了新引用才重载：面板先用本地引用渲染，抓取完成后并入远程引用与领先/落后。
 		 * 远端没有新提交时不作废窗口缓存、不重取 —— 定时抓取每轮都重取一遍是纯浪费。
