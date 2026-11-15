@@ -36,6 +36,25 @@ export function removeBusy(entries: readonly BusyEntry[], repo: string, scope: B
 }
 
 /**
+ * 改写一次操作当前的阶段名。
+ *
+ * 长操作由多个阶段串成（同步先抓取、再合并、最后推送），阶段变化时更新展示文案，
+ * 用户等待时因此能看出卡在哪一段。按停止键定位，不误改并行中的另一次操作。
+ *
+ * @param entries - 现有记录。
+ * @param cancelKey - 停止键。
+ * @param label - 新的阶段名。
+ * @returns 新记录；没有匹配的停止键时原样返回。
+ */
+export function setBusyLabel(entries: readonly BusyEntry[], cancelKey: string, label: string): readonly BusyEntry[] {
+	const at = entries.findIndex((entry) => entry.cancelKey === cancelKey);
+	if (at === -1) return entries;
+	const next = [...entries];
+	next[at] = { ...entries[at], label };
+	return next;
+}
+
+/**
  * 某个仓库是否有进行中的操作。
  *
  * @param entries - 现有记录。

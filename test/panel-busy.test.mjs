@@ -2,7 +2,7 @@
  * 忙碌状态分级：按仓库与影响面记录，互不阻塞。
  */
 import assert from 'node:assert/strict';
-import { addBusy, anyBusy, busyFlagsOf, cancellableEntriesOf, isReadBlocked, isRepoBusy, removeBusy } from '../src/client/panel/busy.ts';
+import { addBusy, anyBusy, busyFlagsOf, cancellableEntriesOf, isReadBlocked, isRepoBusy, removeBusy, setBusyLabel } from '../src/client/panel/busy.ts';
 import { parallel } from './harness.mjs';
 
 
@@ -109,6 +109,24 @@ parallel('忙碌分级', (t) => {
 			const blocking = addBusy([], '/repo/a', scope, { cancelKey: scope, label: scope });
 			assert.equal(cancellableEntriesOf(blocking)[0].surface, 'dialog', scope + ' 挡住功能，应弹窗');
 		}
+	});
+
+	t.test('阶段改写按停止键定位', () => {
+		let entries = addBusy([], '/repo/a', 'network', { cancelKey: 'k1', label: '抓取' });
+		entries = setBusyLabel(entries, 'k1', '合并');
+		assert.equal(cancellableEntriesOf(entries)[0].label, '合并');
+
+		// 键不存在时原样返回：操作已结束时到来的阶段上报不该凭空造出记录。
+		assert.equal(setBusyLabel(entries, 'missing', '推送'), entries);
+	});
+
+	t.test('阶段改写不波及并行中的另一次操作', () => {
+		let entries = addBusy([], '/repo/a', 'network', { cancelKey: 'k1', label: '抓取' });
+		entries = addBusy(entries, '/repo/a', 'network', { cancelKey: 'k2', label: '抓取' });
+		entries = setBusyLabel(entries, 'k2', '合并');
+
+		const labels = cancellableEntriesOf(entries).map((entry) => entry.cancelKey + '=' + entry.label);
+		assert.deepEqual(labels, ['k1=抓取', 'k2=合并']);
 	});
 
 	t.test('按停止键精确移除，不误删并行的另一次操作', () => {

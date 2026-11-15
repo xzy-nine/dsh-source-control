@@ -330,16 +330,20 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		if (busyFlags.network || workingTreePath === null) return;
 		const skipHooks = pushHookActive && !runHooks;
 		const parts = upstreamPartsOf(currentSync?.upstream ?? null);
-		void run('network', async (cancelKey) => {
+		void run('network', async (cancelKey, reportPhase) => {
+			// 三个阶段各自声明：等待时能看出卡在哪一段，而不是只看到「同步」。
+			reportPhase('抓取');
 			if (parts === null) {
 				await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
 			} else {
 				await fetchRepo(workingTreePath, parts.remote, false, false, parts.branch, cancelKey);
 			}
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
+				reportPhase('合并');
 				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream)), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
+				reportPhase('推送');
 				await pushCurrentBranch(undefined, skipHooks);
 			}
 		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）', cancellable: true }).finally(() => { setRunHooks(true); });

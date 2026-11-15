@@ -40,7 +40,7 @@ import { useRepositoryWriteEvents } from './use-repository-write-events.ts';
 import { useRepos } from './use-repos.ts';
 import { findNodeByPath } from './repo-tree.ts';
 import { workspaceEmptyOf } from './workspace-empty.ts';
-import { addBusy, busyFlagsOf, removeBusy } from './busy.ts';
+import { addBusy, busyFlagsOf, removeBusy, setBusyLabel } from './busy.ts';
 import { primaryActionOf } from './submit-state.ts';
 import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
@@ -433,10 +433,21 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		const startedAt = Date.now();
 		// 可停止的操作各带一个键：同仓库同影响面并行时，停止其中一次不能连带另一次。
 		const cancelKey = options?.cancellable === true ? `${target}\u0000${scope}\u0000${String(startedAt)}\u0000${String(Math.random()).slice(2, 10)}` : undefined;
-		const cancelInfo = cancelKey === undefined ? undefined : { cancelKey, label: intent };
+		// 界面文案与日志文案分开：日志要精确，界面只要用户认得出的动作名。
+		const label = options?.label ?? intent;
+		const cancelInfo = cancelKey === undefined ? undefined : { cancelKey, label };
 		setState((previous) => ({ ...previous, busy: addBusy(previous.busy, target, scope, cancelInfo), error: null }));
+		/**
+		 * 声明当前阶段。
+		 *
+		 * 不可停止的操作不进停止清单，因此没有可改写的记录，直接忽略。
+		 */
+		const reportPhase = (phase: string): void => {
+			if (cancelKey === undefined) return;
+			setState((previous) => ({ ...previous, busy: setBusyLabel(previous.busy, cancelKey, phase) }));
+		};
 		try {
-			await operation(cancelKey ?? '');
+			await operation(cancelKey ?? '', reportPhase);
 			logClient('I', 'action', `操作完成：${intent}，耗时 ${String(Date.now() - startedAt)} ms`);
 			if (optimistic !== undefined && target === workingTreePath) {
 				setState((previous) => ({ ...previous, entries: optimistic(previous.entries) }));
@@ -872,7 +883,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const fetchAll = React.useCallback(() => {
 		void run('network', async (cancelKey) => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
-		}, undefined, undefined, { intent: '从所有远程抓取', cancellable: true });
+		}, undefined, undefined, { intent: '从所有远程抓取', cancellable: true, label: '抓取' });
 	}, [run, workingTreePath, settings.fetchAndPrune, settings.fetchAndPruneTags]);
 	/** 打开设置面板。 */
 	const openSettingsPanel = React.useCallback(() => { setSettingsTab('repo'); setSettingsOpen(true); }, []);

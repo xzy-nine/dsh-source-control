@@ -307,8 +307,10 @@ export type PanelRun = (
 	 *
 	 * 可停止的操作经入参拿到本次的停止键，并把它传给宿主侧对应的 git 调用；不可停止的操作
 	 * 忽略该入参即可。
+	 *
+	 * 分多个阶段的长操作在每段开始前调用第二个入参声明当前阶段，界面据此显示执行到哪一步。
 	 */
-	operation: (cancelKey: string) => Promise<void>,
+	operation: (cancelKey: string, reportPhase: (label: string) => void) => Promise<void>,
 	repo?: string,
 	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
 	options?: {
@@ -321,6 +323,13 @@ export type PanelRun = (
 		 * 只有确信「停下不留下半截状态」的操作才该给。
 		 */
 		readonly cancellable?: boolean;
+		/**
+		 * 界面上的动作名。
+		 *
+		 * 与 `intent` 分开：`intent` 是日志用的精确描述（如「同步（抓取 + 合并或推送）」），
+		 * 这里只给用户看的短名。省略时退回 `intent`。
+		 */
+		readonly label?: string;
 	},
 ) => Promise<void>;
 
