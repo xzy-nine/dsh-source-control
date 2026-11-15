@@ -5,6 +5,8 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ConfirmationOptions } from '../../ui/dialog.ts';
+import { refIdOf } from '../../shared/ref-id.ts';
+import { localNameForRemoteBranch } from '../github.ts';
 import type { MenuActionMeta } from '../menu-actions.ts';
 import type { BusyScope, Commit, Remote } from '../../shared/types.ts';
 
@@ -45,6 +47,8 @@ export interface GraphMenuDeps {
 	readonly canCreatePullRequest: boolean;
 	/** 被别的工作树检出的本地分支：照常显示，但检出、删除与重命名不可用。 */
 	readonly foreignBranches?: readonly string[];
+	/** 仓库里的本地分支名：远程标记的合并与变基据此判断短名是否与本地分支撞名。 */
+	readonly localBranches: ReadonlySet<string>;
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
 	readonly setCommitMessage: (message: string) => void;
 }
@@ -137,7 +141,23 @@ export function localBranchItem(ctx: MenuContext, name: string, item: ContextMen
 }
 
 /**
+ * 取远程分支在 git 命令里使用的引用名。
+ *
+ * 有同名本地分支时短名会被 git 解析到该本地分支，因此改用完整引用；没有同名本地分支时保持
+ * 短名，git 生成的合并提交信息里是通常的写法。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 远程分支短名。
+ * @returns 交给 git 的引用名。
+ */
+export function remoteRefOf(ctx: MenuContext, name: string): string {
+	return ctx.deps.localBranches.has(name) ? refIdOf(name, 'remote') : name;
+}
+
+/**
  * 把一项远程分支操作渲染成菜单项：先问本地分支名，确认后执行。
+ *
+ * 输入框预填的本地分支名按远程给出（见 {@link localNameForRemoteBranch}），可改。
  *
  * @param ctx - 构建上下文。
  * @param meta - 操作元数据，取菜单名称。
@@ -155,12 +175,11 @@ export function branchFromRemoteItem(
 ): ContextMenuItem | null {
 	const ref = ctx.ref;
 	if (ref === null) return null;
-	const short = shortBranchName(ref.name);
 	return {
 		title: meta.title,
 		onClick: () => {
 			void (async () => {
-				const localName = await showText({ title, label: '本地分支名', value: short, placeholder });
+				const localName = await showText({ title, label: '本地分支名', value: localNameForRemoteBranch(ref.name), placeholder });
 				if (localName !== null && localName !== '') act(ref, localName);
 			})();
 		},

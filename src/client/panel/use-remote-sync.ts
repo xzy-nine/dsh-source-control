@@ -61,6 +61,18 @@ export interface RemoteSync {
 }
 
 /**
+ * 把上游短名写成交给 git 的完整引用。
+ *
+ * 本地分支名可能形如 `远程名/分支名`，与同名的远程跟踪分支撞名，短名会被 git 解析到本地分支。
+ *
+ * @param upstream - 上游短名。
+ * @returns 完整引用名。
+ */
+function remoteTrackingRef(upstream: string): string {
+	return 'refs/remotes/' + upstream;
+}
+
+/**
  * 组装远程动作。
  *
  * @param deps - 见 {@link RemoteSyncDeps}。
@@ -297,7 +309,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		void run('network', async () => {
 			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
-				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
+				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync.upstream)), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
 				await pushCurrentBranch(undefined, skipHooks);
@@ -374,7 +386,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			if (!ok) return;
 			await run('history', async () => {
 				await fetchRepo(path, parts.remote, settings.fetchAndPrune, settings.fetchAndPruneTags);
-				const error = await resetToCommit(path, upstream, 'hard');
+				const error = await resetToCommit(path, remoteTrackingRef(upstream), 'hard');
 				if (error !== null) throw new Error(error);
 			}, undefined, undefined, { intent: '用远程覆盖本地（硬重置）' });
 		})();

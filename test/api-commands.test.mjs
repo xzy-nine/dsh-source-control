@@ -249,6 +249,39 @@ test('分支、标签、贮藏与远程的写操作', async () => {
 	}
 });
 
+test('检出远程分支：本地同名分支的归属决定检出还是报告冲突', async () => {
+	const { repo, git } = makeRepo();
+	const bare = tempPath('gg-api-remote-');
+	try {
+		execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+		git('remote', 'add', 'other', bare);
+		git('push', '-q', 'other', 'main');
+		git('fetch', '-q', 'other');
+		const call = await makeCaller(repo);
+
+		// 本地没有同名分支：新建跟踪分支并检出。
+		assert.deepEqual((await call({ command: 'checkoutBranch', branchName: 'other/main', remoteBranch: 'other/main' })).errors, [null]);
+		assert.equal(git('branch', '--show-current').trim(), 'other/main');
+		// 上游与本地分支同名时 git 给多一层前缀的写法，插件统一收敛成远程分支短名。
+		assert.equal(git('for-each-ref', '--format=%(upstream:short)', 'refs/heads/other/main').trim(), 'remotes/other/main');
+		assert.equal((await call({ command: 'loadWorkingTreeSnapshot', noCache: true })).upstream, 'other/main');
+
+		// 本地该分支正跟踪同一远程分支：直接检出它，不报「已存在」。
+		git('checkout', '-q', 'main');
+		assert.deepEqual((await call({ command: 'checkoutBranch', branchName: 'other/main', remoteBranch: 'other/main' })).errors, [null]);
+		assert.equal(git('branch', '--show-current').trim(), 'other/main');
+
+		// 本地同名分支没有上游：报告冲突，不静默落到它上面。
+		git('checkout', '-q', 'main');
+		const conflict = await call({ command: 'checkoutBranch', branchName: 'main', remoteBranch: 'other/main' });
+		assert.match(conflict.errors[0], /already exists/i);
+		assert.equal(git('branch', '--show-current').trim(), 'main');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(bare, { recursive: true, force: true });
+	}
+});
+
 test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活时为 false', async () => {
 	const { repo } = makeRepo();
 	try {

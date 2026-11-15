@@ -47,6 +47,23 @@ export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(o
 export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
 
 /**
+ * 把 git 报出的上游名收敛成远程分支短名。
+ *
+ * 上游跟踪分支与本地分支同名时（本地分支名形如 `远程名/分支名`），`%(upstream:short)` 与
+ * `git status` 的 `branch.upstream` 给出多一层 `remotes/` 前缀的写法，以使短名无歧义；
+ * 这里统一还原成 `远程名/分支名`。
+ *
+ * @param upstream - git 报出的上游名。
+ * @returns 远程分支短名；不含该前缀时原样返回。
+ */
+export function upstreamShortName(upstream: string): string {
+	for (const prefix of ['refs/remotes/', 'remotes/']) {
+		if (upstream.startsWith(prefix)) return upstream.slice(prefix.length);
+	}
+	return upstream;
+}
+
+/**
  * 引用与分支合并读取的字段数：HEAD 标记、全名、短名、对象名、解引用对象名、对象类型、符号引用目标。
  */
 export const REF_BRANCH_FIELD_COUNT = 7;
@@ -704,7 +721,7 @@ export function parseBranchSync(stdout: string): BranchSync {
 		const behind = /behind (\d+)/.exec(track);
 		return {
 			branch,
-			upstream: upstreamName,
+			upstream: upstreamShortName(upstreamName),
 			ahead: ahead === null ? 0 : Number.parseInt(ahead[1], 10),
 			behind: behind === null ? 0 : Number.parseInt(behind[1], 10),
 		};

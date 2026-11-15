@@ -150,6 +150,12 @@ test('parseBranchSync：ahead、behind 与两者同时', () => {
 		{ branch: 'main', upstream: 'origin/main', ahead: 1, behind: 2 });
 });
 
+test('parseBranchSync：上游写成 remotes/ 前缀时收敛成远程分支短名', () => {
+	// 本地分支名与上游短名相同时 git 用多一层前缀的写法，插件仍按 `远程名/分支名` 记上游。
+	assert.deepEqual(parseBranchSync(record('*', 'other/main', 'remotes/other/main', '') + '\n'),
+		{ branch: 'other/main', upstream: 'other/main', ahead: 0, behind: 0 });
+});
+
 test('parseBranchSync：upstream 为 null 的三种情形', () => {
 	assert.deepEqual(parseBranchSync(record('*', 'main', '', '') + '\n'),
 		{ branch: 'main', upstream: null, ahead: 0, behind: 0 }, '上游字段为空');

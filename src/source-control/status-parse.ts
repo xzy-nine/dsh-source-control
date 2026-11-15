@@ -5,6 +5,7 @@
  */
 import { conflictKindOfPair } from '../shared/conflict-kind.js';
 import { pickByDepth } from './depth-limit.js';
+import { upstreamShortName } from './git-parse.js';
 /**
  * 工作区变更的解析上限。
  *
@@ -221,7 +222,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			const value = space === -1 ? '' : token.slice(space + 1);
 			if (key === 'branch.oid') head = value === '' || value === '(initial)' ? null : value;
 			else if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
-			else if (key === 'branch.upstream') upstream = value;
+			else if (key === 'branch.upstream') upstream = upstreamShortName(value);
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
 				const [aheadRaw, behindRaw] = value.split(' ');

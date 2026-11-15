@@ -150,20 +150,45 @@ export function autoRefNames(context: AutoFilterContext): string[] {
 }
 
 /**
+ * 取自动模式的取数起点。
+ *
+ * 起点交给 `git log`，本地分支与上游因此写成完整引用：本地分支名可能形如 `远程名/分支名`，
+ * 与同名的远程跟踪分支撞名，短名会被 git 解析到本地分支。分叉来源的种类无法从名字判定，
+ * 原样交给 git。
+ *
+ * @param context - 见 {@link AutoFilterContext}。
+ * @returns 起点列表；无起点时为空数组。
+ */
+function autoRefStarts(context: AutoFilterContext): string[] {
+	const starts: string[] = [];
+	const head = context.head === null || context.head === '' ? context.headHash ?? null : `refs/heads/${context.head}`;
+	if (head !== null && head !== '') starts.push(head);
+	const upstream = context.upstream;
+	if (upstream !== null && upstream !== '') starts.push(`refs/remotes/${upstream}`);
+	// 分叉来源与上游或当前分支是同一个引用时不再重复。
+	if (context.base !== null && context.base !== '' && context.base !== upstream && context.base !== context.head) starts.push(context.base);
+	return starts;
+}
+
+/**
  * 取一次取数的引用起点。
+ *
+ * 自动模式给出当前分支、上游与分叉来源，其中本地分支与上游用完整引用名；手选模式原样交出
+ * 选中的引用 id。null 表示全部引用（宿主按 `--branches` 等枚举）。
  *
  * @param filter - 当前筛选状态。
  * @param context - 自动模式需要的上下文。
- * @returns 引用名列表；null 表示全部引用（宿主按 `--branches` 等枚举）。
+ * @returns 引用名列表；null 表示全部引用。
  */
 export function filterBranchesOf(filter: RefFilter, context: AutoFilterContext): string[] | null {
 	if (filter.mode === 'all') return null;
 	if (filter.mode === 'auto') {
-		const names = autoRefNames(context);
-		return names.length === 0 ? null : names;
+		const starts = autoRefStarts(context);
+		return starts.length === 0 ? null : starts;
 	}
-	const names = filter.ids.map(refNameOf).filter((name) => name !== '');
-	return names.length === 0 ? null : names;
+	/* 手选按完整引用名交给 git：短名可能与本地分支撞名而解析到它。 */
+	const ids = filter.ids.filter((id) => id !== '');
+	return ids.length === 0 ? null : [...ids];
 }
 
 /** 筛选按钮的摘要文案。文案归此处，调用方与测试都按引用取用。 */

@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import type { ConfigLocation, ErrorInfo, PushMode, ResetMode } from './git-types.js';
 import type { GitResult } from './working-tree.js';
+import { upstreamShortName } from './git-parse.js';
 import { runGit } from './working-tree.js';
 import { isShallowClone } from './worktree-branches.js';
 
@@ -403,18 +404,41 @@ export async function pushTag(repo: string, tagName: string, remotes: readonly s
 }
 
 /**
+ * 取一个本地分支的上游跟踪分支短名。
+ *
+ * @param repo - 仓库路径。
+ * @param branchName - 本地分支名。
+ * @returns 上游远程分支短名（如 `origin/main`）；分支没有上游或读不到时返回 null。同名本地分支
+ * 存在时 git 给出多一层 `remotes/` 前缀的写法，这里收敛成短名。
+ */
+async function branchUpstream(repo: string, branchName: string): Promise<string | null> {
+	try {
+		const result = await runGit(['for-each-ref', '--format=%(upstream:short)', `refs/heads/${branchName}`], repo);
+		const upstream = result.stdout.trim();
+		return result.code === 0 && upstream !== '' ? upstreamShortName(upstream) : null;
+	} catch {
+		// 取不到仓库或 git 无法启动：按没有上游处理，调用方据此报告冲突。
+		return null;
+	}
+}
+
+/**
  * 检出分支；本地尚无该分支时可基于远程分支新建。
+ *
+ * 本地已有同名分支时 git 拒绝新建，此时只有在该分支跟踪的正是这个远程分支的情况下才检出它；
+ * 跟踪别的远程或没有上游时原样返回冲突，不静默落到另一个分支上。
  *
  * @param repo - 仓库路径。
  * @param branchName - 要检出的分支名。
  * @param remoteBranch - 新建分支所基于的远程分支；null 表示直接检出已有本地分支。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function checkoutBranch(repo: string, branchName: string, remoteBranch: string | null): Promise<ErrorInfo> {
-	const args = ['checkout'];
-	if (remoteBranch === null) args.push(branchName);
-	else args.push('-b', branchName, remoteBranch);
-	return gitErrorInfo(args, repo);
+export async function checkoutBranch(repo: string, branchName: string, remoteBranch: string | null): Promise<ErrorInfo> {
+	if (remoteBranch === null) return gitErrorInfo(['checkout', branchName], repo);
+	const created = await gitErrorInfo(['checkout', '-b', branchName, remoteBranch], repo);
+	if (created === null || !/already exists/i.test(created)) return created;
+	const upstream = await branchUpstream(repo, branchName);
+	return upstream === remoteBranch ? gitErrorInfo(['checkout', branchName], repo) : created;
 }
 
 /**
