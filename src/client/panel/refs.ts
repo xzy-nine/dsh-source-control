@@ -168,12 +168,14 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 	const head = context.head === null || context.head === '' ? context.headHash ?? null : `refs/heads/${context.head}`;
 	if (head !== null && head !== '') starts.push(head);
 	const upstream = context.upstreamRef;
-	// 上游的完整引用由宿主给出：本地分支与远程跟踪引用各自是它们本来的引用名，无需按短名判断种类。
+	/*
+	 * 只认完整引用。
+	 *
+	 * 没有完整引用时无从判定上游是本地分支还是远程跟踪引用：按错种类拼出的引用并不存在，
+	 * `git log` 会直接失败（退出码 128）而不是少显示一段历史。因此宁可少给一个起点 —— 那也是
+	 * 宿主没给出权威值时的降级，由快照在下一轮补上。
+	 */
 	if (upstream !== null && upstream !== '') starts.push(upstream);
-	else if (context.upstream !== null && context.upstream !== '') {
-		// 宿主未给出完整引用时退回短名按远程跟踪引用处理：少一个起点会让图形区静默少显示一段历史。
-		starts.push(refIdOf(context.upstream, 'remote'));
-	}
 	/*
 	 * 分叉来源与上游或当前分支是同一个引用时不再重复。
 	 *

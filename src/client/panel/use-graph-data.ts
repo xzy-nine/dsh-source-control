@@ -59,6 +59,8 @@ export interface UseGraphDataOptions {
 	/** 首帧可用的当前分支与上游（仓库树快照提供），避免首次进入少带筛选条件多取一次。 */
 	readonly headHint?: string | null;
 	readonly upstreamHint?: string | null;
+	/** 上游的完整引用，与 `upstreamHint` 同源；据此判定上游是本地分支还是远程跟踪引用。 */
+	readonly upstreamRefHint?: string | null;
 }
 
 /** 提交图数据 hook 的返回值。 */
@@ -160,7 +162,7 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
-	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null,
+	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null, upstreamRefHint = null,
 }: UseGraphDataOptions): UseGraphDataResult {
 	/*
 	 * 初始状态直接取该仓库上一次的结果。
@@ -180,7 +182,7 @@ export function useGraphData({
 		};
 		}
 		return {
-			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint, upstreamRef: null,
+			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint, upstreamRef: upstreamRefHint,
 			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
 			entries: [], entriesTruncated: false, selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
@@ -227,8 +229,8 @@ export function useGraphData({
 	const branchesRef = React.useRef(graphBranches);
 	branchesRef.current = graphBranches;
 	/** 换仓库时的起点要按新仓库的分支提示重算，不能沿用上一个仓库的起点。 */
-	const hintRef = React.useRef({ filter, head: headHint, upstream: upstreamHint });
-	hintRef.current = { filter, head: headHint, upstream: upstreamHint };
+	const hintRef = React.useRef({ filter, head: headHint, upstream: upstreamHint, upstreamRef: upstreamRefHint });
+	hintRef.current = { filter, head: headHint, upstream: upstreamHint, upstreamRef: upstreamRefHint };
 	/** 上一次取数使用的起点，用于判断筛选或分支变化后是否要按新窗口重取。 */
 	const loadedBranchesRef = React.useRef<string | null>(null);
 	/**
@@ -295,7 +297,7 @@ export function useGraphData({
 		const requestBranches = repoChanged
 			? filterBranchesOf(hintRef.current.filter, {
 				head: hintRef.current.head, headHash: null,
-				upstream: hintRef.current.upstream, upstreamRef: null, base: null,
+				upstream: hintRef.current.upstream, upstreamRef: hintRef.current.upstreamRef, base: null,
 			})
 			: branchesRef.current;
 		const requestKey = requestBranches === null ? '*' : JSON.stringify(requestBranches);

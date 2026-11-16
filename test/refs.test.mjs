@@ -109,6 +109,22 @@ parallel('引用筛选状态', (t) => {
 		);
 	});
 
+	t.test('取数起点：没有完整引用时不猜上游种类', () => {
+		/*
+		 * 上游是本地分支（branch.X.remote 为 .）时短名就是本地分支名。没有完整引用时按远程跟踪
+		 * 引用拼会得到不存在的引用，git log 直接失败（退出码 128），比少一个起点更糟。
+		 */
+		const context = {
+			head: 'followlocal', headHash: 'h1',
+			upstream: 'localbase', upstreamRef: null, base: null,
+		};
+		assert.deepEqual(
+			filterBranchesOf({ mode: 'auto', ids: [] }, context),
+			['refs/heads/followlocal'],
+			'缺完整引用时只给当前分支，不拼出不存在的上游引用',
+		);
+	});
+
 	t.test('取数起点：当前分支与上游同名时两者都取', () => {
 		// 本地分支名形如远程分支短名时它不再是上游的去重对象：两个尖端都要进窗口。
 		assert.deepEqual(

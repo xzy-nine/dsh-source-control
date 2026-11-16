@@ -42,7 +42,7 @@ const COMMITS_PAYLOAD = {
 const SNAPSHOT_PAYLOAD = {
 	command: 'loadWorkingTreeSnapshot', error: null,
 	entries: [{ path: 'a.txt', origPath: null, index: ' ', worktree: 'M' }],
-	head: 'c1', branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0,
+	head: 'c1', branch: 'main', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', ahead: 0, behind: 0,
 };
 
 /**
@@ -122,13 +122,13 @@ async function mount(initialDelays = {}, overrides = {}) {
 	/** 当前仓库路径；测试可改写以制造换仓库。 */
 	const target = { path: '/repo' };
 	/** hook 的可变入参：本用例的筛选与分叉来源等。 */
-	const options = { filter: undefined, branchBase: null, headHint: null, upstreamHint: null, ...overrides };
+	const options = { filter: undefined, branchBase: null, headHint: null, upstreamHint: null, upstreamRefHint: null, ...overrides };
 	function Probe() {
 		const result = useGraphData({
 			workingTreePath: target.path, hasWorkspace: true, maxCommits: 200,
 			settings: SETTINGS, selectedId: null, setSyncById: noop,
 			filter: options.filter, branchBase: options.branchBase,
-			headHint: options.headHint, upstreamHint: options.upstreamHint,
+			headHint: options.headHint, upstreamHint: options.upstreamHint, upstreamRefHint: options.upstreamRefHint,
 		});
 		latest.state = result.state;
 		latest.refresh = result.refresh;
@@ -327,7 +327,7 @@ test('取数起点：手选筛选把选中引用交给宿主', { skip }, async (
 
 test('取数起点：自动筛选取当前分支、上游与分叉来源', { skip }, async () => {
 	const harness = await mount({}, {
-		headHint: 'main', upstreamHint: 'origin/main',
+		headHint: 'main', upstreamHint: 'origin/main', upstreamRefHint: 'refs/remotes/origin/main',
 		// 分叉来源带所属仓库：只有与当前仓库一致时才会被采用。
 		branchBase: { repo: '/repo', branch: 'main', base: 'origin/dev', baseRef: 'refs/remotes/origin/dev' },
 	});

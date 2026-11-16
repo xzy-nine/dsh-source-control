@@ -275,6 +275,8 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		filter: refFilter, branchBase, headHint: selectedNode?.branch ?? null,
 		// 仅作首轮筛选的起点提示：这是渲染态缺席时的兜底，取数结果仍以本轮快照为准。
 		upstreamHint: currentSync?.upstream ?? null,
+		// 完整引用一并给出：缺了它只能按远程跟踪引用猜种类，本地上游会被拼成不存在的引用。
+		upstreamRefHint: currentSync?.upstreamRef ?? null,
 	});
 	/** 选中仓库的忙碌分级；分区按控件用途取用，慢操作不会禁用无关按钮。 */
 	const busyFlags = React.useMemo(() => busyFlagsOf(state.busy, workingTreePath), [state.busy, workingTreePath]);
