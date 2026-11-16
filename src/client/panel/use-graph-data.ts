@@ -49,8 +49,13 @@ export interface UseGraphDataOptions {
 	/** 回写某个节点的领先/落后。 */
 	/** 引用筛选：决定提交图的取数起点，与 VS Code 图形视图同一模型；省略时按自动。 */
 	readonly filter?: RefFilter;
-	/** 自动筛选的分叉来源：带所属分支，供本 hook 校验是否与当前分支匹配。 */
-	readonly branchBase?: { readonly branch: string; readonly base: string | null; readonly baseRef?: string | null } | null;
+	/** 自动筛选的分叉来源：带所属仓库与分支，供本 hook 校验是否与当前仓库和分支匹配。 */
+	readonly branchBase?: {
+		readonly repo: string;
+		readonly branch: string;
+		readonly base: string | null;
+		readonly baseRef?: string | null;
+	} | null;
 	/** 首帧可用的当前分支与上游（仓库树快照提供），避免首次进入少带筛选条件多取一次。 */
 	readonly headHint?: string | null;
 	readonly upstreamHint?: string | null;
@@ -200,7 +205,13 @@ export function useGraphData({
 	 */
 	const headName = state.head ?? headHint;
 	const upstreamName = state.upstream ?? upstreamHint;
-	const matchedBase = branchBase !== null && branchBase.branch === headName ? branchBase : null;
+	/*
+	 * 仓库与分支都要对上：分叉来源只对产生它的那个仓库的当前分支成立，换仓库后沿用会把上一个
+	 * 仓库的来源当成这一轮取数的起点。
+	 */
+	const matchedBase = branchBase !== null && branchBase.repo === workingTreePath && branchBase.branch === headName
+		? branchBase
+		: null;
 	const baseRef = matchedBase?.base ?? null;
 	// 完整引用一并交给筛选：短名撞名时按它取数会被解析到别的引用上。
 	const baseRefFull = matchedBase?.baseRef ?? null;

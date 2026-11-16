@@ -409,6 +409,8 @@ test('推送：上游分支名与本地不同名时按显式目标推送', async
 		git('fetch', '-q', 'origin');
 		git('branch', '--set-upstream-to=origin/rename-me', 'main');
 		git('config', 'branch.main.merge', 'refs/heads/rename-me');
+		// 固定推送模式：不带目标的拒绝来自 simple，而开发机的全局 push.default 会改变这一结果。
+		git('config', 'push.default', 'simple');
 
 		const call = await makeCaller(repo);
 		writeFileSync(join(repo, 'later.txt'), 'later\n');

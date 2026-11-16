@@ -93,6 +93,22 @@ parallel('引用筛选状态', (t) => {
 		);
 	});
 
+	t.test('取数起点：分叉来源用完整引用，且与上游同名时不误判为重复', () => {
+		/*
+		 * 上游是 refs/remotes/origin/main、来源是 refs/heads/origin/main 时两者是不同引用：
+		 * 按短名比较会把来源当成重复而跳过，图形区因此少一段历史。
+		 */
+		const context = {
+			head: 'feature', headHash: 'h1',
+			upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main',
+			base: 'origin/main', baseRef: 'refs/heads/origin/main',
+		};
+		assert.deepEqual(
+			filterBranchesOf({ mode: 'auto', ids: [] }, context),
+			['refs/heads/feature', 'refs/remotes/origin/main', 'refs/heads/origin/main'],
+		);
+	});
+
 	t.test('取数起点：当前分支与上游同名时两者都取', () => {
 		// 本地分支名形如远程分支短名时它不再是上游的去重对象：两个尖端都要进窗口。
 		assert.deepEqual(
@@ -133,6 +149,25 @@ parallel('引用筛选状态', (t) => {
 			['refs/heads/main', 'refs/remotes/origin/main'],
 		);
 		assert.deepEqual([...checkedRefIds({ mode: 'manual', ids: ['refs/heads/dev'] }, refs, context)], ['refs/heads/dev']);
+	});
+
+	t.test('勾选态：按引用 id 匹配，同名标签不被错勾', () => {
+		/*
+		 * 自动模式的勾选按 id：`main` 既是分支也是标签时，只该勾上当前分支那一条，
+		 * 按名字匹配会把同名的标签一并勾上。
+		 */
+		const refs = [
+			ref('refs/heads/main', 'main', 'branch'),
+			ref('refs/tags/main', 'main', 'tag'),
+			ref('refs/remotes/origin/main', 'origin/main', 'remote'),
+		];
+		const context = {
+			head: 'main', headHash: 'h1', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', base: null,
+		};
+		assert.deepEqual(
+			[...checkedRefIds({ mode: 'auto', ids: [] }, refs, context)],
+			['refs/heads/main', 'refs/remotes/origin/main'],
+		);
 	});
 
 	t.test('按钮摘要：模式名、单个引用名或数量', () => {

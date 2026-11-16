@@ -328,10 +328,12 @@ test('取数起点：手选筛选把选中引用交给宿主', { skip }, async (
 test('取数起点：自动筛选取当前分支、上游与分叉来源', { skip }, async () => {
 	const harness = await mount({}, {
 		headHint: 'main', upstreamHint: 'origin/main',
-		branchBase: { branch: 'main', base: 'origin/dev' },
+		// 分叉来源带所属仓库：只有与当前仓库一致时才会被采用。
+		branchBase: { repo: '/repo', branch: 'main', base: 'origin/dev', baseRef: 'refs/remotes/origin/dev' },
 	});
 	await settle(harness, 400);
-	assert.deepEqual(lastBranches(harness), ['refs/heads/main', 'refs/remotes/origin/main', 'origin/dev']);
+	// 分叉来源用完整引用交给 git log：裸短名与同名分支撞车时会被解析到别处。
+	assert.deepEqual(lastBranches(harness), ['refs/heads/main', 'refs/remotes/origin/main', 'refs/remotes/origin/dev']);
 	await harness.teardown();
 });
 
