@@ -296,7 +296,12 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 				const picked = await showSelect({
 					title: '发布到远程仓库',
 					message: `把分支 ${branch} 推送到哪个远程仓库？`,
-					options: remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== '' ? `（${item.url}）` : ''}` })),
+					// 段内只放名称（过长时截断），地址放在控件下方整行显示。
+					options: remotes.map((item) => ({
+						value: item.name,
+						label: item.name,
+						description: item.url ?? '',
+					})),
 				});
 				if (picked === null || picked === '') return;
 				remote = picked;
