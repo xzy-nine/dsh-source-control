@@ -140,7 +140,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 	rebaseOnto: (ctx, meta) => {
 		/* 远程标记用完整引用：本地分支与它同名时短名会被 git 解析到本地分支。 */
 		const obj = ctx.ref === null ? ctx.commit.hash
-			: ctx.ref.type === 'remote' ? remoteRefOf(ctx, ctx.ref.name) : ctx.ref.name;
+			: ctx.ref.type === 'remote' ? remoteRefOf(ctx.ref.name) : ctx.ref.name;
 		const label = ctx.ref !== null ? ctx.ref.name : ctx.commit.hash.slice(0, 7);
 		return {
 			title: meta.title, disabled: ctx.isUncommitted,

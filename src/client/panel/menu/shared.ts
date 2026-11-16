@@ -47,12 +47,6 @@ export interface GraphMenuDeps {
 	readonly canCreatePullRequest: boolean;
 	/** 被别的工作树检出的本地分支：照常显示，但检出、删除与重命名不可用。 */
 	readonly foreignBranches?: readonly string[];
-	/**
-	 * 仓库里的本地分支名：远程标记的合并与变基据此判断短名是否与本地分支撞名。
-	 *
-	 * null 表示清单尚未加载：这时无法排除撞名，调用方按保守方向处理（用完整引用）。
-	 */
-	readonly localBranches: ReadonlySet<string> | null;
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
 	readonly setCommitMessage: (message: string) => void;
 }
@@ -151,11 +145,10 @@ export function localBranchItem(ctx: MenuContext, name: string, item: ContextMen
  * 判断依赖分支清单是否已加载，条件给不出确定结果时就会退回短名，撞名与不撞名的行为因此不一致。
  * 完整引用在任何情形下都只指向那一个远程跟踪引用。
  *
- * @param ctx - 构建上下文。
  * @param name - 远程分支短名。
  * @returns 交给 git 的引用名。
  */
-export function remoteRefOf(_ctx: MenuContext, name: string): string {
+export function remoteRefOf(name: string): string {
 	return refIdOf(name, 'remote');
 }
 

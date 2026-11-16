@@ -22,7 +22,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			title: meta.title,
 			onClick: confirmThenRun(
 				{ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true },
-				() => { void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, remoteRefOf(ctx, name)), checkoutFailureText); }); },
+				() => { void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, remoteRefOf(name)), checkoutFailureText); }); },
 			),
 		};
 	},

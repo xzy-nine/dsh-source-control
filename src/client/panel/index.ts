@@ -832,19 +832,6 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	);
 
 	/** 本地分支名集合：远程标记的合并与变基据此判断短名是否与本地分支撞名。 */
-	/**
-	 * 本地分支名清单。
-	 *
-	 * 清单或它的仓库对不上时给 null 而不是空集合：空集合既表示「确认没有同名分支」，也会让
-	 * 调用方误以为撞名不可能，两者含义不同。
-	 */
-	const localBranchNames = React.useMemo(
-		() => (refItems !== null && refItems.repo === workingTreePath
-			? new Set(refItems.items.filter((item) => item.type === 'branch').map((item) => item.name))
-			: null),
-		[refItems, workingTreePath],
-	);
-
 	/** 菜单依赖面；提交菜单与引用菜单共用。 */
 	const menuDeps = React.useMemo(() => ({
 		workingTreePath, run: menuRun, remotes: state.remotes, handleCreateArchive: repoCommands.handleCreateArchive, head: state.head,
@@ -852,10 +839,9 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		handleCreatePullRequest: repoCommands.handleCreatePullRequest, canCreatePullRequest: repoCommands.canCreatePullRequest,
 		// 被别的工作树检出的分支：照常显示，但检出、删除、重命名与合并目标不可用。
 		foreignBranches: state.foreignBranches,
-		localBranches: localBranchNames,
 	}), [
 		workingTreePath, menuRun, state.remotes, repoCommands.handleCreateArchive, state.head, notify, announce,
-		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches, localBranchNames,
+		repoCommands.handleCreatePullRequest, repoCommands.canCreatePullRequest, state.foreignBranches,
 	]);
 
 	/** 提交行右键菜单。同步弹出，需要 git 查询的条目随后补齐。 */
