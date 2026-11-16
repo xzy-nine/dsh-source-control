@@ -45,16 +45,11 @@ export interface CommitMenuTexts {
 	readonly createBranch: string;
 	readonly createTag: string;
 	readonly cherrypick: string;
-	readonly cherrypickHint: string;
 	readonly revert: string;
-	readonly revertHint: string;
 	readonly resetHere: string;
 	readonly resetSoft: string;
-	readonly resetSoftHint: string;
 	readonly resetMixed: string;
-	readonly resetMixedHint: string;
 	readonly resetHard: string;
-	readonly resetHardHint: string;
 	readonly copyHash: string;
 	readonly copyMessage: string;
 }

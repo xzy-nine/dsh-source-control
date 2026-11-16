@@ -430,18 +430,15 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		event.preventDefault();
 		event.stopPropagation();
 		const { clientX, clientY } = event;
-		const upstream = currentSync?.upstream ?? '';
 		showContextMenu({
 			x: clientX, y: clientY,
 			items: [
 				{
 					title: '用本地覆盖远程（强制推送）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支强推到 ${upstream}`,
 					onClick: () => { overwriteRemoteWithLocal(); },
 				},
 				{
 					title: '用远程覆盖本地（硬重置）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支重置到 ${upstream}`,
 					onClick: () => { overwriteLocalWithRemote(); },
 				},
 			],
