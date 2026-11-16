@@ -170,8 +170,6 @@ export interface WorkingTreeSnapshot {
 	readonly branch: string | null;
 	/** 上游短名；无上游或上游引用不存在时为 null。 */
 	readonly upstream: string | null;
-	/** 上游的完整引用，如 `refs/remotes/origin/main`；无上游时为 null。 */
-	readonly upstreamRef: string | null;
 	/** 相对上游的领先提交数。 */
 	readonly ahead: number;
 	/** 相对上游的落后提交数。 */
@@ -208,7 +206,6 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	let head: string | null = null;
 	let branch: string | null = null;
 	let upstream = '';
-	let upstreamRef = '';
 	let ab: { ahead: number; behind: number } | null = null;
 	/*
 	 * 记录先全部收下、解析完再按深度取：上限要按完整深度决定保留哪一层，
@@ -226,9 +223,12 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			if (key === 'branch.oid') head = value === '' || value === '(initial)' ? null : value;
 			else if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
 			else if (key === 'branch.upstream') {
-				// 完整引用是权威值：短名在同名分支下会带消歧前缀，远程名也无法从它可靠还原。
+				/*
+				 * 这里只有短名：`git status` 的 `branch.upstream` 不带命名空间，本地分支上游
+				 * 与远程跟踪引用在上游是本地分支时同样是 `localbase` 这种写法，无法据此判定种类。
+				 * 完整引用由调用方按分支名另行查询（见 `git-query.ts` 的 `getWorkingTreeSnapshot`）。
+				 */
 				upstream = upstreamShortName(value);
-				upstreamRef = value;
 			}
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
@@ -263,7 +263,6 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 		entries: truncated ? pickByDepth(entries, limit, (entry) => entry.path) : entries,
 		head, branch,
 		upstream: upstream !== '' && ab !== null ? upstream : null,
-		upstreamRef: upstreamRef !== '' && ab !== null ? upstreamRef : null,
 		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false, truncated,
 	};
 }

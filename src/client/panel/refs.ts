@@ -174,10 +174,16 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 		// 宿主未给出完整引用时退回短名按远程跟踪引用处理：少一个起点会让图形区静默少显示一段历史。
 		starts.push(refIdOf(context.upstream, 'remote'));
 	}
-	// 分叉来源与上游或当前分支是同一个引用时不再重复。
-	if (context.base !== null && context.base !== '' && context.base !== upstream && context.base !== context.head) {
-		// 用完整引用交给 git log：短名与标签撞名时会被解析到别处。
-		starts.push(context.baseRef ?? context.base);
+	/*
+	 * 分叉来源与上游或当前分支是同一个引用时不再重复。
+	 *
+	 * 判重必须用完整引用：短名 `origin/main` 可能同时是本地分支名与远程跟踪引用，
+	 * 按短名比较会把其实是另一个引用的来源误判成重复而跳过。
+	 */
+	const baseStart = context.baseRef ?? context.base;
+	const upstreamStart = upstream !== null && upstream !== '' ? upstream : null;
+	if (baseStart !== null && baseStart !== '' && baseStart !== upstreamStart && baseStart !== head) {
+		starts.push(baseStart);
 	}
 	return starts;
 }

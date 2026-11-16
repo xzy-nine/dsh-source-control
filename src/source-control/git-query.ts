@@ -407,6 +407,13 @@ export async function getStatus(repo: string, limit = DETAIL_FILE_LIMIT): Promis
 
 /** 工作区快照的读取结果：条目、分支与上游关系，或错误文本。 */
 export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
+	/**
+	 * 上游的完整引用，如 `refs/remotes/origin/main` 或 `refs/heads/localbase`；无上游时为 null。
+	 *
+	 * 由本层按分支名另查 `%(upstream)` 得到：解析层的 `branch.upstream` 只有短名，
+	 * 判定不出上游是本地分支还是远程跟踪引用。
+	 */
+	readonly upstreamRef: string | null;
 	readonly error: ErrorInfo;
 }
 
@@ -433,6 +440,27 @@ async function mergeInProgress(repo: string): Promise<boolean> {
 }
 
 /**
+ * 读取一个分支上游的完整引用。
+ *
+ * `git status` 的 `branch.upstream` 只有短名，无法区分 `refs/remotes/origin/x` 与
+ * `refs/heads/origin/x`（本地分支上游时同样只是分支名）；`%(upstream)` 由 git 给出完整
+ * 引用，是判定种类的权威值。
+ *
+ * @param repo - 仓库路径。
+ * @param branch - 当前分支名；分离头指针或不分支时为 null。
+ * @returns 完整上游引用；无上游或读不到时为 null。
+ */
+async function upstreamRefOf(repo: string, branch: string | null): Promise<string | null> {
+	if (branch === null || branch === '') return null;
+	const result = await runGit([
+		'for-each-ref', '--format=%(upstream)', `refs/heads/${branch}`,
+	], repo);
+	if (result.code !== 0) return null;
+	const value = result.stdout.trim();
+	return value === '' ? null : value;
+}
+
+/**
  * 读取工作区快照：变更条目与当前分支的上游关系。
  *
  * 两条信息来自同一次 `git status --porcelain=v2 --branch -z -uall`：面板进入仓库与写操作后的
@@ -451,12 +479,14 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			mergeInProgress(repo),
 		]);
 		const snapshot = parseStatusSnapshot(stdout);
+		// 完整引用另起一次权威查询：status 只给短名，判定不出上游是本地还是远程分支。
+		const upstreamRef = snapshot.upstream === null ? null : await upstreamRefOf(repo, snapshot.branch);
 		return {
 			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
 			head: snapshot.head,
 			branch: snapshot.branch,
 			upstream: snapshot.upstream,
-			upstreamRef: snapshot.upstreamRef,
+			upstreamRef,
 			ahead: snapshot.ahead,
 			behind: snapshot.behind,
 			merging,

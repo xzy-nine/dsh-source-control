@@ -398,6 +398,39 @@ test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活�
 	}
 });
 
+test('推送：上游分支名与本地不同名时按显式目标推送', async () => {
+	const { repo, git } = makeRepo();
+	const remote = mkdtempSync(join(tmpdir(), 'gg-push-target-'));
+	try {
+		execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
+		git('remote', 'add', 'origin', remote);
+		// 远程上先有 rename-me 分支，把本地 main 的上游指到它：上游分支名与本地不同名。
+		git('push', '-q', 'origin', 'main:rename-me');
+		git('fetch', '-q', 'origin');
+		git('branch', '--set-upstream-to=origin/rename-me', 'main');
+		git('config', 'branch.main.merge', 'refs/heads/rename-me');
+
+		const call = await makeCaller(repo);
+		writeFileSync(join(repo, 'later.txt'), 'later\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'local commit');
+
+		// 不带目标：push.default=simple 因两侧名字不同而拒绝。
+		const rejected = await call({ command: 'pushUpstream' });
+		assert.notEqual(rejected.error ?? null, null, '不同名时不带目标应被拒绝');
+
+		// 带显式目标：推到上游实际绑定的那个远程分支。
+		const pushed = await call({ command: 'pushUpstream', remote: 'origin', branch: 'rename-me' });
+		assert.equal(pushed.error ?? null, null, '显式目标应推送成功');
+		const remoteHead = execFileSync('git', ['--git-dir', remote, 'rev-parse', 'rename-me'], { encoding: 'utf8' }).trim();
+		const localHead = git('rev-parse', 'HEAD').trim();
+		assert.equal(remoteHead, localHead, '远程分支应指到本地最新提交');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(remote, { recursive: true, force: true });
+	}
+});
+
 test('提交与推送：skipHooks 传 --no-verify，未传时照常运行钩子', async () => {
 	const { repo, git } = makeRepo();
 	const hooksDir = join(repo, '.git', 'hooks');

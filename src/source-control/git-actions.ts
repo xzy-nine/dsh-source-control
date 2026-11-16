@@ -368,17 +368,28 @@ export function pushBranch(repo: string, branchName: string, remote: string, set
 /**
  * 把当前分支推送到其上游。
  *
- * 不带参数执行 `git push`：由 git 按 `push.default` 与分支的上游配置决定目标，
- * 因此无需调用方指定远程。当前分支没有上游时 git 会给出提示性错误。
+ * 不给目标时执行不带参数的 `git push`：由 git 按 `push.default` 与分支的上游配置决定去向，
+ * 当前分支没有上游时 git 会给出提示性错误。给了目标则按它显式推送。
  *
  * @param repo - 仓库路径。
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
+ * @param cancelKey - 停止键。
+ * @param target - 显式推送目标；省略时交给 git 按上游配置决定。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function pushUpstream(repo: string, skipHooks = false, cancelKey = ''): Promise<ErrorInfo> {
+export function pushUpstream(repo: string, skipHooks = false, cancelKey = '', target: { readonly remote: string; readonly branch: string } | null = null): Promise<ErrorInfo> {
+	/*
+	 * 给出目标时按 `<远程> <本地分支>:<远程分支>` 推送，而不是只写远程名。
+	 *
+	 * 不带 refspec 的推送由 `push.default` 决定去向：上游远程分支与本地分支不同名时
+	 * （`branch.<名字>.merge` 指向别的名字），`simple` 会直接拒绝；显式写出两侧名字
+	 * 让这次推送按上游实际绑定的分支走。
+	 */
 	const args = ['push'];
+	if (target !== null) args.push(target.remote);
 	if (skipHooks) args.push('--no-verify');
-	return gitErrorInfo(args, repo, { cancelKey });
+	if (target === null) return gitErrorInfo(args, repo, { cancelKey });
+	return gitErrorInfo([...args, `HEAD:${target.branch}`], repo, { cancelKey });
 }
 
 /**

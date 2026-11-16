@@ -50,7 +50,7 @@ export interface UseGraphDataOptions {
 	/** 引用筛选：决定提交图的取数起点，与 VS Code 图形视图同一模型；省略时按自动。 */
 	readonly filter?: RefFilter;
 	/** 自动筛选的分叉来源：带所属分支，供本 hook 校验是否与当前分支匹配。 */
-	readonly branchBase?: { readonly branch: string; readonly base: string | null } | null;
+	readonly branchBase?: { readonly branch: string; readonly base: string | null; readonly baseRef?: string | null } | null;
 	/** 首帧可用的当前分支与上游（仓库树快照提供），避免首次进入少带筛选条件多取一次。 */
 	readonly headHint?: string | null;
 	readonly upstreamHint?: string | null;
@@ -200,13 +200,16 @@ export function useGraphData({
 	 */
 	const headName = state.head ?? headHint;
 	const upstreamName = state.upstream ?? upstreamHint;
-	const baseRef = branchBase !== null && branchBase.branch === headName ? branchBase.base : null;
+	const matchedBase = branchBase !== null && branchBase.branch === headName ? branchBase : null;
+	const baseRef = matchedBase?.base ?? null;
+	// 完整引用一并交给筛选：短名撞名时按它取数会被解析到别的引用上。
+	const baseRefFull = matchedBase?.baseRef ?? null;
 	const graphBranches = React.useMemo(
 		() => filterBranchesOf(filter, {
 			head: headName, headHash: state.headHash ?? null,
-			upstream: upstreamName, upstreamRef: state.upstreamRef, base: baseRef,
+			upstream: upstreamName, upstreamRef: state.upstreamRef, base: baseRef, baseRef: baseRefFull,
 		}),
-		[filter, headName, state.headHash, upstreamName, state.upstreamRef, baseRef],
+		[filter, headName, state.headHash, upstreamName, state.upstreamRef, baseRef, baseRefFull],
 	);
 	/** 取数起点的稳定编码：作为依赖与「起点是否变化」的判据。 */
 	const branchesKey = graphBranches === null ? '*' : JSON.stringify(graphBranches);

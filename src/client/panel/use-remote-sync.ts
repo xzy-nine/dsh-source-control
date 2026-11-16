@@ -57,7 +57,10 @@ export interface RemoteSync {
 	/** 同步按钮的右键菜单。 */
 	readonly handleSyncContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
 	/** 推送某个仓库的当前分支到其上游，失败时报错。 */
-	readonly pushCurrentBranch: (repoPath?: string, skipHooks?: boolean) => Promise<void>;
+	readonly pushCurrentBranch: (
+		repoPath?: string, skipHooks?: boolean, cancelKey?: string,
+		target?: { readonly remote: string; readonly branch: string } | null,
+	) => Promise<void>;
 	/** 是否可用同步按钮的右键覆盖项。 */
 	readonly overwriteChoicesAvailable: boolean;
 }
@@ -117,8 +120,11 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	 * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
 	 * @returns 无。
 	 */
-	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false, cancelKey = ''): Promise<void> => {
-		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks, cancelKey);
+	const pushCurrentBranch = React.useCallback(async (
+		repoPath?: string, skipHooks = false, cancelKey = '',
+		target: { readonly remote: string; readonly branch: string } | null = null,
+	): Promise<void> => {
+		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks, cancelKey, target);
 		if (error === null) return;
 		if (/no configured push destination|no configured remote/i.test(error)) {
 			throw new Error('未配置远程仓库，请先在设置中添加远程。');
@@ -350,7 +356,11 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
 				reportPhase('推送');
-				await pushCurrentBranch(undefined, skipHooks, cancelKey);
+				/*
+				 * 显式给出上游的远程与分支：上游分支名与本地分支名不同时，不带 refspec 的推送会被
+				 * push.default=simple 拒绝。只在这条同步路径上传，其余调用保持原有语义。
+				 */
+				await pushCurrentBranch(undefined, skipHooks, cancelKey, parts);
 			}
 		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）', cancellable: true }).finally(() => { setRunHooks(true); });
 	};

@@ -485,13 +485,18 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 撤掉，界面不必等子进程退出。
 	 */
 	const handleCancelOperation = React.useCallback((cancelKey: string) => {
-		const target = workingTreePath;
+		/*
+		 * 用记录自带的仓库发请求，而不是当前选中的工作树：仓库树里别的仓库也可能在跑可停止的
+		 * 操作，选中项为空时更不该因此发不出停止请求。
+		 */
+		const entry = state.busy.find((item) => item.cancelKey === cancelKey);
+		const target = entry?.repo ?? workingTreePath;
 		if (target === null) return;
 		logClient('W', 'action', `用户停止操作：${cancelKey}`);
 		void cancelOperation(target, cancelKey).catch((error: unknown) => {
 			logClient('E', 'action', `停止操作失败：${error instanceof Error ? error.message : String(error)}`);
 		});
-	}, [workingTreePath]);
+	}, [state.busy, workingTreePath]);
 
 	/**
 	 * 阻塞型可停止操作的弹窗：用户可暂时收起，收起后仍以行为单位提供停止入口。

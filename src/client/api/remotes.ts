@@ -52,9 +52,17 @@ export async function pushBranch(
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 错误文本，无错误时返回 null。
  */
-export async function pushUpstream(cwd: string, skipHooks = false, cancelKey = ''): Promise<string | null> {
+export async function pushUpstream(
+	cwd: string,
+	skipHooks = false,
+	cancelKey = '',
+	target: { readonly remote: string; readonly branch: string } | null = null,
+): Promise<string | null> {
 	// 用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。
-	const payload = await callApiRaw(cwd, { command: 'pushUpstream', skipHooks, cancelKey });
+	const payload = await callApiRaw(cwd, {
+		command: 'pushUpstream', skipHooks, cancelKey,
+		...(target === null ? {} : { remote: target.remote, branch: target.branch }),
+	});
 	return commandError(payload);
 }
 

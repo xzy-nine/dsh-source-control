@@ -147,17 +147,16 @@ export function localBranchItem(ctx: MenuContext, name: string, item: ContextMen
 /**
  * 取远程分支在 git 命令里使用的引用名。
  *
- * 有同名本地分支时短名会被 git 解析到该本地分支，因此改用完整引用；没有同名本地分支时保持
- * 短名，git 生成的合并提交信息里是通常的写法。
+ * 一律给完整引用。短名在有同名本地分支时会被 git 解析到那个本地分支；而「没有同名分支」的
+ * 判断依赖分支清单是否已加载，条件给不出确定结果时就会退回短名，撞名与不撞名的行为因此不一致。
+ * 完整引用在任何情形下都只指向那一个远程跟踪引用。
  *
  * @param ctx - 构建上下文。
  * @param name - 远程分支短名。
  * @returns 交给 git 的引用名。
  */
-export function remoteRefOf(ctx: MenuContext, name: string): string {
-	// 清单未知时无从排除撞名，用完整引用：短名撞上同名本地分支会被 git 解析到那个本地分支。
-	const named = ctx.deps.localBranches;
-	return named === null || named.has(name) ? refIdOf(name, 'remote') : name;
+export function remoteRefOf(_ctx: MenuContext, name: string): string {
+	return refIdOf(name, 'remote');
 }
 
 /**

@@ -136,9 +136,14 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never, bool('skipHooks')),
 			});
 			break;
-		case 'pushUpstream':
-			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks'), str('cancelKey')));
+		case 'pushUpstream': {
+			// 同步等上游分支与本地分支不同名的情形由调用方给出显式目标；其余路径不给，交给 git。
+			const remote = str('remote');
+			const branch = str('branch');
+			const target = remote === '' || branch === '' ? null : { remote, branch };
+			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks'), str('cancelKey'), target));
 			break;
+		}
 
 		/* --- 提交操作 --- */
 		case 'checkoutCommit':
