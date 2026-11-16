@@ -1,13 +1,13 @@
 /**
  * GitHub 远端判定测试。
  *
- * 覆盖 HTTPS / scp / `ssh://` 三种地址形态的识别、提交页地址的选取与远程分支名的拆分；
- * 判定结果决定提交菜单里是否出现 GitHub 网页入口。
+ * 覆盖 HTTPS / scp / `ssh://` 三种地址形态的识别、提交页地址的选取、远程分支名的拆分的
+ * 远程分支检出时的本地分支名；判定结果决定提交菜单里是否出现 GitHub 网页入口。
  */
 import assert from 'node:assert/strict';
 import { parallel } from './harness.mjs';
 import {
-	githubCommitUrl, githubRemoteNames, hasGitHubRemote, remoteNameOfBranch,
+	githubCommitUrl, githubRemoteNames, hasGitHubRemote, localNameForRemoteBranch, remoteNameOfBranch,
 } from '../src/client/panel/github.ts';
 
 /** 一个远端条目。 */
@@ -53,5 +53,13 @@ parallel('GitHub 远端识别', (t) => {
 		assert.equal(remoteNameOfBranch('origin/feature/nested'), 'origin');
 		assert.equal(remoteNameOfBranch('main'), '');
 		assert.equal(remoteNameOfBranch('/main'), '');
+	});
+
+	t.test('检出远程分支时的本地分支名', () => {
+		assert.equal(localNameForRemoteBranch('origin/main'), 'main');
+		assert.equal(localNameForRemoteBranch('origin/feature/nested'), 'feature/nested');
+		assert.equal(localNameForRemoteBranch('other/main'), 'other/main');
+		assert.equal(localNameForRemoteBranch('upstream/release/1.0'), 'upstream/release/1.0');
+		assert.equal(localNameForRemoteBranch('main'), 'main');
 	});
 });

@@ -249,6 +249,120 @@ test('分支、标签、贮藏与远程的写操作', async () => {
 	}
 });
 
+test('检出远程分支：本地同名分支的归属决定检出还是报告冲突', async () => {
+	const { repo, git } = makeRepo();
+	const bare = tempPath('gg-api-remote-');
+	try {
+		execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+		git('remote', 'add', 'other', bare);
+		git('push', '-q', 'other', 'main');
+		git('fetch', '-q', 'other');
+		const call = await makeCaller(repo);
+
+		// 本地没有同名分支：新建跟踪分支并检出。
+		assert.deepEqual((await call({ command: 'checkoutBranch', branchName: 'other/main', remoteBranch: 'other/main' })).errors, [null]);
+		assert.equal(git('branch', '--show-current').trim(), 'other/main');
+		// 上游与本地分支同名时 git 给多一层前缀的写法，插件统一收敛成远程分支短名。
+		assert.equal(git('for-each-ref', '--format=%(upstream:short)', 'refs/heads/other/main').trim(), 'remotes/other/main');
+		assert.equal((await call({ command: 'loadWorkingTreeSnapshot', noCache: true })).upstream, 'other/main');
+
+		// 本地该分支正跟踪同一远程分支：直接检出它，不报「已存在」。
+		git('checkout', '-q', 'main');
+		assert.deepEqual((await call({ command: 'checkoutBranch', branchName: 'other/main', remoteBranch: 'other/main' })).errors, [null]);
+		assert.equal(git('branch', '--show-current').trim(), 'other/main');
+
+		// 本地同名分支没有上游：报告冲突，不静默落到它上面。
+		git('checkout', '-q', 'main');
+		const conflict = await call({ command: 'checkoutBranch', branchName: 'main', remoteBranch: 'other/main' });
+		assert.match(conflict.errors[0], /already exists/i);
+		assert.equal(git('branch', '--show-current').trim(), 'main');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(bare, { recursive: true, force: true });
+	}
+});
+
+test('按分支抓取：只取指定远程的指定分支，其他远程与分支不动', async () => {
+	const { repo, git } = makeRepo();
+	const kept = tempPath('gg-api-keep-');
+	const skipped = tempPath('gg-api-skip-');
+	try {
+		for (const bare of [kept, skipped]) {
+			execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+			git('push', '-q', bare, 'main');
+		}
+		// kept 上多留一个非 main 分支：抓 main 时它不该被一起取回。
+		git('branch', 'side', 'main');
+		git('push', '-q', kept, 'side');
+		git('remote', 'add', 'kept', kept);
+		git('remote', 'add', 'skipped', skipped);
+		const call = await makeCaller(repo);
+
+		// 只抓 kept 的 main：不产生 skipped 的任何远程跟踪引用。
+		const fetched = await call({ command: 'fetch', name: 'kept', prune: false, pruneTags: false, branch: 'main' });
+		assert.equal(fetched.error ?? null, null, '按分支抓取应成功');
+		assert.match(git('for-each-ref', '--format=%(refname)', 'refs/remotes'), /refs\/remotes\/kept\/main/);
+		assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/remotes/skipped'), '', '未被指定的远程不应被访问');
+		assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/remotes/kept/side'), '', '同一远程的其他分支也不该被取回');
+
+		// 清理选项作用于整个远程，与按分支抓取不同时成立：直接拒绝，不起 git fetch。
+		const rejected = await call({ command: 'fetch', name: 'kept', prune: true, pruneTags: false, branch: 'main' });
+		assert.match(rejected.error, /不能同时清理/);
+		// 没有远程名就无从判定抓哪一个：同样拒绝。
+		const noRemote = await call({ command: 'fetch', name: null, prune: false, pruneTags: false, branch: 'main' });
+		assert.match(noRemote.error, /必须指定远程名/);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(kept, { recursive: true, force: true });
+		rmSync(skipped, { recursive: true, force: true });
+	}
+});
+
+test('停止操作：按停止键终止在跑的 git 子进程', async () => {
+	const { repo, git } = makeRepo();
+	const bare = tempPath('gg-api-cancel-remote-');
+	try {
+		execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+		git('remote', 'add', 'origin', bare);
+		// 先建立上游并推一次，此时还没有阻塞用的钩子。
+		git('push', '-q', '-u', 'origin', 'main');
+
+		/*
+		 * 再制造一个可控的长任务：pre-push 钩子睡住，推送到结束前 git 一直不返回，
+		 * 停止键因此有真实的子进程可终止。留一个待推的新提交，否则 git 会直接报 up-to-date 而不跑钩子。
+		 */
+		writeFileSync(join(repo, 'pending.txt'), 'pending\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'pending push');
+		writeHook(join(repo, '.git', 'hooks'), 'pre-push', '#!/bin/sh\nsleep 8\n');
+
+		const call = await makeCaller(repo);
+
+		// 没有该键对应的操作时返回 0：停止一个已经结束的操作属正常情况。
+		const idle = await call({ command: 'cancelOperation', key: 'no-such-key' });
+		assert.equal(idle.stopped, 0);
+		assert.equal(idle.error ?? null, null, '停止是用户主动行为，命令本身恒成功');
+		const empty = await call({ command: 'cancelOperation', key: '' });
+		assert.equal(empty.stopped, 0);
+
+		// 起一次真实推送：它会被钩子挡住，等到子进程登记完成再停止。
+		const pending = call({ command: 'pushUpstream', skipHooks: false, cancelKey: 'cancel-test-key' });
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		const stopped = await call({ command: 'cancelOperation', key: 'cancel-test-key' });
+		assert.ok(stopped.stopped >= 1, '应终止在跑的 git 子进程，实际 ' + String(stopped.stopped));
+
+		// 被终止的推送以失败回投，不会假装成功。
+		const pushed = await pending;
+		assert.notEqual(pushed.error ?? null, null, '被停止的推送应报错');
+		// 登记随之清理：同一个键再停一次没有进程可终止。
+		const again = await call({ command: 'cancelOperation', key: 'cancel-test-key' });
+		assert.equal(again.stopped, 0, '结束后登记应已清理');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(bare, { recursive: true, force: true });
+	}
+});
+
 test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活时为 false', async () => {
 	const { repo } = makeRepo();
 	try {
@@ -281,6 +395,41 @@ test('钩子探测：默认钩子目录与 core.hooksPath 都识别，未激活�
 		rmSync(elsewhere, { recursive: true, force: true });
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test('推送：上游分支名与本地不同名时按显式目标推送', async () => {
+	const { repo, git } = makeRepo();
+	const remote = mkdtempSync(join(tmpdir(), 'gg-push-target-'));
+	try {
+		execFileSync('git', ['init', '-q', '--bare', remote], { encoding: 'utf8' });
+		git('remote', 'add', 'origin', remote);
+		// 远程上先有 rename-me 分支，把本地 main 的上游指到它：上游分支名与本地不同名。
+		git('push', '-q', 'origin', 'main:rename-me');
+		git('fetch', '-q', 'origin');
+		git('branch', '--set-upstream-to=origin/rename-me', 'main');
+		git('config', 'branch.main.merge', 'refs/heads/rename-me');
+		// 固定推送模式：不带目标的拒绝来自 simple，而开发机的全局 push.default 会改变这一结果。
+		git('config', 'push.default', 'simple');
+
+		const call = await makeCaller(repo);
+		writeFileSync(join(repo, 'later.txt'), 'later\n');
+		git('add', '-A');
+		git('commit', '-q', '-m', 'local commit');
+
+		// 不带目标：push.default=simple 因两侧名字不同而拒绝。
+		const rejected = await call({ command: 'pushUpstream' });
+		assert.notEqual(rejected.error ?? null, null, '不同名时不带目标应被拒绝');
+
+		// 带显式目标：推到上游实际绑定的那个远程分支。
+		const pushed = await call({ command: 'pushUpstream', remote: 'origin', branch: 'rename-me' });
+		assert.equal(pushed.error ?? null, null, '显式目标应推送成功');
+		const remoteHead = execFileSync('git', ['--git-dir', remote, 'rev-parse', 'rename-me'], { encoding: 'utf8' }).trim();
+		const localHead = git('rev-parse', 'HEAD').trim();
+		assert.equal(remoteHead, localHead, '远程分支应指到本地最新提交');
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(remote, { recursive: true, force: true });
 	}
 });
 

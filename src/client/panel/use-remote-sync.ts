@@ -12,6 +12,8 @@ import {
 import type { SshStatusInfo } from '../api/index.ts';
 import { showCheckbox, showMessage, showSelect, showTabbedForm, type FormPage } from '../ui/dialog.ts';
 import { showContextMenu } from '../ui/context-menu.ts';
+import { refIdOf } from '../shared/ref-id.ts';
+import { upstreamPartsFromRef, upstreamPartsFromShortName } from '../../shared/upstream-ref.ts';
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
@@ -55,9 +57,43 @@ export interface RemoteSync {
 	/** 同步按钮的右键菜单。 */
 	readonly handleSyncContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
 	/** 推送某个仓库的当前分支到其上游，失败时报错。 */
-	readonly pushCurrentBranch: (repoPath?: string, skipHooks?: boolean) => Promise<void>;
+	readonly pushCurrentBranch: (
+		repoPath?: string, skipHooks?: boolean, cancelKey?: string,
+		target?: { readonly remote: string; readonly branch: string } | null,
+	) => Promise<void>;
 	/** 是否可用同步按钮的右键覆盖项。 */
 	readonly overwriteChoicesAvailable: boolean;
+}
+
+/**
+ * 把上游短名写成交给 git 的完整引用。
+ *
+ * 本地分支名可能形如 `远程名/分支名`，与同名的远程跟踪分支撞名，短名会被 git 解析到本地分支。
+ *
+ * @param upstream - 上游短名。
+ * @returns 完整引用名。
+ */
+function remoteTrackingRef(sync: RepoSync): string {
+	// 完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。
+	return sync.upstreamRef ?? refIdOf(sync.upstream ?? '', 'remote');
+}
+
+/**
+ * 把上游名拆成远程名与分支名。
+ *
+ * 上游记作 `<远程>/<分支>`（如 `origin/main`），远程名可能含斜杠以外字符；
+ * 没有斜杠时无法判定远程，返回 null。
+ *
+ * @param upstream - 上游引用名；null 表示没有上游。
+ * @returns 远程名与该远程上的分支名。
+ */
+export function upstreamPartsOf(sync: RepoSync | undefined): { remote: string; branch: string } | null {
+	if (sync === undefined) return null;
+	// 优先用完整引用：远程名与源分支由 git 给出，不必从短名猜种类或拆前缀。
+	const fromRef = upstreamPartsFromRef(sync.upstreamRef);
+	if (fromRef !== null) return fromRef.remote === null ? null : { remote: fromRef.remote, branch: fromRef.branch };
+	// 宿主未给出完整引用时退回短名拆分。
+	return upstreamPartsFromShortName(sync.upstream);
 }
 
 /**
@@ -84,8 +120,11 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	 * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
 	 * @returns 无。
 	 */
-	const pushCurrentBranch = React.useCallback(async (repoPath?: string, skipHooks = false): Promise<void> => {
-		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks);
+	const pushCurrentBranch = React.useCallback(async (
+		repoPath?: string, skipHooks = false, cancelKey = '',
+		target: { readonly remote: string; readonly branch: string } | null = null,
+	): Promise<void> => {
+		const error = await pushUpstream(repoPath ?? (workingTreePath as string), skipHooks, cancelKey, target);
 		if (error === null) return;
 		if (/no configured push destination|no configured remote/i.test(error)) {
 			throw new Error('未配置远程仓库，请先在设置中添加远程。');
@@ -291,34 +330,39 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		})();
 	}, [busyFlags.network, remotes, currentSync, workingTreePath, run, askRemoteSource, announce, pushHookActive, runHooks, setRunHooks]);
 
+	/**
+	 * 同步：抓取当前分支的上游后再按领先/落后合并或推送。
+	 *
+	 * 只抓当前分支的上游那一个远程分支。抓全部远程会连同无关远程的全部分支一起传输，
+	 * 另起一个分支全在本地没有的远程时一次抓取就要数分钟，把同步按钮拖到超时。
+	 * 需要抓其他远程时用「抓取」入口。
+	 */
 	const handleSync = (): void => {
 		if (busyFlags.network || workingTreePath === null) return;
 		const skipHooks = pushHookActive && !runHooks;
-		void run('network', async () => {
-			await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags);
+		const parts = upstreamPartsOf(currentSync);
+		void run('network', async (cancelKey, reportPhase) => {
+			// 三个阶段各自声明：等待时能看出卡在哪一段，而不是只看到「同步」。
+			// 每个阶段都用同一个停止键登记，用户在任意一段停止都能落到当时在跑的那个进程上。
+			reportPhase('抓取');
+			if (parts === null) {
+				await fetchRepo(workingTreePath, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey);
+			} else {
+				await fetchRepo(workingTreePath, parts.remote, false, false, parts.branch, cancelKey);
+			}
 			if (currentSync !== undefined && currentSync.behind > 0 && currentSync.upstream !== null) {
-				throwIfError(await merge(workingTreePath, currentSync.upstream), checkoutFailureText);
+				reportPhase('合并');
+				throwIfError(await merge(workingTreePath, remoteTrackingRef(currentSync), false, false, false, cancelKey), checkoutFailureText);
 			}
 			if (currentSync !== undefined && currentSync.ahead > 0 && head !== null) {
-				await pushCurrentBranch(undefined, skipHooks);
+				reportPhase('推送');
+				/*
+				 * 显式给出上游的远程与分支：上游分支名与本地分支名不同时，不带 refspec 的推送会被
+				 * push.default=simple 拒绝。只在这条同步路径上传，其余调用保持原有语义。
+				 */
+				await pushCurrentBranch(undefined, skipHooks, cancelKey, parts);
 			}
-		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）' }).finally(() => { setRunHooks(true); });
-	};
-
-	/**
-	 * 把上游名拆成远程名与分支名。
-	 *
-	 * 上游记作 `<远程>/<分支>`（如 `origin/main`），远程名可能含斜杠以外字符；
-	 * 没有斜杠时无法判定远程，返回 null。
-	 *
-	 * @param upstream - 上游引用名。
-	 * @returns 远程名与该远程上的分支名。
-	 */
-	const upstreamPartsOf = (upstream: string | null): { remote: string; branch: string } | null => {
-		if (upstream === null) return null;
-		const at = upstream.indexOf('/');
-		if (at <= 0 || at === upstream.length - 1) return null;
-		return { remote: upstream.slice(0, at), branch: upstream.slice(at + 1) };
+		}, undefined, undefined, { intent: '同步（抓取 + 合并或推送）', cancellable: true }).finally(() => { setRunHooks(true); });
 	};
 
 	/**
@@ -330,7 +374,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 	 */
 	const overwriteTarget = (): { readonly sync: RepoSync; readonly path: string; readonly parts: { remote: string; branch: string } } | null => {
 		const sync = currentSync;
-		const parts = sync === undefined ? null : upstreamPartsOf(sync.upstream);
+		const parts = upstreamPartsOf(sync);
 		if (sync === undefined || workingTreePath === null || parts === null || sync.branch === null) return null;
 		return { sync, path: workingTreePath, parts };
 	};
@@ -373,12 +417,13 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 			});
 			if (!ok) return;
 			await run('history', async () => {
-				await fetchRepo(path, parts.remote, settings.fetchAndPrune, settings.fetchAndPruneTags);
-				const error = await resetToCommit(path, upstream, 'hard');
+				// 只抓要被采用的那一个远程分支：整包抓取会把它名下其他分支的缺失对象一并下载。
+				await fetchRepo(path, parts.remote, false, false, parts.branch);
+				const error = await resetToCommit(path, remoteTrackingRef(sync), 'hard');
 				if (error !== null) throw new Error(error);
 			}, undefined, undefined, { intent: '用远程覆盖本地（硬重置）' });
 		})();
-	}, [currentSync, workingTreePath, run, settings.fetchAndPrune, settings.fetchAndPruneTags]);
+	}, [currentSync, workingTreePath, run]);
 
 	/** 同步按钮的右键菜单：双向分叉时给出两种整体覆盖。 */
 	const handleSyncContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {

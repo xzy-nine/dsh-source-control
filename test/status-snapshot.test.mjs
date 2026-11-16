@@ -54,6 +54,13 @@ test('干净仓库只有分支信息', () => {
 	}
 });
 
+test('上游写成 remotes/ 前缀时收敛成远程分支短名', () => {
+	// 本地分支名与上游短名相同时 git 的 `branch.upstream` 带多一层前缀。
+	const snap = parseStatusSnapshot('# branch.oid abc123\0# branch.head other/main\0# branch.upstream remotes/other/main\0# branch.ab +0 -0\0');
+	assert.equal(snap.branch, 'other/main');
+	assert.equal(snap.upstream, 'other/main');
+});
+
 test('条目上限：按完整深度截断，浅层路径优先保留', () => {
 	const { repo, git, write } = makeRepo();
 	try {

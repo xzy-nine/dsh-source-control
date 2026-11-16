@@ -6,14 +6,18 @@ import { callApi, callApiRaw, commandError, errorList } from './http.ts';
 /**
  * 抓取远端引用。
  *
+ * 给出 `branch` 时只抓该远程上的这一个分支：抓整个远程会把它名下所有分支的缺失对象
+ * 一并下载，另起一个分支全在本地没有的远程时一次就是整包传输。
+ *
  * @param cwd - 会话工作区路径。
  * @param name - 远程名；null 表示全部远程。
  * @param prune - 是否修剪已删除的远程分支。
  * @param pruneTags - 是否修剪远程标签。
+ * @param branch - 该远程上的分支名；给出时只抓这一个，此时 `name` 必填且两个清理选项须为 false。
  * @returns 引用是否发生变化；无变化时调用方不必重取。
  */
-export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false): Promise<boolean> {
-	const payload = await callApi(cwd, { command: 'fetch', name, prune, pruneTags });
+export async function fetchRepo(cwd: string, name: string | null, prune = false, pruneTags = false, branch: string | null = null, cancelKey = ''): Promise<boolean> {
+	const payload = await callApi(cwd, { command: 'fetch', name, prune, pruneTags, branch, cancelKey });
 	// 宿主编比较了抓取前后的引用：无变化时重取一遍拿到的还是旧数据。
 	return payload.changed === true;
 }
@@ -48,9 +52,17 @@ export async function pushBranch(
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
  * @returns 错误文本，无错误时返回 null。
  */
-export async function pushUpstream(cwd: string, skipHooks = false): Promise<string | null> {
+export async function pushUpstream(
+	cwd: string,
+	skipHooks = false,
+	cancelKey = '',
+	target: { readonly remote: string; readonly branch: string } | null = null,
+): Promise<string | null> {
 	// 用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。
-	const payload = await callApiRaw(cwd, { command: 'pushUpstream', skipHooks });
+	const payload = await callApiRaw(cwd, {
+		command: 'pushUpstream', skipHooks, cancelKey,
+		...(target === null ? {} : { remote: target.remote, branch: target.branch }),
+	});
 	return commandError(payload);
 }
 
@@ -151,6 +163,22 @@ export async function editRemote(cwd: string, nameOld: string, nameNew: string, 
 export async function createArchive(cwd: string, ref: string, format: string, outputPath: string): Promise<string | null> {
 	const payload = await callApiRaw(cwd, { command: 'createArchive', ref, format, outputPath });
 	return commandError(payload);
+}
+
+/**
+ * 停止一次可停止的操作。
+ *
+ * 宿主按停止键整组终止该操作起的 git 子进程，等待方随即得到失败结果；已经结束的操作
+ * 返回 0，属正常情况。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param key - 停止键。
+ * @returns 实际终止的子进程数。
+ */
+export async function cancelOperation(cwd: string, key: string): Promise<number> {
+	const payload = await callApiRaw(cwd, { command: 'cancelOperation', key });
+	const stopped = payload.stopped;
+	return typeof stopped === 'number' ? stopped : 0;
 }
 
 /**

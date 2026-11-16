@@ -182,8 +182,8 @@ export async function revertCommit(cwd: string, commitHash: string, parentIndex 
  * @param noCommit - 是否只应用改动不提交。
  * @returns 错误文本，无错误时返回 null。
  */
-export async function merge(cwd: string, obj: string, createNewCommit = false, squash = false, noCommit = false): Promise<string | null> {
-	const payload = await callApiRaw(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit });
+export async function merge(cwd: string, obj: string, createNewCommit = false, squash = false, noCommit = false, cancelKey = ''): Promise<string | null> {
+	const payload = await callApiRaw(cwd, { command: 'merge', obj, actionOn: 'Branch', createNewCommit, squash, noCommit, cancelKey });
 	return commandError(payload);
 }
 

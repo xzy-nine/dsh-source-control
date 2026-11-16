@@ -49,11 +49,18 @@ export interface UseGraphDataOptions {
 	/** 回写某个节点的领先/落后。 */
 	/** 引用筛选：决定提交图的取数起点，与 VS Code 图形视图同一模型；省略时按自动。 */
 	readonly filter?: RefFilter;
-	/** 自动筛选的分叉来源：带所属分支，供本 hook 校验是否与当前分支匹配。 */
-	readonly branchBase?: { readonly branch: string; readonly base: string | null } | null;
+	/** 自动筛选的分叉来源：带所属仓库与分支，供本 hook 校验是否与当前仓库和分支匹配。 */
+	readonly branchBase?: {
+		readonly repo: string;
+		readonly branch: string;
+		readonly base: string | null;
+		readonly baseRef?: string | null;
+	} | null;
 	/** 首帧可用的当前分支与上游（仓库树快照提供），避免首次进入少带筛选条件多取一次。 */
 	readonly headHint?: string | null;
 	readonly upstreamHint?: string | null;
+	/** 上游的完整引用，与 `upstreamHint` 同源；据此判定上游是本地分支还是远程跟踪引用。 */
+	readonly upstreamRefHint?: string | null;
 }
 
 /** 提交图数据 hook 的返回值。 */
@@ -155,7 +162,7 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
-	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null,
+	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null, upstreamRefHint = null,
 }: UseGraphDataOptions): UseGraphDataResult {
 	/*
 	 * 初始状态直接取该仓库上一次的结果。
@@ -171,11 +178,11 @@ export function useGraphData({
 		if (remembered !== undefined) {
 			return {
 			...remembered,
-			headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null,
+			headHash: remembered.headHash ?? null, upstream: remembered.upstream ?? null, upstreamRef: remembered.upstreamRef ?? null,
 		};
 		}
 		return {
-			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint,
+			phase: 'loading', entriesPhase: 'loading', error: null, commits: [], head: headHint, headHash: null, upstream: upstreamHint, upstreamRef: upstreamRefHint,
 			ahead: 0, behind: 0,
 			more: false, nextSkip: 0,
 			entries: [], entriesTruncated: false, selectedHash: null, detail: null, busy: [], remotes: [], foreignBranches: [], merging: false,
@@ -200,21 +207,30 @@ export function useGraphData({
 	 */
 	const headName = state.head ?? headHint;
 	const upstreamName = state.upstream ?? upstreamHint;
-	const baseRef = branchBase !== null && branchBase.branch === headName ? branchBase.base : null;
+	/*
+	 * 仓库与分支都要对上：分叉来源只对产生它的那个仓库的当前分支成立，换仓库后沿用会把上一个
+	 * 仓库的来源当成这一轮取数的起点。
+	 */
+	const matchedBase = branchBase !== null && branchBase.repo === workingTreePath && branchBase.branch === headName
+		? branchBase
+		: null;
+	const baseRef = matchedBase?.base ?? null;
+	// 完整引用一并交给筛选：短名撞名时按它取数会被解析到别的引用上。
+	const baseRefFull = matchedBase?.baseRef ?? null;
 	const graphBranches = React.useMemo(
 		() => filterBranchesOf(filter, {
 			head: headName, headHash: state.headHash ?? null,
-			upstream: upstreamName, base: baseRef,
+			upstream: upstreamName, upstreamRef: state.upstreamRef, base: baseRef, baseRef: baseRefFull,
 		}),
-		[filter, headName, state.headHash, upstreamName, baseRef],
+		[filter, headName, state.headHash, upstreamName, state.upstreamRef, baseRef, baseRefFull],
 	);
 	/** 取数起点的稳定编码：作为依赖与「起点是否变化」的判据。 */
 	const branchesKey = graphBranches === null ? '*' : JSON.stringify(graphBranches);
 	const branchesRef = React.useRef(graphBranches);
 	branchesRef.current = graphBranches;
 	/** 换仓库时的起点要按新仓库的分支提示重算，不能沿用上一个仓库的起点。 */
-	const hintRef = React.useRef({ filter, head: headHint, upstream: upstreamHint });
-	hintRef.current = { filter, head: headHint, upstream: upstreamHint };
+	const hintRef = React.useRef({ filter, head: headHint, upstream: upstreamHint, upstreamRef: upstreamRefHint });
+	hintRef.current = { filter, head: headHint, upstream: upstreamHint, upstreamRef: upstreamRefHint };
 	/** 上一次取数使用的起点，用于判断筛选或分支变化后是否要按新窗口重取。 */
 	const loadedBranchesRef = React.useRef<string | null>(null);
 	/**
@@ -280,7 +296,8 @@ export function useGraphData({
 		 */
 		const requestBranches = repoChanged
 			? filterBranchesOf(hintRef.current.filter, {
-				head: hintRef.current.head, headHash: null, upstream: hintRef.current.upstream, base: null,
+				head: hintRef.current.head, headHash: null,
+				upstream: hintRef.current.upstream, upstreamRef: hintRef.current.upstreamRef, base: null,
 			})
 			: branchesRef.current;
 		const requestKey = requestBranches === null ? '*' : JSON.stringify(requestBranches);
@@ -325,7 +342,7 @@ export function useGraphData({
 			setState((previous) => ({
 				...previous,
 				phase: 'loading', entriesPhase: 'loading', error: null,
-				commits: [], entries: [], head: null, headHash: null, upstream: null, more: false, nextSkip: 0,
+				commits: [], entries: [], head: null, headHash: null, upstream: null, upstreamRef: null, more: false, nextSkip: 0,
 				detail: null, selectedHash: null,
 			}));
 		} else if (branchesChanged) {
@@ -417,7 +434,7 @@ export function useGraphData({
 					...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
 					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
+					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? settled.remotes : graph.remotes,
 					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
@@ -512,7 +529,7 @@ export function useGraphData({
 					phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
 					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
+					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
 					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
 					remotes: remotesSame ? previous.remotes : graph.remotes,
 					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
@@ -528,6 +545,14 @@ export function useGraphData({
 	}, [maxCommits, settings, branchesKey]);
 
 	/**
+	 * 在途翻页请求所属的代次；没有在途请求时为 null。
+	 *
+	 * 记代次而不是布尔值：换仓库或换筛选会让代次前进，旧代次的在途请求不该继续挡着新列表
+	 * 分页，它结束时也只释放自己那一次占用。
+	 */
+	const loadMorePendingRef = React.useRef<number | null>(null);
+
+	/**
 	 * 追加下一页。
 	 *
 	 * 偏移分页：下一页的起点是已加载条数。客户端保留从最新提交开始的完整前缀，因此向上滚动不需要
@@ -538,6 +563,10 @@ export function useGraphData({
 	 */
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
+		// 一次请求在途期间不再发起第二次：触底续取与「转到当前历史」的补齐可能同时要下一页，
+		// 两次请求的偏移取自同一份状态，会取回同一页，后回来的那次把 `more` 收成 false、分页就此停摆。
+		if (loadMorePendingRef.current === generationRef.current) return;
+		loadMorePendingRef.current = generationRef.current;
 		/*
 		 * 偏移量用宿主上一窗口给出的 `nextSkip`。
 		 *
@@ -577,6 +606,9 @@ export function useGraphData({
 			});
 		} catch (error) {
 			reportError(setState, error instanceof Error ? error.message : String(error));
+		} finally {
+			// 只释放自己那一次占用：代次已前进时，占用可能已被新列表的请求接管。
+			if (loadMorePendingRef.current === generation) loadMorePendingRef.current = null;
 		}
 	}, [workingTreePath, maxCommits, settings, branchesKey]);
 

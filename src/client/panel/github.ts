@@ -1,5 +1,6 @@
 /**
- * GitHub 远端判定：从远端列表里取仓库标识、提交页地址与远程名。
+ * GitHub 远端判定与远程分支的本地命名：从远端列表里取仓库标识、提交页地址与远程名，并给出
+ * 检出远程分支时使用的本地分支名。
  *
  * 识别的地址形态：`https://github.com/owner/repo.git`、`git@github.com:owner/repo.git`
  * 与 `ssh://git@github.com/owner/repo.git`。
@@ -70,4 +71,20 @@ export function githubRemoteNames(remotes: readonly Remote[]): ReadonlySet<strin
 export function remoteNameOfBranch(branch: string): string {
 	const separator = branch.indexOf('/');
 	return separator <= 0 ? '' : branch.slice(0, separator);
+}
+
+/**
+ * 检出远程分支时使用的本地分支名。
+ *
+ * `origin` 是本地分支默认跟踪的远程，它的分支用去掉远程名的短名；其余远程沿用短名会与本地
+ * 已有的同名分支撞名，git 无从分辨，因此用 `远程名/分支名` 全名，让同名的多个远程分支各自
+ * 有本地分支。
+ *
+ * @param remoteBranch - 远程分支短名，形态为 `远程名/分支名`。
+ * @returns 本地分支名；不是远程分支短名时原样返回。
+ */
+export function localNameForRemoteBranch(remoteBranch: string): string {
+	const remote = remoteNameOfBranch(remoteBranch);
+	if (remote !== 'origin') return remoteBranch;
+	return remoteBranch.slice(remote.length + 1);
 }

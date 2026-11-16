@@ -100,9 +100,12 @@ async function submodulesOf(dir: string, submoduleIds: Set<string>): Promise<Rep
 			submoduleIds.add(nodeId(path));
 			// 未检出的子模块没有自己的 git 目录：向上定位会命中外层仓库，浅克隆状态因此不适用。
 			const present = (await gitEntryOf(path)) !== null;
+			// 已检出的子模块照常读自己的 HEAD：未展开时那一行也要显示它当前检出的分支或提交。
+			const head = present ? await headOf(path) : { branch: null, head: null };
 			nodes.push({
 				id: nodeId(path), path, name: basename(path), kind: 'submodule', depth: 1,
-				branch: null, head: null, available: present, shallowClone: present && await isShallowClone(path), children: [],
+				branch: head.branch, head: head.head,
+				available: present, shallowClone: present && await isShallowClone(path), children: [],
 			});
 		}
 	} catch {

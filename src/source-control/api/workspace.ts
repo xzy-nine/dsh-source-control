@@ -22,6 +22,7 @@ const EMPTY_SNAPSHOT = {
 	head: null,
 	branch: null,
 	upstream: null,
+	upstreamRef: null,
 	ahead: 0,
 	behind: 0,
 	merging: false,

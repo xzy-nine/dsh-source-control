@@ -8,8 +8,21 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import type { ConfigLocation, ErrorInfo, PushMode, ResetMode } from './git-types.js';
 import type { GitResult } from './working-tree.js';
+import { upstreamShortName } from './git-parse.js';
 import { runGit } from './working-tree.js';
 import { isShallowClone } from './worktree-branches.js';
+
+/**
+ * 把 `<远程>/<分支>` 短名写成完整的远程跟踪引用。
+ *
+ * @param remoteBranch - 远程分支短名。
+ * @returns 完整引用名；名字不含斜杠时原样返回，交给 git 自行判定。
+ */
+function remoteTrackingRefOf(remoteBranch: string): string {
+	const at = remoteBranch.indexOf('/');
+	if (at <= 0 || at === remoteBranch.length - 1) return remoteBranch;
+	return 'refs/remotes/' + remoteBranch;
+}
 
 /**
  * 去掉文本末尾的换行符。
@@ -28,7 +41,7 @@ function stripTrailingNewlines(text: string): string {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 成功为 null；失败为 stderr 文本（去掉末尾换行），stderr 为空时退回 stdout，两者皆空时返回通用失败文本。
  */
-async function gitErrorInfo(args: readonly string[], cwd: string, options: { readonly quietWrite?: boolean } = {}): Promise<ErrorInfo> {
+async function gitErrorInfo(args: readonly string[], cwd: string, options: { readonly quietWrite?: boolean; readonly cancelKey?: string } = {}): Promise<ErrorInfo> {
 	let result: GitResult;
 	try {
 		result = await runGit(args, cwd, options);
@@ -99,7 +112,7 @@ export async function addRemote(repo: string, name: string, url: string, pushUrl
 		if (pushUrlError !== null) return pushUrlError;
 	}
 
-	return fetch ? fetchRemote(repo, name, false, false, false) : null;
+	return fetch ? fetchRemote(repo, name, false, false, false, '') : null;
 }
 
 /**
@@ -212,7 +225,7 @@ export async function deleteTag(repo: string, tagName: string, deleteOnRemote: s
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet: boolean): Promise<ErrorInfo> {
+async function fetchRemote(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet: boolean, cancelKey: string): Promise<ErrorInfo> {
 	if (pruneTags && !prune) {
 		return '要清理标签，从' + (remote !== null ? '某个远程仓库' : '远程仓库') + '抓取时也必须同时启用清理。';
 	}
@@ -220,7 +233,8 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
 	const args = ['fetch', remote === null ? '--all' : remote];
 	if (prune) args.push('--prune');
 	if (pruneTags) args.push('--prune-tags');
-	return gitErrorInfo(args, repo, { quietWrite: quiet });
+	args.push('--recurse-submodules=on-demand');
+	return gitErrorInfo(args, repo, { quietWrite: quiet, cancelKey });
 }
 
 /**
@@ -232,8 +246,33 @@ async function fetchRemote(repo: string, remote: string | null, prune: boolean, 
  * @param pruneTags - 是否清理已删除的远程标签；为真时要求 `prune` 也为真。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet = false): Promise<ErrorInfo> {
-	return fetchRemote(repo, remote, prune, pruneTags, quiet);
+export function fetch(repo: string, remote: string | null, prune: boolean, pruneTags: boolean, quiet = false, cancelKey = ''): Promise<ErrorInfo> {
+	return fetchRemote(repo, remote, prune, pruneTags, quiet, cancelKey);
+}
+
+/**
+ * 只抓取某个远程上的一个分支。
+ *
+ * 抓取整个远程会把它名下所有分支的缺失对象一并下载：另起的一个远程若分支全在本地没有，
+ * 一次抓取即整包传输，耗时可达数分钟并卡住整条抓取链。只需要当前分支的上游时用本函数，
+ * 传输量按该分支的新提交计。
+ *
+ * 同时把远端该分支的最新提交写入它的远程跟踪引用：后续的领先/落后与合并都靠这条引用。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名。
+ * @param branch - 该远程上的分支名。
+ * @param quiet - 为 true 时按静默写操作执行。
+ * @returns 成功为 null；失败为 git 的 stderr 文本。
+ */
+export function fetchRemoteBranch(repo: string, remote: string, branch: string, quiet = false, cancelKey = ''): Promise<ErrorInfo> {
+	/*
+	 * 显式写出去向：短名抓取是否更新远程跟踪引用取决于该远程的 refspec 配置，
+	 * 单分支克隆留下的写法下不会更新，后续的领先/落后与合并就拿不到新提交。
+	 * 信源限定在 refs/heads 之下，同名标签不会参与匹配。
+	 */
+	const refspec = 'refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch;
+	return gitErrorInfo(['fetch', remote, refspec, '--recurse-submodules=on-demand'], repo, { quietWrite: quiet, cancelKey });
 }
 
 /**
@@ -329,17 +368,28 @@ export function pushBranch(repo: string, branchName: string, remote: string, set
 /**
  * 把当前分支推送到其上游。
  *
- * 不带参数执行 `git push`：由 git 按 `push.default` 与分支的上游配置决定目标，
- * 因此无需调用方指定远程。当前分支没有上游时 git 会给出提示性错误。
+ * 不给目标时执行不带参数的 `git push`：由 git 按 `push.default` 与分支的上游配置决定去向，
+ * 当前分支没有上游时 git 会给出提示性错误。给了目标则按它显式推送。
  *
  * @param repo - 仓库路径。
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
+ * @param cancelKey - 停止键。
+ * @param target - 显式推送目标；省略时交给 git 按上游配置决定。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function pushUpstream(repo: string, skipHooks = false): Promise<ErrorInfo> {
+export function pushUpstream(repo: string, skipHooks = false, cancelKey = '', target: { readonly remote: string; readonly branch: string } | null = null): Promise<ErrorInfo> {
+	/*
+	 * 给出目标时按 `<远程> <本地分支>:<远程分支>` 推送，而不是只写远程名。
+	 *
+	 * 不带 refspec 的推送由 `push.default` 决定去向：上游远程分支与本地分支不同名时
+	 * （`branch.<名字>.merge` 指向别的名字），`simple` 会直接拒绝；显式写出两侧名字
+	 * 让这次推送按上游实际绑定的分支走。
+	 */
 	const args = ['push'];
+	if (target !== null) args.push(target.remote);
 	if (skipHooks) args.push('--no-verify');
-	return gitErrorInfo(args, repo);
+	if (target === null) return gitErrorInfo(args, repo, { cancelKey });
+	return gitErrorInfo([...args, `HEAD:${target.branch}`], repo, { cancelKey });
 }
 
 /**
@@ -403,18 +453,49 @@ export async function pushTag(repo: string, tagName: string, remotes: readonly s
 }
 
 /**
+ * 取一个本地分支的上游跟踪分支短名。
+ *
+ * @param repo - 仓库路径。
+ * @param branchName - 本地分支名。
+ * @returns 上游远程分支短名（如 `origin/main`）；分支没有上游或读不到时返回 null。同名本地分支
+ * 存在时 git 给出多一层 `remotes/` 前缀的写法，这里收敛成短名。
+ */
+async function branchUpstream(repo: string, branchName: string): Promise<string | null> {
+	try {
+		const result = await runGit(['for-each-ref', '--format=%(upstream:short)', `refs/heads/${branchName}`], repo);
+		const upstream = result.stdout.trim();
+		return result.code === 0 && upstream !== '' ? upstreamShortName(upstream) : null;
+	} catch {
+		// 取不到仓库或 git 无法启动：按没有上游处理，调用方据此报告冲突。
+		return null;
+	}
+}
+
+/**
  * 检出分支；本地尚无该分支时可基于远程分支新建。
+ *
+ * 本地已有同名分支时 git 拒绝新建，此时只有在该分支跟踪的正是这个远程分支的情况下才检出它；
+ * 跟踪别的远程或没有上游时原样返回冲突，不静默落到另一个分支上。
  *
  * @param repo - 仓库路径。
  * @param branchName - 要检出的分支名。
  * @param remoteBranch - 新建分支所基于的远程分支；null 表示直接检出已有本地分支。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export function checkoutBranch(repo: string, branchName: string, remoteBranch: string | null): Promise<ErrorInfo> {
-	const args = ['checkout'];
-	if (remoteBranch === null) args.push(branchName);
-	else args.push('-b', branchName, remoteBranch);
-	return gitErrorInfo(args, repo);
+export async function checkoutBranch(repo: string, branchName: string, remoteBranch: string | null): Promise<ErrorInfo> {
+	if (remoteBranch === null) return gitErrorInfo(['checkout', branchName], repo);
+	/*
+	 * 起点写成完整引用、并显式要求建立跟踪。
+	 *
+	 * 短名起点在有同名本地分支时会被解析到那个本地分支；不显式 --track 时是否建立上游取决于
+	 * branch.autoSetupMerge，取 simple 且本地名与远端名不同就无法复用这个分支。
+	 */
+	const created = await gitErrorInfo([
+		'checkout', '-b', branchName, '--track', remoteTrackingRefOf(remoteBranch),
+	], repo);
+	if (created === null || !/already exists/i.test(created)) return created;
+	const upstream = await branchUpstream(repo, branchName);
+	return upstream === remoteBranch ? gitErrorInfo(['checkout', branchName], repo) : created;
 }
 
 /**
@@ -536,13 +617,13 @@ export function renameBranch(repo: string, oldName: string, newName: string): Pr
  * @param noCommit - 是否使用 `--no-commit`。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
-export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean): Promise<ErrorInfo> {
+export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean, cancelKey = ''): Promise<ErrorInfo> {
 	const args = ['merge', obj];
 	if (squash) args.push('--squash');
 	else if (createNewCommit) args.push('--no-ff');
 	if (noCommit) args.push('--no-commit');
 
-	const mergeError = await gitErrorInfo(args, repo);
+	const mergeError = await gitErrorInfo(args, repo, { cancelKey });
 	if (mergeError !== null) return mergeError;
 	return squash && !noCommit ? commitSquashIfStagedChangesExist(repo, obj, actionOn) : null;
 }

@@ -5,6 +5,7 @@
  */
 import { conflictKindOfPair } from '../shared/conflict-kind.js';
 import { pickByDepth } from './depth-limit.js';
+import { upstreamShortName } from './git-parse.js';
 /**
  * 工作区变更的解析上限。
  *
@@ -221,7 +222,14 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 			const value = space === -1 ? '' : token.slice(space + 1);
 			if (key === 'branch.oid') head = value === '' || value === '(initial)' ? null : value;
 			else if (key === 'branch.head') branch = value === '' || value === '(detached)' ? null : value;
-			else if (key === 'branch.upstream') upstream = value;
+			else if (key === 'branch.upstream') {
+				/*
+				 * 这里只有短名：`git status` 的 `branch.upstream` 不带命名空间，本地分支上游
+				 * 与远程跟踪引用在上游是本地分支时同样是 `localbase` 这种写法，无法据此判定种类。
+				 * 完整引用由调用方按分支名另行查询（见 `git-query.ts` 的 `getWorkingTreeSnapshot`）。
+				 */
+				upstream = upstreamShortName(value);
+			}
 			else if (key === 'branch.ab') {
 				/* 取值形如 `+1 -2`：加号为领先、减号为落后。 */
 				const [aheadRaw, behindRaw] = value.split(' ');
@@ -253,7 +261,8 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	const truncated = entries.length > limit;
 	return {
 		entries: truncated ? pickByDepth(entries, limit, (entry) => entry.path) : entries,
-		head, branch, upstream: upstream !== '' && ab !== null ? upstream : null,
+		head, branch,
+		upstream: upstream !== '' && ab !== null ? upstream : null,
 		ahead: ab?.ahead ?? 0, behind: ab?.behind ?? 0, merging: false, truncated,
 	};
 }

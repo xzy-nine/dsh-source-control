@@ -5,6 +5,8 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ConfirmationOptions } from '../../ui/dialog.ts';
+import { refIdOf } from '../../shared/ref-id.ts';
+import { localNameForRemoteBranch } from '../github.ts';
 import type { MenuActionMeta } from '../menu-actions.ts';
 import type { BusyScope, Commit, Remote } from '../../shared/types.ts';
 
@@ -137,7 +139,23 @@ export function localBranchItem(ctx: MenuContext, name: string, item: ContextMen
 }
 
 /**
+ * 取远程分支在 git 命令里使用的引用名。
+ *
+ * 一律给完整引用。短名在有同名本地分支时会被 git 解析到那个本地分支；而「没有同名分支」的
+ * 判断依赖分支清单是否已加载，条件给不出确定结果时就会退回短名，撞名与不撞名的行为因此不一致。
+ * 完整引用在任何情形下都只指向那一个远程跟踪引用。
+ *
+ * @param name - 远程分支短名。
+ * @returns 交给 git 的引用名。
+ */
+export function remoteRefOf(name: string): string {
+	return refIdOf(name, 'remote');
+}
+
+/**
  * 把一项远程分支操作渲染成菜单项：先问本地分支名，确认后执行。
+ *
+ * 输入框预填的本地分支名按远程给出（见 {@link localNameForRemoteBranch}），可改。
  *
  * @param ctx - 构建上下文。
  * @param meta - 操作元数据，取菜单名称。
@@ -155,12 +173,11 @@ export function branchFromRemoteItem(
 ): ContextMenuItem | null {
 	const ref = ctx.ref;
 	if (ref === null) return null;
-	const short = shortBranchName(ref.name);
 	return {
 		title: meta.title,
 		onClick: () => {
 			void (async () => {
-				const localName = await showText({ title, label: '本地分支名', value: short, placeholder });
+				const localName = await showText({ title, label: '本地分支名', value: localNameForRemoteBranch(ref.name), placeholder });
 				if (localName !== null && localName !== '') act(ref, localName);
 			})();
 		},

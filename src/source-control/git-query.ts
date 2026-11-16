@@ -407,6 +407,13 @@ export async function getStatus(repo: string, limit = DETAIL_FILE_LIMIT): Promis
 
 /** 工作区快照的读取结果：条目、分支与上游关系，或错误文本。 */
 export interface WorkingTreeSnapshotData extends WorkingTreeSnapshot {
+	/**
+	 * 上游的完整引用，如 `refs/remotes/origin/main` 或 `refs/heads/localbase`；无上游时为 null。
+	 *
+	 * 由本层按分支名另查 `%(upstream)` 得到：解析层的 `branch.upstream` 只有短名，
+	 * 判定不出上游是本地分支还是远程跟踪引用。
+	 */
+	readonly upstreamRef: string | null;
 	readonly error: ErrorInfo;
 }
 
@@ -433,6 +440,27 @@ async function mergeInProgress(repo: string): Promise<boolean> {
 }
 
 /**
+ * 读取一个分支上游的完整引用。
+ *
+ * `git status` 的 `branch.upstream` 只有短名，无法区分 `refs/remotes/origin/x` 与
+ * `refs/heads/origin/x`（本地分支上游时同样只是分支名）；`%(upstream)` 由 git 给出完整
+ * 引用，是判定种类的权威值。
+ *
+ * @param repo - 仓库路径。
+ * @param branch - 当前分支名；分离头指针或不分支时为 null。
+ * @returns 完整上游引用；无上游或读不到时为 null。
+ */
+async function upstreamRefOf(repo: string, branch: string | null): Promise<string | null> {
+	if (branch === null || branch === '') return null;
+	const result = await runGit([
+		'for-each-ref', '--format=%(upstream)', `refs/heads/${branch}`,
+	], repo);
+	if (result.code !== 0) return null;
+	const value = result.stdout.trim();
+	return value === '' ? null : value;
+}
+
+/**
  * 读取工作区快照：变更条目与当前分支的上游关系。
  *
  * 两条信息来自同一次 `git status --porcelain=v2 --branch -z -uall`：面板进入仓库与写操作后的
@@ -451,11 +479,14 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 			mergeInProgress(repo),
 		]);
 		const snapshot = parseStatusSnapshot(stdout);
+		// 完整引用另起一次权威查询：status 只给短名，判定不出上游是本地还是远程分支。
+		const upstreamRef = snapshot.upstream === null ? null : await upstreamRefOf(repo, snapshot.branch);
 		return {
 			entries: snapshot.entries.sort((left, right) => left.path.localeCompare(right.path)),
 			head: snapshot.head,
 			branch: snapshot.branch,
 			upstream: snapshot.upstream,
+			upstreamRef,
 			ahead: snapshot.ahead,
 			behind: snapshot.behind,
 			merging,
@@ -464,7 +495,7 @@ export async function getWorkingTreeSnapshot(repo: string): Promise<WorkingTreeS
 		};
 	} catch (error) {
 		return {
-			entries: [], head: null, branch: null, upstream: null, ahead: 0, behind: 0, merging: false, truncated: false,
+			entries: [], head: null, branch: null, upstream: null, upstreamRef: null, ahead: 0, behind: 0, merging: false, truncated: false,
 			error: errorText(error),
 		};
 	}
@@ -722,8 +753,8 @@ async function execDiff(repo: string, fromHash: string, toHash: string, arg: '--
 	return separator === -1 ? '' : stdout.slice(separator + 1);
 }
 
-/** 分叉来源解析用的引用格式：全名、短名、上游短名、上游跟踪状态。 */
-const BASE_REF_FORMAT = ['%(refname)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+/** 分叉来源解析用的引用格式：全名、短名、上游短名、上游跟踪状态、上游完整引用。 */
+const BASE_REF_FORMAT = ['%(refname)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)', '%(upstream)'].join('%00');
 
 /**
  * 读取仓库的全部引用，供引用筛选列表与手选校验使用。
@@ -800,30 +831,32 @@ async function reflogCreatedFrom(repo: string, branch: string): Promise<string |
  * @param candidate - 候选引用名。
  * @returns 引用短名；候选解析不到时为 null。
  */
-async function resolveRefName(repo: string, candidate: string): Promise<string | null> {
+async function resolveRefName(repo: string, candidate: string): Promise<{ short: string; ref: string } | null> {
 	const name = candidate.trim();
 	if (name === '') return null;
 	const patterns = name.startsWith('refs/') ? [name] : [`refs/heads/${name}`, `refs/remotes/${name}`];
 	const result = await runGit(['for-each-ref', `--format=${BASE_REF_FORMAT}`, ...patterns], repo);
 	if (result.code !== 0) return null;
-	let local: string | null = null;
-	let upstream = '';
-	let track = '';
-	let remote: string | null = null;
+	let local: { short: string; ref: string } | null = null;
+	let upstream: { short: string; ref: string } | null = null;
+	let gone = false;
+	let remote: { short: string; ref: string } | null = null;
 	for (const line of result.stdout.split('\n')) {
 		if (line === '') continue;
-		const [refname, short, upstreamName, upstreamTrack] = line.split('\0');
+		const [refname, short, upstreamName, upstreamTrack, upstreamRef] = line.split('\0');
 		if (refname.startsWith('refs/heads/')) {
-			local = short;
-			upstream = upstreamName;
-			track = upstreamTrack;
+			local = { short, ref: refname };
+			// 上游已消失时退回本地分支；上游的完整引用由 git 给出，不再按短名拼。
+			gone = upstreamTrack.trim() === 'gone';
+			// 无上游时上游短名与完整引用都为空串。
+			upstream = upstreamName === '' || upstreamRef === '' ? null : { short: upstreamName, ref: upstreamRef };
 		} else if (refname.startsWith('refs/remotes/') && !short.endsWith('/HEAD')) {
-			remote = short;
+			remote = { short, ref: refname };
 		}
 	}
 	if (remote !== null) return remote;
 	if (local === null) return null;
-	if (upstream !== '' && track !== 'gone') return upstream;
+	if (!gone && upstream !== null) return upstream;
 	return local;
 }
 
@@ -833,9 +866,9 @@ async function resolveRefName(repo: string, candidate: string): Promise<string |
  * 取第一个远程，按 `refs/remotes/<远程>/HEAD` 解析；该符号引用多数仓库未建立，读不到即可。
  *
  * @param repo - 仓库路径。
- * @returns 引用短名；无法确定时为 null。
+ * @returns 引用短名与完整引用；无法确定时为 null。
  */
-async function defaultRemoteBranch(repo: string): Promise<string | null> {
+async function defaultRemoteBranch(repo: string): Promise<{ short: string; ref: string } | null> {
 	let remotes: string[];
 	try {
 		remotes = await getRemoteNames(repo);
@@ -861,20 +894,21 @@ async function defaultRemoteBranch(repo: string): Promise<string | null> {
 export async function getBranchBase(repo: string): Promise<BranchBase> {
 	const head = await repoHead(repo);
 	const branch = head?.branch ?? null;
-	if (branch === null) return { branch: null, base: null };
+	if (branch === null) return { branch: null, base: null, baseRef: null };
 
 	const configured = await runGit(['config', '--get', `branch.${branch}.vscode-merge-base`], repo);
 	const configuredName = configured.code === 0 ? configured.stdout.trim() : '';
 	if (configuredName !== '') {
 		const resolved = await resolveRefName(repo, configuredName);
-		if (resolved !== null) return { branch, base: resolved };
+		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
 	}
 
 	const fromReflog = await reflogCreatedFrom(repo, branch);
 	if (fromReflog !== null) {
 		const resolved = await resolveRefName(repo, fromReflog);
-		if (resolved !== null) return { branch, base: resolved };
+		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
 	}
 
-	return { branch, base: await defaultRemoteBranch(repo) };
+	const fallback = await defaultRemoteBranch(repo);
+	return { branch, base: fallback?.short ?? null, baseRef: fallback?.ref ?? null };
 }

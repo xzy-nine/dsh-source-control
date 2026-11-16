@@ -8,7 +8,7 @@ import {
 	cleanUntrackedFiles, resetFileToRevision, setConfigValue, unsetConfigValue,
 } from '../git-actions.js';
 import { ghAccount, ghCreatePullRequest, ghCreateRepo, ghOwners, ghRepoInfo } from '../gh-cli.js';
-import { gitOrThrow, runGit } from '../git-exec.js';
+import { cancelGitOperation, gitOrThrow, runGit } from '../git-exec.js';
 import { getConfig, getRepoInfo } from '../git-query.js';
 import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
@@ -231,6 +231,14 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				status: await sshStatus(str('host') === '' ? 'github.com' : str('host'), str('refresh') === 'true', str('sshUrl')),
 			}));
 			break;
+		case 'cancelOperation': {
+			// 用户手动停止一次在跑的操作：按键整组终止其子进程，等待方随即得到失败结果。
+			const key = str('key');
+			const stopped = key === '' ? 0 : cancelGitOperation(key);
+			logInfo('api', `用户停止操作：${key}，终止 ${String(stopped)} 个 git 子进程`);
+			respondResultSync('cancelOperation', { key, stopped });
+			break;
+		}
 		case 'openExtensionSettings':
 		case 'openExternalDirDiff':
 		case 'openExternalUrl':

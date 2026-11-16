@@ -35,10 +35,14 @@ export interface AutoFilterContext {
 	readonly head: string | null;
 	/** 当前 HEAD 的提交哈希；分离头指针时用作取数起点。 */
 	readonly headHash?: string | null;
-	/** 上游远程跟踪分支短名。 */
+	/** 上游短名。 */
 	readonly upstream: string | null;
+	/** 上游的完整引用；以它为准判定种类与取数起点。 */
+	readonly upstreamRef: string | null;
 	/** 分叉来源引用短名（VS Code 图形视图的 base 引用）。 */
 	readonly base: string | null;
+	/** 分叉来源的完整引用；以它为准定位与勾选，短名只管显示。 */
+	readonly baseRef?: string | null;
 }
 
 /**
@@ -150,20 +154,61 @@ export function autoRefNames(context: AutoFilterContext): string[] {
 }
 
 /**
+ * 取自动模式的取数起点。
+ *
+ * 起点交给 `git log`，本地分支与上游因此写成完整引用：本地分支名可能形如 `远程名/分支名`，
+ * 与同名的远程跟踪分支撞名，短名会被 git 解析到本地分支。分叉来源的种类无法从名字判定，
+ * 原样交给 git。
+ *
+ * @param context - 见 {@link AutoFilterContext}。
+ * @returns 起点列表；无起点时为空数组。
+ */
+function autoRefStarts(context: AutoFilterContext): string[] {
+	const starts: string[] = [];
+	const head = context.head === null || context.head === '' ? context.headHash ?? null : `refs/heads/${context.head}`;
+	if (head !== null && head !== '') starts.push(head);
+	const upstream = context.upstreamRef;
+	/*
+	 * 只认完整引用。
+	 *
+	 * 没有完整引用时无从判定上游是本地分支还是远程跟踪引用：按错种类拼出的引用并不存在，
+	 * `git log` 会直接失败（退出码 128）而不是少显示一段历史。因此宁可少给一个起点 —— 那也是
+	 * 宿主没给出权威值时的降级，由快照在下一轮补上。
+	 */
+	if (upstream !== null && upstream !== '') starts.push(upstream);
+	/*
+	 * 分叉来源与上游或当前分支是同一个引用时不再重复。
+	 *
+	 * 判重必须用完整引用：短名 `origin/main` 可能同时是本地分支名与远程跟踪引用，
+	 * 按短名比较会把其实是另一个引用的来源误判成重复而跳过。
+	 */
+	const baseStart = context.baseRef ?? context.base;
+	const upstreamStart = upstream !== null && upstream !== '' ? upstream : null;
+	if (baseStart !== null && baseStart !== '' && baseStart !== upstreamStart && baseStart !== head) {
+		starts.push(baseStart);
+	}
+	return starts;
+}
+
+/**
  * 取一次取数的引用起点。
+ *
+ * 自动模式给出当前分支、上游与分叉来源，其中本地分支与上游用完整引用名；手选模式原样交出
+ * 选中的引用 id。null 表示全部引用（宿主按 `--branches` 等枚举）。
  *
  * @param filter - 当前筛选状态。
  * @param context - 自动模式需要的上下文。
- * @returns 引用名列表；null 表示全部引用（宿主按 `--branches` 等枚举）。
+ * @returns 引用名列表；null 表示全部引用。
  */
 export function filterBranchesOf(filter: RefFilter, context: AutoFilterContext): string[] | null {
 	if (filter.mode === 'all') return null;
 	if (filter.mode === 'auto') {
-		const names = autoRefNames(context);
-		return names.length === 0 ? null : names;
+		const starts = autoRefStarts(context);
+		return starts.length === 0 ? null : starts;
 	}
-	const names = filter.ids.map(refNameOf).filter((name) => name !== '');
-	return names.length === 0 ? null : names;
+	/* 手选按完整引用名交给 git：短名可能与本地分支撞名而解析到它。 */
+	const ids = filter.ids.filter((id) => id !== '');
+	return ids.length === 0 ? null : [...ids];
 }
 
 /** 筛选按钮的摘要文案。文案归此处，调用方与测试都按引用取用。 */
@@ -218,8 +263,24 @@ export function revalidatedFilter(filter: RefFilter, refs: readonly RefItem[]): 
 export function checkedRefIds(filter: RefFilter, refs: readonly RefItem[], context: AutoFilterContext): Set<string> {
 	if (filter.mode === 'manual') return new Set(filter.ids);
 	if (filter.mode === 'all') return new Set(refs.map((ref) => ref.id));
-	const names = new Set(autoRefNames(context));
-	return new Set(refs.filter((ref) => names.has(ref.name)).map((ref) => ref.id));
+	/*
+	 * 自动模式的勾选按引用 id 而不是短名：短名会撞车，同名标签会被一并勾上。
+	 * 当前分支与上游的种类是确定的（本地分支 / 完整上游引用），据此直接得到 id；
+	 * 分叉来源只有短名、种类无法判定，仍按名字匹配。
+	 */
+	const ids = new Set<string>();
+	if (context.head !== null && context.head !== '') ids.add(refIdOf(context.head, 'branch'));
+	if (context.upstreamRef !== null && context.upstreamRef !== '') ids.add(context.upstreamRef);
+	const baseRef = context.baseRef;
+	if (baseRef !== null && baseRef !== undefined && baseRef !== '') ids.add(baseRef);
+	else {
+		// 宿主未给出完整引用时退回短名匹配：这类非空判定属旧宿主兼容，不影响已就绪的判定。
+		const baseName = context.base;
+		if (baseName !== null && baseName !== '') {
+			for (const ref of refs) if (ref.name === baseName) ids.add(ref.id);
+		}
+	}
+	return new Set(refs.filter((ref) => ids.has(ref.id)).map((ref) => ref.id));
 }
 
 /**

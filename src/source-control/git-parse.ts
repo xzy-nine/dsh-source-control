@@ -43,8 +43,34 @@ export const REF_FIELD_COUNT = 4;
 /** 引用列表的格式串。 */
 export const REF_FORMAT = ['%(refname)', '%(objectname)', '%(*objectname)', '%(objecttype)'].join('%00');
 
-/** 分支同步的格式串；`%(HEAD)` 标出当前分支。 */
-export const BRANCH_SYNC_FORMAT = ['%(HEAD)', '%(refname:short)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+/**
+ * 分支同步的格式串；`%(HEAD)` 标出当前分支。
+ *
+ * 本地分支名按固定层数剥掉引用命名空间（`refs/heads/`），不用 `%(refname:short)`：
+ * 存在同名远程跟踪引用时，短名会带上 `heads/` 或 `remotes/` 前缀来消歧，分支名因此出错。
+ */
+export const BRANCH_SYNC_FORMAT = [
+	'%(HEAD)', '%(refname:lstrip=2)', '%(upstream:short)', '%(upstream:track,nobracket)',
+	// 上游的完整引用与远程名由 git 给出：短名在同名分支下会带消歧前缀，远程名也无法从短名可靠还原。
+	'%(upstream)', '%(upstream:remotename)',
+].join('%00');
+
+/**
+ * 把 git 报出的上游名收敛成远程分支短名。
+ *
+ * 上游跟踪分支与本地分支同名时（本地分支名形如 `远程名/分支名`），`%(upstream:short)` 与
+ * `git status` 的 `branch.upstream` 给出多一层 `remotes/` 前缀的写法，以使短名无歧义；
+ * 这里统一还原成 `远程名/分支名`。
+ *
+ * @param upstream - git 报出的上游名。
+ * @returns 远程分支短名；不含该前缀时原样返回。
+ */
+export function upstreamShortName(upstream: string): string {
+	for (const prefix of ['refs/remotes/', 'remotes/']) {
+		if (upstream.startsWith(prefix)) return upstream.slice(prefix.length);
+	}
+	return upstream;
+}
 
 /**
  * 引用与分支合并读取的字段数：HEAD 标记、全名、短名、对象名、解引用对象名、对象类型、符号引用目标。
@@ -74,7 +100,12 @@ export interface RefsAndBranches {
 /** 一个仓库的分支同步状态。 */
 export interface BranchSync {
 	readonly branch: string | null;
+	/** 上游短名，供显示；无上游时为 null。 */
 	readonly upstream: string | null;
+	/** 上游的完整引用，如 `refs/remotes/origin/main`；无上游时为 null。 */
+	readonly upstreamRef: string | null;
+	/** 上游所属远程名；无上游时为 null（本地上游时 git 给出 `.`）。 */
+	readonly upstreamRemote: string | null;
 	readonly ahead: number;
 	readonly behind: number;
 }
@@ -690,7 +721,7 @@ export function parseSignatureStatus(code: string): SignatureStatus | null {
  * @returns 当前分支的同步状态；无当前分支记录时分支与上游为 null、计数为 0。
  */
 export function parseBranchSync(stdout: string): BranchSync {
-	const empty: BranchSync = { branch: null, upstream: null, ahead: 0, behind: 0 };
+	const empty: BranchSync = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
 	for (const line of stdout.split('\n')) {
 		if (line === '') continue;
 		const fields = line.split(FIELD);
@@ -699,12 +730,19 @@ export function parseBranchSync(stdout: string): BranchSync {
 		if (branch === '') return empty;
 		const upstreamName = fields[2] ?? '';
 		const track = fields[3] ?? '';
-		if (upstreamName === '' || track === 'gone') return { branch, upstream: null, ahead: 0, behind: 0 };
+		const upstreamRef = fields[4] ?? '';
+		const upstreamRemote = fields[5] ?? '';
+		if (upstreamName === '' || track === 'gone') {
+			return { branch, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
+		}
 		const ahead = /ahead (\d+)/.exec(track);
 		const behind = /behind (\d+)/.exec(track);
 		return {
 			branch,
-			upstream: upstreamName,
+			upstream: upstreamShortName(upstreamName),
+			upstreamRef: upstreamRef === '' ? null : upstreamRef,
+			// 空串表示没有上游；本地分支上游时 git 给出 '.'，原样保留。
+			upstreamRemote: upstreamRemote === '' ? null : upstreamRemote,
 			ahead: ahead === null ? 0 : Number.parseInt(ahead[1], 10),
 			behind: behind === null ? 0 : Number.parseInt(behind[1], 10),
 		};

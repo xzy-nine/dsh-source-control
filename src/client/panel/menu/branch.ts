@@ -9,9 +9,9 @@ import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
 import { fillText, type MenuActionMeta } from '../menu-actions.ts';
-import { remoteNameOfBranch } from '../github.ts';
+import { localNameForRemoteBranch, remoteNameOfBranch } from '../github.ts';
 import {
-	copyRefNameItem, isUnmergedRefusal, localBranchItem, shortBranchName, type MenuContext,
+	copyRefNameItem, isUnmergedRefusal, localBranchItem, remoteRefOf, shortBranchName, type MenuContext,
 } from './shared.ts';
 
 /** 合并方式，按菜单里的排列顺序。 */
@@ -42,11 +42,12 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			});
 		}
 		/*
-		 * 提交行右键：本地尖端分支与远程尖端分支都列。远程分支按去掉远程名的短名检出，由 git 决定
-		 * 是新建跟踪分支（本地没有同名分支）还是检出已有本地分支；本地已有同名尖端分支时不重复列出。
+		 * 提交行右键：本地尖端分支与远程尖端分支都列。远程分支按它自己的远程引用检出，新建的本地
+		 * 分支名由 {@link localNameForRemoteBranch} 决定（`origin` 用短名，其余远程用全名）；本地
+		 * 已有同名尖端分支时不重复列出。
 		 */
 		const localNames = new Set(ctx.tipBranches);
-		const remoteTips = ctx.tipRemoteBranches.filter((name) => !localNames.has(shortBranchName(name)));
+		const remoteTips = ctx.tipRemoteBranches.filter((name) => !localNames.has(localNameForRemoteBranch(name)));
 		if (localNames.size === 0 && remoteTips.length === 0) return null;
 		return {
 			title: meta.commitTitle,
@@ -58,7 +59,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 				})),
 				...remoteTips.map((name) => ({
 					title: fillText(meta.commitRemoteTitle, { name }),
-					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, shortBranchName(name), null), checkoutFailureText); }); },
+					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localNameForRemoteBranch(name), name), checkoutFailureText); }); },
 				})),
 			],
 		};
@@ -137,7 +138,9 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 		};
 	},
 	rebaseOnto: (ctx, meta) => {
-		const obj = ctx.ref !== null ? ctx.ref.name : ctx.commit.hash;
+		/* 远程标记用完整引用：本地分支与它同名时短名会被 git 解析到本地分支。 */
+		const obj = ctx.ref === null ? ctx.commit.hash
+			: ctx.ref.type === 'remote' ? remoteRefOf(ctx.ref.name) : ctx.ref.name;
 		const label = ctx.ref !== null ? ctx.ref.name : ctx.commit.hash.slice(0, 7);
 		return {
 			title: meta.title, disabled: ctx.isUncommitted,

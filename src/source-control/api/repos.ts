@@ -85,7 +85,11 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 				// 读引用，不碰工作区：抓取期间照常读。
 				await whenLocalSettled(repo);
 				const sync = await loadRepoSync(repo);
-				return { repo, branch: sync.branch, upstream: sync.upstream, ahead: sync.ahead, behind: sync.behind };
+				return {
+			repo, branch: sync.branch, upstream: sync.upstream,
+			upstreamRef: sync.upstreamRef, upstreamRemote: sync.upstreamRemote,
+			ahead: sync.ahead, behind: sync.behind,
+		};
 			});
 			break;
 		case 'loadReposSync':

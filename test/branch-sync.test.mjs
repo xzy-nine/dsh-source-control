@@ -86,8 +86,8 @@ function commitFile(repo, name, content, message) {
  * @param track - 领先/落后文本。
  * @returns 记录文本（不含行尾换行）。
  */
-function record(head, branch, upstream, track) {
-	return [head, branch, upstream, track].join('\0');
+function record(head, branch, upstream, track, upstreamRef = '', upstreamRemote = '') {
+	return [head, branch, upstream, track, upstreamRef, upstreamRemote].join('\0');
 }
 
 /**
@@ -133,32 +133,45 @@ function oracleSync(repo) {
 	return { ahead, behind };
 }
 
-test('BRANCH_SYNC_FORMAT：四个字段以 %00 分隔且首字段为 %(HEAD)', () => {
-	assert.equal(BRANCH_SYNC_FORMAT.split('%00').length, 4);
+test('BRANCH_SYNC_FORMAT：六个字段以 %00 分隔且首字段为 %(HEAD)', () => {
+	assert.equal(BRANCH_SYNC_FORMAT.split('%00').length, 6);
 	assert.ok(BRANCH_SYNC_FORMAT.startsWith('%(HEAD)'));
 	assert.ok(BRANCH_SYNC_FORMAT.includes('%(upstream:short)'));
 	assert.ok(BRANCH_SYNC_FORMAT.includes('%(upstream:track,nobracket)'));
+	// 上游的完整引用与远程名由 git 给出，不从短名反推。
+	assert.ok(BRANCH_SYNC_FORMAT.includes('%(upstream)'));
+	assert.ok(BRANCH_SYNC_FORMAT.includes('%(upstream:remotename)'));
 	assert.ok(!BRANCH_SYNC_FORMAT.includes('%x00'), 'for-each-ref 的转义是 %00');
 });
 
 test('parseBranchSync：ahead、behind 与两者同时', () => {
 	assert.deepEqual(parseBranchSync(record('*', 'main', 'origin/main', 'ahead 1') + '\n'),
-		{ branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0 });
+		{ branch: 'main', upstream: 'origin/main', upstreamRef: null, upstreamRemote: null, ahead: 1, behind: 0 });
 	assert.deepEqual(parseBranchSync(record('*', 'main', 'origin/main', 'behind 2') + '\n'),
-		{ branch: 'main', upstream: 'origin/main', ahead: 0, behind: 2 });
+		{ branch: 'main', upstream: 'origin/main', upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 2 });
 	assert.deepEqual(parseBranchSync(record('*', 'main', 'origin/main', 'ahead 1, behind 2') + '\n'),
-		{ branch: 'main', upstream: 'origin/main', ahead: 1, behind: 2 });
+		{ branch: 'main', upstream: 'origin/main', upstreamRef: null, upstreamRemote: null, ahead: 1, behind: 2 });
+});
+
+test('parseBranchSync：上游写成 remotes/ 前缀时收敛成远程分支短名', () => {
+	// 本地分支名与上游短名相同时 git 用多一层前缀的写法，插件仍按 `远程名/分支名` 记上游。
+	assert.deepEqual(
+		parseBranchSync(record('*', 'other/main', 'remotes/other/main', '', 'refs/remotes/other/main', 'other') + '\n'),
+		{
+			branch: 'other/main', upstream: 'other/main',
+			upstreamRef: 'refs/remotes/other/main', upstreamRemote: 'other', ahead: 0, behind: 0,
+		});
 });
 
 test('parseBranchSync：upstream 为 null 的三种情形', () => {
 	assert.deepEqual(parseBranchSync(record('*', 'main', '', '') + '\n'),
-		{ branch: 'main', upstream: null, ahead: 0, behind: 0 }, '上游字段为空');
+		{ branch: 'main', upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 }, '上游字段为空');
 	assert.deepEqual(parseBranchSync(record('*', 'main', 'origin/main', 'gone') + '\n'),
-		{ branch: 'main', upstream: null, ahead: 0, behind: 0 }, '上游引用已删除');
+		{ branch: 'main', upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 }, '上游引用已删除');
 	assert.deepEqual(parseBranchSync(record(' ', 'dev', '', '') + '\n'),
-		{ branch: null, upstream: null, ahead: 0, behind: 0 }, '无 * 记录');
+		{ branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 }, '无 * 记录');
 	assert.deepEqual(parseBranchSync(''),
-		{ branch: null, upstream: null, ahead: 0, behind: 0 }, '空串');
+		{ branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 }, '空串');
 });
 
 test('parseBranchSync：多分支且 * 在中间', () => {
@@ -167,10 +180,12 @@ test('parseBranchSync：多分支且 * 在中间', () => {
 		record('*', 'main', 'origin/main', 'ahead 3, behind 4'),
 		record(' ', 'feat', '', ''),
 	].join('\n') + '\n';
-	assert.deepEqual(parseBranchSync(stdout), { branch: 'main', upstream: 'origin/main', ahead: 3, behind: 4 });
+	assert.deepEqual(parseBranchSync(stdout), {
+		branch: 'main', upstream: 'origin/main', upstreamRef: null, upstreamRemote: null, ahead: 3, behind: 4,
+	});
 });
 
-test('parseBranchSync：真实 for-each-ref 输出每行四字段且标出当前分支', () => {
+test('parseBranchSync：真实 for-each-ref 输出每行六字段且标出当前分支', () => {
 	const repo = makeRepo();
 	commitFile(repo, 'a.txt', 'one\n', 'base');
 	gitIn(repo, 'branch', 'dev');
@@ -178,11 +193,12 @@ test('parseBranchSync：真实 for-each-ref 输出每行四字段且标出当前
 	const stdout = gitIn(repo, 'for-each-ref', `--format=${BRANCH_SYNC_FORMAT}`, 'refs/heads');
 	const lines = stdout.split('\n').filter((line) => line !== '');
 	assert.equal(lines.length, 2);
-	for (const line of lines) assert.equal(line.split('\0').length, 4);
+	for (const line of lines) assert.equal(line.split('\0').length, 6);
 
 	const parsed = parseBranchSync(stdout);
 	assert.equal(parsed.branch, 'main');
 	assert.equal(parsed.upstream, null);
+	assert.equal(parsed.upstreamRef, null, '无上游时完整引用同样为 null');
 	assert.equal(parsed.ahead, 0);
 	assert.equal(parsed.behind, 0);
 });
@@ -194,6 +210,9 @@ test('独立预言机：仅领先时 for-each-ref 解析与 rev-list 推导一�
 
 	assert.equal(parsed.branch, 'main');
 	assert.equal(parsed.upstream, 'origin/main');
+	// 完整引用与远程名由 git 给出，不是从短名推出来的。
+	assert.equal(parsed.upstreamRef, 'refs/remotes/origin/main');
+	assert.equal(parsed.upstreamRemote, 'origin');
 	assert.deepEqual({ ahead: parsed.ahead, behind: parsed.behind }, { ahead: 1, behind: 0 });
 	assert.deepEqual({ ahead: parsed.ahead, behind: parsed.behind }, oracleSync(repo));
 });
@@ -214,7 +233,10 @@ test('loadRepoSync（lib 产物）：与 rev-list 推导一致', async () => {
 	const repo = makeUpstreamRepo(2, 1);
 
 	const sync = await loadRepoSync(repo);
-	assert.deepEqual(sync, { branch: 'main', upstream: 'origin/main', ahead: 2, behind: 1 });
+	assert.deepEqual(sync, {
+		branch: 'main', upstream: 'origin/main',
+		upstreamRef: 'refs/remotes/origin/main', upstreamRemote: 'origin', ahead: 2, behind: 1,
+	});
 	assert.deepEqual({ ahead: sync.ahead, behind: sync.behind }, oracleSync(repo));
 });
 
@@ -228,7 +250,7 @@ test('loadRepoSync（lib 产物）：上游引用被删除后 upstream 为 null 
 	assert.equal(line.split('\0')[3].trim(), 'gone', '上游被删除时 track 文本为 gone');
 
 	const sync = await loadRepoSync(repo);
-	assert.deepEqual(sync, { branch: 'main', upstream: null, ahead: 0, behind: 0 });
+	assert.deepEqual(sync, { branch: 'main', upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 });
 });
 
 test('loadRepoSync（lib 产物）：无提交仓库给出分支名与空上游', async () => {
@@ -236,7 +258,7 @@ test('loadRepoSync（lib 产物）：无提交仓库给出分支名与空上游'
 	const repo = makeRepo('gg-branch-empty-');
 
 	const sync = await loadRepoSync(repo);
-	assert.deepEqual(sync, { branch: 'main', upstream: null, ahead: 0, behind: 0 });
+	assert.deepEqual(sync, { branch: 'main', upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 });
 });
 
 test('loadRepoSync（lib 产物）：分离头指针时分支为 null', async () => {
@@ -247,5 +269,5 @@ test('loadRepoSync（lib 产物）：分离头指针时分支为 null', async ()
 	assert.equal(gitIn(repo, 'branch', '--show-current').trim(), '');
 
 	const sync = await loadRepoSync(repo);
-	assert.deepEqual(sync, { branch: null, upstream: null, ahead: 0, behind: 0 });
+	assert.deepEqual(sync, { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 });
 });
