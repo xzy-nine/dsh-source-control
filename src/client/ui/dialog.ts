@@ -372,11 +372,16 @@ export function showText({ title, message = '', label = '', value = '', placehol
 	});
 }
 
-/** 单选框选项。 */
+/**
+ * 单选框选项。
+ *
+ * 段内只放得下短文案：`label` 超出列宽时按省略号截断，完整名称挂在悬停提示上；
+ * 地址这类放不下的长文本放 `description`，它不在段内，只在选中后于控件下方整行显示。
+ */
 export interface SelectOptions {
 	readonly title: string;
 	readonly message?: string;
-	readonly options: ReadonlyArray<{ value: string; label: string; title?: string }>;
+	readonly options: ReadonlyArray<{ value: string; label: string; description?: string; title?: string }>;
 	readonly value?: string;
 	readonly confirmLabel?: string;
 }
@@ -391,6 +396,7 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 	return runDialog<string | null>((finish) => {
 		function Content(): React.ReactElement {
 			const [selected, setSelected] = React.useState(value ?? options.at(0)?.value ?? '');
+			const detail = options.find((option) => option.value === selected)?.description;
 			return dialogModal(
 				title,
 				() => { finish(null); },
@@ -401,8 +407,10 @@ export function showSelect({ title, message = '', options, value, confirmLabel =
 						label: title,
 						value: selected,
 						onChange: setSelected,
-						options: options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
+						className: css.selectControl,
+						options: options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
 					}),
+					detail !== undefined && detail !== '' && React.createElement('div', { className: css.selectDescription }, detail),
 				),
 				confirmFooter(() => { finish(null); }, () => { finish(selected); }, confirmLabel),
 			);
@@ -495,15 +503,6 @@ export interface TabbedFormOptions {
 	readonly confirmLabel?: string;
 }
 
-/**
- * 分页表单：顶部页签切换页面，底部确认返回全部页的字段值。
- *
- * 各页字段共享一份值对象，切换页签不丢失已填内容；返回结果用 `page` 键附带所选页签值，
- * 便于调用方按当前页决定后续动作。
- *
- * @param options - 见 {@link TabbedFormOptions}。
- * @returns 用户确认返回字段值对象（含 `page`），取消返回 null。
- */
 /**
  * 分页表单：顶部页签切换页面，底部确认返回当前页的字段值。
  *
@@ -654,7 +653,8 @@ function buildField(
 			label: field.label ?? field.name,
 			value: typeof current === 'string' ? current : '',
 			onChange: (next: string) => { setField(field.name, next); },
-			options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title })),
+			className: css.selectControl,
+			options: field.options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
 		}));
 	}
 	if (field.type === 'dropdown') {

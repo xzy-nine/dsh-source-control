@@ -169,14 +169,14 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		for (const item of tagItems) items.push(item);
 	}
 	items.push({ type: 'divider' });
-	push(items, { title: COMMIT_MENU.cherrypick, hint: COMMIT_MENU.cherrypickHint, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
-	push(items, { title: COMMIT_MENU.revert, hint: COMMIT_MENU.revertHint, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
+	push(items, { title: COMMIT_MENU.cherrypick, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
+	push(items, { title: COMMIT_MENU.revert, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
 	items.push({ type: 'divider' });
 	// 重置只对当前分支可达的提交有意义：重置到其他分支的提交会改写当前分支。
 	push(items, ctx.onCurrentBranch ? { title: COMMIT_MENU.resetHere, danger: true, disabled: isUncommitted, children: [
-		{ title: COMMIT_MENU.resetSoft, hint: COMMIT_MENU.resetSoftHint, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
-		{ title: COMMIT_MENU.resetMixed, hint: COMMIT_MENU.resetMixedHint, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'mixed')); }); } },
-		{ title: COMMIT_MENU.resetHard, hint: COMMIT_MENU.resetHardHint, danger: true, onClick: () => {
+		{ title: COMMIT_MENU.resetSoft, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
+		{ title: COMMIT_MENU.resetMixed, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'mixed')); }); } },
+		{ title: COMMIT_MENU.resetHard, danger: true, onClick: () => {
 			void (async () => {
 				const ok = await showCheckbox({
 					title: '重置当前分支',

@@ -719,7 +719,7 @@ export function apply(ctx) {
 	ctx.effect(() => installOverlay(slots));
 
 	/*
-	 * 右键菜单：宿主提供共享菜单时改走它，否则保持本插件的自建浮层。
+	 * 右键菜单：经宿主共享菜单弹出。
 	 *
 	 * 用 ctx.inject 而不是 ctx.get 探测：只有服务就位时这段才启动，服务缺席时不注册、
 	 * 也不影响插件其余部分；服务卸载时作用域回到这里清空。
@@ -729,7 +729,7 @@ export function apply(ctx) {
 			const menus = scope.contextMenus;
 			if (menus === undefined) return;
 			useSharedContextMenu(menus);
-			// 作用域销毁时清空：服务没了就必须退回自建浮层，不能留着失效引用。
+			// 作用域销毁时清空：服务没了就不能再弹菜单，不能留着失效引用。
 			scope.effect?.(() => () => { useSharedContextMenu(null); });
 		});
 	}

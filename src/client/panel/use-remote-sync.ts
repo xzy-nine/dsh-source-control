@@ -296,7 +296,12 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 				const picked = await showSelect({
 					title: '发布到远程仓库',
 					message: `把分支 ${branch} 推送到哪个远程仓库？`,
-					options: remotes.map((item) => ({ value: item.name, label: `${item.name}${item.url !== undefined && item.url !== '' ? `（${item.url}）` : ''}` })),
+					// 段内只放名称（过长时截断），地址放在控件下方整行显示。
+					options: remotes.map((item) => ({
+						value: item.name,
+						label: item.name,
+						description: item.url ?? '',
+					})),
 				});
 				if (picked === null || picked === '') return;
 				remote = picked;
@@ -430,18 +435,15 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		event.preventDefault();
 		event.stopPropagation();
 		const { clientX, clientY } = event;
-		const upstream = currentSync?.upstream ?? '';
 		showContextMenu({
 			x: clientX, y: clientY,
 			items: [
 				{
 					title: '用本地覆盖远程（强制推送）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支强推到 ${upstream}`,
 					onClick: () => { overwriteRemoteWithLocal(); },
 				},
 				{
 					title: '用远程覆盖本地（硬重置）', danger: true,
-					hint: upstream === '' ? undefined : `把本地分支重置到 ${upstream}`,
 					onClick: () => { overwriteLocalWithRemote(); },
 				},
 			],

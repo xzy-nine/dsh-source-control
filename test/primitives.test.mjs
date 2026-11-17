@@ -179,6 +179,18 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.match(scroll[1], /overflow-y:auto/, '变更列表容器应纵向滚动');
 	});
 
+	t.test('单选框只把短文案放进段内', () => {
+		// 分段控件按最宽的段定尺寸：名称与地址拼进同一个段会撑破 380px 宽的弹窗，
+		// 因此地址这类长文本走 description，在控件下方整行显示。
+		const sync = readFileSync(join(panelDir, 'use-remote-sync.ts'), 'utf8');
+		assert.match(sync, /label: item\.name/, '发布对话框的段内文案应是远程名');
+		assert.match(sync, /description: item\.url \?\? ''/, '远程地址应交给下方说明');
+		const dialog = readFileSync(join(clientDir, 'ui', 'dialog.ts'), 'utf8');
+		assert.match(dialog, /className: css\.selectControl/, '分段控件应带上限制宽度的类');
+		assert.match(dialog, /className: css\.selectDescription/, '选中项的长文本应在下方渲染');
+		assert.match(cssFile('dialog.module.css'), /\.selectControl button\{[^}]*text-overflow:ellipsis/, '超长段内文案按省略号截断');
+	});
+
 	t.test('文件行整行点击即打开', () => {
 		// 文件行不再有独立的差异按钮：点击行本身即打开。
 		const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
