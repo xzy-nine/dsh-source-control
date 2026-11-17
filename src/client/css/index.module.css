@@ -35,8 +35,19 @@
 
 /* 差异页正文：forge 的 DiffFile 只做横向滚动（`.code` 自带 overflow-x），纵向滚动由这里承担。
    `min-height:0` 让 flex 子项能收缩，`overflow:auto` 才是可滚动的那个视口；
-   文件头用 position:sticky 贴在这个滚动容器的顶部。 */
-.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;overscroll-behavior:contain}
+   文件头用 position:sticky 贴在这个滚动容器的顶部。
+   这里是分段暂存轨道的定位参照：轨道用绝对定位叠在正文之上。 */
+.diffTabBody{position:relative;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;overscroll-behavior:contain}
+
+/* 正文与它中间那条 96px 的分段轨道并排。 */
+.diffBody{position:relative;flex:1 0 auto;display:flex;flex-direction:column;min-height:0}
+
+/* 左右两栏之间让出 96px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
+   forge 的并排行是两个等宽格子，因此把每个格子收窄半个列宽即可空出中间那条。
+   单侧改动的文件只有一栏，没有缝可让，也就不显示轨道。 */
+.diffBody :global([data-diff-pair]){column-gap:96px}
+
+.diffBody :global([data-forge-notes]){column-gap:96px}
 
 /* 增减行数：与评审视图同色同字号。 */
 .counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}

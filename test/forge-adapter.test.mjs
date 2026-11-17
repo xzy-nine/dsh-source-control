@@ -225,7 +225,6 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 			path: 'src/app.ts',
 			content: TEXT_DIFF,
 			scope: { kind: 'worktree', staged: false },
-			split: false,
 			wrap: true,
 			state: { expanded: true, revealed: false, open: new Set() },
 			setState: () => {},
@@ -432,10 +431,20 @@ test('jsdom 里渲染合并视图：选中行后浮出评论框并给出该侧�
 		assert.ok(oursRow !== null, '当前更改的行要带行号属性');
 		assert.ok(theirsRow !== null, '传入的更改的行要带行号属性');
 
-		oursRow.dispatchEvent(new env.dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
-		env.dom.window.dispatchEvent(new env.dom.window.MouseEvent('pointerup', { bubbles: true }));
-
-		await waitFor(() => document.querySelector('[data-sc-merge-comment]') !== null, 'comment box');
+		/*
+		 * 手势的监听是在渲染提交之后才挂上的，因此按下可能与挂载擦肩而过；这里等它真正
+		 * 生效再断言，而不是假设「元素出现在 DOM 里」就等于监听已挂。
+		 */
+		const press = () => {
+			oursRow.querySelector('[data-sc-line-no]').dispatchEvent(new env.dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+			env.dom.window.dispatchEvent(new env.dom.window.MouseEvent('pointerup', { bubbles: true }));
+		};
+		const deadline = Date.now() + 8000;
+		while (document.querySelector('[data-sc-merge-comment]') === null) {
+			if (Date.now() > deadline) throw new Error('等待超时：comment box');
+			press();
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
 		const box = document.querySelector('[data-sc-merge-comment]');
 		assert.match(box.textContent, /评论：当前更改第 \d+ 行/, '选区落在左栏时注明该栏与行号');
 		assert.ok(box.querySelector('textarea') !== null, '评论框要有正文输入');
@@ -447,6 +456,67 @@ test('jsdom 里渲染合并视图：选中行后浮出评论框并给出该侧�
 	}
 });
 
+
+test('jsdom 里渲染分段轨道：按钮竖排、按块定位、全部横排在顶端', { skip }, async () => {
+	const hunks = [
+		{ index: 0, header: '@@ -1,1 +1,1 @@', oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 },
+		{ index: 1, header: '@@ -9,1 +9,1 @@', oldStart: 9, oldLines: 1, newStart: 9, newLines: 1 },
+	];
+	const slots = [
+		{ index: 0, top: 0, height: 40 },
+		{ index: 1, top: 40, height: 20 },
+	];
+	const applied = [];
+	assert.ok(typeof clientModule.HunkLane === 'function', '轨道组件应可从产物取到');
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.HunkLane, {
+			hunks, slots, staged: false, busy: false,
+			onApply: (indexes) => { applied.push(indexes); },
+		}),
+		'[data-sc-hunk-lane]',
+	);
+	try {
+		const buttons = [...document.querySelectorAll('[data-sc-hunk]')];
+		assert.equal(buttons.length, 3, '全部块 + 两个逐块按钮');
+		assert.equal(buttons[0].getAttribute('data-sc-hunk'), 'all', '全部块横排在列顶');
+		assert.deepEqual(buttons.slice(1).map((node) => node.getAttribute('data-sc-hunk')), ['0', '1'], '其后按块顺序竖排');
+		// 逐块按钮各自落在量出的位置上。
+		const slotBoxes = [...document.querySelectorAll('[data-sc-hunk-slot]')];
+		assert.equal(slotBoxes.length, 2);
+		assert.equal(slotBoxes[0].style.top, '0px');
+		assert.equal(slotBoxes[1].style.top, '40px');
+		assert.equal(slotBoxes[1].style.height, '20px');
+		// 按钮文字竖排：每个字独占一行，宽度压到一个字。
+		const label = document.querySelector('[data-sc-hunk="0"] span');
+		assert.ok(label !== null, '按钮里应有竖排文字节点');
+		assert.equal(label.getAttribute('aria-hidden'), 'true', '竖排文字是按钮文本的可视形态，语义由 aria-label 给');
+		assert.match(document.querySelector('[data-sc-hunk="0"]').getAttribute('aria-label'), /暂存这一块/, '读屏与悬停给出动作与块范围');
+		// 点击回投块下标；全部块给空数组。
+		document.querySelector('[data-sc-hunk="1"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
+		document.querySelector('[data-sc-hunk="all"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
+		assert.deepEqual(applied, [[1], []], '逐块给下标，全部给空数组');
+	} finally {
+		await env.cleanup();
+	}
+});
+
+test('暂存区作用域给出取消暂存', { skip }, async () => {
+	const hunks = [{ index: 0, header: '@@ -1,1 +1,1 @@', oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 }];
+	const env = await renderDom(
+		(React) => React.createElement(clientModule.HunkLane, {
+			hunks, slots: [{ index: 0, top: 0, height: 20 }], staged: true, busy: false, onApply: () => {},
+		}),
+		'[data-sc-hunk-lane]',
+	);
+	try {
+		const button = document.querySelector('[data-sc-hunk="0"]');
+		assert.equal(button.getAttribute('data-sc-hunk-action'), 'unstage', '暂存区作用域按取消暂存处理');
+		assert.match(button.textContent, /取消暂存/);
+		assert.equal(document.querySelector('[data-sc-hunk="all"]'), null, '只有一个块时不给全部按钮');
+	} finally {
+		await env.cleanup();
+	}
+});
 
 test('合并评论的定位写明是哪一份内容', async () => {
 	const { formatMergeComment } = await import('../src/client/diff/comment-reference.ts');

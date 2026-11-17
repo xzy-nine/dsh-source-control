@@ -222,13 +222,14 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(!/isNewFile/.test(changesSource), '旧的合并判据应已移除');
 	});
 
-	t.test('差异页默认并排且可切换', () => {
-		// 视图来自 forge 的 DiffFile，它支持统一 / 并排两种布局；差异页应默认并排并给出切换。
+	t.test('差异页固定左右并排，不再提供切换', () => {
+		// 中间要站一列分段暂存按钮，单列布局没有这条接缝，因此并排不再是可选项。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(source, /ForgeDiffView, \{/, '应把比较交给 forge 的差异视图');
-		assert.match(source, /split,/, '应把 split 传下去');
-		// 切换走设置，不再用组件内的 useState：刷新与换浏览器都要保留。
-		assert.match(source, /diffView\.patch\(\{ split: !split \}\)/, '应能切换布局');
+		assert.ok(!/split,/.test(source), '页面不再把 split 传下去：并排由适配层固定');
+		assert.ok(!/diffView\.patch\(\{ split/.test(source), '不应再有并排切换入口');
+		const adapter = readFileSync(join(clientDir, 'diff', 'forge-adapter.tsx'), 'utf8');
+		assert.match(adapter, /split: true/, '适配层把并排写死');
 	});
 
 	t.test('普通文件地址用绝对路径', () => {
@@ -448,15 +449,14 @@ parallel('客户端结构与产物契约', (t) => {
 	t.test('差异面板默认自动换行', () => {
 		// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
 		const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
-		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
+		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ wrap: (true|false) \}/.exec(view);
 		assert.ok(choice !== null, '未找到默认视图选择');
-		assert.equal(choice[1], 'true', '并排应默认开启');
-		assert.equal(choice[2], 'true', '换行应默认开启');
+		assert.equal(choice[1], 'true', '换行应默认开启');
 		// 视图选择取自面板设置，因此与其它视图开关同源、随宿主持久化。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(source, /const diffView = useDiffView\(/, '差异页应经 hook 取视图选择');
 		assert.match(source, /const wrap = diffView\.choice\.wrap;/, 'wrap 取自设置');
-		assert.match(source, /const split = diffView\.choice\.split;/, 'split 取自设置');
+		assert.ok(!/diffView\.choice\.split/.test(source), '并排不是可选项，不再从设置里读');
 	});
 
 	t.test('删除分支只列以该提交为尖端的分支', () => {

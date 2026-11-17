@@ -107,6 +107,46 @@ test('标记只落在区间内的行上', () => {
 	assert.equal(rows.filter((row) => row.hasAttribute('data-sc-range')).length, 0);
 });
 
+test('正文拖动交给浏览器，行号列才起手选行', () => {
+	const host = buildHost(dom.window.document);
+	const [first] = range.selectableRows(host);
+	// 行内两格：行号（只放数字）与正文（带 data-review-code）。
+	const gutter = dom.window.document.createElement('span');
+	gutter.textContent = '10';
+	const code = dom.window.document.createElement('span');
+	code.setAttribute('data-review-code', '');
+	code.textContent = 'const a = 1';
+	first.append(gutter, code);
+
+	assert.equal(range.gutterPressed(gutter, first), true, '按在行号数字上应起手选行');
+	assert.equal(range.gutterPressed(code, first), false, '按在正文里应交给浏览器的文本选区');
+	// 行内容的子节点（高亮会把它切成很多片段）属于正文。
+	const token = dom.window.document.createElement('span');
+	token.textContent = 'const';
+	code.replaceChildren(token);
+	assert.equal(range.gutterPressed(token, first), false, '正文里的高亮片段仍属正文');
+});
+
+test('合并视图的行号带标记，按在行号上即选行', () => {
+	const host = buildHost(dom.window.document);
+	const [first] = range.selectableRows(host);
+	const gutter = dom.window.document.createElement('span');
+	gutter.setAttribute('data-sc-line-no', '');
+	gutter.textContent = '7';
+	gutter.setAttribute('data-ours-line', '7');
+	first.append(gutter);
+	assert.equal(range.gutterPressed(gutter, first), true, '带 data-sc-line-no 就算行号列');
+});
+
+test('行号列以外的纯文字不起手选行', () => {
+	const host = buildHost(dom.window.document);
+	const [first] = range.selectableRows(host);
+	const text = dom.window.document.createElement('span');
+	text.textContent = 'hello';
+	first.append(text);
+	assert.equal(range.gutterPressed(text, first), false, '正文文字不触发选行');
+});
+
 test('手势由本插件接管，评论框仍用 forge 原生组件', () => {
 	// forge 的选区只认 hunk 内的行，因此手势必须由本插件接管；
 	// 但界面不复刻——评论框直接渲染 forge 的 ReviewComposer。

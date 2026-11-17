@@ -1,17 +1,25 @@
 /*
- * 分段暂存条：正文上方一条紧凑的块列表，每块一个动作按钮。
+ * 分段暂存轨道：站进左右两栏之间那条窄列，按补丁块自上而下竖排。
+ *
+ * 轨道绝对定位在正文之上；位置与每块的落位由 hunk-lane.ts 从渲染结果量出并写成内联样式。
+ * 窄列本身由 index.module.css 让出来（左右两栏各缩进半个列宽），轨道只是叠加层。
  */
 
-.bar{display:flex;flex:none;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;border-bottom:0.5px solid var(--dsw-alias-border-l3);font-size:11px;line-height:18px}
+.lane{position:absolute;top:0;bottom:0;left:50%;width:96px;margin-left:-48px;pointer-events:none;font-size:11px;line-height:16px}
 
-.label{flex:none;color:var(--dsw-alias-label-tertiary);font-weight:600}
+/* 每块一个竖向按钮，贴在块首行；块自身的高度决定它下方留多少空白。 */
+.slot{position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px;pointer-events:none}
 
-.item{display:inline-flex;align-items:center;gap:4px;padding:1px 4px 1px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm)}
+.button{pointer-events:auto;box-sizing:border-box;width:20px;padding:3px 0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:14px;cursor:pointer;text-align:center}
 
-.range{color:var(--dsw-alias-label-secondary);font-family:var(--ds-font-family-code);font-variant-numeric:tabular-nums}
-
-.button{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}
+/* 文字竖排：每个字独占一行，按钮因此只占一个字的宽度。 */
+.stacked{display:block;letter-spacing:0;writing-mode:vertical-rl;text-orientation:upright;margin:0 auto}
 
 .button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 
 .button:disabled{opacity:0.45;cursor:default}
+
+/* 全部块：横排，落在这一列的顶端（首个补丁块的位置）。 */
+.allButton{display:inline-flex;align-items:center;gap:3px;width:auto;padding:2px 6px;white-space:nowrap;margin-bottom:4px}
+
+.allButton .stacked{writing-mode:horizontal-tb}

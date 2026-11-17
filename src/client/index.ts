@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import {
-	IconChevronDownOutlineRegular, IconCompareSplitOutlineRegular, IconInspectOutlineRegular,
+	IconChevronDownOutlineRegular, IconInspectOutlineRegular,
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
@@ -33,7 +33,8 @@ import {
 import { MergeView } from './diff/merge-view.ts';
 import { formatMergeComment } from './diff/comment-reference.ts';
 import type { LineRange } from './diff/line-range.ts';
-import { HunkBar } from './diff/hunk-bar.ts';
+import { HunkLane } from './diff/hunk-bar.ts';
+import { hunkSlots, type HunkSlot } from './diff/hunk-lane.ts';
 import { analyzeMerge, type MergeChoice } from '../shared/merge-ranges.ts';
 import { showMessage } from './ui/dialog.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
@@ -268,7 +269,6 @@ function GitDiffTab(props) {
 	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
 	const diffView = useDiffView(typeof cwd === 'string' ? cwd : null);
 	const wrap = diffView.choice.wrap;
-	const split = diffView.choice.split;
 	/** 在同一页里切到另一个文件：只改导航参数，页身份不变。 */
 	const switchFile = React.useCallback((path: string) => {
 		if (tabActions === undefined || path === currentPath) return;
@@ -386,7 +386,7 @@ function GitDiffTab(props) {
 			.catch(reportFailure)
 			.finally(() => { setMergeBusy(false); });
 	}, [gitCwd, parsed, currentPath, choices, load, loadMerge]);
-	/** 文件当前的补丁块；分段暂存条据此列出可处理的块。 */
+	/** 文件当前的补丁块；分段暂存轨道据此列出可处理的块。 */
 	const [hunks, setHunks] = React.useState<FileHunk[]>([]);
 	React.useEffect(() => {
 		// 提交与对比作用域没有「暂存这一块」的语义：只对工作区与暂存区两个作用域取块。
@@ -417,6 +417,25 @@ function GitDiffTab(props) {
 			if (error !== null) throw new Error(error);
 		});
 	}, [gitCwd, currentPath, staged, runResolve]);
+	/** 各补丁块在正文里的落位；分段暂存轨道据此把按钮竖排到对应的块旁。 */
+	const [slots, setSlots] = React.useState<HunkSlot[]>([]);
+	// 轨道按绝对定位贴在正文上，因此量算的原点取正文元素——它与轨道一起滚动。
+	const bodyRoot = React.useRef<HTMLDivElement | null>(null);
+	React.useLayoutEffect(() => {
+		if (hunks.length === 0) { setSlots([]); return undefined; }
+		const body = bodyRoot.current;
+		if (body === null) { setSlots([]); return undefined; }
+		const measure = (): void => { setSlots(hunkSlots(body, hunks)); };
+		measure();
+		// 正文尺寸变化后重排：展开折叠区、切换换行、重新取数都会改变块的位置。
+		const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+		observer?.observe(body);
+		window.addEventListener('resize', measure);
+		return () => {
+			observer?.disconnect();
+			window.removeEventListener('resize', measure);
+		};
+	}, [hunks, diffData, wrap]);
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
@@ -455,12 +474,8 @@ function GitDiffTab(props) {
 		if (diffData.binary) return React.createElement('p', { className: css.status }, '二进制文件，无法显示改动');
 		/*
 		 * 冲突走逐段左右对照：处理粒度是「这一段取哪边」，动作在中间一列，而不是在顶栏
-		 * 对整个文件取一边。非冲突文件仍交给 forge 的 DiffFile，并在它上方挂分段暂存条。
+		 * 对整个文件取一边。非冲突文件交给 forge 的 DiffFile，分段按钮站它两栏之间的窄列。
 		 */
-		// 分段条对冲突与普通文件都要：冲突改完仍需按块进出索引。
-		const hunkBar = hunks.length === 0
-			? null
-			: React.createElement(HunkBar, { hunks, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk });
 		if (diffData.conflict) {
 			if (analysis === null) {
 				return React.createElement('p', { className: css.status, role: 'status' }, '正在读取三方内容…');
@@ -468,7 +483,6 @@ function GitDiffTab(props) {
 			const conflicting = analysis.ranges.filter((range) => range.conflicting).length;
 			const handled = analysis.ranges.filter((range) => range.conflicting && choices.has(range.index)).length;
 			return React.createElement(React.Fragment, null,
-				hunkBar,
 				React.createElement(MergeView, {
 					analysis, choices, wrap, busy: mergeBusy, onChoose: handleChoose,
 					onComment: handleMergeComment,
@@ -485,19 +499,25 @@ function GitDiffTab(props) {
 					}, '写回结果'),
 				));
 		}
-		return React.createElement(React.Fragment, null,
-			hunkBar,
+		// 单侧改动只有一栏，没有站中间列的接缝，因此不给分段按钮。
+		const oneSided = diffData.oldText === null || diffData.newText === null;
+		return React.createElement(
+			'div',
+			{ className: css.diffBody, 'data-sc-diff-body': '', ref: bodyRoot },
 			React.createElement(ForgeDiffView, {
 				path: currentPath,
 				content: diffData,
 				scope: scope ?? { kind: 'worktree', staged: false },
-				split,
 				wrap,
 				state: fileState,
 				setState: setFileState,
 				reach,
 				addToInput,
-			}));
+			}),
+			!oneSided && React.createElement(HunkLane, {
+				hunks, slots, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
+			}),
+		);
 	};
 	return React.createElement(
 		'div',
@@ -531,14 +551,7 @@ function GitDiffTab(props) {
 						React.createElement('span', { className: css.added }, `+${counts.added}`),
 						React.createElement('span', { className: css.deleted }, `-${counts.deleted}`))),
 			React.createElement('span', { className: css.tools },
-				React.createElement(Tooltip, {
-					label: split ? '切换为单栏对比' : '切换为左右对比', side: 'bottom', delayMs: 500,
-					children: React.createElement('button', {
-						type: 'button', className: css.tool, 'aria-pressed': split, 'aria-label': '左右对比',
-						'data-review-tool': 'split',
-						onClick: () => { diffView.patch({ split: !split }); },
-					}, React.createElement(IconCompareSplitOutlineRegular, { className: css.compareIcon })),
-				}),
+
 				React.createElement(Tooltip, {
 					label: wrap ? '关闭自动换行' : '开启自动换行', side: 'bottom', delayMs: 500,
 					children: React.createElement('button', {
@@ -839,10 +852,11 @@ export function apply(ctx) {
 export const inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs', 'remote', 'remote.session'];
 export { __forgeAdapter } from './diff/forge-adapter.tsx';
 /**
- * 合并视图与分段条的可测面。
+ * 合并视图与分段轨道的可测面。
  *
  * 客户端测试跑在 Node 里，而 Node 的类型剥离不处理 TSX/JSX 之外的部分也要走产物，
  * 因此这两份实现从构建产物取，断言的就是页面会跑的那份。
  */
 export { MergeView, rowsOfAnalysis } from './diff/merge-view.ts';
-export { HunkBar } from './diff/hunk-bar.ts';
+export { HunkLane } from './diff/hunk-bar.ts';
+export { hunkSlots } from './diff/hunk-lane.ts';

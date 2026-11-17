@@ -4,6 +4,9 @@
  * forge 自带的选区只认 hunk 内的行：折叠区展开后的未变更行不在任何 hunk 里，跨 hunk
  * 的区间（例如整个方法体）也会被整段拒绝。本模块改用渲染结果本身作依据——每一行都带
  * `data-old-line` / `data-new-line`，因此连续行号可以横跨 hunk 与展开的未变更行。
+ *
+ * 手势只从行号列起手：正文区留给浏览器原生的文本选择与复制。行号列没有可复制的正文，
+ * 从那里按下不会与复制动作冲突，因此它是评论选区的唯一入口。
  */
 
 /** 一行在两侧的行号；不存在的侧为 null。 */
@@ -48,6 +51,28 @@ export function rowNumber(row: Element): RowNumber {
 		old: lineOf(row.querySelector('[data-old-line]')?.getAttribute('data-old-line') ?? null),
 		new: lineOf(row.querySelector('[data-new-line]')?.getAttribute('data-new-line') ?? null),
 	};
+}
+
+/**
+ * 判定按下位置是否落在行号列。
+ *
+ * 行号列只放数字，正文元素带 `data-review-code`，合并视图的行号带 `data-sc-line-no`：
+ * 命中后者算行号列，命中前者算正文。forge 的行号元素没有标记属性，因此退回「整段文本
+ * 就是该行行号之一」这条判据——行号列里只有这个数字，正文里要恰好只写一个与自身行号
+ * 相同的数字才会误判。
+ *
+ * @param target - 按下命中的元素。
+ * @param row - 该元素所在的行。
+ * @returns 落在行号列时为 true。
+ */
+export function gutterPressed(target: Element, row: Element): boolean {
+	if (target.closest('[data-sc-line-no]') !== null) return true;
+	if (target.closest('[data-review-code]') !== null) return false;
+	const text = target.textContent.trim();
+	if (!/^[0-9]+$/.test(text)) return false;
+	const numbers = rowNumber(row);
+	const value = Number(text);
+	return value === numbers.old || value === numbers.new;
 }
 
 /**
