@@ -1,9 +1,10 @@
 /**
  * 分段暂存轨道的几何：把每个补丁块落到它在差异视图里的实际位置。
  *
- * 竖排按钮按块的首行定位。块在屏幕上的高度与「行数」不是一回事：并排布局把一串删除行
- * 与紧随其后的新增行配成同一行，自动换行又把一行撑成多行。因此位置与高度都从渲染结果
- * 量出来，而不是按行数推算。
+ * 按钮摆在块**改动区间**的垂直中点，而不是块首行：块首行之前常跟着上下文行，贴首行会
+ * 让按钮看起来属于上面的未改动区域。块在屏幕上的高度与「行数」也不是一回事——并排布局
+ * 把一串删除行与紧随其后的新增行配成同一行，自动换行又把一行撑成多行——因此位置与高度
+ * 都从渲染结果量出来。
  */
 
 import { rowNumber, selectableRows } from './line-range.ts';
@@ -13,35 +14,40 @@ import type { FileHunk } from '../api/merge.ts';
 export interface HunkSlot {
 	/** 块下标。 */
 	readonly index: number;
-	/** 块首行距正文顶部的距离。 */
+	/** 块改动区间的顶端距正文顶部的距离。 */
 	readonly top: number;
-	/** 块占用的高度。 */
+	/** 块改动区间的高度。 */
 	readonly height: number;
 }
 
 /**
- * 找出某一块的首行在可选择行里的下标。
+ * 找出某一块的改动区间覆盖哪些行。
  *
- * 块的首行由块头两侧行号确定：新侧有行时按新侧找，纯删除的块按旧侧找。展开的未变更行
- * 与折叠按钮都不影响这条判据，因为它们不会带该块的行号。
+ * 块的改动区间由块头两侧行号确定：新侧有内容时覆盖新侧行号，纯删除的块覆盖旧侧行号。
+ * 块内的上下文行因此被排除在外——它们没有改动，不该把按钮往下拽。
  *
  * @param rows - 可选择的行。
  * @param hunk - 补丁块。
- * @returns 首行的下标；找不到时为 -1。
+ * @returns 该块改动区间覆盖的行下标，按显示顺序；找不到时为接下来。
  */
-function firstRowOf(rows: readonly Element[], hunk: FileHunk): number {
+function changedRowIndexes(rows: readonly Element[], hunk: FileHunk): number[] {
+	const useNew = hunk.newLines > 0;
+	const from = useNew ? hunk.newStart : hunk.oldStart;
+	const to = from + (useNew ? hunk.newLines : hunk.oldLines) - 1;
+	const picked: number[] = [];
 	for (const [index, row] of rows.entries()) {
 		const numbers = rowNumber(row);
-		if (hunk.newLines > 0 ? numbers.new === hunk.newStart : numbers.old === hunk.oldStart) return index;
+		const line = useNew ? numbers.new : numbers.old;
+		if (line !== null && line >= from && line <= to) picked.push(index);
 	}
-	return -1;
+	return picked;
 }
 
 /**
- * 量出各块在正文里的落位。
+ * 量出各块改动区间在正文里的落位。
  *
- * 块的顶端取首行相对正文的偏移；高度取到下一个块的首行为止，最后一块取到正文末尾。
- * 这样块之间的折叠区也被算进上一个块的高度里，按钮列不会与正文错位。
+ * 顶端取改动首行、底端取改动末行：两端都从渲染结果量出，因此折叠区、自动换行与配对行
+ * 都不会让按钮错位。按钮在 {@link HunkSlot} 的中点上，由轨道自己居中。
  *
  * @param host - 差异正文的滚动容器。
  * @param hunks - 各补丁块，按块顺序。
@@ -52,19 +58,13 @@ export function hunkSlots(host: Element | null, hunks: readonly FileHunk[]): Hun
 	const rows = selectableRows(host);
 	if (rows.length === 0) return [];
 	const origin = host.getBoundingClientRect().top;
-	const tops: number[] = [];
-	const indexes: number[] = [];
+	const slots: HunkSlot[] = [];
 	for (const hunk of hunks) {
-		const at = firstRowOf(rows, hunk);
-		if (at < 0) continue;
-		indexes.push(hunk.index);
-		tops.push(rows[at].getBoundingClientRect().top - origin);
+		const picked = changedRowIndexes(rows, hunk);
+		if (picked.length === 0) continue;
+		const first = rows[picked[0]].getBoundingClientRect();
+		const last = rows[picked[picked.length - 1]].getBoundingClientRect();
+		slots.push({ index: hunk.index, top: first.top - origin, height: last.bottom - first.top });
 	}
-	if (tops.length === 0) return [];
-	const bottom = host.getBoundingClientRect().bottom - origin;
-	return tops.map((top, at) => ({
-		index: indexes[at],
-		top,
-		height: (at + 1 < tops.length ? tops[at + 1] : bottom) - top,
-	}));
+	return slots;
 }

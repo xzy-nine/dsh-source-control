@@ -2,8 +2,8 @@
  * 分段暂存轨道：按补丁块在正文里的位置，把按钮竖排放进左右两栏之间的窄列。
  *
  * forge 的 `DiffFile` 不画 `@@` 块头（它只按行渲染与折叠未变更行），因此块级动作没法
- * 挂在块头行上。这里改为在正文中间让出一条窄列：每个块在自己的首行旁竖排给出「暂存」
- * 或「取消暂存」，位置由 {@link hunkSlots} 从渲染结果量出。与冲突视图的中间一列同构。
+ * 挂在块头行上。这里改为在正文中间让出一条窄列：每个块在自己的改动区间中点竖排给出
+ * 「暂存」或「取消暂存」，位置由 {@link hunkSlots} 从渲染结果量出。与冲突视图的中间一列同构。
  */
 import React from 'react';
 import type { FileHunk } from '../api/merge.ts';
@@ -58,10 +58,20 @@ export function HunkLane({ hunks, slots, staged, busy, onApply }: HunkLaneProps)
 	if (hunks.length === 0 || slots.length === 0) return null;
 	const verb = staged ? '取消暂存' : '暂存';
 	const byIndex = new Map(hunks.map((hunk) => [hunk.index, hunk]));
+	const first = slots[0];
 	return React.createElement(
 		'div',
 		{ className: css.lane, 'data-sc-hunk-lane': '' },
-		...slots.map((slot, at) => {
+		// 全部块横排在这一列的顶端：文件头占住了轨道的顶边，因此它落在首块改动区间的上沿。
+		hunks.length > 1 && React.createElement('div', {
+			className: css.allSlot, style: { top: first.top },
+		}, React.createElement('button', {
+			type: 'button', className: `${css.button} ${css.allButton}`, disabled: busy,
+			title: `${verb}全部块`, 'aria-label': `${verb}全部块`,
+			'data-sc-hunk': 'all', 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
+			onClick: () => { onApply([]); },
+		}, '全部', stacked(verb))),
+		...slots.map((slot) => {
 			const hunk = byIndex.get(slot.index);
 			if (hunk === undefined) return null;
 			return React.createElement(
@@ -71,13 +81,6 @@ export function HunkLane({ hunks, slots, staged, busy, onApply }: HunkLaneProps)
 					style: { top: slot.top, height: slot.height },
 					'data-sc-hunk-slot': String(slot.index),
 				},
-				// 全部块横排在这一列的顶端：文件头占住了轨道的顶边，因此它落在首块的位置上。
-				at === 0 && hunks.length > 1 && React.createElement('button', {
-					type: 'button', className: `${css.button} ${css.allButton}`, disabled: busy,
-					title: `${verb}全部块`, 'aria-label': `${verb}全部块`,
-					'data-sc-hunk': 'all', 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
-					onClick: () => { onApply([]); },
-				}, '全部', stacked(verb)),
 				React.createElement('button', {
 					type: 'button', className: css.button, disabled: busy,
 					title: `${verb}这一块 ${rangeText(hunk)}`,

@@ -484,6 +484,7 @@ test('jsdom 里渲染分段轨道：按钮竖排、按块定位、全部横排�
 		const slotBoxes = [...document.querySelectorAll('[data-sc-hunk-slot]')];
 		assert.equal(slotBoxes.length, 2);
 		assert.equal(slotBoxes[0].style.top, '0px');
+		assert.equal(slotBoxes[0].style.height, '40px', '首块区间高 40');
 		assert.equal(slotBoxes[1].style.top, '40px');
 		assert.equal(slotBoxes[1].style.height, '20px');
 		// 按钮文字竖排：每个字独占一行，宽度压到一个字。

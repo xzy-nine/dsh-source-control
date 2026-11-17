@@ -42,12 +42,13 @@
 /* 正文与它中间那条 96px 的分段轨道并排。 */
 .diffBody{position:relative;flex:1 0 auto;display:flex;flex-direction:column;min-height:0}
 
-/* 左右两栏之间让出 96px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
+/* 左右两栏之间让出 48px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
    forge 的并排行是两个等宽格子，因此把每个格子收窄半个列宽即可空出中间那条。
-   单侧改动的文件只有一栏，没有缝可让，也就不显示轨道。 */
-.diffBody :global([data-diff-pair]){column-gap:96px}
+   只有确实要画分段列时这里才加 `data-sc-lane`：单侧改动、折叠、提交作用域都没有分段
+   按钮，那时不该白占宽度。 */
+[data-sc-lane] :global([data-diff-pair]){column-gap:48px}
 
-.diffBody :global([data-forge-notes]){column-gap:96px}
+[data-sc-lane] :global([data-forge-notes]){column-gap:48px}
 
 /* 增减行数：与评审视图同色同字号。 */
 .counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}

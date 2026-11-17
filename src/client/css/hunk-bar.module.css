@@ -1,14 +1,18 @@
 /*
  * 分段暂存轨道：站进左右两栏之间那条窄列，按补丁块自上而下竖排。
  *
- * 轨道绝对定位在正文之上；位置与每块的落位由 hunk-lane.ts 从渲染结果量出并写成内联样式。
- * 窄列本身由 index.module.css 让出来（左右两栏各缩进半个列宽），轨道只是叠加层。
+ * 轨道绝对定位在正文之上；每块的改动区间由 hunk-lane.ts 从渲染结果量出并写成内联样式。
+ * 窄列本身由 index.module.css 让出来，轨道只是叠加层，因此它不改变两栏的行对齐。
  */
 
-.lane{position:absolute;top:0;bottom:0;left:50%;width:96px;margin-left:-48px;pointer-events:none;font-size:11px;line-height:16px}
+/* 列宽 48px：按钮 20px，两侧各留 14px，正好放下横排的「全部」。 */
+.lane{position:absolute;top:0;bottom:0;left:50%;width:48px;margin-left:-24px;pointer-events:none;font-size:11px;line-height:16px}
 
-/* 每块一个竖向按钮，贴在块首行；块自身的高度决定它下方留多少空白。 */
-.slot{position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px;pointer-events:none}
+/* 每块一个按钮，落在该块改动区间的中点：区间上下等分，按钮由自身高度居中。 */
+.slot{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+
+/* 「全部」横排在首块区间的上沿，不参与区间居中。 */
+.allSlot{position:absolute;left:0;right:0;display:flex;justify-content:center;pointer-events:none}
 
 .button{pointer-events:auto;box-sizing:border-box;width:20px;padding:3px 0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:14px;cursor:pointer;text-align:center}
 
@@ -19,7 +23,6 @@
 
 .button:disabled{opacity:0.45;cursor:default}
 
-/* 全部块：横排，落在这一列的顶端（首个补丁块的位置）。 */
-.allButton{display:inline-flex;align-items:center;gap:3px;width:auto;padding:2px 6px;white-space:nowrap;margin-bottom:4px}
+.allButton{display:inline-flex;align-items:center;gap:3px;width:auto;padding:2px 5px;white-space:nowrap}
 
 .allButton .stacked{writing-mode:horizontal-tb}

@@ -419,6 +419,17 @@ function GitDiffTab(props) {
 	}, [gitCwd, currentPath, staged, runResolve]);
 	/** 各补丁块在正文里的落位；分段暂存轨道据此把按钮竖排到对应的块旁。 */
 	const [slots, setSlots] = React.useState<HunkSlot[]>([]);
+	/**
+	 * 分段列是否出现。
+	 *
+	 * 三件事同时成立才画：两侧都有内容（单侧改动只有一栏，没有中间缝）、拿到补丁块
+	 * （提交与对比作用域没有「暂存这一块」的语义）、正文处于展开状态（折叠的文件段里
+	 * 没有行，按钮无处可站）。不出现时这一列也不占宽度。
+	 */
+	const laneVisible = diffData !== null && !diffData.binary && !diffData.conflict
+		&& diffData.oldText !== null && diffData.newText !== null
+		&& hunks.length > 0 && slots.length > 0
+		&& fileState.expanded;
 	// 轨道按绝对定位贴在正文上，因此量算的原点取正文元素——它与轨道一起滚动。
 	const bodyRoot = React.useRef<HTMLDivElement | null>(null);
 	React.useLayoutEffect(() => {
@@ -499,11 +510,18 @@ function GitDiffTab(props) {
 					}, '写回结果'),
 				));
 		}
-		// 单侧改动只有一栏，没有站中间列的接缝，因此不给分段按钮。
-		const oneSided = diffData.oldText === null || diffData.newText === null;
+		/*
+		 * 分段列只在三件事同时成立时出现：两侧都有内容（单侧改动只有一栏，没有缝）、
+		 * 拿到补丁块（提交与对比作用域没有「暂存这一块」的语义）、正文处于展开状态。
+		 * 其余时候这一列既不该画按钮，也不该让出宽度。
+		 */
+
 		return React.createElement(
 			'div',
-			{ className: css.diffBody, 'data-sc-diff-body': '', ref: bodyRoot },
+			{
+				className: css.diffBody, 'data-sc-diff-body': '', ref: bodyRoot,
+				'data-sc-lane': laneVisible ? '' : undefined,
+			},
 			React.createElement(ForgeDiffView, {
 				path: currentPath,
 				content: diffData,
@@ -514,7 +532,7 @@ function GitDiffTab(props) {
 				reach,
 				addToInput,
 			}),
-			!oneSided && React.createElement(HunkLane, {
+			laneVisible && React.createElement(HunkLane, {
 				hunks, slots, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
 			}),
 		);
