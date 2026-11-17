@@ -68,3 +68,23 @@ export function hunkSlots(host: Element | null, hunks: readonly FileHunk[]): Hun
 	}
 	return slots;
 }
+/**
+ * 标出某一块的改动区间，并清掉上一块的标记。
+ *
+ * 用于指到分段按钮时把该块的改动行高亮：区间与按钮落位取自同一套行号判据，因此高亮
+ * 一定会盖住按钮对应的那些行。
+ *
+ * @param host - 差异正文的滚动容器。
+ * @param hunks - 各补丁块。
+ * @param index - 要标出的块下标；null 表示清除标记。
+ * @returns 无。
+ */
+export function markHunkRows(host: Element | null, hunks: readonly FileHunk[], index: number | null): void {
+	if (host === null) return;
+	for (const row of selectableRows(host)) row.removeAttribute('data-sc-hunk-hover');
+	if (index === null) return;
+	const hunk = hunks.find((item) => item.index === index);
+	if (hunk === undefined) return;
+	const rows = selectableRows(host);
+	for (const at of changedRowIndexes(rows, hunk)) rows[at].setAttribute('data-sc-hunk-hover', '');
+}

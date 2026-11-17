@@ -457,7 +457,7 @@ test('jsdom 里渲染合并视图：选中行后浮出评论框并给出该侧�
 });
 
 
-test('jsdom 里渲染分段轨道：按钮竖排、按块定位、全部横排在顶端', { skip }, async () => {
+test('jsdom 里渲染分段轨道：方块图标按块定位', { skip }, async () => {
 	const hunks = [
 		{ index: 0, header: '@@ -1,1 +1,1 @@', oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 },
 		{ index: 1, header: '@@ -9,1 +9,1 @@', oldStart: 9, oldLines: 1, newStart: 9, newLines: 1 },
@@ -477,9 +477,7 @@ test('jsdom 里渲染分段轨道：按钮竖排、按块定位、全部横排�
 	);
 	try {
 		const buttons = [...document.querySelectorAll('[data-sc-hunk]')];
-		assert.equal(buttons.length, 3, '全部块 + 两个逐块按钮');
-		assert.equal(buttons[0].getAttribute('data-sc-hunk'), 'all', '全部块横排在列顶');
-		assert.deepEqual(buttons.slice(1).map((node) => node.getAttribute('data-sc-hunk')), ['0', '1'], '其后按块顺序竖排');
+		assert.deepEqual(buttons.map((node) => node.getAttribute('data-sc-hunk')), ['0', '1'], '按块顺序竖排');
 		// 逐块按钮各自落在量出的位置上。
 		const slotBoxes = [...document.querySelectorAll('[data-sc-hunk-slot]')];
 		assert.equal(slotBoxes.length, 2);
@@ -487,15 +485,19 @@ test('jsdom 里渲染分段轨道：按钮竖排、按块定位、全部横排�
 		assert.equal(slotBoxes[0].style.height, '40px', '首块区间高 40');
 		assert.equal(slotBoxes[1].style.top, '40px');
 		assert.equal(slotBoxes[1].style.height, '20px');
-		// 按钮文字竖排：每个字独占一行，宽度压到一个字。
-		const label = document.querySelector('[data-sc-hunk="0"] span');
-		assert.ok(label !== null, '按钮里应有竖排文字节点');
-		assert.equal(label.getAttribute('aria-hidden'), 'true', '竖排文字是按钮文本的可视形态，语义由 aria-label 给');
-		assert.match(document.querySelector('[data-sc-hunk="0"]').getAttribute('aria-label'), /暂存这一块/, '读屏与悬停给出动作与块范围');
-		// 点击回投块下标；全部块给空数组。
+		// 逐块按钮只画方块加号，不带文字：动作语义由 aria-label 与悬停提示给。
+		const button0 = document.querySelector('[data-sc-hunk="0"]');
+		assert.match(button0.getAttribute('aria-label'), /暂存这一块/, '读屏与悬停给出动作与块范围');
+		assert.match(button0.getAttribute('title'), /暂存这一块/, '悬停提示写明动作');
+		const icon = button0.querySelector('span[aria-hidden="true"]');
+		assert.ok(icon !== null, '按钮里应有图标');
+		assert.match(icon.innerHTML, /<svg/, '图标是内联 SVG');
+		assert.match(icon.innerHTML, /M8 5\.4v5\.2M5\.4 8h5\.2/, '未暂存时给方块加号');
+		// 这一列只有逐块按钮：「全部块」作用于整个文件，放在页头增减行数旁。
+		assert.equal(document.querySelector('[data-sc-hunk="all"]'), null, '轨道里不再有全部块按钮');
+		// 点击回投块下标。
 		document.querySelector('[data-sc-hunk="1"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
-		document.querySelector('[data-sc-hunk="all"]').dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
-		assert.deepEqual(applied, [[1], []], '逐块给下标，全部给空数组');
+		assert.deepEqual(applied, [[1]], '逐块按钮回投该块下标');
 	} finally {
 		await env.cleanup();
 	}
@@ -512,7 +514,11 @@ test('暂存区作用域给出取消暂存', { skip }, async () => {
 	try {
 		const button = document.querySelector('[data-sc-hunk="0"]');
 		assert.equal(button.getAttribute('data-sc-hunk-action'), 'unstage', '暂存区作用域按取消暂存处理');
-		assert.match(button.textContent, /取消暂存/);
+		assert.match(button.getAttribute('aria-label'), /取消暂存这一块/, '语义写明取消暂存');
+		// 图标换成方块减号：只有横线，没有竖线。
+		const icon = button.querySelector('span[aria-hidden="true"]');
+		assert.match(icon.innerHTML, /M5\.4 8h5\.2/, '已暂存时给方块减号');
+		assert.ok(!/v5\.2/.test(icon.innerHTML), '减号不应带竖线');
 		assert.equal(document.querySelector('[data-sc-hunk="all"]'), null, '只有一个块时不给全部按钮');
 	} finally {
 		await env.cleanup();

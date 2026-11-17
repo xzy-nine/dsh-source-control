@@ -533,7 +533,7 @@ function GitDiffTab(props) {
 				addToInput,
 			}),
 			laneVisible && React.createElement(HunkLane, {
-				hunks, slots, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
+				hunks, slots, host: bodyRoot.current, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
 			}),
 		);
 	};
@@ -567,7 +567,18 @@ function GitDiffTab(props) {
 					? React.createElement('span', { className: css.label }, '二进制')
 					: React.createElement(React.Fragment, null,
 						React.createElement('span', { className: css.added }, `+${counts.added}`),
-						React.createElement('span', { className: css.deleted }, `-${counts.deleted}`))),
+						React.createElement('span', { className: css.deleted }, `-${counts.deleted}`),
+						/*
+						 * 全部块的动作跟在增减行数后面：它作用于整个文件，与这两个数字同一处，
+						 * 因此分段列里不必再为它留位置，那一列只放逐块的方块图标。
+						 */
+						laneVisible && hunks.length > 1 && React.createElement('button', {
+							type: 'button', className: css.hunkAll, disabled: hunkBusy || resolving,
+							title: `${staged ? '取消暂存' : '暂存'}全部块`,
+							'aria-label': `${staged ? '取消暂存' : '暂存'}全部块`,
+							'data-sc-hunk': 'all', 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
+							onClick: () => { handleApplyHunk([]); },
+						}, 'All'))),
 			React.createElement('span', { className: css.tools },
 
 				React.createElement(Tooltip, {

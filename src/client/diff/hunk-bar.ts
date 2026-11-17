@@ -1,13 +1,18 @@
 /**
- * 分段暂存轨道：按补丁块在正文里的位置，把按钮竖排放进左右两栏之间的窄列。
+ * 分段暂存轨道：按补丁块在正文里的位置，把按钮放进左右两栏之间的窄列。
  *
  * forge 的 `DiffFile` 不画 `@@` 块头（它只按行渲染与折叠未变更行），因此块级动作没法
- * 挂在块头行上。这里改为在正文中间让出一条窄列：每个块在自己的改动区间中点竖排给出
- * 「暂存」或「取消暂存」，位置由 {@link hunkSlots} 从渲染结果量出。与冲突视图的中间一列同构。
+ * 挂在块头行上。这里改为在正文中间让出一条窄列：每个块在自己的改动区间中点给一个方块
+ * 加号（暂存）或方块减号（取消暂存），位置由 {@link hunkSlots} 从渲染结果量出。
+ *
+ * 「全部块」不在这里：它作用于整个文件，因此放在页头增减行数旁边。与 VS Code 的差异
+ * 视图一样，逐块按钮平时隐去，指到某一块或轨道本身时才浮现——一屏里常有十几块，常驻
+ * 会把中间那条缝变成一排图标。
  */
 import React from 'react';
 import type { FileHunk } from '../api/merge.ts';
-import type { HunkSlot } from './hunk-lane.ts';
+import { markHunkRows, type HunkSlot } from './hunk-lane.ts';
+import { AddBlockIcon, RemoveBlockIcon } from '../ui/ref-icons.ts';
 import css from '../css/hunk-bar.module.css';
 
 /** 分段暂存轨道的属性。 */
@@ -16,7 +21,9 @@ export interface HunkLaneProps {
 	readonly hunks: readonly FileHunk[];
 	/** 各块在正文里的落位。 */
 	readonly slots: readonly HunkSlot[];
-	/** 当前作用域是否已暂存：决定按钮是「暂存」还是「取消暂存」。 */
+	/** 差异正文的滚动容器；指到按钮时用它把对应的改动行高亮出来。 */
+	readonly host: Element | null;
+	/** 当前作用域是否已暂存：决定按钮是加号还是减号。 */
 	readonly staged: boolean;
 	/** 动作进行中。 */
 	readonly busy: boolean;
@@ -39,38 +46,19 @@ function rangeText(hunk: FileHunk): string {
 }
 
 /**
- * 竖排文字：按钮文本按字换行，宽度压到一个字。
- *
- * @param text - 按钮文本。
- * @returns 文字节点；换行由样式承担，这里只保证每个字都能单独折行。
- */
-function stacked(text: string): React.ReactNode {
-	return React.createElement('span', { className: css.stacked, 'aria-hidden': 'true' }, text);
-}
-
-/**
  * 分段暂存轨道。
  *
  * @param props - 见 {@link HunkLaneProps}。
  * @returns 轨道元素；没有块或量不出位置时不渲染。
  */
-export function HunkLane({ hunks, slots, staged, busy, onApply }: HunkLaneProps): React.ReactElement | null {
+export function HunkLane({ hunks, slots, host, staged, busy, onApply }: HunkLaneProps): React.ReactElement | null {
 	if (hunks.length === 0 || slots.length === 0) return null;
 	const verb = staged ? '取消暂存' : '暂存';
+	const icon = staged ? React.createElement(RemoveBlockIcon) : React.createElement(AddBlockIcon);
 	const byIndex = new Map(hunks.map((hunk) => [hunk.index, hunk]));
-	const first = slots[0];
 	return React.createElement(
 		'div',
-		{ className: css.lane, 'data-sc-hunk-lane': '' },
-		// 全部块横排在这一列的顶端：文件头占住了轨道的顶边，因此它落在首块改动区间的上沿。
-		hunks.length > 1 && React.createElement('div', {
-			className: css.allSlot, style: { top: first.top },
-		}, React.createElement('button', {
-			type: 'button', className: `${css.button} ${css.allButton}`, disabled: busy,
-			title: `${verb}全部块`, 'aria-label': `${verb}全部块`,
-			'data-sc-hunk': 'all', 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
-			onClick: () => { onApply([]); },
-		}, '全部', stacked(verb))),
+		{ className: css.lane, 'data-sc-hunk-lane': '', 'data-sc-hunk-staged': staged ? '' : undefined },
 		...slots.map((slot) => {
 			const hunk = byIndex.get(slot.index);
 			if (hunk === undefined) return null;
@@ -87,7 +75,12 @@ export function HunkLane({ hunks, slots, staged, busy, onApply }: HunkLaneProps)
 					'aria-label': `${verb}这一块 ${rangeText(hunk)}`,
 					'data-sc-hunk': hunk.index, 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
 					onClick: () => { onApply([hunk.index]); },
-				}, stacked(verb)),
+					// 指到按钮时把它要处理的那几行淡出来，让人确认按钮管的是哪一段。
+					onPointerEnter: () => { markHunkRows(host, hunks, hunk.index); },
+					onPointerLeave: () => { markHunkRows(host, hunks, null); },
+					onFocus: () => { markHunkRows(host, hunks, hunk.index); },
+					onBlur: () => { markHunkRows(host, hunks, null); },
+				}, icon),
 			);
 		}),
 	);

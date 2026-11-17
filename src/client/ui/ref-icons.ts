@@ -1,9 +1,9 @@
 /**
- * 本地资源图标：引用标记（标签、远端）、存储库行与界面动作按钮。
+ * 本地资源图标：引用标记（标签、远端）、存储库行、界面动作按钮与分段暂存的加减块。
  *
- * 资源文件取自 Google Material Symbols Outlined（24px、FILL 0、wght 400、
- * GRAD 0、opsz 24），置于 assets/icons/，由 scripts/build-client.mjs 以文本
- * 形式内联进 lib/client.js，运行时不访问网络。
+ * Material 系资源取自 Material Symbols Outlined（24px、FILL 0、wght 400、GRAD 0、
+ * opsz 24）；加减块是 16px 画布上按同一线性风格另画的方形图标。资源置于 assets/icons/，
+ * 由 scripts/build-client.mjs 以文本形式内联进 lib/client.js，运行时不访问网络。
  */
 import React from 'react';
 import bookSvg from '../../../assets/icons/book_2.svg';
@@ -11,6 +11,8 @@ import cloudSvg from '../../../assets/icons/cloud.svg';
 import cloudUploadSvg from '../../../assets/icons/cloud_upload.svg';
 import translateSvg from '../../../assets/icons/g_translate.svg';
 import tagSvg from '../../../assets/icons/shoppingmode.svg';
+import addBoxSvg from '../../../assets/icons/add_box.svg';
+import removeBoxSvg from '../../../assets/icons/remove_box.svg';
 import css from '../css/shared.module.css';
 /** 引用标记的图标边长（像素）。 */
 const REF_ICON_SIZE = 12;
@@ -125,4 +127,30 @@ export function PublishIcon(): React.ReactElement {
  */
 export function TranslateIcon({ inverted = false }: { inverted?: boolean } = {}): React.ReactElement {
 	return ResourceIcon(inverted ? TRANSLATE_INVERTED_MARKUP : TRANSLATE_MARKUP);
+}
+/** 分段暂存按钮的图标边长（像素）。 */
+const HUNK_ICON_SIZE = 14;
+
+/** 方块加号：暂存这一块。 */
+const ADD_BOX_MARKUP = iconMarkup(addBoxSvg, HUNK_ICON_SIZE);
+
+/** 方块减号：取消暂存这一块。 */
+const REMOVE_BOX_MARKUP = iconMarkup(removeBoxSvg, HUNK_ICON_SIZE);
+
+/**
+ * 暂存这一块的按钮图标：方块中的加号。
+ *
+ * @returns 图标元素。
+ */
+export function AddBlockIcon(): React.ReactElement {
+	return ResourceIcon(ADD_BOX_MARKUP);
+}
+
+/**
+ * 取消暂存这一块的按钮图标：方块中的减号。
+ *
+ * @returns 图标元素。
+ */
+export function RemoveBlockIcon(): React.ReactElement {
+	return ResourceIcon(REMOVE_BOX_MARKUP);
 }

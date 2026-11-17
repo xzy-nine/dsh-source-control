@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const { JSDOM } = await import('jsdom');
-const { hunkSlots } = await import('../src/client/diff/hunk-lane.ts');
+const { hunkSlots, markHunkRows } = await import('../src/client/diff/hunk-lane.ts');
 
 /** 造一个正文容器：每行带两侧行号，行高固定 22。 */
 function buildBody(document, numbers) {
@@ -91,6 +91,54 @@ test('没有块或没有行时不产生落位', () => {
 	dom.window.close();
 });
 
+test('指到分段按钮把它要处理的行标出来', () => {
+	const dom = new JSDOM('<!doctype html><html><body></body></html>');
+	// 第 0 行未改动，第 1-2 行是首块的改动，第 3 行是次块的改动。
+	const body = buildBody(dom.window.document, [[9, 9], [10, 10], [11, 11], [30, 30]]);
+	const marked = () => [...body.children].map((row) => row.hasAttribute('data-sc-hunk-hover'));
+
+	markHunkRows(body, HUNKS, 0);
+	assert.deepEqual(marked(), [false, true, true, false], '只标首块的两行改动');
+	markHunkRows(body, HUNKS, 1);
+	assert.deepEqual(marked(), [false, false, false, true], '换块时清掉上一块');
+	markHunkRows(body, HUNKS, null);
+	assert.deepEqual(marked(), [false, false, false, false], '清除标记');
+	dom.window.close();
+});
+
+test('轨道按钮在指到与聚焦时高亮、离开时清除', () => {
+	const source = readFileSync(join(root, 'src', 'client', 'diff', 'hunk-bar.ts'), 'utf8');
+	assert.match(source, /onPointerEnter: \(\) => \{ markHunkRows\(host, hunks, hunk\.index\)/, '指到按钮时标出该块的行');
+	assert.match(source, /onPointerLeave: \(\) => \{ markHunkRows\(host, hunks, null\)/, '离开时清除');
+	assert.match(source, /onFocus:/, '键盘聚焦同样标出');
+	// 高亮要压在红绿底色之上：并排布局的增减底色画在行内的单元格上，因此染色用铺满整格的
+	// 绝对定位伪元素，而不是给行加内阴影（那会落在单元格下方，看不见）。
+	const css = readFileSync(join(root, 'src', 'client', 'css', 'forge-adapter.module.css'), 'utf8');
+	const base = /\[data-sc-hunk-hover\]\)\{([^}]*)\}/.exec(css);
+	assert.ok(base !== null, '应有悬停高亮的样式');
+	assert.match(base[1], /position:relative/, '行要成为伪元素的定位参照');
+	const overlay = /\[data-sc-hunk-hover\]\)::after\{([^}]*)\}/.exec(css);
+	assert.ok(overlay !== null, '染色由伪元素铺满整格');
+	assert.match(overlay[1], /position:absolute;inset:0/, '伪元素盖满该行');
+	assert.match(overlay[1], /pointer-events:none/, '染色层不能挡指针');
+	assert.match(overlay[1], /5%/, '淡到只是微微泛白');
+	assert.ok(!/box-shadow:inset 0 0 0 9999px/.test(css), '不要用行内阴影：它落在单元格底色下面');
+});
+
+test('指进中间列就浮现全部按钮，指到某个时才实显', () => {
+	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
+	// 整列接收指针：否则只有指到按钮本身才触发 hover，列里其余位置没有反应。
+	const rule = /^\.lane\{([^}]*)\}/m.exec(lane);
+	assert.ok(rule !== null, '应有轨道规则');
+	assert.match(rule[1], /pointer-events:auto/, '整列接收指针，指进列里即触发');
+	// 指到列：全部按钮浮现为半透明；指到某个：它实显。
+	assert.match(lane, /\.lane:hover \.button\{opacity:0\.4\}/, '指进列时全部按钮半透明显示');
+	assert.match(lane, /\.lane:hover \.slot:hover \.button[^{]*\{opacity:1/, '指到某个按钮时才实显');
+	// 列是空隙，里面没有正文；按钮不能比列宽，否则会压到两栏代码上。
+	assert.match(lane, /width:18px;height:18px/, '按钮 18px');
+	assert.match(rule[1], /width:20px/, '列宽只比按钮多 2px');
+});
+
 test('分段列只在两侧都有改动、有块且展开时让出宽度', () => {
 	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
 	const rule = /const laneVisible = ([\s\S]*?);\n/.exec(source);
@@ -106,15 +154,19 @@ test('分段列只在两侧都有改动、有块且展开时让出宽度', () =>
 	assert.match(source, /laneVisible && React\.createElement\(HunkLane/, '轨道由同一条判据驱动');
 });
 
-test('分段列宽 48px，只有带标记时才让宽', () => {
+test('分段列刚好放得下按钮，只有带标记时才让宽', () => {
 	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
-	assert.match(lane, /width:48px/, '轨道宽 48px');
-	assert.match(lane, /margin-left:-24px/, '轨道以中线居中');
+	const width = /^\.lane\{[^}]*width:(\d+)px/m.exec(lane);
+	assert.ok(width !== null, '应有轨道宽度');
+	// 这列只放一个 18px 的图标按钮，宽度取按钮边长 + 两侧各 1px，不多占正文。
+	assert.equal(width[1], '20', '轨道宽度只够放下按钮');
+	assert.match(lane, /width:18px;height:18px/, '按钮是 18px 方形');
+	assert.match(lane, /margin-left:-10px/, '轨道以中线居中');
 	// 按钮在区间里垂直居中，而不是贴在上沿。
 	assert.match(lane, /\.slot\{[^}]*align-items:center/, '按钮在区间内垂直居中');
 	const page = readFileSync(join(root, 'src', 'client', 'css', 'index.module.css'), 'utf8');
 	const gap = /\[data-sc-lane\] :global\(\[data-diff-pair\]\)\{column-gap:(\d+)px\}/.exec(page);
 	assert.ok(gap !== null, '应有让宽的规则');
-	assert.equal(gap[1], '48', '让出的宽度与轨道宽度一致');
+	assert.equal(gap[1], '20', '让出的宽度与轨道宽度一致');
 	assert.ok(!/^\.diffBody :global\(\[data-diff-pair\]\)/m.test(page), '让宽规则必须挂在标记下');
 });

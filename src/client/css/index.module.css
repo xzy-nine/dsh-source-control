@@ -42,13 +42,13 @@
 /* 正文与它中间那条 96px 的分段轨道并排。 */
 .diffBody{position:relative;flex:1 0 auto;display:flex;flex-direction:column;min-height:0}
 
-/* 左右两栏之间让出 48px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
+/* 左右两栏之间让出 20px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
    forge 的并排行是两个等宽格子，因此把每个格子收窄半个列宽即可空出中间那条。
    只有确实要画分段列时这里才加 `data-sc-lane`：单侧改动、折叠、提交作用域都没有分段
    按钮，那时不该白占宽度。 */
-[data-sc-lane] :global([data-diff-pair]){column-gap:48px}
+[data-sc-lane] :global([data-diff-pair]){column-gap:20px}
 
-[data-sc-lane] :global([data-forge-notes]){column-gap:48px}
+[data-sc-lane] :global([data-forge-notes]){column-gap:20px}
 
 /* 增减行数：与评审视图同色同字号。 */
 .counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}
@@ -56,6 +56,13 @@
 .added{color:var(--dsw-alias-state-success-primary)}
 
 .deleted{color:var(--dsw-alias-state-error-primary)}
+
+/* 全部块：跟在增减行数后面，紧凑按钮；形态与文件行上的行内动作一致。 */
+.hunkAll{margin-left:2px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;cursor:pointer}
+
+.hunkAll:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.hunkAll:disabled{opacity:0.45;cursor:default}
 
 .label{color:var(--dsw-alias-label-tertiary)}
 
