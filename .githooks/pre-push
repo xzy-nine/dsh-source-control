@@ -1,9 +1,9 @@
 #!/bin/sh
 #
-# pre-push：校验提交信息，跑全量 oxlint、两段类型检查与文档门禁。
+# pre-push：校验提交信息，跑全量 oxlint、两段类型检查、注释散文与文档门禁。
 #
 # 与 pre-commit 的分工：pre-commit 只查本次提交涉及的文件，pre-push 查整个 src/ 并跑 tsc。
-# 文档门禁与提交信息校验在这里无条件跑。
+# 注释散文、文档门禁与提交信息校验在这里无条件跑。
 #
 # 规则集见仓库根的 .oxlintrc.json。
 
@@ -29,6 +29,9 @@ node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
 
 echo "pre-push: 类型检查（客户端）"
 node node_modules/typescript/bin/tsc -p tsconfig.client.json --noEmit
+
+echo "pre-push: 注释散文门禁"
+node node_modules/tsx/dist/cli.mjs scripts/verify-comment-prose.ts
 
 echo "pre-push: 文档门禁"
 node node_modules/tsx/dist/cli.mjs scripts/verify-all.ts

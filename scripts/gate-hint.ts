@@ -24,6 +24,7 @@ export const GATE_RULES: Readonly<Record<string, string>> = {
   'verify-archived-agent-notes': '.agents/notes/README.md',
   'verify-skill-invocation-metadata': 'Docs/AGENTS.md',
   'check:dual-track': 'Docs/实现/构建与测试.md',
+  'verify-comment-prose': 'Docs/实现/构建与测试.md',
 }
 
 /**
