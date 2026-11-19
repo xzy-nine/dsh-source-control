@@ -242,8 +242,7 @@ function GitDiffTab(props) {
 	 * 当前实际显示哪一侧。
 	 *
 	 * 通常就是地址所指的那一侧；一侧被搬空后页面会就地切到对侧，此时这里是切过去之后
-	 * 的那一侧。暂存、取消暂存与分段取块都按它决定动作方向，否则切侧之后的动作会打到
-	 * 已经不显示的那一侧上。
+	 * 的那一侧。暂存、取消暂存与分段取块按它决定动作方向。
 	 */
 	const [followedSide, setFollowedSide] = React.useState<boolean | null>(null);
 	const staged = followedSide ?? stagedScope;
@@ -294,17 +293,15 @@ function GitDiffTab(props) {
 	/**
 	 * 当前实际显示的一侧，供取数读取。
 	 *
-	 * `load` 要按显示侧取数，但它不能把 `staged` 放进依赖：切侧由下面自己填好数据，若
-	 * `staged` 在依赖里，切侧会再触发一次取数，把刚填好的内容清掉重来。用 ref 读最新值
-	 * 即可两边都不误：切侧不自动重跑，动作之后的主动重取仍按当前显示侧走。
+	 * `load` 按显示侧取数，且不把 `staged` 放进依赖：切侧自行填好数据，动作后的重取
+	 * 也按当前显示侧走。
 	 */
 	const stagedRef = React.useRef(staged);
 	stagedRef.current = staged;
 	/**
 	 * 按当前实际显示的一侧重取本页。
 	 *
-	 * 一律读 {@link stagedRef}，因此重取不会把正文拉回地址所指的那一侧——否则分段块按
-	 * 显示侧取、正文按地址取，两边错配，中间列会因找不到对应的块而消失。
+	 * 读 {@link stagedRef}：正文与分段块取同一侧。
 	 */
 	const load = React.useCallback(() => {
 		if (parsed === null || currentPath === '' || typeof gitCwd !== 'string') return;
@@ -347,8 +344,7 @@ function GitDiffTab(props) {
 	/**
 	 * 本次取数是否由本页的暂存动作引起。
 	 *
-	 * 用它在「内容被搬空」与「打开时本就无改动」之间区分：只有前者才切到另一侧，否则
-	 * 一个本来就没有改动的文件会在打开时被来回搬动。
+	 * 用于区分「本次取数把内容搬空」与「打开时本就无改动」：只有前者切到另一侧。
 	 */
 	const emptiedSide = React.useRef(false);
 	/** 分段暂存进行中。 */
@@ -465,8 +461,7 @@ function GitDiffTab(props) {
 	 * 用户紧接着要看的就是搬过去的那一半。打开新地址会把当前页留在「没有改动」上，因此
 	 * 这里在同一页里换内容——页地址仍是原地那一侧，差别只在于显示哪一侧。
 	 *
-	 * 切过去之后地址与实际显示的一侧不再一致，这是有意为之：页身份按进入时的作用域算，
-	 * 而用户此刻关心的是「这个文件的另一半」，不是又开一个新页。
+	 * 切过去之后地址与实际显示的一侧可以不一致；页身份按进入时的作用域算。
 	 *
 	 * 对侧也没有内容时不切：两侧都空说明这个文件的改动已经全部落定，页面停在原作用域
 	 * 的「没有改动」上才是实情。
@@ -526,7 +521,7 @@ function GitDiffTab(props) {
 	/**
 	 * 正文元素放进状态：轨道要靠它量位置与标高亮，而 `ref.current` 变化不触发重渲染。
 	 *
-	 * 用回调 ref 写入状态，元素挂上或卸下时各重渲染一次，轨道因此总能拿到真实节点。
+	 * 用回调 ref 写入状态：元素挂上或卸下时各重渲染一次。
 	 */
 	const [bodyElement, setBodyElement] = React.useState<HTMLDivElement | null>(null);
 	const bodyRoot = React.useCallback((node: HTMLDivElement | null) => { setBodyElement(node); }, []);
@@ -548,8 +543,7 @@ function GitDiffTab(props) {
 		/**
 		 * 量一次并写回。
 		 *
-		 * 落位相等时不写状态：写入会让组件重渲染，而重渲染又会再量一次；没有等价判断就会
-		 * 来回触发，直到 React 因更新次数过多而卸载整棵树——页面上表现为一片空白。
+		 * 落位相等时不写状态。写入触发重渲染，重渲染再量一次落位。
 		 */
 		const measure = (): void => {
 			const next = hunkSlots(body, hunks);
@@ -559,8 +553,7 @@ function GitDiffTab(props) {
 		/*
 		 * 正文尺寸变化后重排：展开折叠区、切换换行、重新取数都会改变块的位置。
 		 *
-		 * 只观察正文，不观察轨道：轨道是正文的子元素，观察它会把自己写入造成的尺寸变化再
-		 * 报回来，多绕一圈。写入本身已有等价判断兜底。
+		 * 观察正文，不观察轨道（轨道是正文的子元素）。写入已有等价判断兜底。
 		 */
 		const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { measure(); }) : null;
 		observer?.observe(body);

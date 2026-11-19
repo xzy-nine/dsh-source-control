@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# commit-msg：校验提交标题符合 Conventional Commits。
+#
+# 标题格式为 type[(scope)][!]: <description>，类型取自 feat/fix/docs/style/refactor/perf/
+# test/build/ci/chore/revert，破坏性标记 ! 位于类型或作用域之后、冒号之前，冒号后有一个空格。
+# 合并提交、撤销提交、fixup 与 squash 提交不参与校验。
+#
+# 用法：git 以 `commit-msg <提交信息文件>` 调用。跳过：git commit --no-verify。
+
+set -e
+
+msg_file=${1:-}
+if [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
+	echo "commit-msg: 未找到提交信息文件" >&2
+	exit 1
+fi
+
+title=$(head -n 1 "$msg_file")
+
+case "$title" in
+	"Merge "*|"Revert "*|"revert:"*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+if [ -z "$(printf '%s' "$title" | tr -d '[:space:]')" ]; then
+	exit 0
+fi
+
+types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+
+if printf '%s' "$title" | grep -Eq "^(${types})(\([^)]*\))?!?: "; then
+	exit 0
+fi
+
+echo "commit-msg: 提交标题不符合 Conventional Commits，拒绝提交。" >&2
+echo "  实际：$title" >&2
+echo "  要求：type[(scope)][!]: <description>" >&2
+
+if printf '%s' "$title" | grep -Eq "^(${types})(\([^)]*\))?: ?!"; then
+	echo "  修正：把 ! 移到冒号之前——" >&2
+	printf '%s\n' "$title" | sed -E 's/^(([a-z]+)(\([^)]*\))?):[[:space:]]*![[:space:]]*(.*)$/    \1!: \4/' >&2
+fi
+
+echo "  示例：feat: 支持按块暂存 / fix(panel): 修复空白页 / feat!: 移除单栏差异视图" >&2
+echo "  跳过：git commit --no-verify" >&2
+exit 1

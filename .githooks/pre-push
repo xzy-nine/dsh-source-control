@@ -1,10 +1,9 @@
 #!/bin/sh
 #
-# pre-push：推送前跑全量 oxlint、两段类型检查与文档门禁。
+# pre-push：校验提交信息，跑全量 oxlint、两段类型检查与文档门禁。
 #
-# 与 pre-commit 的分工：pre-commit 只查本次提交涉及的文件（反馈快），
-# pre-push 查整个 src/ 并跑 tsc，拦住跨文件的类型问题与漏查的存量。
-# 文档门禁在这里无条件跑：提交可能绕开 pre-commit（--no-verify），推送是最后一道。
+# 与 pre-commit 的分工：pre-commit 只查本次提交涉及的文件，pre-push 查整个 src/ 并跑 tsc。
+# 文档门禁与提交信息校验在这里无条件跑。
 #
 # 规则集见仓库根的 .oxlintrc.json。
 
@@ -12,6 +11,10 @@ set -e
 
 root=$(git rev-parse --show-toplevel)
 cd "$root"
+
+# 标准输入是本钩子唯一的推送范围来源，只可读一次。
+push_stdin=$(cat)
+printf '%s' "$push_stdin" | node scripts/verify-commit-messages.mjs
 
 if [ ! -f node_modules/oxlint/dist/cli.js ]; then
 	echo "pre-push: 未找到 oxlint，请先运行 pnpm install。" >&2
