@@ -44,7 +44,7 @@ Status: rejected — 每项在数据模型、作用域或生命周期上与宿�
 
 ### 右键菜单：已改走双轨兼容
 
-`context-menu.ts` 现按宿主能力二选一：`ctx.inject(['contextMenus'])` 探测到服务时走宿主共享菜单，否则保留自建浮层。决策与退出条件见[双轨兼容记录](../../implemented/architecture/2026-11-05-dual-track-context-menu.md)。
+`context-menu.ts` 现按宿主能力二选一：`ctx.inject(['contextMenus'])` 探测到服务时走宿主共享菜单，否则保留自建浮层。决策与退出条件见[双轨兼容记录](../../archived/architecture/2026-11-05-dual-track-context-menu.md)。
 
 本记录只保留当时的判定依据：`ctx.contextMenus`（`open` / `register` / `notify`）所在的 `packages/client/ui-context-menu` 在提交 `411f157983`（2026-10-22）引入主干，直到 `dsh-v0.2.2-alpha.3`（2026-11-03）才随宿主发布；0.2.1-rc.5 里 `contextMenus` / `useContextMenu` 零命中，因此不能直接切换。
 

@@ -1,6 +1,7 @@
 # Agent Note: 右键菜单双轨兼容与退出
 
 Status: implemented
+Archived: 2026-11-19
 
 ## Problem
 
@@ -30,7 +31,7 @@ Status: implemented
 | `Menu` 的 `anchorPoint` / `anchorRef` | 只有 `getAnchorRect` | `0.2.2-alpha.2` | 双传属性共存 | 删 `getAnchorRect` 与 4px 补偿，只留 CSS 锚点一代 |
 | 子菜单左翻回退 | 无，固定向右且不夹取 | 与 `anchorPoint` 同批 | `usePointerGrace` 是否导出 | 删翻转属性与 CSS 补丁，删 `SUBMENU_FLIP_ATTR` |
 
-退出后 `scripts/check-dual-track-baseline.mjs` 转为**真值门禁**：`engines.dsh` 下限不得低于 `0.2.2-alpha.2`（共享菜单与 CSS 锚点一代都就位的版本），自建浮层的独有标识符不得重现。基线 `dual-track-baseline.json` 记录 `legacyMenu: false`，旧轨重现即报红。
+退出后 `scripts/check-dual-track-baseline.mjs` 转为**真值门禁**：`engines.dsh` 下限不得低于 `0.2.2-alpha.2`（共享菜单与 CSS 锚点一代都就位的版本），旧轨各代的独有标识符不得出现在 `src/` 的任何位置。基线 `baselines/dual-track-baseline.json` 在 `legacyMarkers` 里列出退出时确认缺席的标识符，任一标识符重回源码即报红，注释与字符串同样计入。
 
 ## Alternatives considered
 
@@ -57,4 +58,4 @@ Status: implemented
 - `test/client-bundle.test.mjs`：产物不含 `dsh-client-ui-context-menu` 的运行时引用；`apply` 会探测 `contextMenus`；旧代锚点属性与翻转补丁不再出现。
 - `test/primitives.test.mjs`：提交菜单是同步函数，弹出前不得 `await`，包含关系经 `pendingItems` 补齐。
 - `test/context-menu-host.test.mjs`：按宿主「先置空、再置入新目标」的打开顺序，断言紧接上一份菜单再右键仍带条目；选中动作先于收尾执行；关闭后贡献注销、条目清空。
-- `scripts/check-dual-track-baseline.mjs`：负向验证过一次——把引擎下限改低即报红；基线记录 `legacyMenu: false` 后旧轨重现即报红。
+- `scripts/check-dual-track-baseline.mjs`：负向验证过两次——把引擎下限改低即报红；往任意源文件写回一个旧轨标识符（如注释里的 `getAnchorRect`）同样报红并指出文件与行号。

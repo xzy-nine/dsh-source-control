@@ -959,7 +959,7 @@ export function apply(ctx) {
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
 
-	// 覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。
+	// 覆盖层：弹窗与轻量提示渲染进根级席位，不直接挂到 document.body。
 	ctx.effect(() => installOverlay(slots));
 
 	/*

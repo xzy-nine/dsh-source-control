@@ -5,7 +5,7 @@
  * `.agents/skills/source-control-prose-standard/SKILL.md`。命中不等于定论：确需保留的
  * 注释在行上写 `prose-ok: <理由>` 豁免，或由基线记录为存量。
  *
- * 存量记 `comment-prose-baseline.json`，按「文件 + 规则 + 注释原文」比对，不含行号：
+ * 存量记 `baselines/comment-prose-baseline.json`，按「文件 + 规则 + 注释原文」比对，不含行号：
  * 无关改动不会让基线失效，改写过的注释则算新命中。基线只允许调低。
  *
  * 用法：tsx scripts/verify-comment-prose.ts [--staged] [--update]
@@ -27,7 +27,7 @@ import { PROSE_RULES, baselineEntryOf, newViolations, ruleSummary, scanSource, t
 const PATTERNS = ['src/**/*.ts', 'src/**/*.tsx'] as const
 
 /** 基线文件，相对仓库根。 */
-const BASELINE = 'comment-prose-baseline.json'
+const BASELINE = join('baselines', 'comment-prose-baseline.json')
 
 /** 本次要扫描的绝对路径。 */
 function targets(): string[] {

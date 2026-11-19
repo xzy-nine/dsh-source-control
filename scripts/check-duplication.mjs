@@ -2,7 +2,8 @@
  * 重复代码门禁：用 jscpd 扫描 `src/`，出现基线之外的克隆即失败。
  *
  * 基线记的是当前已接受的重复（文件对 + 片段长度 + 片段内容摘要）及其出现次数，只允许调低；
- * 确实无法消除的（如跨构建目标的类型镜像）才调高，并在提交信息里说明理由。
+ * 确实无法消除的（如跨构建目标的类型镜像）才调高，并在提交信息里说明理由。基线文件
+ * 统一放在 `baselines/` 下，与 `comment-prose-baseline.json` 并列。
  *
  * 同一指纹在基线与当前各出现 N 次时视为未新增：jscpd 会把一处重复按相邻窗口合并成多条克隆，
  * 只比对实例存在与否会让基线随首处重复的条数变化而失效。
@@ -17,11 +18,16 @@ import { fileURLToPath } from 'node:url';
 import { detectClones } from 'jscpd';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const baselinePath = join(root, 'duplication-baseline.json');
+const baselinePath = join(root, 'baselines', 'duplication-baseline.json');
 
-/** 扫描参数；与历史基线一致，改动会让基线整体失效。 */
-const MIN_LINES = 5;
-const MIN_TOKENS = 50;
+/**
+ * 扫描参数。取宽口径：宁可在基线里多记几处短重复，也不要放过一处真正的复制粘贴。
+ *
+ * 5 行 / 50 token 只够拦下成段复制，把「改了名字的同一段逻辑」整批放过去；3 行 /
+ * 20 token 能抓到同一分支结构被抄第二遍，代价是基线变长、相邻窗口的重叠片段变多。
+ */
+const MIN_LINES = 3;
+const MIN_TOKENS = 20;
 
 /**
  * 扫描 `src/` 下的克隆。
@@ -36,7 +42,7 @@ async function scanClones() {
 		path: [target],
 		minLines: MIN_LINES,
 		minTokens: MIN_TOKENS,
-		format: ['typescript'],
+		format: ['typescript', 'tsx'],
 		silent: true,
 		reporters: [],
 	});
@@ -78,7 +84,8 @@ function fingerprints(clones) {
 				.map((name) => name.slice(root.length + 1).replace(/\\/g, '/'))
 				.sort()
 				.join('|');
-			const lines = Math.min(a.end.line - a.start.line + 1, b.end.line - b.start.line + 1);
+			// jscpd 合并相邻窗口时会给出一条反向的起止行，长度取绝对值并保证至少 1 行。
+			const lines = Math.max(1, Math.abs(Math.min(a.end.line - a.start.line + 1, b.end.line - b.start.line + 1)));
 			return `${pair}|${lines}|${fragmentDigest(a.fragment ?? '', b.fragment ?? '')}`;
 		})
 		.sort();
