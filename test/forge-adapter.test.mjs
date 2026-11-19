@@ -487,8 +487,9 @@ test('jsdom 里渲染分段轨道：方块图标按块定位', { skip }, async (
 		assert.equal(slotBoxes[1].style.height, '20px');
 		// 逐块按钮只画方块加号，不带文字：动作语义由 aria-label 与悬停提示给。
 		const button0 = document.querySelector('[data-sc-hunk="0"]');
-		assert.match(button0.getAttribute('aria-label'), /暂存这一块/, '读屏与悬停给出动作与块范围');
-		assert.match(button0.getAttribute('title'), /暂存这一块/, '悬停提示写明动作');
+		// 提示用行号而不是补丁头的 `-1,5 +1,5`：后者是 git 写法，读起来要先换算。
+		assert.match(button0.getAttribute('aria-label'), /暂存第 1 行/, '读屏给出动作与行号');
+		assert.match(button0.getAttribute('title'), /暂存第 1 行/, '悬停提示写明动作与行号');
 		const icon = button0.querySelector('span[aria-hidden="true"]');
 		assert.ok(icon !== null, '按钮里应有图标');
 		assert.match(icon.innerHTML, /<svg/, '图标是内联 SVG');
@@ -514,7 +515,7 @@ test('暂存区作用域给出取消暂存', { skip }, async () => {
 	try {
 		const button = document.querySelector('[data-sc-hunk="0"]');
 		assert.equal(button.getAttribute('data-sc-hunk-action'), 'unstage', '暂存区作用域按取消暂存处理');
-		assert.match(button.getAttribute('aria-label'), /取消暂存这一块/, '语义写明取消暂存');
+		assert.match(button.getAttribute('aria-label'), /取消暂存第 1 行/, '语义写明取消暂存与行号');
 		// 图标换成方块减号：只有横线，没有竖线。
 		const icon = button.querySelector('span[aria-hidden="true"]');
 		assert.match(icon.innerHTML, /M5\.4 8h5\.2/, '已暂存时给方块减号');

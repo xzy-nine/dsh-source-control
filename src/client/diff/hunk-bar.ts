@@ -5,13 +5,14 @@
  * 挂在块头行上。这里改为在正文中间让出一条窄列：每个块在自己的改动区间中点给一个方块
  * 加号（暂存）或方块减号（取消暂存），位置由 {@link hunkSlots} 从渲染结果量出。
  *
- * 「全部块」不在这里：它作用于整个文件，因此放在页头增减行数旁边。与 VS Code 的差异
- * 视图一样，逐块按钮平时隐去，指到某一块或轨道本身时才浮现——一屏里常有十几块，常驻
- * 会把中间那条缝变成一排图标。
+ * 「全部块」不在这里：它作用于整个文件，因此放在页头增减行数旁边。
+ *
+ * 可见性不依赖悬停：触屏没有 hover，只靠 hover 会让按钮永远不出现。默认给一条淡显的
+ * 常驻态，指进这一列时整体加深，指到某个时它实显。
  */
 import React from 'react';
 import type { FileHunk } from '../api/merge.ts';
-import { markHunkRows, type HunkSlot } from './hunk-lane.ts';
+import { hunkLineText, markHunkRows, type HunkSlot } from './hunk-lane.ts';
 import { AddBlockIcon, RemoveBlockIcon } from '../ui/ref-icons.ts';
 import css from '../css/hunk-bar.module.css';
 
@@ -33,16 +34,6 @@ export interface HunkLaneProps {
 	 * @param indexes - 要处理的块下标；空数组表示全部块。
 	 */
 	readonly onApply: (indexes: readonly number[]) => void;
-}
-
-/**
- * 一个块的范围文案。
- *
- * @param hunk - 补丁块。
- * @returns 形如 `-1,5 +1,5` 的范围。
- */
-function rangeText(hunk: FileHunk): string {
-	return `-${String(hunk.oldStart)},${String(hunk.oldLines)} +${String(hunk.newStart)},${String(hunk.newLines)}`;
 }
 
 /**
@@ -71,8 +62,8 @@ export function HunkLane({ hunks, slots, host, staged, busy, onApply }: HunkLane
 				},
 				React.createElement('button', {
 					type: 'button', className: css.button, disabled: busy,
-					title: `${verb}这一块 ${rangeText(hunk)}`,
-					'aria-label': `${verb}这一块 ${rangeText(hunk)}`,
+					title: `${verb}${hunkLineText(hunk)}`,
+					'aria-label': `${verb}${hunkLineText(hunk)}`,
 					'data-sc-hunk': hunk.index, 'data-sc-hunk-action': staged ? 'unstage' : 'stage',
 					onClick: () => { onApply([hunk.index]); },
 					// 指到按钮时把它要处理的那几行淡出来，让人确认按钮管的是哪一段。

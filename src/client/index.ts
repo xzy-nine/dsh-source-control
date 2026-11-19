@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import {
-	IconChevronDownOutlineRegular, IconInspectOutlineRegular,
+	IconChevronDownOutlineRegular, IconChevronsUpDownOutlineRegular, IconChevronUpOutlineRegular, IconInspectOutlineRegular,
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
@@ -32,9 +32,10 @@ import {
 } from './api/index.ts';
 import { MergeView } from './diff/merge-view.ts';
 import { formatMergeComment } from './diff/comment-reference.ts';
+import { setShownSide, subscribeShownSide, titleScopeOf } from './diff/shown-side.ts';
 import type { LineRange } from './diff/line-range.ts';
 import { HunkLane } from './diff/hunk-bar.ts';
-import { hunkSlots, type HunkSlot } from './diff/hunk-lane.ts';
+import { hunkSlots, sameSlots, scrollToHunk, type HunkSlot } from './diff/hunk-lane.ts';
 import { analyzeMerge, type MergeChoice } from '../shared/merge-ranges.ts';
 import { showMessage } from './ui/dialog.ts';
 import { runInTerminal as runInTerminalCommand } from './git/terminal-run.ts';
@@ -235,8 +236,17 @@ function GitDiffTab(props) {
 	const request = scope === null ? null : gitDiffRequest(scope);
 	// 取数坐标拆成原始值：依赖里出现每次渲染新建的对象会让加载反复重跑。
 	const commitHash = request?.commitHash ?? '*';
-	const staged = request?.staged === true;
+	const stagedScope = request?.staged === true;
 	const baseHash = request?.baseHash ?? '';
+	/**
+	 * 当前实际显示哪一侧。
+	 *
+	 * 通常就是地址所指的那一侧；一侧被搬空后页面会就地切到对侧，此时这里是切过去之后
+	 * 的那一侧。暂存、取消暂存与分段取块都按它决定动作方向，否则切侧之后的动作会打到
+	 * 已经不显示的那一侧上。
+	 */
+	const [followedSide, setFollowedSide] = React.useState<boolean | null>(null);
+	const staged = followedSide ?? stagedScope;
 	const files = React.useMemo<readonly string[]>(
 		() => (Array.isArray(navParams?.files) ? navParams.files.filter((item): item is string => typeof item === 'string') : []),
 		[navParams],
@@ -265,7 +275,10 @@ function GitDiffTab(props) {
 	// 换文件时重置该文件的展开状态与已展开区段，避免把上一个文件的下标带过来。
 	React.useEffect(() => {
 		setFileState({ expanded: true, revealed: false, open: new Set() });
-	}, [currentPath, commitHash, staged, baseHash]);
+		setFollowedSide(null);
+		// 换文件后重新与地址对齐，标题不再沿用上一个文件的显示侧。
+		setShownSide(address, null);
+	}, [currentPath, commitHash, stagedScope, baseHash, address]);
 	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
 	const diffView = useDiffView(typeof cwd === 'string' ? cwd : null);
 	const wrap = diffView.choice.wrap;
@@ -278,23 +291,66 @@ function GitDiffTab(props) {
 			void error;
 		}
 	}, [tabActions, address, currentPath, files, repoRoot]);
+	/**
+	 * 当前实际显示的一侧，供取数读取。
+	 *
+	 * `load` 要按显示侧取数，但它不能把 `staged` 放进依赖：切侧由下面自己填好数据，若
+	 * `staged` 在依赖里，切侧会再触发一次取数，把刚填好的内容清掉重来。用 ref 读最新值
+	 * 即可两边都不误：切侧不自动重跑，动作之后的主动重取仍按当前显示侧走。
+	 */
+	const stagedRef = React.useRef(staged);
+	stagedRef.current = staged;
+	/**
+	 * 按当前实际显示的一侧重取本页。
+	 *
+	 * 一律读 {@link stagedRef}，因此重取不会把正文拉回地址所指的那一侧——否则分段块按
+	 * 显示侧取、正文按地址取，两边错配，中间列会因找不到对应的块而消失。
+	 */
 	const load = React.useCallback(() => {
 		if (parsed === null || currentPath === '' || typeof gitCwd !== 'string') return;
+		const side = stagedRef.current;
 		setLoading(true);
 		setDiffData(null);
-		fileDiffContent(gitCwd, commitHash, currentPath, staged, baseHash)
+		fileDiffContent(gitCwd, commitHash, currentPath, side, baseHash)
 			.then((data) => { setDiffData(data); setLoading(false); })
 			.catch((error: unknown) => {
 				setDiffData(null);
 				setLoading(false);
-				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${staged ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${side ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
 			});
-	}, [parsed, commitHash, currentPath, gitCwd, staged, baseHash]);
+	}, [parsed, commitHash, currentPath, gitCwd, baseHash]);
+	/**
+	 * 取另一个作用域的内容。
+	 *
+	 * 用于把改动搬走之后接着看另一半：工作区与暂存区互为对侧，提交与对比作用域没有对侧。
+	 *
+	 * @param toStaged - 对侧是否取暂存区。
+	 * @returns 对侧的差异内容；不适用或取数失败时为 null。
+	 */
+	const loadOtherSide = React.useCallback(
+		async (toStaged: boolean): Promise<FileDiffContent | null> => {
+			if (typeof gitCwd !== 'string') return null;
+			try {
+				return await fileDiffContent(gitCwd, commitHash, currentPath, toStaged, baseHash);
+			} catch {
+				return null;
+			}
+		},
+		[gitCwd, commitHash, currentPath, baseHash],
+	);
 	React.useEffect(() => {
 		load();
 	}, [load]);
+
 	/** 逐段动作进行中：禁用全部段落按钮，避免两次点击撞在一起。 */
 	const [resolving, setResolving] = React.useState(false);
+	/**
+	 * 本次取数是否由本页的暂存动作引起。
+	 *
+	 * 用它在「内容被搬空」与「打开时本就无改动」之间区分：只有前者才切到另一侧，否则
+	 * 一个本来就没有改动的文件会在打开时被来回搬动。
+	 */
+	const emptiedSide = React.useRef(false);
 	/** 分段暂存进行中。 */
 	const [hunkBusy, setHunkBusy] = React.useState(false);
 	/**
@@ -403,6 +459,52 @@ function GitDiffTab(props) {
 		return () => { cancelled.current = true; };
 	}, [gitCwd, currentPath, staged, commitHash, diffData]);
 	/**
+	 * 一侧被搬空后就地切到另一侧并继续看同一个文件。
+	 *
+	 * 工作区与暂存区是同一份文件的两个视图：一侧取空意味着这次改动整体搬到了另一侧，
+	 * 用户紧接着要看的就是搬过去的那一半。打开新地址会把当前页留在「没有改动」上，因此
+	 * 这里在同一页里换内容——页地址仍是原地那一侧，差别只在于显示哪一侧。
+	 *
+	 * 切过去之后地址与实际显示的一侧不再一致，这是有意为之：页身份按进入时的作用域算，
+	 * 而用户此刻关心的是「这个文件的另一半」，不是又开一个新页。
+	 *
+	 * 对侧也没有内容时不切：两侧都空说明这个文件的改动已经全部落定，页面停在原作用域
+	 * 的「没有改动」上才是实情。
+	 *
+	 * @returns 无。
+	 */
+	const switchScopeSide = React.useCallback((): void => {
+		if (scope === null || scope.kind !== 'worktree') return;
+		const toStaged = !staged;
+		setLoading(true);
+		void loadOtherSide(toStaged).then((data) => {
+			// 对侧也没有补丁块：两侧都空，留在原地说明没有改动。
+			if (data === null || data.binary || data.hunks.length === 0) {
+				setLoading(false);
+				return;
+			}
+			setFollowedSide(toStaged);
+			// 标题按地址算、读不到页内状态，因此把实际显示侧登记到共享快照里。
+			setShownSide(address, toStaged === stagedScope ? null : toStaged);
+			setDiffData(data);
+			setLoading(false);
+		});
+	}, [scope, staged, stagedScope, address, loadOtherSide]);
+	/**
+	 * 当前作用域是否已没有内容。
+	 *
+	 * 只有工作区与暂存区两个作用域会互相搬动改动：一侧取空后另一侧必然有内容，因此只有
+	 * 它们需要自动切过去。提交与对比作用域没有对侧，取空就是取空。
+	 */
+	const emptyNow = !loading && diffData !== null && !diffData.binary && diffData.hunks.length === 0;
+	React.useEffect(() => {
+		if (!emptyNow || scope === null || scope.kind !== 'worktree') return;
+		// 只在本次取数确实把内容搬空后才切：首次打开一个本就无改动的文件时停在原作用域。
+		if (!emptiedSide.current) return;
+		emptiedSide.current = false;
+		switchScopeSide();
+	}, [emptyNow, scope, switchScopeSide]);
+	/**
 	 * 暂存或取消暂存若干补丁块。
 	 *
 	 * @param indexes - 块下标；空数组表示全部块。
@@ -410,6 +512,8 @@ function GitDiffTab(props) {
 	 */
 	const handleApplyHunk = React.useCallback((indexes: readonly number[]): void => {
 		if (typeof gitCwd !== 'string') return;
+		// 记下来源：内容若被搬空，取数完成后要切到另一侧。
+		emptiedSide.current = true;
 		setHunkBusy(true);
 		// 分段命令把失败原因放在返回值里（逐块处理允许部分成功），因此这里额外判一次。
 		runResolve(async () => {
@@ -419,6 +523,13 @@ function GitDiffTab(props) {
 	}, [gitCwd, currentPath, staged, runResolve]);
 	/** 各补丁块在正文里的落位；分段暂存轨道据此把按钮竖排到对应的块旁。 */
 	const [slots, setSlots] = React.useState<HunkSlot[]>([]);
+	/**
+	 * 正文元素放进状态：轨道要靠它量位置与标高亮，而 `ref.current` 变化不触发重渲染。
+	 *
+	 * 用回调 ref 写入状态，元素挂上或卸下时各重渲染一次，轨道因此总能拿到真实节点。
+	 */
+	const [bodyElement, setBodyElement] = React.useState<HTMLDivElement | null>(null);
+	const bodyRoot = React.useCallback((node: HTMLDivElement | null) => { setBodyElement(node); }, []);
 	/**
 	 * 分段列是否出现。
 	 *
@@ -431,22 +542,88 @@ function GitDiffTab(props) {
 		&& hunks.length > 0 && slots.length > 0
 		&& fileState.expanded;
 	// 轨道按绝对定位贴在正文上，因此量算的原点取正文元素——它与轨道一起滚动。
-	const bodyRoot = React.useRef<HTMLDivElement | null>(null);
 	React.useLayoutEffect(() => {
-		if (hunks.length === 0) { setSlots([]); return undefined; }
-		const body = bodyRoot.current;
-		if (body === null) { setSlots([]); return undefined; }
-		const measure = (): void => { setSlots(hunkSlots(body, hunks)); };
+		if (hunks.length === 0 || bodyElement === null) { setSlots([]); return undefined; }
+		const body = bodyElement;
+		/**
+		 * 量一次并写回。
+		 *
+		 * 落位相等时不写状态：写入会让组件重渲染，而重渲染又会再量一次；没有等价判断就会
+		 * 来回触发，直到 React 因更新次数过多而卸载整棵树——页面上表现为一片空白。
+		 */
+		const measure = (): void => {
+			const next = hunkSlots(body, hunks);
+			setSlots((previous) => (sameSlots(previous, next) ? previous : next));
+		};
 		measure();
-		// 正文尺寸变化后重排：展开折叠区、切换换行、重新取数都会改变块的位置。
-		const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+		/*
+		 * 正文尺寸变化后重排：展开折叠区、切换换行、重新取数都会改变块的位置。
+		 *
+		 * 只观察正文，不观察轨道：轨道是正文的子元素，观察它会把自己写入造成的尺寸变化再
+		 * 报回来，多绕一圈。写入本身已有等价判断兜底。
+		 */
+		const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { measure(); }) : null;
 		observer?.observe(body);
 		window.addEventListener('resize', measure);
 		return () => {
 			observer?.disconnect();
 			window.removeEventListener('resize', measure);
 		};
-	}, [hunks, diffData, wrap]);
+	}, [hunks, diffData, wrap, bodyElement]);
+	/** 已展开的未变更区段；页头的按钮据此在「全部展开」与「全部折叠」之间切换。 */
+	const openGaps = fileState.open;
+	/**
+	 * 全部展开或全部折叠未变更区段。
+	 *
+	 * 展开时把每个区段的下标都放进去：区段数由补丁块决定，越界下标不会画出任何行，
+	 * 因此不必先请点当前文件有几个折叠区。
+	 *
+	 * @returns 无。
+	 */
+	const toggleGaps = React.useCallback((): void => {
+		setFileState((previous) => {
+			if (previous.open.size > 0) return { ...previous, open: new Set() };
+			const count = diffData === null ? 0 : diffData.hunks.length + 1;
+			return { ...previous, open: new Set(Array.from({ length: count }, (_, at) => at)) };
+		});
+	}, [diffData]);
+	/**
+	 * 跳到上一处或下一处改动。
+	 *
+	 * 按滚动位置推出当前停在哪一块，再前后各走一步；到头后回绕，因此反复按同一个键
+	 * 能在整份差异里循环。跳转只滚正文，不改选中状态。
+	 *
+	 * @param step - 1 为下一处，-1 为上一处。
+	 * @returns 无。
+	 */
+	const jumpHunk = React.useCallback((step: 1 | -1): void => {
+		if (hunks.length === 0 || bodyElement === null) return;
+		const offsets = slots.map((slot) => slot.top);
+		const at = bodyElement.scrollTop;
+		// 当前块取「上沿不超过滚动位置」的那一块；全在下方时从头算。
+		let current = -1;
+		for (const [index, top] of offsets.entries()) {
+			if (top <= at + 1) current = index;
+		}
+		const next = current < 0
+			? (step === 1 ? 0 : offsets.length - 1)
+			: (current + step + offsets.length) % offsets.length;
+		scrollToHunk(bodyElement, hunks, slots[next].index);
+	}, [hunks, slots, bodyElement]);
+	React.useEffect(() => {
+		// 快捷键只在焦点不在输入控件上时生效，免得把文字输入里的方向键抢走。
+		const onKeyDown = (event: KeyboardEvent): void => {
+			if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+			if (event.key !== 'j' && event.key !== 'k') return;
+			const target = event.target;
+			if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]') !== null) return;
+			if (hunks.length === 0) return;
+			event.preventDefault();
+			jumpHunk(event.key === 'j' ? 1 : -1);
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => { window.removeEventListener('keydown', onKeyDown); };
+	}, [jumpHunk, hunks.length]);
 	if (parsed === null) {
 		return React.createElement('div', { className: shared.empty }, '无效的差异地址');
 	}
@@ -533,7 +710,7 @@ function GitDiffTab(props) {
 				addToInput,
 			}),
 			laneVisible && React.createElement(HunkLane, {
-				hunks, slots, host: bodyRoot.current, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
+				hunks, slots, host: bodyElement, staged, busy: hunkBusy || resolving, onApply: handleApplyHunk,
 			}),
 		);
 	};
@@ -581,6 +758,24 @@ function GitDiffTab(props) {
 						}, 'All'))),
 			React.createElement('span', { className: css.tools },
 
+				hunks.length > 0 && React.createElement(React.Fragment, null,
+					React.createElement(Tooltip, {
+						label: '上一处改动（K）', side: 'bottom', delayMs: 500,
+						children: React.createElement('button', {
+							type: 'button', className: css.tool, 'aria-label': '上一处改动',
+							'data-review-tool': 'prev-hunk', disabled: hunkBusy,
+							onClick: () => { jumpHunk(-1); },
+						}, React.createElement(IconChevronUpOutlineRegular)),
+					}),
+					React.createElement(Tooltip, {
+						label: '下一处改动（J）', side: 'bottom', delayMs: 500,
+						children: React.createElement('button', {
+							type: 'button', className: css.tool, 'aria-label': '下一处改动',
+							'data-review-tool': 'next-hunk', disabled: hunkBusy,
+							onClick: () => { jumpHunk(1); },
+						}, React.createElement(IconChevronDownOutlineRegular)),
+					}),
+				),
 				React.createElement(Tooltip, {
 					label: wrap ? '关闭自动换行' : '开启自动换行', side: 'bottom', delayMs: 500,
 					children: React.createElement('button', {
@@ -588,6 +783,15 @@ function GitDiffTab(props) {
 						'data-review-tool': 'wrap',
 						onClick: () => { diffView.patch({ wrap: !wrap }); },
 					}, wrap ? React.createElement(IconNowrapFillRegular) : React.createElement(IconWrapFillRegular)),
+				}),
+				React.createElement(Tooltip, {
+					label: openGaps.size > 0 ? '折叠全部未变更区段' : '展开全部未变更区段', side: 'bottom', delayMs: 500,
+					children: React.createElement('button', {
+						type: 'button', className: css.tool, 'aria-pressed': openGaps.size > 0,
+						'aria-label': openGaps.size > 0 ? '折叠全部未变更区段' : '展开全部未变更区段',
+						'data-review-tool': 'fold-gaps',
+						onClick: toggleGaps,
+					}, React.createElement(IconChevronsUpDownOutlineRegular)),
 				}),
 				React.createElement(Tooltip, {
 					label: '在侧边栏打开整个文件', side: 'bottom', delayMs: 500,
@@ -613,11 +817,16 @@ function GitDiffTab(props) {
 
 /** git-diff 页标题：文件名。 */
 function GitDiffTitle(props) {
+	// `useTabInfo` 是 hook，必须每次渲染直接调用：把它的返回值存进 state 会把快照冻在旧引用上。
 	const tabInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo() : null;
+	const [, refresh] = React.useReducer((count: number) => count + 1, 0);
+	// 显示侧一变更就要重算标题：地址不变，但本页可能已切到对侧内容。
+	React.useEffect(() => subscribeShownSide(refresh), []);
 	const address = tabInfo?.tab?.navigation?.address ?? '';
 	const parsed = parseGitDiffAddress(address);
-	// 页标题给比较作用域；文件名在正文的下一行单独给出。
-	const name = parsed !== null ? gitDiffTitle(parsed.scope) : 'Diff';
+	// 页标题给比较作用域（跟随本页实际显示的一侧）；文件名在正文首行单独给出。
+	const scope = parsed === null ? null : titleScopeOf(address, parsed.scope);
+	const name = scope !== null ? gitDiffTitle(scope) : 'Diff';
 	return React.createElement('span', { className: css.chip }, name);
 }
 
@@ -800,7 +1009,9 @@ export function apply(ctx) {
 			patterns: ['dsh-resource://git-diff/**'],
 			title: (address) => {
 				const parsed = parseGitDiffAddress(address);
-				return parsed !== null ? gitDiffTitle(parsed.scope) : 'Diff';
+				if (parsed === null) return 'Diff';
+				// 与标题组件同一判据：本页可能已切到对侧内容。
+				return gitDiffTitle(titleScopeOf(address, parsed.scope));
 			},
 		}));
 	}

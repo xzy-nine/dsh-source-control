@@ -434,7 +434,10 @@ parallel('客户端结构与产物契约', (t) => {
 		 * 这里锁住：load 的依赖列表里不得出现 request 这类每次新建的对象。
 		 */
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		const deps = /\}, \[(parsed, [^\]]*)\]\);\n\tReact\.useEffect/.exec(source);
+		// 依赖列表紧跟 load 的实现体；取数坐标之后的其它实现不影响这条判据。
+		const loadStart = source.indexOf('const load = React.useCallback(');
+		assert.ok(loadStart >= 0, '未找到 load 定义');
+		const deps = /\}, \[(parsed, [^\]]*)\]\);/.exec(source.slice(loadStart));
 		assert.ok(deps !== null, '未找到差异加载的依赖列表');
 		const names = deps[1].split(',').map((item) => item.trim());
 		assert.ok(!names.includes('request'), '依赖不得含每次新建的 request 对象');
@@ -444,6 +447,29 @@ parallel('客户端结构与产物契约', (t) => {
 		}
 		assert.ok(names.includes('commitHash'), '取数坐标应以原始值入依赖');
 		assert.ok(names.includes('currentPath'), '当前文件应以原始值入依赖');
+	});
+
+t.test('差异页提供上一处 / 下一处改动与全部折叠', () => {
+		// 一屏看不到下一块时只能滚，因此页头给跳转；折叠区段同理。
+		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+		assert.match(source, /data-review-tool': 'prev-hunk'/, '有上一处改动入口');
+		assert.match(source, /data-review-tool': 'next-hunk'/, '有下一处改动入口');
+		assert.match(source, /data-review-tool': 'fold-gaps'/, '有全部展开/折叠入口');
+		// 跳转与快捷键走同一个函数，行为不会分叉。
+		assert.match(source, /jumpHunk\(-1\)/, '上一处按钮调用跳转');
+		assert.match(source, /jumpHunk\(1\)/, '下一处按钮调用跳转');
+		assert.match(source, /event\.key === 'j' \? 1 : -1/, 'J/K 快捷键与按钮同一路径');
+		// 输入控件里的方向键归输入框，不被跳转抢走。
+		assert.match(source, /input, textarea, \[contenteditable/, '输入控件内不触发跳转');
+	});
+
+	t.test('轨道拿到的正文元素来自状态而非 ref', () => {
+		// ref.current 变化不触发重渲染：轨道要量位置就得让元素进状态。
+		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+		assert.match(source, /const \[bodyElement, setBodyElement\] = React\.useState/, '正文元素放进状态');
+		assert.match(source, /const bodyRoot = React\.useCallback\(\(node: HTMLDivElement \| null\)/, '用回调 ref 写入状态');
+		assert.match(source, /host: bodyElement/, '轨道拿状态里的元素');
+		assert.ok(!/host: bodyRoot\.current/.test(source), '不要用 ref.current 当 prop');
 	});
 
 	t.test('差异面板默认自动换行', () => {
