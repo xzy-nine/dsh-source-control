@@ -222,13 +222,14 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(!/isNewFile/.test(changesSource), '旧的合并判据应已移除');
 	});
 
-	t.test('差异页默认并排且可切换', () => {
-		// 视图来自 forge 的 DiffFile，它支持统一 / 并排两种布局；差异页应默认并排并给出切换。
+	t.test('差异页固定左右并排，不再提供切换', () => {
+		// 中间要站一列分段暂存按钮，单列布局没有这条接缝，因此并排不再是可选项。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(source, /ForgeDiffView, \{/, '应把比较交给 forge 的差异视图');
-		assert.match(source, /split,/, '应把 split 传下去');
-		// 切换走设置，不再用组件内的 useState：刷新与换浏览器都要保留。
-		assert.match(source, /diffView\.patch\(\{ split: !split \}\)/, '应能切换布局');
+		assert.ok(!/split,/.test(source), '页面不再把 split 传下去：并排由适配层固定');
+		assert.ok(!/diffView\.patch\(\{ split/.test(source), '不应再有并排切换入口');
+		const adapter = readFileSync(join(clientDir, 'diff', 'forge-adapter.tsx'), 'utf8');
+		assert.match(adapter, /split: true/, '适配层把并排写死');
 	});
 
 	t.test('普通文件地址用绝对路径', () => {
@@ -433,7 +434,10 @@ parallel('客户端结构与产物契约', (t) => {
 		 * 这里锁住：load 的依赖列表里不得出现 request 这类每次新建的对象。
 		 */
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		const deps = /\}, \[(parsed, [^\]]*)\]\);\n\tReact\.useEffect/.exec(source);
+		// 依赖列表紧跟 load 的实现体；取数坐标之后的其它实现不影响这条判据。
+		const loadStart = source.indexOf('const load = React.useCallback(');
+		assert.ok(loadStart >= 0, '未找到 load 定义');
+		const deps = /\}, \[(parsed, [^\]]*)\]\);/.exec(source.slice(loadStart));
 		assert.ok(deps !== null, '未找到差异加载的依赖列表');
 		const names = deps[1].split(',').map((item) => item.trim());
 		assert.ok(!names.includes('request'), '依赖不得含每次新建的 request 对象');
@@ -445,18 +449,40 @@ parallel('客户端结构与产物契约', (t) => {
 		assert.ok(names.includes('currentPath'), '当前文件应以原始值入依赖');
 	});
 
+t.test('差异页提供上一处 / 下一处改动与全部折叠', () => {
+		// 一屏看不到下一块时只能滚，因此页头给跳转；折叠区段同理。
+		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+		assert.match(source, /data-review-tool': 'prev-hunk'/, '有上一处改动入口');
+		assert.match(source, /data-review-tool': 'next-hunk'/, '有下一处改动入口');
+		assert.match(source, /data-review-tool': 'fold-gaps'/, '有全部展开/折叠入口');
+		// 跳转与快捷键走同一个函数，行为不会分叉。
+		assert.match(source, /jumpHunk\(-1\)/, '上一处按钮调用跳转');
+		assert.match(source, /jumpHunk\(1\)/, '下一处按钮调用跳转');
+		assert.match(source, /event\.key === 'j' \? 1 : -1/, 'J/K 快捷键与按钮同一路径');
+		// 输入控件里的方向键归输入框，不被跳转抢走。
+		assert.match(source, /input, textarea, \[contenteditable/, '输入控件内不触发跳转');
+	});
+
+	t.test('轨道拿到的正文元素来自状态而非 ref', () => {
+		// ref.current 变化不触发重渲染：轨道要量位置就得让元素进状态。
+		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
+		assert.match(source, /const \[bodyElement, setBodyElement\] = React\.useState/, '正文元素放进状态');
+		assert.match(source, /const bodyRoot = React\.useCallback\(\(node: HTMLDivElement \| null\)/, '用回调 ref 写入状态');
+		assert.match(source, /host: bodyElement/, '轨道拿状态里的元素');
+		assert.ok(!/host: bodyRoot\.current/.test(source), '不要用 ref.current 当 prop');
+	});
+
 	t.test('差异面板默认自动换行', () => {
 		// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
 		const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
-		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ split: (true|false), wrap: (true|false) \}/.exec(view);
+		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ wrap: (true|false) \}/.exec(view);
 		assert.ok(choice !== null, '未找到默认视图选择');
-		assert.equal(choice[1], 'true', '并排应默认开启');
-		assert.equal(choice[2], 'true', '换行应默认开启');
+		assert.equal(choice[1], 'true', '换行应默认开启');
 		// 视图选择取自面板设置，因此与其它视图开关同源、随宿主持久化。
 		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
 		assert.match(source, /const diffView = useDiffView\(/, '差异页应经 hook 取视图选择');
 		assert.match(source, /const wrap = diffView\.choice\.wrap;/, 'wrap 取自设置');
-		assert.match(source, /const split = diffView\.choice\.split;/, 'split 取自设置');
+		assert.ok(!/diffView\.choice\.split/.test(source), '并排不是可选项，不再从设置里读');
 	});
 
 	t.test('删除分支只列以该提交为尖端的分支', () => {

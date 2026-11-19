@@ -27,12 +27,16 @@ const PATCH_PREFIX = 'dsh-sc-hunk-';
 /**
  * 生成某个文件的当前补丁。
  *
+ * 用零上下文（`-U0`）取块：块里只有红绿本身，不含未改动的上下文行。上下文只为了让
+ * 人看懂位置，对「暂存这一处改动」没有作用；带上它会让相邻改动被并成一块、也让每一块
+ * 在视图里看起来比实际改动更宽。重放时配 `--unidiff-zero`，git 才接受没有上下文的补丁。
+ *
  * @param repo - 仓库路径。
  * @param path - 文件路径，相对仓库根。
  * @returns 补丁文本；工作区与索引都没有差异时为空串。
  */
 export async function filePatchOf(repo: string, path: string): Promise<string> {
-	return await gitOrThrow(['diff', '--no-color', '--no-ext-diff', '--unified=3', '--', path], repo);
+	return await gitOrThrow(['diff', '--no-color', '--no-ext-diff', '--unified=0', '--', path], repo);
 }
 
 /**
@@ -43,6 +47,8 @@ export async function filePatchOf(repo: string, path: string): Promise<string> {
  *
  * @param repo - 仓库路径。
  * @param patchText - 补丁文本。
+ * 补丁按零上下文切出，因此重放要带 `--unidiff-zero`：git 默认拒绝没有上下文的块。
+ *
  * @param args - 额外的 git apply 参数（`--cached`、`-R` 等）。
  * @returns 失败原因；成功为 null。
  */
@@ -52,7 +58,7 @@ async function applyPatch(repo: string, patchText: string, args: readonly string
 	const file = join(dir, 'patch.diff');
 	try {
 		writeFileSync(file, patchText, 'utf8');
-		await gitOrThrow(['apply', ...args, '--whitespace=nowarn', '--', file], repo);
+		await gitOrThrow(['apply', '--unidiff-zero', ...args, '--whitespace=nowarn', '--', file], repo);
 		return null;
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
@@ -79,7 +85,7 @@ export async function applyHunks(
 	 */
 	const patchText = direction === 'stage'
 		? await filePatchOf(repo, path)
-		: await gitOrThrow(['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=3', '--', path], repo);
+		: await gitOrThrow(['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=0', '--', path], repo);
 	const parsed = parsePatch(patchText);
 	if (parsed.hunks.length === 0) {
 		return { path, hunks: [], error: '该文件没有可分段处理的改动' };
@@ -107,7 +113,7 @@ export async function applyHunks(
  */
 export async function hunkListOf(repo: string, path: string, staged: boolean): Promise<Array<{ index: number; header: string; oldStart: number; oldLines: number; newStart: number; newLines: number }>> {
 	const patchText = staged
-		? await gitOrThrow(['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=3', '--', path], repo)
+		? await gitOrThrow(['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=0', '--', path], repo)
 		: await filePatchOf(repo, path);
 	return parsePatch(patchText).hunks.map((hunk) => ({
 		index: hunk.index, header: hunk.header.trimEnd(),

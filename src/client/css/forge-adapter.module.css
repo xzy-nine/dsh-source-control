@@ -31,6 +31,17 @@
 
 /* 已选中的行：与 forge 选中态同色，覆盖统一行与并排配对两种结构。 */
 .host :global([data-sc-range]){background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}
+
+/*
+ * 指到分段按钮时它要处理的那几行：微微泛白。
+ *
+ * 并排布局的红绿底色画在行里面的单元格上（`.add` / `.del` 落在 `.cell`），因此染色必须
+ * 铺到子单元格、并且压在它们之上：用绝对定位的伪元素盖满整格，而不是给行加深色内阴影
+ * ——给行加会落在单元格下方，看不见。
+ */
+.host :global([data-sc-hunk-hover]){position:relative}
+
+.host :global([data-sc-hunk-hover])::after{content:'';position:absolute;inset:0;pointer-events:none;background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
 /* 冲突操作条：种类文案 + 解决动作，贴在文件段上方、随正文一起滚动。 */
 .conflictBar{
   display:flex;

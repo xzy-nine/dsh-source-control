@@ -1,17 +1,39 @@
 /*
- * 分段暂存条：正文上方一条紧凑的块列表，每块一个动作按钮。
+ * 分段暂存轨道：站进左右两栏之间那条窄列，按补丁块摆放暂存按钮。
+ *
+ * 轨道绝对定位在正文之上；每块的改动区间由 hunk-lane.ts 从渲染结果量出并写成内联样式。
+ * 窄列本身由 index.module.css 让出来，轨道只是叠加层，因此它不改变两栏的行对齐。
+ *
+ * 这一列只放逐块的图标按钮，「全部块」在页头。
+ *
+ * 可见性不依赖 hover：触屏没有 hover，只按 hover 显隐会让按钮在那些设备上永远不出现。
+ * 因此给一条常驻的淡显态，指进这一列时整体加深，指到某个时它实显。
  */
 
-.bar{display:flex;flex:none;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;border-bottom:0.5px solid var(--dsw-alias-border-l3);font-size:11px;line-height:18px}
+/*
+ * 列宽 20px：只放一个 18px 的图标按钮，两侧各留 1px。
+ *
+ * 整列自己接收指针：指到这一列的任意位置都让按钮加深，而不是只有指到按钮上才有反应。
+ * 列是让出来的空隙，里面没有正文，因此不挡文本选择；滚轮照常冒泡给滚动容器。
+ */
+.lane{position:absolute;top:0;bottom:0;left:50%;width:20px;margin-left:-10px;pointer-events:auto}
 
-.label{flex:none;color:var(--dsw-alias-label-tertiary);font-weight:600}
+/*
+ * 每块一个按钮，落在该块改动区间的中点：区间上下等分，按钮由自身高度居中。
+ *
+ * 槽位不吃指针，让整列统一管 hover；但按钮必须自己收回指针事件——`pointer-events`
+ * 会从槽位继承，槽位设成 none 后按钮也会跟着穿透，点击就落不到按钮上。
+ */
+.slot{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
 
-.item{display:inline-flex;align-items:center;gap:4px;padding:1px 4px 1px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm)}
+/* 按钮：18px 方形，里面是方块加号或减号。常驻淡显，不悬停也看得见。 */
+.button{pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:18px;height:18px;padding:0;border:1px solid transparent;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;cursor:pointer;opacity:0.35;transition:opacity 0.12s ease-out}
 
-.range{color:var(--dsw-alias-label-secondary);font-family:var(--ds-font-family-code);font-variant-numeric:tabular-nums}
+/* 指进这一列时整体加深；指到某个按钮或键盘聚焦时它实显。 */
+.lane:hover .button{opacity:0.6}
+.lane:hover .slot:hover .button,.button:focus-visible{opacity:1;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-interactive-bg-hover)}
 
-.button{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}
+.button:disabled{opacity:0.25;cursor:default}
 
-.button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-
-.button:disabled{opacity:0.45;cursor:default}
+/* 加减块图标的描边随按钮文字色；图标本身由 ref-icons.ts 内联成 currentColor。 */
+.button span[aria-hidden='true']{display:inline-flex;align-items:center;justify-content:center}

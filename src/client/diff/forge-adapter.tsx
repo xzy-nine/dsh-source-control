@@ -16,7 +16,7 @@ import { SectionReach } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/
 import { textLines } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/diff-rows.ts';
 import { forgePanelCopy } from './forge-locales.ts';
 import { formatCommentQuote } from './comment-reference.ts';
-import { markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
+import { gutterPressed, markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
 import { placeComposer, sameBox, type ComposerBox } from './composer-placement.ts';
 import type { GitDiffScope } from './resource-path.ts';
 import type { FileDiffContent } from '../api/commits.ts';
@@ -157,8 +157,6 @@ export interface ForgeDiffViewProps {
 	readonly content: FileDiffContent;
 	/** 当前页的比较作用域，决定评论引用里的定位写法。 */
 	readonly scope: GitDiffScope;
-	/** 是否左右并排。 */
-	readonly split: boolean;
 	/** 是否自动换行。 */
 	readonly wrap: boolean;
 	/** 展开/折叠、未变更行展开的本地状态。 */
@@ -172,18 +170,20 @@ export interface ForgeDiffViewProps {
 }
 
 /**
- * 让整个差异视图可按连续行选区间，并在侧栏页底部给出一条确认栏。
+ * 让差异视图可以按连续行选区间，并在选区旁浮出评论框。
  *
  * forge 自带的选区只认 hunk 内的行，折叠区展开的后未变更行选不中、跨 hunk 的区间
  * 也会被整段拒绝。这里在容器上接管按下与划过：每一行都带行号属性，因此区间可以跨
  * hunk 与展开的未变更行。选择结果不进 forge 的评论框，而是直接由本插件的确认栏
  * 插进对话输入框。
  *
+ * 起手位置限定在行号列：正文区不拦截指针，拖动照旧由浏览器做文本选择与复制。
+ *
  * @param props - 见 {@link ForgeDiffViewProps}。
  * @returns 视图元素。
  */
 export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
-	const { path, content, scope, split, wrap, state, setState, reach, addToInput } = props;
+	const { path, content, scope, wrap, state, setState, reach, addToInput } = props;
 	const file = toForgeFile(path, content);
 	const { handlers } = createDiffFileHandlers(state, setState, reach);
 	const t = forgePanelCopy();
@@ -227,11 +227,17 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 	useEffect(() => {
 		const element = host.current;
 		if (element === null) return undefined;
-		/** 按下哪一行就从哪一行开始选；列号或空白处不算行。 */
+		/**
+		 * 按下哪一行的行号就从哪一行开始选。
+		 *
+		 * 正文区不接管：那里按下交给浏览器做文本选区与复制。只有行号列起手才进入行选区，
+		 * 两套手势因此不会互相抢指针。
+		 */
 		const down = (event: PointerEvent): void => {
 			if (event.button !== 0 || !(event.target instanceof Element)) return;
 			const row = event.target.closest(ROW_SELECTOR);
 			if (row === null || !element.contains(row)) return;
+			if (!gutterPressed(event.target, row)) return;
 			const list = rows();
 			const index = list.indexOf(row);
 			if (index < 0) return;
@@ -279,7 +285,8 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		revealed: state.revealed,
 		text: content.newText === null ? undefined : textLines(content.newText),
 		open: state.open,
-		split,
+		// 左右并排是唯一布局：中间要站一列分段暂存按钮，单列没有这条接缝。
+		split: true,
 		wrap,
 		badge: '',
 		tooltip: path,
@@ -325,7 +332,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		// 视口尺寸变化后重排；滚动不必跟：浮窗按 fixed 定位，相对视口而不是内容。
 		window.addEventListener('resize', measure);
 		return () => { window.removeEventListener('resize', measure); };
-	}, [range, forward, selection, split, wrap, state]);
+	}, [range, forward, selection, wrap, state]);
 	return createElement(
 		'div',
 		{ className: css.host, 'data-sc-host': '', ref: host },

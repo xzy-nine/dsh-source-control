@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import type { MergeAnalysis, MergeChoice, MergeRange } from '../../shared/merge-ranges.js';
-import { markRange, ROW_SELECTOR, type LineRange } from './line-range.ts';
+import { gutterPressed, markRange, ROW_SELECTOR, type LineRange } from './line-range.ts';
 import css from '../css/merge-view.module.css';
 
 /** 一个区间的覆盖方向。 */
@@ -121,7 +121,8 @@ function renderLines(lines: readonly string[], from: number, side?: 'ours' | 'th
 		return React.createElement(
 			'div',
 			attrs,
-			React.createElement('span', { className: css.lineNo }, String(number)),
+			// 行号列是选行的手势入口：正文区留给浏览器做文本选区与复制。
+			React.createElement('span', { className: css.lineNo, 'data-sc-line-no': '' }, String(number)),
 			React.createElement('span', { className: css.lineText }, line === '' ? '\u00a0' : line),
 		);
 	});
@@ -179,10 +180,12 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 	React.useEffect(() => {
 		const element = host.current;
 		if (element === null) return undefined;
+		/** 从行号列按下才开始选行；正文区交给浏览器做文本选区与复制。 */
 		const down = (event: PointerEvent): void => {
 			if (event.button !== 0 || !(event.target instanceof Element)) return;
 			const row = event.target.closest(ROW_SELECTOR);
 			if (row === null || !element.contains(row)) return;
+			if (!gutterPressed(event.target, row)) return;
 			const list = selectable();
 			const index = list.indexOf(row);
 			if (index < 0) return;
