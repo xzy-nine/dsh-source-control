@@ -2,6 +2,7 @@
  * 提交改动、完整提交信息、包含分支与文件差异内容查询。
  */
 import { callApi } from './http.ts';
+import type { ConflictKind } from '../../shared/conflict-kind.ts';
 
 /** 提交改动文件。 */
 export interface CommitFileEntry {
@@ -160,6 +161,12 @@ export interface FileDiffContent {
 	readonly newText: string | null;
 	/** 该差异是否为二进制文件；为 true 时 `hunks` 为空。 */
 	readonly binary: boolean;
+	/** 该文件是否是未合并（冲突）条目。 */
+	readonly conflict: boolean;
+	/** 冲突种类；非冲突条目为 null。 */
+	readonly conflictKind: ConflictKind | null;
+	/** 冲突阶段是否存在；非冲突条目为 null。 */
+	readonly conflictStages: { readonly base: boolean; readonly ours: boolean; readonly theirs: boolean } | null;
 	/** 由 git 算出的逐块差异（形状同 DSH 的 WorkspaceDiffHunk）。 */
 	readonly hunks: Array<{
 		readonly oldStart: number;
@@ -198,11 +205,19 @@ export async function fileDiffContent(cwd: string, hash: string, path: string, s
 			lines,
 		}];
 	});
+	const stages = payload.conflictStages !== null && typeof payload.conflictStages === 'object'
+		? payload.conflictStages as Record<string, unknown>
+		: null;
 	return {
 		path: typeof payload.path === 'string' ? payload.path : path,
 		oldText: typeof payload.oldText === 'string' ? payload.oldText : null,
 		newText: typeof payload.newText === 'string' ? payload.newText : null,
 		binary: payload.binary === true,
 		hunks,
+		conflict: payload.conflict === true,
+		conflictKind: typeof payload.conflictKind === 'string' ? payload.conflictKind as ConflictKind : null,
+		conflictStages: stages === null
+			? null
+			: { base: stages.base === true, ours: stages.ours === true, theirs: stages.theirs === true },
 	};
 }

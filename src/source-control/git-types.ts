@@ -234,6 +234,8 @@ export interface BranchBase {
 	readonly branch: string | null;
 	/** 分叉来源的引用短名；无法确定时为 null。 */
 	readonly base: string | null;
+	/** 分叉来源的完整引用；无法确定时为 null。判定用完整引用，显示用短名。 */
+	readonly baseRef: string | null;
 }
 
 /** 仓库信息。 */

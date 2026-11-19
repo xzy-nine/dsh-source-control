@@ -1,16 +1,16 @@
 /**
  * SSH 状态检测的纯逻辑测试。
  *
- * 覆盖版本行提取、私钥筛选与探测输出归类；真实探测需要本机安装 ssh 并联网，不在此测试内。
+ * 覆盖版本行提取、私钥筛选、退出码判定与未就绪说明；真实探测需要本机安装 ssh 并联网，不在此测试内。
  *
  * `ssh-status.ts` 有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入；
- * `pretest` 会先重建产物。归类断言按 `kind` 判定，不按说明文案。
+ * `pretest` 会先重建产物。
  */
 import assert from 'node:assert/strict';
 import { importHostModule } from './lib-import.mjs';
 import { parallel } from './harness.mjs';
 
-const { classifySshProbe, parseSshVersion, sshKeyNames, SSH_TEXT } = await importHostModule('source-control/ssh-status.js');
+const { isAuthenticated, parseSshVersion, sshFailureMessage, sshKeyNames } = await importHostModule('source-control/ssh-status.js');
 
 
 /** 本文件的用例之间无共享进程级状态，因此并发执行；并发前提见 test/harness.mjs。 */
@@ -33,38 +33,28 @@ parallel('SSH 状态检测', (t) => {
 		assert.deepEqual(sshKeyNames([]), []);
 	});
 
-	t.test('认证成功以输出文本为准（退出码非 0 也算通过）', () => {
-		const verdict = classifySshProbe('', "Hi user! You've successfully authenticated, but GitHub does not provide shell access.\n", 'github.com');
-		assert.equal(verdict.authenticated, true);
-		assert.equal(verdict.kind, 'authenticated');
-		assert.equal(verdict.message, null);
+	t.test('ssh 探测以退出码判定：255 是 ssh 自身出错，其余是远端命令的状态', () => {
+		// 认证通过后远端拒绝命令，退出码由对方决定：gitee 为 0、github 为 1。
+		assert.equal(isAuthenticated('ssh', 0), true);
+		assert.equal(isAuthenticated('ssh', 1), true);
+		assert.equal(isAuthenticated('ssh', 255), false);
 	});
 
-	t.test('主机指纹未确认时给出确认指引', () => {
-		const verdict = classifySshProbe('', 'Host key verification failed.', 'github.com');
-		assert.equal(verdict.authenticated, false);
-		assert.equal(verdict.kind, 'host-key');
-		assert.equal(verdict.message, SSH_TEXT.hostKey.replaceAll('{host}', 'github.com'));
+	t.test('git 探测以退出码判定：0 为通过', () => {
+		assert.equal(isAuthenticated('git', 0), true);
+		assert.equal(isAuthenticated('git', 1), false);
+		assert.equal(isAuthenticated('git', 128), false);
+		assert.equal(isAuthenticated('git', 255), false);
 	});
 
-	t.test('公钥被拒绝时指出公钥问题', () => {
-		const denied = classifySshProbe('', 'git@github.com: Permission denied (publickey).', 'github.com');
-		assert.equal(denied.authenticated, false);
-		assert.equal(denied.kind, 'publickey');
-		assert.equal(denied.message, SSH_TEXT.publickey.replaceAll('{host}', 'github.com'));
+	t.test('未就绪说明是探测输出原文，ANSI 转义序列原样保留', () => {
+		const banner = "Hi \u001b[36;01myang(@xzy_nine)\u001b[0m! You've \u001b[32msuccessfully\u001b[0m authenticated, but GITEE.COM does not provide shell access.";
+		assert.equal(sshFailureMessage('', banner, 'gitee.com'), banner);
+		assert.equal(sshFailureMessage('fatal: 出错了\n', '', 'gitee.com'), 'fatal: 出错了');
 	});
 
-	t.test('网络不可达时指出连接问题', () => {
-		const refused = classifySshProbe('', 'ssh: connect to host github.com port 22: Connection refused', 'github.com');
-		assert.equal(refused.authenticated, false);
-		assert.equal(refused.kind, 'network');
-		assert.equal(refused.message, SSH_TEXT.network.replaceAll('{host}', 'github.com'));
-	});
-
-	t.test('空输出给出兜底说明', () => {
-		const empty = classifySshProbe('', '', 'gitlab.com');
-		assert.equal(empty.authenticated, false);
-		assert.equal(empty.kind, 'other');
-		assert.equal(empty.message, SSH_TEXT.fallback.replaceAll('{host}', 'gitlab.com'));
+	t.test('没有输出时给兜底说明', () => {
+		assert.equal(sshFailureMessage('', '', 'gitlab.com'), 'SSH 认证未通过（gitlab.com）。');
+		assert.equal(sshFailureMessage('\n\n', '', 'gitlab.com'), 'SSH 认证未通过（gitlab.com）。');
 	});
 });

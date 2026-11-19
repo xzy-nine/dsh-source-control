@@ -70,7 +70,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 	const isShallowClone = node.shallowClone && node.available;
 	const items: ContextMenuItem[] = [
 		{ title: '刷新', onClick: () => { selectNodeAndReset(node); void run('read', () => refresh('full'), node.path, undefined, { intent: `刷新仓库 ${node.name}` }); } },
-		{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async () => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags); }, node.path, undefined, { intent: `抓取仓库 ${node.name}` }); } },
+		{ title: '抓取', disabled: isRepoBusy(state.busy, node.path, 'network'), onClick: () => { selectNodeAndReset(node); void run('network', async (cancelKey) => { await fetchRepo(node.path, null, settings.fetchAndPrune, settings.fetchAndPruneTags, null, cancelKey); }, node.path, undefined, { intent: `抓取仓库 ${node.name}`, cancellable: true, label: `抓取 ${node.name}` }); } },
 		{
 			title: '推送', disabled: isRepoBusy(state.busy, node.path, 'network') || branchName === '',
 			onClick: () => {

@@ -13,7 +13,7 @@ import { importHostModule } from './lib-import.mjs';
 
 /* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
 
-const { collectDiff, splitDiffBlocks, fitSingleDiff, isDocPath, isBinaryBuffer, SINGLE_DIFF_MAX, DIFF_TOTAL_MAX, TRUNCATED_NOTE } = await importHostModule('source-control/commit-diff.js');
+const { collectDiff, splitDiffBlocks, fitSingleDiff, fitDiffBlock, deletionNote, isDocPath, isBinaryBuffer, SINGLE_DIFF_MAX, DIFF_TOTAL_MAX, TRUNCATED_NOTE } = await importHostModule('source-control/commit-diff.js');
 
 /**
  * 建一个已配置身份的临时仓库。
@@ -91,6 +91,47 @@ test('单文件差异按上限截断并追加标记', () => {
 	const fitted = fitSingleDiff(long, SINGLE_DIFF_MAX);
 	assert.ok(fitted.length <= SINGLE_DIFF_MAX);
 	assert.ok(fitted.endsWith(TRUNCATED_NOTE), '截断标记应取自同一个常量');
+});
+
+test('超长整文件删除压缩为路径标记，不保留被删正文', () => {
+	const block = 'diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-' + 'x'.repeat(SINGLE_DIFF_MAX);
+	assert.ok(block.length > SINGLE_DIFF_MAX, '夹具应超过单文件上限');
+
+	const fitted = fitDiffBlock(block, 'gone.ts');
+	assert.equal(fitted, deletionNote('gone.ts'), '超长删除块应压缩为路径标记');
+	assert.ok(!fitted.includes('x'.repeat(100)), '被删正文不应保留');
+});
+
+test('collectDiff：超长删除文件压缩为路径标记并省出预算', async () => {
+	const { repo, git, write } = makeRepo();
+	try {
+		write('base.txt', 'base\n');
+		// 超过单文件上限的整文件删除：旧实现保留五万字符删除正文。
+		write('gone.ts', 'x\n'.repeat(SINGLE_DIFF_MAX));
+		git('add', '-A');
+		git('commit', '-q', '-m', 'first');
+		git('rm', '-q', '--cached', 'gone.ts');
+		rmSync(join(repo, 'gone.ts'));
+		write('small.ts', 'export const a = 1;\n');
+		git('add', 'small.ts');
+
+		const collected = await collectDiff(repo, false);
+		assert.ok(collected.diff.includes(deletionNote('gone.ts').trim()), '超长删除应压缩为路径标记');
+		assert.ok(collected.diff.includes('small.ts'), '省出的预算仍让小改动进入');
+		assert.ok(!collected.diff.includes('x\n'.repeat(100)), '被删正文不应进入提示词');
+	} finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('未超长的整文件删除保留原补丁', () => {
+	const block = 'diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n';
+	assert.equal(fitDiffBlock(block, 'gone.ts'), block, '未超限时原样保留删除补丁');
+});
+
+test('超长修改仍按截断标记处理，不压缩为删除标记', () => {
+	const block = 'diff --git a/keep.ts b/keep.ts\n--- a/keep.ts\n+++ b/keep.ts\n@@ -1 +1 @@\n-' + 'x'.repeat(SINGLE_DIFF_MAX);
+	const fitted = fitDiffBlock(block, 'keep.ts');
+	assert.ok(fitted.endsWith(TRUNCATED_NOTE), '超长修改仍走截断');
+	assert.ok(!fitted.includes('deleted file mode'), '不应误判为整文件删除');
 });
 
 test('普通路径：暂存区为空时退回工作区与未跟踪文件', async () => {

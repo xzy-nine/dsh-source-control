@@ -1,6 +1,30 @@
 /**
  * 客户端领域类型：宿主返回的数据形状与面板内部使用的结构。
  */
+import type { ConflictKind } from '../../shared/conflict-kind.ts';
+
+export type { ConflictKind };
+
+/** 可执行的冲突解决动作。 */
+export type ConflictAction = 'ours' | 'theirs' | 'delete' | 'markResolved' | 'restoreMarkers';
+
+/** 一个未合并路径在索引里的三个阶段是否存在。 */
+export interface ConflictStages {
+	/** 基线（共同祖先）。 */
+	readonly base: boolean;
+	/** 我方（当前分支）。 */
+	readonly ours: boolean;
+	/** 对方（被合并的一侧）。 */
+	readonly theirs: boolean;
+}
+
+/** 一次冲突解决的结局。 */
+export interface ConflictReport {
+	/** 已处置的路径。 */
+	readonly resolved: readonly string[];
+	/** 未能处置的路径与原因，按 git 原文。 */
+	readonly errors: readonly string[];
+}
 
 /** 提交引用标记（分支/远程/标签）。 */
 export interface CommitTag {
@@ -52,6 +76,8 @@ export interface WorkingTreeEntry {
 	readonly index: string;
 	/** 工作区状态码。 */
 	readonly worktree: string;
+	/** 是否是未合并（冲突）条目：两列组成七种冲突组合之一。 */
+	readonly unmerged?: boolean;
 }
 
 /** 提交改动文件。 */
@@ -86,7 +112,7 @@ export interface RepoNode {
 	readonly depth: number;
 	/** 当前分支；分离头指针为 null。 */
 	readonly branch: string | null;
-	/** 提交短哈希；仅工作树枚举提供。 */
+	/** 分离头指针提交的短哈希；已检出的子模块也带这一项。 */
 	readonly head: string | null;
 	/** 路径在磁盘上是否存在。 */
 	readonly available: boolean;
@@ -99,7 +125,10 @@ export interface RepoNode {
 /** 仓库领先/落后信息。 */
 export interface RepoSync {
 	readonly branch: string | null;
+	/** 上游短名，供显示。 */
 	readonly upstream: string | null;
+	/** 上游的完整引用，如 `refs/remotes/origin/main`：抓取范围与合并目标都按它判定。 */
+	readonly upstreamRef: string | null;
 	readonly ahead: number;
 	readonly behind: number;
 }
@@ -151,8 +180,6 @@ export interface Settings {
 	cleanupSeconds: number;
 	onRepoLoadScrollToHead: boolean;
 	showAvatars: boolean;
-	/** 差异页默认左右并排；单侧改动时仍退回单列。 */
-	diffSplit: boolean;
 	/** 差异页默认自动换行。 */
 	diffWrap: boolean;
 	graphColours: readonly string[] | null;
@@ -227,6 +254,8 @@ export interface ChangeActions {
 	readonly unstagePaths: (cwd: string, paths: readonly string[]) => Promise<unknown>;
 	readonly discardPaths: (cwd: string, paths: readonly string[], untracked: boolean) => Promise<DiscardReport>;
 	readonly openDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
+	/** 对未合并条目执行一个解决动作，并把未完成的路径原因回报给用户。 */
+	readonly resolveConflict: (repo: string, paths: readonly string[], action: ConflictAction) => Promise<ConflictReport>;
 	/** 把路径加入 .gitignore。 */
 	readonly onAddToGitignore: (path: string) => void;
 	/** 把路径加入本地排除文件。 */
@@ -274,16 +303,49 @@ export type BusyScope = 'read' | 'commit' | 'history' | 'network';
  */
 export type PanelRun = (
 	scope: BusyScope,
-	operation: () => Promise<void>,
+	/**
+	 * 操作体。
+	 *
+	 * 可停止的操作经入参拿到本次的停止键，并把它传给宿主侧对应的 git 调用；不可停止的操作
+	 * 忽略该入参即可。
+	 *
+	 * 分多个阶段的长操作在每段开始前调用第二个入参声明当前阶段，界面据此显示执行到哪一步。
+	 */
+	operation: (cancelKey: string, reportPhase: (label: string) => void) => Promise<void>,
 	repo?: string,
 	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: { readonly historyChanged?: boolean; readonly intent?: string },
+	options?: {
+		readonly historyChanged?: boolean;
+		readonly intent?: string;
+		/**
+		 * 允许用户手动停止本次操作。
+		 *
+		 * 给出时该操作进入可停止清单，用户从停止入口主动终止；不给时只能等它自己结束。
+		 * 只有确信「停下不留下半截状态」的操作才该给。
+		 */
+		readonly cancellable?: boolean;
+		/**
+		 * 界面上的动作名。
+		 *
+		 * 与 `intent` 分开：`intent` 是日志用的精确描述（如「同步（抓取 + 合并或推送）」），
+		 * 这里只给用户看的短名。省略时退回 `intent`。
+		 */
+		readonly label?: string;
+	},
 ) => Promise<void>;
 
-/** 一条进行中的操作：目标仓库路径与影响面。 */
+/**
+ * 一条进行中的操作：目标仓库路径、影响面与可停止信息。
+ *
+ * `cancelKey` 只在这次操作可被用户手动停止时给出；`label` 是给用户看的动作名。
+ */
 export interface BusyEntry {
 	readonly repo: string;
 	readonly scope: BusyScope;
+	/** 停止键；与宿主侧子进程登记键一致。不可停止时为 undefined。 */
+	readonly cancelKey?: string | undefined;
+	/** 面向用户的操作名，用于停止入口的说明。 */
+	readonly label?: string | undefined;
 }
 
 /** 某个仓库四个影响面各自的忙碌标志；供分区按控件用途取用。 */
@@ -329,8 +391,10 @@ export interface PanelState {
 	head: string | null;
 	/** 当前 HEAD 指向的提交哈希；尚无提交时为 null。 */
 	headHash: string | null;
-	/** 上游远程跟踪分支名；无上游时为 null。 */
+	/** 上游短名；无上游时为 null。 */
 	upstream: string | null;
+	/** 上游的完整引用；无上游时为 null。 */
+	upstreamRef: string | null;
 	/**
 	 * 相对上游领先的提交数。
 	 *

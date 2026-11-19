@@ -42,7 +42,7 @@ const COMMITS_PAYLOAD = {
 const SNAPSHOT_PAYLOAD = {
 	command: 'loadWorkingTreeSnapshot', error: null,
 	entries: [{ path: 'a.txt', origPath: null, index: ' ', worktree: 'M' }],
-	head: 'c1', branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0,
+	head: 'c1', branch: 'main', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', ahead: 0, behind: 0,
 };
 
 /**
@@ -122,13 +122,13 @@ async function mount(initialDelays = {}, overrides = {}) {
 	/** 当前仓库路径；测试可改写以制造换仓库。 */
 	const target = { path: '/repo' };
 	/** hook 的可变入参：本用例的筛选与分叉来源等。 */
-	const options = { filter: undefined, branchBase: null, headHint: null, upstreamHint: null, ...overrides };
+	const options = { filter: undefined, branchBase: null, headHint: null, upstreamHint: null, upstreamRefHint: null, ...overrides };
 	function Probe() {
 		const result = useGraphData({
 			workingTreePath: target.path, hasWorkspace: true, maxCommits: 200,
 			settings: SETTINGS, selectedId: null, setSyncById: noop,
 			filter: options.filter, branchBase: options.branchBase,
-			headHint: options.headHint, upstreamHint: options.upstreamHint,
+			headHint: options.headHint, upstreamHint: options.upstreamHint, upstreamRefHint: options.upstreamRefHint,
 		});
 		latest.state = result.state;
 		latest.refresh = result.refresh;
@@ -320,18 +320,20 @@ function lastBranches(harness) {
 test('取数起点：手选筛选把选中引用交给宿主', { skip }, async () => {
 	const harness = await mount({}, { filter: { mode: 'manual', ids: ['refs/heads/dev'] } });
 	await settle(harness, 400);
-	assert.deepEqual(lastBranches(harness), ['dev'], '手选引用按短名传给 git log');
+	assert.deepEqual(lastBranches(harness), ['refs/heads/dev'], '手选引用按完整引用名传给 git log');
 	assert.deepEqual(harness.latest.state.commits.map((commit) => commit.hash).filter((hash) => hash !== '*'), ['c1']);
 	await harness.teardown();
 });
 
 test('取数起点：自动筛选取当前分支、上游与分叉来源', { skip }, async () => {
 	const harness = await mount({}, {
-		headHint: 'main', upstreamHint: 'origin/main',
-		branchBase: { branch: 'main', base: 'origin/dev' },
+		headHint: 'main', upstreamHint: 'origin/main', upstreamRefHint: 'refs/remotes/origin/main',
+		// 分叉来源带所属仓库：只有与当前仓库一致时才会被采用。
+		branchBase: { repo: '/repo', branch: 'main', base: 'origin/dev', baseRef: 'refs/remotes/origin/dev' },
 	});
 	await settle(harness, 400);
-	assert.deepEqual(lastBranches(harness), ['main', 'origin/main', 'origin/dev']);
+	// 分叉来源用完整引用交给 git log：裸短名与同名分支撞车时会被解析到别处。
+	assert.deepEqual(lastBranches(harness), ['refs/heads/main', 'refs/remotes/origin/main', 'refs/remotes/origin/dev']);
 	await harness.teardown();
 });
 
@@ -392,11 +394,11 @@ test('对账刷新：触底加载过的分页不被收回', { skip }, async () =
 test('切换筛选会按新起点重取提交图', { skip }, async () => {
 	const harness = await mount();
 	await settle(harness, 400);
-	assert.deepEqual(lastBranches(harness), ['main', 'origin/main'], '分支与上游从响应取到后自动模式收窄');
+	assert.deepEqual(lastBranches(harness), ['refs/heads/main', 'refs/remotes/origin/main'], '分支与上游从响应取到后自动模式收窄');
 	const before = harness.bodies.filter((body) => body.command === 'loadCommits').length;
 	await harness.setOptions({ filter: { mode: 'manual', ids: ['refs/heads/dev'] } });
 	await settle(harness, 400);
 	assert.ok(harness.bodies.filter((body) => body.command === 'loadCommits').length > before, '换筛选应重取');
-	assert.deepEqual(lastBranches(harness), ['dev']);
+	assert.deepEqual(lastBranches(harness), ['refs/heads/dev']);
 	await harness.teardown();
 });

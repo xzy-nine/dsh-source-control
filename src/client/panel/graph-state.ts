@@ -18,7 +18,7 @@ import type { PanelState, RepoSync } from '../shared/types.ts';
  */
 export function syncOfSnapshot(snapshot: WorkingTreeSnapshot): RepoSync {
 	return {
-		branch: snapshot.branch, upstream: snapshot.upstream,
+		branch: snapshot.branch, upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef,
 		ahead: snapshot.ahead, behind: snapshot.behind,
 	};
 }
@@ -43,7 +43,7 @@ export function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapsho
 		// 手里已有本轮快照：变更列表那一路就是就绪的，与提交图是否还在取数无关。
 		...previous, error: null, entriesPhase: 'ready', merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 		headHash: snapshot.head,
-		upstream: snapshot.upstream, ahead: snapshot.ahead, behind: snapshot.behind,
+		upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
 		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
 		commits,
 	};

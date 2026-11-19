@@ -1,5 +1,5 @@
 /**
- * 提交图的滚动窗口化：可视区测量、起始行换算、触底续取与滚动期间的悬停推迟。
+ * 提交图的滚动窗口化：可视区测量、起始行换算、触底续取、按哈希定位与滚动期间的悬停推迟。
  *
  * 行偏移按 ROW_HEIGHT 累加，展开详情的那一行额外加上它的实测高度；未渲染部分由调用方用
  * 等高空占位撑起滚动条。
@@ -23,6 +23,19 @@ const SCROLL_SETTLE_MS = 160;
 /** 取下一页后等待新数据的上限；超时未到则解除占用，允许重试。 */
 const LOAD_MORE_SETTLE_MS = 10000;
 
+/**
+ * 定位请求：把某个提交所在的行滚到可视区顶部。
+ *
+ * 提交在提交列表里的下标不等于行下标（领先/落后指示行与未提交行都插在行数组里），因此按哈希
+ * 给出目标，由提交图自己换算行下标。
+ */
+export interface ScrollToRowRequest {
+	/** 目标行的提交哈希。 */
+	readonly hash: string;
+	/** 请求序号；同一目标重复定位时靠它再触发一次。 */
+	readonly serial: number;
+}
+
 /** 滚动窗口化的入参。 */
 export interface UseGraphWindowingOptions {
 	/** 泳道布局给出的行。 */
@@ -37,6 +50,8 @@ export interface UseGraphWindowingOptions {
 	readonly onLoadMore: () => void;
 	/** 悬停取数回调：进入传哈希，离开传 null。 */
 	readonly onHoverCommit?: ((hash: string | null) => void) | undefined;
+	/** 定位请求：把该哈希所在行滚到可视区顶部；无请求时为 null。 */
+	readonly scrollTo?: ScrollToRowRequest | null | undefined;
 }
 
 /** 滚动窗口化的返回值。 */
@@ -64,9 +79,12 @@ export interface UseGraphWindowingResult {
  * @returns 见 {@link UseGraphWindowingResult}。
  */
 export function useGraphWindowing({
-	rows, selectedIndex, commits, moreCommitsAvailable, onLoadMore, onHoverCommit,
+	rows, selectedIndex, commits, moreCommitsAvailable, onLoadMore, onHoverCommit, scrollTo,
 }: UseGraphWindowingOptions): UseGraphWindowingResult {
 	const graphRef = React.useRef<HTMLDivElement | null>(null);
+	/** 最近一次渲染的行列表；定位按它把哈希换成行下标。 */
+	const rowsRef = React.useRef(rows);
+	rowsRef.current = rows;
 	/** 可视区高度；窗口化渲染据此决定渲染哪一段。 */
 	const [viewportHeight, setViewportHeight] = React.useState(0);
 	/** 可视窗口的起始行下标；滚动按帧合并后才更新。 */
@@ -252,6 +270,22 @@ export function useGraphWindowing({
 		return out;
 	}, [rows, selectedIndex, detailHeight]);
 	offsetsRef.current = offsets;
+
+	/*
+	 * 定位：按哈希找行下标，再按偏移表设置滚动位置。
+	 *
+	 * 目标行可能尚未挂载（窗口化只渲染可视区附近），因此不能按 DOM 找行：滚到它的偏移后，窗口
+	 * 随之把该行渲染出来。只认 `scrollTo` 本身——把行偏移与行列表纳入依赖，会让展开详情引起的
+	 * 重算把视图又拉回目标行。
+	 */
+	React.useEffect(() => {
+		if (scrollTo === null || scrollTo === undefined) return;
+		const index = rowsRef.current.findIndex((row) => row.hash === scrollTo.hash);
+		if (index < 0) return;
+		const element = graphRef.current;
+		if (element === null) return;
+		element.scrollTo({ top: offsetsRef.current[index], behavior: 'smooth' });
+	}, [scrollTo]);
 
 	/*
 	 * 可视区上下各多渲染 OVERSCAN_ROWS 行，滚动时不出现空白。

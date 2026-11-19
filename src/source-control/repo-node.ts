@@ -24,7 +24,7 @@ export interface RepoNode {
 	readonly depth: number;
 	/** 当前分支；分离头指针为 null。 */
 	readonly branch: string | null;
-	/** 提交短哈希；仅工作树枚举提供。 */
+	/** 分离头指针时的提交短哈希；已检出的子模块同样提供。 */
 	readonly head: string | null;
 	/** 路径在磁盘上是否存在。 */
 	readonly available: boolean;

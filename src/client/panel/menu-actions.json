@@ -181,16 +181,11 @@
 		"createBranch": "创建分支…",
 		"createTag": "创建标签…",
 		"cherrypick": "挑拣此提交…",
-		"cherrypickHint": "将此提交挑拣到当前分支",
 		"revert": "重置此提交…",
-		"revertHint": "将此提交效果重置并创建重置提交",
 		"resetHere": "重置当前分支到此处",
 		"resetSoft": "暂存其他改动",
-		"resetSoftHint": "软重置：保留改动并已暂存",
 		"resetMixed": "不暂存其他改动",
-		"resetMixedHint": "混合重置：保留改动但不暂存",
 		"resetHard": "丢弃其他改动",
-		"resetHardHint": "硬重置：丢弃工作区与暂存区的改动",
 		"copyHash": "复制哈希",
 		"copyMessage": "复制提交信息"
 	}

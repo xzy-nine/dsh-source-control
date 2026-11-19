@@ -520,13 +520,14 @@ const DetailGutter = React.memo(DetailGutterView);
  * @param props.issueLinking - Issue 链接配置。
  * @param props.commitStats - 提交哈希 -> 改动统计的映射。
  * @param props.onHoverCommit - 悬停回调：进入传哈希，离开传 null。
+ * @param props.scrollTo - 定位请求：把目标提交所在行滚到可视区顶部；无请求时为 null。
  * @param props.renderDetail - 选中行的展开内容：({ commit, row }) => 元素或 null。
  * @returns 提交图元素。
  */
 function CommitGraphView({
 	commits, head, selectedHash, onSelect, onLoadMore, moreCommitsAvailable,
 	onContextMenu, formatDate, formatDetail, issueLinking, commitStats, commitMessages, onHoverCommit, renderDetail,
-	localTip, remoteTip, baseTip, upstream,
+	localTip, remoteTip, baseTip, upstream, scrollTo,
 	markdown, showAvatars, muteMergeCommits, graphColours: _graphColours,
 	translatedMessages, translatedFrom, translatingHash, translateReady, onTranslateCommit, onCancelTranslateCommit,
 	onVisibleCommits,
@@ -553,7 +554,7 @@ function CommitGraphView({
 		[rows, selectedHash],
 	);
 	const { graphRef, offsets, range, loadingMore, handleScroll, measureDetail, hoverOrDefer } = useGraphWindowing({
-		rows, selectedIndex, commits, moreCommitsAvailable, onLoadMore, onHoverCommit,
+		rows, selectedIndex, commits, moreCommitsAvailable, onLoadMore, onHoverCommit, scrollTo,
 	});
 
 	// 上报可见窗口内的提交：标题栏的批量翻译按这一批下发。

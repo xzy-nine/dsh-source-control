@@ -54,6 +54,13 @@ test('干净仓库只有分支信息', () => {
 	}
 });
 
+test('上游写成 remotes/ 前缀时收敛成远程分支短名', () => {
+	// 本地分支名与上游短名相同时 git 的 `branch.upstream` 带多一层前缀。
+	const snap = parseStatusSnapshot('# branch.oid abc123\0# branch.head other/main\0# branch.upstream remotes/other/main\0# branch.ab +0 -0\0');
+	assert.equal(snap.branch, 'other/main');
+	assert.equal(snap.upstream, 'other/main');
+});
+
 test('条目上限：按完整深度截断，浅层路径优先保留', () => {
 	const { repo, git, write } = makeRepo();
 	try {
@@ -101,7 +108,7 @@ test('未跟踪、已修改、已暂存与重命名各自的 XY 状态', () => {
 
 		const snap = snapshot(repo);
 		const byPath = new Map(snap.entries.map((entry) => [entry.path, entry]));
-		assert.deepEqual(byPath.get('b.txt'), { path: 'b.txt', origPath: null, index: 'M', worktree: ' ' });
+		assert.deepEqual(byPath.get('b.txt'), { path: 'b.txt', origPath: null, index: 'M', worktree: ' ' }, '普通条目不带未合并标记');
 		assert.deepEqual(byPath.get('renamed.txt'), { path: 'renamed.txt', origPath: 'a.txt', index: 'R', worktree: ' ' });
 		assert.deepEqual(byPath.get('untracked.txt'), { path: 'untracked.txt', origPath: null, index: '?', worktree: '?' });
 		assert.equal(snap.entries.length, 3, '重命名的旧路径不作为独立条目');
@@ -219,6 +226,7 @@ test('未合并记录按 XY 两列给出', () => {
 		assert.notEqual(entry, undefined);
 		assert.equal(entry.index, 'U');
 		assert.equal(entry.worktree, 'U');
+		assert.equal(entry.unmerged, true, '未合并记录要带上标记，分组与差异页据此处理');
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}

@@ -6,13 +6,17 @@
 import React from 'react';
 import {
 	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, StateDot,
+	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, StateDot, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { PublishIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { ChangeGroup } from '../changes.ts';
 import { anyBusy } from '../busy.ts';
 import { commitButtonDisabledOf } from '../submit-state.ts';
-import type { AiStats, BusyFlags, ChangeActions, SectionPhase, WorkingTreeEntry } from '../../shared/types.ts';
+import type { AiStats, BusyFlags, ChangeActions, ConflictAction, ConflictStages, SectionPhase, WorkingTreeEntry } from '../../shared/types.ts';
+import { ConflictGroup } from '../conflict-group.ts';
+import { indexGroupOf } from '../conflicts.ts';
+import { absolutePathOf } from '../change-tree.ts';
+import type { ChangeMenuDeps } from '../change-menu.ts';
 import { WorkspaceEmpty } from './empty-state.ts';
 import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
 import { refreshButton } from './refresh-button.ts';
@@ -68,14 +72,22 @@ export interface ChangesSectionProps extends ChangeActions {
 	readonly onRefresh: () => void;
 	/** 同步按钮的右键菜单；双向分叉时给出覆盖入口，其余情形为 undefined。 */
 	readonly onSyncContextMenu?: ((event: React.MouseEvent<HTMLElement>) => void) | undefined;
-	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string> };
-	readonly groupExpanded: { staged: boolean; unstaged: boolean };
+	readonly collapsedByGroup: { staged: ReadonlySet<string>; unstaged: ReadonlySet<string>; conflict: ReadonlySet<string> };
+	readonly groupExpanded: { staged: boolean; unstaged: boolean; conflict: boolean };
 	readonly toggleChange: (key: string, path: string) => void;
 	readonly toggleGroup: (key: string) => void;
 	/** 当前工作树是否有本地排除条目；有才显示查看入口。 */
 	readonly hasLocalExclude: boolean;
 	/** 查看本地排除的条目。 */
 	readonly onShowLocalExclude: () => void;
+	/** 未解决的冲突条目数：大于零时提交按钮禁用。 */
+	readonly unresolvedConflicts: number;
+	/** 各冲突路径的阶段；冲突分组的动作可用性据此判定。 */
+	readonly conflictStages: ReadonlyMap<string, ConflictStages>;
+	/** 打开冲突文件的差异页。 */
+	readonly onOpenConflict: (entry: WorkingTreeEntry) => void;
+	/** 执行一个冲突解决动作并给出失败原因。 */
+	readonly onResolveConflict: (paths: readonly string[], action: ConflictAction) => void;
 	/** 是否处于未完成的合并：为真时显示取消合并入口。 */
 	readonly merging: boolean;
 	/** 中止当前合并。 */
@@ -102,7 +114,7 @@ export type CommitBoxProps = Pick<ChangesSectionProps,
 	| 'hooksActive' | 'runHooks' | 'onToggleRunHooks' | 'onStash' | 'onAbortMerge'
 	| 'showTranslate' | 'translateBusy' | 'onTranslate' | 'aiBusy' | 'aiWarning' | 'aiStats' | 'onAiCommit' | 'onOpenAiSettings'
 	| 'showSyncButton' | 'syncBehind' | 'syncAhead' | 'onSync' | 'showPublishButton' | 'onPublish'
-	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging' | 'onSyncContextMenu'>;
+	| 'canSubmit' | 'onSubmit' | 'hasLocalExclude' | 'onShowLocalExclude' | 'merging' | 'unresolvedConflicts' | 'onSyncContextMenu'>;
 
 /**
  * 提交框：提交信息、AI 入口与主按钮；只随这些属性重渲染。
@@ -114,7 +126,7 @@ function CommitBoxView({
 	entries, busy, phase, head, message, onMessageChange, amend, onToggleAmend, hooksActive, runHooks, onToggleRunHooks,
 	onStash, onAbortMerge, showTranslate, translateBusy, onTranslate, aiBusy, aiWarning, aiStats, onAiCommit,
 	onOpenAiSettings, showSyncButton, syncBehind, syncAhead, onSync, showPublishButton, onPublish, canSubmit, onSubmit,
-	hasLocalExclude, onShowLocalExclude, merging, onSyncContextMenu,
+	hasLocalExclude, onShowLocalExclude, merging, unresolvedConflicts, onSyncContextMenu,
 }: CommitBoxProps): React.ReactElement {
 	/** AI 生成设置菜单的展开状态；两项都跳到全局设置里的同一分区。 */
 	const [aiMenuOpen, setAiMenuOpen] = React.useState(false);
@@ -200,7 +212,13 @@ function CommitBoxView({
 			),
 		),
 		aiWarning !== '' && React.createElement('div', { className: css.commitAiWarning }, aiWarning),
-		merging && React.createElement('div', { className: css.mergeHint }, '合并中：提交即结束合并，提交信息留空时沿用 git 生成的合并信息。'),
+		/*
+		 * 冲突提示优先于合并提示：拣选与变基停在冲突时没有 MERGE_HEAD，只判 merging 会漏掉。
+		 * 冲突清零后回到合并中那条说明。
+		 */
+		unresolvedConflicts > 0
+			? React.createElement('div', { className: css.mergeHint }, `还有 ${String(unresolvedConflicts)} 个冲突未解决：解决后才能提交。`)
+			: merging && React.createElement('div', { className: css.mergeHint }, '合并中：提交即结束合并，提交信息留空时沿用 git 生成的合并信息。'),
 		aiStats !== null && React.createElement('div', { className: css.commitAiStats },
 			String(aiStats.tps) + ' tok/s',
 			' · 输入 ' + String(aiStats.inputTokens),
@@ -296,6 +314,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 				canSubmit: props.canSubmit, onSubmit: props.onSubmit,
 				hasLocalExclude: props.hasLocalExclude, onShowLocalExclude: props.onShowLocalExclude,
 				merging: props.merging, onSyncContextMenu: props.onSyncContextMenu,
+				unresolvedConflicts: props.unresolvedConflicts,
 				}),
 				// 提交框与两个分组分开：提交框固定，只有变更列表滚动。
 				React.createElement(
@@ -310,6 +329,8 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 					React.createElement(ChangeLists, {
 						entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 						stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+						resolveConflict: props.resolveConflict, conflictStages: props.conflictStages, onOpenConflict: props.onOpenConflict,
+						onResolveConflict: props.onResolveConflict,
 					}),
 				),
 			),
@@ -321,7 +342,8 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 export type ChangeListsProps = Pick<ChangesSectionProps,
 	| 'entries' | 'entriesTruncated' | 'busy' | 'workingTreePath' | 'collapsedByGroup' | 'groupExpanded'
 	| 'toggleChange' | 'toggleGroup' | 'run' | 'stagePaths' | 'unstagePaths' | 'discardPaths'
-	| 'openDiff' | 'onAddToGitignore' | 'onAddToLocalExclude'>;
+	| 'openDiff' | 'onAddToGitignore' | 'onAddToLocalExclude'
+	| 'resolveConflict' | 'conflictStages' | 'onOpenConflict' | 'onResolveConflict'>;
 
 /**
  * 变更分组列表：两个分组的折叠状态与条目。
@@ -332,30 +354,64 @@ export type ChangeListsProps = Pick<ChangesSectionProps,
 function ChangeListsView({
 	entries, entriesTruncated, busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
+	resolveConflict, conflictStages, onOpenConflict, onResolveConflict,
 }: ChangeListsProps): React.ReactElement {
 	// 已暂存一侧有条目时，未暂存分组即使为空也显示：折叠标题上的分组菜单仍需可达。
-	const forceShow = React.useMemo(
-		() => entries.some((entry) => entry.index !== ' ' && entry.index !== '?'),
-		[entries],
-	);
+	const forceShow = React.useMemo(() => entries.some(indexGroupOf), [entries]);
 	const toggleStaged = React.useCallback(() => { toggleGroup('staged'); }, [toggleGroup]);
 	const toggleUnstaged = React.useCallback(() => { toggleGroup('unstaged'); }, [toggleGroup]);
+	const toggleConflict = React.useCallback(() => { toggleGroup('conflict'); }, [toggleGroup]);
+	/**
+	 * 冲突行的右键菜单依赖面。
+	 *
+	 * 冲突分组不走暂存与丢弃（两者对未合并路径都失败），因此这份依赖面只提供解决入口；
+	 * 打开文件、复制路径与忽略规则照常。菜单按阶段判定动作可用性。
+	 */
+	const conflictMenu = React.useMemo<ChangeMenuDeps>(() => ({
+		busy: busy.commit,
+		staged: false,
+		truncated: entriesTruncated,
+		onStage: () => { /* 冲突条目不能直接暂存 */ },
+		onUnstage: () => { /* 冲突条目不能取消暂存 */ },
+		onStageAll: () => { /* 冲突条目不能直接暂存 */ },
+		onUnstageAll: () => { /* 冲突条目不能取消暂存 */ },
+		onDiscard: () => { /* 丢弃对未合并路径不成立 */ },
+		onDiscardFolder: () => { /* 丢弃对未合并路径不成立 */ },
+		onDiscardGroup: () => { /* 丢弃对未合并路径不成立 */ },
+		onOpenFile: (entry) => { onOpenConflict(entry); },
+		onAddToGitignore,
+		onAddToLocalExclude,
+		// 菜单里的路径相对仓库根；复制时给出绝对路径。
+		onCopyPath: (path) => { void writeClipboard(absolutePathOf(workingTreePath as string, path)); },
+		conflictStages,
+		onResolveConflict: (paths, action) => {
+			if (workingTreePath !== null) void resolveConflict(workingTreePath, paths, action);
+		},
+	}), [busy, entriesTruncated, onOpenConflict, onAddToGitignore, onAddToLocalExclude, workingTreePath, conflictStages, resolveConflict]);
 	return React.createElement(
 		React.Fragment,
 		null,
+		React.createElement(ConflictGroup, {
+			entries, busy: busy.commit,
+			groupKey: 'conflict', collapsed: collapsedByGroup.conflict, toggleChange,
+			open: groupExpanded.conflict, onToggleGroup: toggleConflict, stagesByPath: conflictStages, onOpen: onOpenConflict,
+			onResolve: onResolveConflict,
+			run, stagePaths, unstagePaths, discardPaths, openDiff,
+			onAddToGitignore, onAddToLocalExclude, resolveConflict, menu: conflictMenu,
+		}),
 		React.createElement(ChangeGroup, {
 			staged: true, truncated: entriesTruncated, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 			groupKey: 'staged', collapsed: collapsedByGroup.staged, toggleChange,
 			open: groupExpanded.staged, onToggleGroup: toggleStaged,
 			run, stagePaths, unstagePaths, discardPaths, openDiff,
-			onAddToGitignore, onAddToLocalExclude,
+			onAddToGitignore, onAddToLocalExclude, resolveConflict,
 		}),
 		React.createElement(ChangeGroup, {
 			staged: false, truncated: entriesTruncated, entries, busy: busy.commit, workingTreePath: workingTreePath as string,
 			groupKey: 'unstaged', collapsed: collapsedByGroup.unstaged, toggleChange,
 			open: groupExpanded.unstaged, onToggleGroup: toggleUnstaged,
 			run, stagePaths, unstagePaths, discardPaths, openDiff,
-			onAddToGitignore, onAddToLocalExclude,
+			onAddToGitignore, onAddToLocalExclude, resolveConflict,
 			forceShow,
 		}),
 	);

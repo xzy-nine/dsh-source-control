@@ -14,6 +14,7 @@ import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
 import { guidesOf } from './tree-rows.tsx';
+import { indexGroupOf, worktreeGroupOf } from './conflicts.ts';
 import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
@@ -56,7 +57,7 @@ export function splitPath(path: string): { dir: string; name: string } {
  * @param build - 构建菜单项。
  * @returns 无。
  */
-function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => ContextMenuItem[]): void {
+export function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => ContextMenuItem[]): void {
 	event.preventDefault();
 	const target = event.currentTarget;
 	target.classList.add(MENU_TARGET_CLASS);
@@ -130,6 +131,64 @@ export function isUntrackedFile(entry: WorkingTreeEntry): boolean {
 	return entry.index === '?' && entry.worktree === '?';
 }
 
+/** 变更树里的文件夹行。 */
+export interface ChangeFolderRowProps {
+	readonly row: Extract<ChangeRow, { kind: 'folder' }>;
+	readonly open: boolean;
+	readonly onToggle: () => void;
+	readonly onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
+}
+
+/**
+ * 变更树里的文件夹行：缩进、折叠箭头、目录图标、名称与计数。
+ *
+ * 暂存/未暂存分组与合并冲突分组共用同一种画法，视觉上三组因此没有差别。
+ *
+ * @param props - 见 {@link ChangeFolderRowProps}。
+ * @returns 文件夹行元素。
+ */
+export function ChangeFolderRow({ row, open, onToggle, onContextMenu }: ChangeFolderRowProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: cx(css.change, css.folder), title: row.path, onClick: onToggle, onContextMenu },
+		...guidesOf(row.depth),
+		React.createElement('span', { className: cx(shared.repoChevron, !open && shared.isCollapsed) },
+			React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
+		React.createElement(open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
+		React.createElement('span', { className: css.changeName }, row.name),
+		React.createElement('span', { className: cx(css.rowTail, css.count) }, String(row.count)),
+	);
+}
+
+/** 变更树里文件行的外壳属性：行高亮、点击与右键、缩进、图标与文件名。 */
+export interface ChangeFileShellProps {
+	readonly name: string;
+	readonly depth: number;
+	readonly title: string;
+	/** 行尾内容：状态字符，以及各分组自己的悬停按钮。 */
+	readonly children?: React.ReactNode;
+	readonly onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
+	readonly onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
+}
+
+/**
+ * 变更树里文件行的外壳：三组共用同一套缩进、图标与文件名画法，尾部内容由调用方给。
+ *
+ * @param props - 见 {@link ChangeFileShellProps}。
+ * @returns 文件行元素。
+ */
+export function ChangeFileShell({ name, depth, title, children, onClick, onContextMenu }: ChangeFileShellProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: cx(css.change, css.changeOpenable), title, onClick, onContextMenu },
+		...guidesOf(depth),
+		React.createElement(FileTypeIcon, { path: name, size: 14 }),
+		React.createElement('span', { className: css.changeName },
+			React.createElement('span', { className: css.changeText }, name)),
+		children,
+	);
+}
+
 /** 文件夹行或文件行（变更树内）。 */
 function ChangeNodeRowView({
 	row, busy, open, staged, groupKey, toggleChange, onStage, onUnstage, onDiscard, onOpen, menu,
@@ -143,20 +202,9 @@ function ChangeNodeRowView({
 				entry: null, untracked: false,
 			}));
 		};
-		return React.createElement(
-			'div',
-			{
-				className: cx(css.change, css.folder), title: row.path,
-				onClick: () => { toggleChange(groupKey, row.path); }, onContextMenu: handleContextMenu,
-			},
-			...guidesOf(row.depth),
-			React.createElement('span', {
-				className: cx(shared.repoChevron, !open && shared.isCollapsed),
-			}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-			React.createElement(open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
-			React.createElement('span', { className: css.changeName }, row.name),
-			React.createElement('span', { className: cx(css.rowTail, css.count) }, String(row.count)),
-		);
+		return React.createElement(ChangeFolderRow, {
+			row, open, onToggle: () => { toggleChange(groupKey, row.path); }, onContextMenu: handleContextMenu,
+		});
 	}
 	const entry = row.entry;
 	const fileStaged = staged;
@@ -178,12 +226,11 @@ function ChangeNodeRowView({
 		onOpen(entry, isNew);
 	};
 	return React.createElement(
-		'div',
-		{ className: cx(css.change, css.changeOpenable), title: entry.path, onClick: handleClick, onContextMenu: handleContextMenu },
-		...guidesOf(row.depth),
-		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: css.changeName },
-			React.createElement('span', { className: css.changeText }, name)),
+		ChangeFileShell,
+		{
+			name, depth: row.depth, title: entry.path,
+			onClick: handleClick, onContextMenu: handleContextMenu,
+		},
 		// 悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。
 		fileStaged
 			? React.createElement('button', {
@@ -315,10 +362,9 @@ function ChangeGroupView({
 	staged, truncated, entries, busy, workingTreePath, collapsed, toggleChange, groupKey, open, onToggleGroup, run,
 	stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude, forceShow,
 }: ChangeGroupProps): React.ReactElement | [] {
+	// 分组白名单：未合并条目的两列不属于任一侧，因此只出现在「合并冲突」分组里。
 	const visible = React.useMemo(
-		() => entries.filter((entry) => (staged
-			? (entry.index !== ' ' && entry.index !== '?')
-			: (entry.worktree !== ' '))),
+		() => entries.filter((entry) => (staged ? indexGroupOf(entry) : worktreeGroupOf(entry))),
 		[entries, staged],
 	);
 	const rows = React.useMemo<ChangeRow[]>(() => changeRowsOf(visible, collapsed), [visible, collapsed]);

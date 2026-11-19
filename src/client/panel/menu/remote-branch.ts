@@ -6,7 +6,7 @@ import { showCheckbox } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
 import type { MenuActionMeta } from '../menu-actions.ts';
-import { branchFromRemoteItem, confirmThenRun, copyRefNameItem, shortBranchName, type MenuContext } from './shared.ts';
+import { branchFromRemoteItem, confirmThenRun, copyRefNameItem, remoteRefOf, shortBranchName, type MenuContext } from './shared.ts';
 
 export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null>> = {
 	checkoutRemoteBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '检出远程分支', (ref, localName) => {
@@ -22,7 +22,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			title: meta.title,
 			onClick: confirmThenRun(
 				{ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true },
-				() => { void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, name), checkoutFailureText); }); },
+				() => { void ctx.deps.run('history', async () => { throwIfError(await merge(ctx.repo, remoteRefOf(name)), checkoutFailureText); }); },
 			),
 		};
 	},

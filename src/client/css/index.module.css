@@ -35,8 +35,20 @@
 
 /* 差异页正文：forge 的 DiffFile 只做横向滚动（`.code` 自带 overflow-x），纵向滚动由这里承担。
    `min-height:0` 让 flex 子项能收缩，`overflow:auto` 才是可滚动的那个视口；
-   文件头用 position:sticky 贴在这个滚动容器的顶部。 */
-.diffTabBody{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;overscroll-behavior:contain}
+   文件头用 position:sticky 贴在这个滚动容器的顶部。
+   这里是分段暂存轨道的定位参照：轨道用绝对定位叠在正文之上。 */
+.diffTabBody{position:relative;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;overscroll-behavior:contain}
+
+/* 正文与它中间那条 96px 的分段轨道并排。 */
+.diffBody{position:relative;flex:1 0 auto;display:flex;flex-direction:column;min-height:0}
+
+/* 左右两栏之间让出 20px：分段暂存轨道站在这条缝里，不压住任何一栏的代码。
+   forge 的并排行是两个等宽格子，因此把每个格子收窄半个列宽即可空出中间那条。
+   只有确实要画分段列时这里才加 `data-sc-lane`：单侧改动、折叠、提交作用域都没有分段
+   按钮，那时不该白占宽度。 */
+[data-sc-lane] :global([data-diff-pair]){column-gap:20px}
+
+[data-sc-lane] :global([data-forge-notes]){column-gap:20px}
 
 /* 增减行数：与评审视图同色同字号。 */
 .counts{display:inline-flex;flex:none;gap:6px;align-items:center;font-family:var(--ds-font-family-code);font-size:12px;line-height:20px}
@@ -44,6 +56,13 @@
 .added{color:var(--dsw-alias-state-success-primary)}
 
 .deleted{color:var(--dsw-alias-state-error-primary)}
+
+/* 全部块：跟在增减行数后面，紧凑按钮；形态与文件行上的行内动作一致。 */
+.hunkAll{margin-left:2px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;cursor:pointer}
+
+.hunkAll:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+
+.hunkAll:disabled{opacity:0.45;cursor:default}
 
 .label{color:var(--dsw-alias-label-tertiary)}
 
@@ -67,3 +86,11 @@
 /* 差异视图里的已审阅标记不属于本插件：没有已审阅状态可存，也无可提交的评审。
    forge 的 DiffFile 只在这个控件上写 data-disabled，因此这一条只命中它。 */
 .diffTabBody label[data-disabled]{display:none}
+/* 合并视图底部：处理进度与「写回结果」。固定在本页底部，不随内容滚动。 */
+.mergeFooter{display:flex;flex:none;gap:10px;align-items:center;padding:8px 10px;border-top:0.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-card-fill)}
+
+.mergeFooterText{font-size:12px;color:var(--dsw-alias-label-secondary)}
+
+.primaryButton{margin-left:auto;padding:3px 12px;border:1px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+
+.primaryButton:disabled{opacity:0.45;cursor:default}

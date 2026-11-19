@@ -4,7 +4,9 @@ Status: proposed
 
 ## Problem
 
-本插件在「变更区 / 提交 / 推送 / 冲突 / 工作树」四个面与 VS Code 内置 git 扩展（`E:\GitHubCode\98Ref\03Windows\vscode\extensions\git`）存在能力缺口，其中冲突条目分组为实测缺陷。
+本插件在「变更区 / 提交 / 推送 / 冲突 / 工作树」四个面与 VS Code 内置 git 扩展（`E:\GitHubCode\98Ref\03Windows\vscode\extensions\git`）存在能力缺口。
+
+> 冲突面已单独交付：冲突条目的分组、差异显示与解决动作见[冲突条目在差异页显示并可就地解决](../../implemented/feature/2026-11-14-merge-conflict-view-and-resolution.md)。本篇第一节记录的是当时的缺口与提案，实施细节以那份记录为准；其余各节仍待实施。
 
 成功判据：
 
@@ -17,7 +19,7 @@ Status: proposed
 
 ## Proposal
 
-### 一、冲突条目分组与解决（最高优先）
+### 一、冲突条目分组与解决（已交付）
 
 现状：`src/source-control/working-tree.ts:686` 的 `parseStatusSnapshot` 把 v2 的 `u`（未合并）记录写入 `entries`，`index` / `worktree` 取 XY 两列（如 `UU`、`AA`、`DU`）。`src/client/panel/changes.ts:35` 的 `changeOf`：`staged = index !== ' ' && index !== '?' && index !== ''`，`UU` 因此判为已暂存。`src/client/panel/sections.ts:307-309` 与 `changes.ts:307-309` 两个分组的 filter 分别是 `index !== ' ' && index !== '?'` 与 `worktree !== ' '`，`UU` 两条都成立。实测确认：`git restore` 对未合并路径直接失败（`error: path 'f.txt' is unmerged`，退出码 1），因此现有「丢弃」对冲突条目必然报错；`git checkout --ours/--theirs` 才是可用入口。
 

@@ -6,7 +6,7 @@
  * `HEAD~1 → 工作区` 的合并 diff，把上一提交的改动一并纳入。
  *
  * 进入提示词前分三层：二进制文件只留文件名；文档类改动排在代码之后；
- * 再按文件块截断超长 diff 并按总量上限填充。
+ * 再按文件块处理超长 diff（整文件删除压缩为路径标记，其余截断）并按总量上限填充。
  */
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
@@ -82,6 +82,41 @@ export interface CollectedDiff {
 export function fitSingleDiff(diff: string, limit: number): string {
 	if (diff.length <= limit) return diff;
 	return diff.slice(0, Math.max(0, limit - TRUNCATED_NOTE.length)) + TRUNCATED_NOTE;
+}
+
+/** 超长整文件删除压缩后保留的块：只标明路径与移除事实，不含被删正文。 */
+export function deletionNote(path: string): string {
+	return `diff --git a/${path} b/${path}\ndeleted file mode\n${path} 移除\n`;
+}
+
+/**
+ * 判断补丁块是否为整文件删除。
+ *
+ * 判据取补丁头：`deleted file mode` 与 `+++ /dev/null` 同时出现。纯删行但文件仍在的改动
+ * 没有这两行，因此不会被误判为整文件删除。
+ *
+ * @param block - 单个文件块的补丁文本。
+ * @returns 整文件删除时为 true。
+ */
+function isDeletionBlock(block: string): boolean {
+	const hunk = block.indexOf('\n@@');
+	const header = hunk === -1 ? block : block.slice(0, hunk);
+	return header.includes('deleted file mode') && header.includes('+++ /dev/null');
+}
+
+/**
+ * 把单个文件块收进长度上限。
+ *
+ * 整文件删除超限时压缩成一行路径标记：删除正文对生成提交信息的价值低于新增与修改，
+ * 压缩后仍省掉被删内容占用的预算。其余改动保留前段并追加截断标记。
+ *
+ * @param block - 单个文件块的补丁文本。
+ * @param path - 文件相对路径。
+ * @returns 不超过上限的块。
+ */
+export function fitDiffBlock(block: string, path: string): string {
+	if (block.length <= SINGLE_DIFF_MAX) return block;
+	return isDeletionBlock(block) ? deletionNote(path) : fitSingleDiff(block, SINGLE_DIFF_MAX);
 }
 
 /**
@@ -166,7 +201,7 @@ function parseNumstatWithPatch(stdout: string): DiffFile[] {
 		const record = records[at];
 		files.push({
 			path: record.path,
-			block: fitSingleDiff(blocks[at], SINGLE_DIFF_MAX),
+			block: fitDiffBlock(blocks[at], record.path),
 			binary: record.binary,
 			doc: isDocPath(record.path),
 		});

@@ -4,7 +4,7 @@
  * 子进程环境、子进程生命周期、空闲跟踪、调用频率告警、只读结果缓存与在途复用、
  * 仓库写事件都在本模块。上层的工作区操作与子模块操作共用这里的 {@link runGit}。
  */
-import { runCollect, terminateAllChildren } from './host-runtime.js';
+import { cancellableKeys, runCollect, terminateAllChildren, terminateCancellable } from './host-runtime.js';
 import { countSpawnInScope } from './api/refresh-scope.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
 
@@ -37,6 +37,12 @@ export interface GitOptions {
 	 * 让所有面板重取一遍。调用方在确认确有改动后经 {@link notifyRepositoryWrite} 补发。
 	 */
 	readonly quietWrite?: boolean;
+	/**
+	 * 可停止的登记键。
+	 *
+	 * 给出时该子进程归入这次操作，用户可据此手动停止；省略时不可单独停止。
+	 */
+	readonly cancelKey?: string | undefined;
 }
 
 /**
@@ -141,6 +147,28 @@ export function normalizeRepo(cwd: string): string {
  */
 export function killRunningGit(): void {
 	terminateAllChildren();
+}
+
+/**
+ * 停止一次可停止的 git 操作。
+ *
+ * 用户手动停止的入口：整棵进程树被终止，等待该子进程的调用方因此立即得到失败结果，
+ * 不会一直挂着。本地命令与联网命令都可停止，是否可停在发起侧决定。
+ *
+ * @param key - 停止键。
+ * @returns 实际终止的子进程数；为 0 表示该操作已经结束。
+ */
+export function cancelGitOperation(key: string): number {
+	return terminateCancellable(key);
+}
+
+/**
+ * 当前在跑的可停止操作键。
+ *
+ * @returns 停止键列表。
+ */
+export function runningCancellableKeys(): string[] {
+	return cancellableKeys();
 }
 
 /* 宿主退出与终止信号下都收尾；重复调用无副作用。 */
@@ -510,7 +538,7 @@ const writeListeners = new Set<(repo: string, surface: WriteSurface) => void>();
 export type WriteSurface = 'history' | 'index';
 
 /** 只影响索引与工作区的写子命令；不在表内的一律按 `history`。 */
-const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv']);
+const INDEX_ONLY_WRITES: ReadonlySet<string> = new Set(['add', 'restore', 'clean', 'rm', 'update-index', 'mv', 'checkout-index']);
 
 /**
  * 判定一条写命令的影响面。
@@ -604,7 +632,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 	const operation = startOperation(repo, kindOf(args));
 	const task = (async (): Promise<GitResult> => {
 		try {
-			return await spawnGit(args, cwd);
+			return await spawnGit(args, cwd, options.cancelKey);
 		} finally {
 			endOperation(repo, operation);
 		}
@@ -690,13 +718,19 @@ export function isProbeCommand(args: readonly string[]): boolean {
 /**
  * 启动一个 git 子进程。
  *
+ * 不设时长上限：钩子由仓库自身的脚本决定时长，联网命令等不到响应时也不该由插件替用户
+ * 判定放弃。挂住的命令由用户手动停止，见 {@link cancelGitOperation}。
+ *
  * @param args - 参数数组。
  * @param cwd - 工作目录。
  * @returns 子进程结果。
  */
-function spawnGit(args: readonly string[], cwd: string): Promise<GitResult> {
+function spawnGit(args: readonly string[], cwd: string, cancelKey?: string): Promise<GitResult> {
 	countSpawnInScope();
-	return runCollect({ command: 'git', args, cwd, env: gitEnvironment(isReadOnly(args)) });
+	return runCollect({
+		command: 'git', args, cwd, env: gitEnvironment(isReadOnly(args)),
+		...(cancelKey === undefined ? {} : { cancelKey }),
+	});
 }
 
 /**

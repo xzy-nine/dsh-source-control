@@ -14,6 +14,16 @@
 
 .dialogHint{white-space:pre-wrap;line-height:1.6;color:var(--dsw-alias-label-secondary);font-size:12px;margin-bottom:8px}
 
+/* 分段控件填满弹窗内容列：段按列宽等分，段内文案过长时截断，完整文案在悬停提示里。 */
+
+.selectControl{max-width:100%}
+
+.selectControl button{overflow:hidden;text-overflow:ellipsis}
+
+/* 选中项的长文本（如远程地址）：在控件下方整行折行显示，可选中复制。 */
+
+.selectDescription{margin-top:8px;font-family:var(--ds-font-family-code, monospace);font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary);word-break:break-all;user-select:text}
+
 /* 结果入口：地址与路径都是长串，独占一行并允许折行。 */
 
 .dialogLinks{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
@@ -29,3 +39,15 @@ button.btnDanger,
 button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);color:#fff}
 
 button.btnDanger:hover:not(:disabled){background:var(--dsw-alias-state-error-secondary)}
+
+/* ── 可停止操作 ─────────────────────────────────────────── */
+
+/* 非阻塞操作的一行入口：占一行，不遮挡面板内容。 */
+.cancelRow{display:flex;align-items:center;gap:8px;padding:2px 8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+
+.cancelRowText{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 阻塞操作的弹窗：定位在面板范围内，不接管 DSH 本体的交互。 */
+.cancelDialog{position:absolute;inset:auto 8px 8px auto;z-index:10;display:flex;flex-direction:column;gap:6px;padding:10px 12px;max-width:320px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-primary);box-shadow:0 4px 16px rgb(0 0 0 / 24%)}
+
+.dialogTitle{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}

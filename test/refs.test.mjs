@@ -76,15 +76,64 @@ parallel('引用筛选状态', (t) => {
 	});
 
 	t.test('取数起点：全部为 null，自动与手选给引用名', () => {
-		const context = { head: 'feature', headHash: 'h1', upstream: 'origin/feature', base: 'origin/main' };
+		const context = {
+			head: 'feature', headHash: 'h1',
+			upstream: 'origin/feature', upstreamRef: 'refs/remotes/origin/feature', base: 'origin/main',
+		};
 		assert.equal(filterBranchesOf({ mode: 'all', ids: [] }, context), null);
-		assert.deepEqual(filterBranchesOf({ mode: 'auto', ids: [] }, context), ['feature', 'origin/feature', 'origin/main']);
+		assert.deepEqual(filterBranchesOf({ mode: 'auto', ids: [] }, context), ['refs/heads/feature', 'refs/remotes/origin/feature', 'origin/main']);
 		assert.deepEqual(
 			filterBranchesOf({ mode: 'manual', ids: ['refs/heads/dev', 'refs/tags/v1'] }, context),
-			['dev', 'v1'],
+			['refs/heads/dev', 'refs/tags/v1'],
 		);
 		// 自动模式的上下文为空时退回全部，避免空取数。
-		assert.equal(filterBranchesOf({ mode: 'auto', ids: [] }, { head: null, headHash: null, upstream: null, base: null }), null);
+		assert.equal(
+			filterBranchesOf({ mode: 'auto', ids: [] }, { head: null, headHash: null, upstream: null, upstreamRef: null, base: null }),
+			null,
+		);
+	});
+
+	t.test('取数起点：分叉来源用完整引用，且与上游同名时不误判为重复', () => {
+		/*
+		 * 上游是 refs/remotes/origin/main、来源是 refs/heads/origin/main 时两者是不同引用：
+		 * 按短名比较会把来源当成重复而跳过，图形区因此少一段历史。
+		 */
+		const context = {
+			head: 'feature', headHash: 'h1',
+			upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main',
+			base: 'origin/main', baseRef: 'refs/heads/origin/main',
+		};
+		assert.deepEqual(
+			filterBranchesOf({ mode: 'auto', ids: [] }, context),
+			['refs/heads/feature', 'refs/remotes/origin/main', 'refs/heads/origin/main'],
+		);
+	});
+
+	t.test('取数起点：没有完整引用时不猜上游种类', () => {
+		/*
+		 * 上游是本地分支（branch.X.remote 为 .）时短名就是本地分支名。没有完整引用时按远程跟踪
+		 * 引用拼会得到不存在的引用，git log 直接失败（退出码 128），比少一个起点更糟。
+		 */
+		const context = {
+			head: 'followlocal', headHash: 'h1',
+			upstream: 'localbase', upstreamRef: null, base: null,
+		};
+		assert.deepEqual(
+			filterBranchesOf({ mode: 'auto', ids: [] }, context),
+			['refs/heads/followlocal'],
+			'缺完整引用时只给当前分支，不拼出不存在的上游引用',
+		);
+	});
+
+	t.test('取数起点：当前分支与上游同名时两者都取', () => {
+		// 本地分支名形如远程分支短名时它不再是上游的去重对象：两个尖端都要进窗口。
+		assert.deepEqual(
+			filterBranchesOf({ mode: 'auto', ids: [] }, {
+				head: 'other/main', headHash: 'h1',
+				upstream: 'other/main', upstreamRef: 'refs/remotes/other/main', base: null,
+			}),
+			['refs/heads/other/main', 'refs/remotes/other/main'],
+		);
 	});
 
 	t.test('手选引用失效时回退自动', () => {
@@ -107,13 +156,34 @@ parallel('引用筛选状态', (t) => {
 			ref('refs/remotes/origin/main', 'origin/main', 'remote'),
 			ref('refs/heads/dev', 'dev', 'branch'),
 		];
-		const context = { head: 'main', headHash: 'h1', upstream: 'origin/main', base: null };
+		const context = {
+			head: 'main', headHash: 'h1', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', base: null,
+		};
 		assert.deepEqual([...checkedRefIds({ mode: 'all', ids: [] }, refs, context)], refs.map((item) => item.id));
 		assert.deepEqual(
 			[...checkedRefIds({ mode: 'auto', ids: [] }, refs, context)],
 			['refs/heads/main', 'refs/remotes/origin/main'],
 		);
 		assert.deepEqual([...checkedRefIds({ mode: 'manual', ids: ['refs/heads/dev'] }, refs, context)], ['refs/heads/dev']);
+	});
+
+	t.test('勾选态：按引用 id 匹配，同名标签不被错勾', () => {
+		/*
+		 * 自动模式的勾选按 id：`main` 既是分支也是标签时，只该勾上当前分支那一条，
+		 * 按名字匹配会把同名的标签一并勾上。
+		 */
+		const refs = [
+			ref('refs/heads/main', 'main', 'branch'),
+			ref('refs/tags/main', 'main', 'tag'),
+			ref('refs/remotes/origin/main', 'origin/main', 'remote'),
+		];
+		const context = {
+			head: 'main', headHash: 'h1', upstream: 'origin/main', upstreamRef: 'refs/remotes/origin/main', base: null,
+		};
+		assert.deepEqual(
+			[...checkedRefIds({ mode: 'auto', ids: [] }, refs, context)],
+			['refs/heads/main', 'refs/remotes/origin/main'],
+		);
 	});
 
 	t.test('按钮摘要：模式名、单个引用名或数量', () => {

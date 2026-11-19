@@ -103,24 +103,23 @@ export interface SshStatusInfo {
 	readonly authenticated: boolean;
 	/** 是否可直接用于 SSH 远程操作。 */
 	readonly ready: boolean;
-	/** 未就绪时的原因说明。 */
+	/** 未就绪时的说明：探测输出原文；就绪时为 null。 */
 	readonly message: string | null;
-	/** 探测输出的原文。 */
-	readonly detail: string;
 }
 
 /**
  * 检测本地 SSH 状态：ssh 客户端、私钥与对目标主机的认证。
  *
- * 结果由宿主按主机缓存：就绪结果缓存 5 分钟、未就绪结果缓存 15 秒，重复调用不重新探测。
+ * 结果由宿主按探测目标缓存：就绪结果缓存 5 分钟、未就绪结果缓存 15 秒，重复调用不重新探测。
  *
  * @param cwd - 会话工作区路径。
  * @param host - 目标主机名，默认 github.com。
  * @param refresh - 为 true 时忽略宿主缓存，重新探测。
+ * @param sshUrl - 目标主机的 SSH 远程地址；给定时宿主用它跑 `git ls-remote`。
  * @returns SSH 状态。
  */
-export async function sshStatus(cwd: string, host = 'github.com', refresh = false): Promise<SshStatusInfo> {
-	const payload = await callApi(cwd, { command: 'sshStatus', host, refresh });
+export async function sshStatus(cwd: string, host = 'github.com', refresh = false, sshUrl = ''): Promise<SshStatusInfo> {
+	const payload = await callApi(cwd, { command: 'sshStatus', host, refresh, sshUrl });
 	const status = (payload.status ?? {}) as Record<string, unknown>;
 	const keys = Array.isArray(status.keys) ? status.keys.filter((item): item is string => typeof item === 'string') : [];
 	return {
@@ -131,7 +130,6 @@ export async function sshStatus(cwd: string, host = 'github.com', refresh = fals
 		authenticated: status.authenticated === true,
 		ready: status.ready === true,
 		message: typeof status.message === 'string' ? status.message : null,
-		detail: typeof status.detail === 'string' ? status.detail : '',
 	};
 }
 

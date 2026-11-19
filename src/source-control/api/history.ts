@@ -4,13 +4,14 @@
  */
 import {
 	abortMerge, addRemote, addTag, checkoutBranch, checkoutCommit, cherrypickCommit, createBranch,
-	deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag, dropCommit, editRemote, fetch,
+	deleteBranch, deleteRemote, deleteRemoteBranch, deleteTag, dropCommit, editRemote, fetch, fetchRemoteBranch,
 	applyStash, branchFromStash, dropStash, fetchIntoLocalBranch, merge, mergeCurrentIntoBranch, popStash, pruneRemote, pullBranch, pushBranchToMultipleRemotes,
 	pushStash, pushTag, pushUpstream, rebase, renameBranch, resetToCommit, restoreFullHistory, revertCommit,
 } from '../git-actions.js';
 import { isShallowClone } from '../worktree-branches.js';
 import type { MergeMode } from '../git-actions.js';
 import { notifyRepositoryWrite, runGit } from '../git-exec.js';
+import { shareCancellable } from '../host-runtime.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
 
@@ -41,8 +42,42 @@ async function refsSignature(repo: string): Promise<string> {
 	return result.code === 0 ? result.stdout : '';
 }
 
-/** 在途的抓取：同仓库并发请求共享一次 git fetch，避免多面板各起一遍。 */
-const inFlightFetches = new Map<string, Promise<{ repo: string; changed: boolean }>>();
+/**
+ * 在途的抓取：同一目标并发请求共享一次 git fetch，避免多面板各起一遍。
+ *
+ * 同时记下发起方使用的停止键：后来者共享这次抓取时，把自己的停止键指向同一组子进程，
+ * 否则它的停止请求找不到任何进程。
+ */
+const inFlightFetches = new Map<string, { readonly promise: Promise<{ repo: string; changed: boolean }>; readonly cancelKey: string }>();
+
+/**
+ * 在途抓取的键。
+ *
+ * 只抓一个分支与抓整个远程是两次不同的传输，不能互相复用；同一仓库的不同抓取范围
+ * 各占一个键，互不阻塞。
+ *
+ * @param repo - 仓库路径。
+ * @param remote - 远程名；null 表示全部远程。
+ * @param branch - 该远程上的分支名；null 表示该远程的全部分支。
+ * @returns 键。
+ */
+function fetchKeyOf(repo: string, remote: string | null, branch: string | null): string {
+	if (remote === null) return repo + '\u0000*';
+	return repo + '\u0000' + remote + (branch === null ? '' : '\u0000' + branch);
+}
+
+/**
+ * 抓取目标的展示文本。
+ *
+ * @param remote - 远程名；null 表示全部远程。
+ * @param branch - 该远程上的分支名；null 表示该远程的全部分支。
+ * @returns 展示文本。
+ */
+function fetchTargetText(remote: string | null, branch: string | null): string {
+	if (remote === null) return '远程（全部）';
+	if (branch === null) return '远程：' + remote;
+	return '远程分支：' + remote + '/' + branch;
+}
 
 /**
  * 处理分支、提交、标签与远程写操作的一条命令。
@@ -101,9 +136,14 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				errors: await pushBranchToMultipleRemotes(repo, str('branchName'), arr('remotes'), bool('setUpstream'), (typeof msg.mode === 'string' ? msg.mode : '') as never, bool('skipHooks')),
 			});
 			break;
-		case 'pushUpstream':
-			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks')));
+		case 'pushUpstream': {
+			// 同步等上游分支与本地分支不同名的情形由调用方给出显式目标；其余路径不给，交给 git。
+			const remote = str('remote');
+			const branch = str('branch');
+			const target = remote === '' || branch === '' ? null : { remote, branch };
+			await respondError('pushUpstream', () => pushUpstream(repo, bool('skipHooks'), str('cancelKey'), target));
 			break;
+		}
 
 		/* --- 提交操作 --- */
 		case 'checkoutCommit':
@@ -123,7 +163,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		case 'merge': {
 			const obj = str('obj');
-			const error = await merge(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit'));
+			const error = await merge(repo, obj, typeof msg.actionOn === 'string' ? msg.actionOn : 'Branch', bool('createNewCommit'), bool('squash'), bool('noCommit'), str('cancelKey'));
 			if (error === null) logInfo('repo', `已合并：${obj}`);
 			respond({
 				command: 'merge',
@@ -187,15 +227,32 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 			const remoteName = strOrNull('name');
 			const pruneRemotes = bool('prune');
 			const pruneAllTags = bool('pruneTags');
+			const remoteBranch = strOrNull('branch');
 			// 非仓库路径抓不了：直接回未变化，不起 git fetch 与两次 for-each-ref。
 			if (!(await isRepoPath(repo))) {
 				logDebug('repo', `目标路径不是 git 仓库，跳过抓取：${repo}`);
 				respondResultSync('fetch', { repo, changed: false });
 				break;
 			}
+			// 清理选项作用于整个远程，与按分支抓取不同时成立。
+			if (remoteBranch !== null && remoteName === null) {
+				respond({ command: 'fetch', error: '按分支抓取时必须指定远程名。' });
+				break;
+			}
+			if (remoteBranch !== null && (pruneRemotes || pruneAllTags)) {
+				respond({ command: 'fetch', error: '按分支抓取时不能同时清理远程分支或标签。' });
+				break;
+			}
 			await respondResult('fetch', async () => {
-				const existing = inFlightFetches.get(repo);
-				if (existing !== undefined) return existing;
+				// 去重按抓取目标；取消登记按请求方给的键：两者不是一回事，不能互相顶替。
+				const key = fetchKeyOf(repo, remoteName, remoteBranch);
+				const requestKey = str('cancelKey');
+				const existing = inFlightFetches.get(key);
+				if (existing !== undefined) {
+					// 共享这次抓取，同时让请求方的停止键也能终止它名下的子进程。
+					if (requestKey !== '') shareCancellable(requestKey, existing.cancelKey);
+					return existing.promise;
+				}
 				const promise = (async () => {
 					/*
 					 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
@@ -204,16 +261,18 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
 					 */
 					const before = await refsSignature(repo);
-					const error = await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true);
+					const error = remoteBranch === null
+						? await fetch(repo, remoteName, pruneRemotes, pruneAllTags, true, requestKey)
+						: await fetchRemoteBranch(repo, remoteName as string, remoteBranch, true, requestKey);
 					if (error !== null) throw new Error(error);
 					const after = await refsSignature(repo);
 					const changed = before !== after;
 					// 抓取以 quietWrite 执行：确有改动才补发写事件，否则面板不会白刷新。
 					if (changed) notifyRepositoryWrite(repo);
-					logInfo('repo', `已抓取远程${remoteName === null ? '（全部）' : `：${remoteName}`}${changed ? '，引用有更新' : '，引用无变化'}`);
+					logInfo('repo', `已抓取${fetchTargetText(remoteName, remoteBranch)}${changed ? '，引用有更新' : '，引用无变化'}`);
 					return { repo, changed };
-				})().finally(() => { inFlightFetches.delete(repo); });
-				inFlightFetches.set(repo, promise);
+				})().finally(() => { inFlightFetches.delete(key); });
+				inFlightFetches.set(key, { promise, cancelKey: requestKey });
 				return promise;
 			});
 			break;
