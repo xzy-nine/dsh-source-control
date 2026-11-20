@@ -75,6 +75,8 @@ async function mount(initialDelays = {}, overrides = {}) {
 	const delays = new Map(Object.entries(initialDelays));
 	/** 当前快照条目；测试可改写以制造条目变化。 */
 	const snapshot = { entries: SNAPSHOT_PAYLOAD.entries };
+	/** 快照命令是否按失败回投；测试可改写。 */
+	const fail = { snapshot: false };
 	/**
 	 * 提交图数据源；`records` 为 null 时回固定响应。
 	 *
@@ -109,8 +111,14 @@ async function mount(initialDelays = {}, overrides = {}) {
 		if (wait > 0) await new Promise((done) => setTimeout(done, wait));
 		// 与真实 fetch 一致：请求被中止时调用方看到 AbortError，而不是拿到正常响应。
 		if (init.signal?.aborted === true) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+		/*
+		 * 快照命令失败时宿主回的是「空条目 + error 文本」，而不是非 2xx：夹具按同一形状回投，
+		 * 用来验证客户端把这类结果当成失败。
+		 */
 		const payload = body.command === 'loadCommits' ? graphPayload(body)
-			: body.command === 'loadWorkingTreeSnapshot' ? { ...SNAPSHOT_PAYLOAD, entries: snapshot.entries }
+			: body.command === 'loadWorkingTreeSnapshot' ? (fail.snapshot
+				? { command: body.command, error: 'fatal: not a git repository: x/.git/modules/y', entries: [], head: null, branch: null, upstream: null, upstreamRef: null, ahead: 0, behind: 0, merging: false, truncated: false }
+				: { ...SNAPSHOT_PAYLOAD, entries: snapshot.entries })
 				: body.command === 'loadRepoInfo' ? { command: body.command, error: null, branches: ['main'], head: 'main', remotes: [], stashes: [] }
 					: { command: body.command, error: null };
 		return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
@@ -148,7 +156,10 @@ async function mount(initialDelays = {}, overrides = {}) {
 		restoreGlobals();
 	};
 	return {
-		calls, bodies, delays, snapshot, graph, latest, act, reactRoot, teardown,
+		calls, bodies, delays, snapshot, fail, graph, latest, act, reactRoot, teardown,
+		/** 让快照命令按失败回投。 */
+		set failSnapshot(value) { fail.snapshot = value; },
+		get failSnapshot() { return fail.snapshot; },
 		/** 换到另一个仓库并重渲染。 */
 		setPath: (path) => {
 			target.path = path;
@@ -288,6 +299,25 @@ test('只取快照的刷新：登记 entries 作用面', { skip }, async () => {
 	assert.deepEqual(scopes, ['entries'], '只应登记 entries');
 	await settle(harness, 600);
 	assert.deepEqual(harness.latest.state.background, []);
+	await harness.teardown();
+});
+
+test('刷新失败：相位不留在 loading，错误照常上报', { skip }, async () => {
+	// 宿主的快照命令把「仓库可用但读不出来」放在 error 里回投：这类结果必须按失败处理。
+	const harness = await mount();
+	await settle(harness, 400);
+	assert.equal(harness.latest.state.phase, 'ready');
+	// 让快照命令回一条命令级 error，模拟 gstatus 之类的取数失败。
+	harness.failSnapshot = true;
+	await harness.act(async () => { await harness.latest.refresh('full'); });
+	assert.equal(harness.latest.state.phase, 'ready', '失败之后相位必须收回来，否则更改区永远停在占位');
+	assert.equal(harness.latest.state.entriesPhase, 'ready', '更改区那一路同样要收回来');
+	assert.match(String(harness.latest.state.error), /fatal/, '失败原因仍要写进状态供报错弹窗使用');
+	harness.failSnapshot = false;
+	// 恢复后主动刷新应能把数据重新取回来。
+	await harness.act(async () => { await harness.latest.refresh('full'); });
+	assert.equal(harness.latest.state.error, null, '恢复后错误应被清掉');
+	assert.equal(harness.latest.state.entries.length, 1);
 	await harness.teardown();
 });
 
