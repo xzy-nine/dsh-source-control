@@ -155,6 +155,20 @@ test('hunk 形状逐字段映射到 forge', () => {
 	assert.notEqual(hunks[0], TEXT_DIFF.hunks[0], '必须换一个对象，不能把宿主的数组当成只读类型塞过去');
 });
 
+test('行数过多的块在适配层就被切到上限以内', () => {
+	// forge 按块一次性展开行数组，单块行数超过运行时上限即抛 RangeError。
+	const big = {
+		...TEXT_DIFF,
+		hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 12000, lines: Array.from({ length: 12000 }, (_, at) => `+line ${String(at + 1)}`) }],
+	};
+	const hunks = adapter.toForgeHunks(big);
+	assert.ok(hunks.length > 1, '必须切成多块');
+	for (const hunk of hunks) assert.ok(hunk.lines.length <= 4000, `单块行数越过上限：${String(hunk.lines.length)}`);
+	assert.equal(hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0), 12000, '行不丢也不重');
+	assert.equal(hunks[0].newStart, 1);
+	assert.equal(hunks.at(-1).newStart + hunks.at(-1).newLines - 1, 12000, '末尾行号不偏移');
+});
+
 test('行数统计与宿主 hunk 前缀一致', () => {
 	assert.deepEqual(adapter.countLines(TEXT_DIFF), { additions: 2, deletions: 1 });
 });

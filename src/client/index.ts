@@ -31,6 +31,7 @@ import {
 	type FileDiffContent, type FileHunk, type MergeContentsPayload,
 } from './api/index.ts';
 import { MergeView } from './diff/merge-view.ts';
+import { DiffRenderGuard } from './diff/render-guard.ts';
 import { formatMergeComment } from './diff/comment-reference.ts';
 import { setShownSide, subscribeShownSide, titleScopeOf } from './diff/shown-side.ts';
 import type { LineRange } from './diff/line-range.ts';
@@ -642,6 +643,7 @@ function GitDiffTab(props) {
 	 * 绘制正文：读取中、读取失败、二进制各给一行说明，文本比较交给 forge 的 DiffFile。
 	 *
 	 * 这几条状态文案与 DSH 差异视图一致，因此与 forge 面板里同样的失败看起来没有差别。
+	 * 返回值由 {@link DiffRenderGuard} 收容：这里抛出的渲染错误只影响正文这一段。
 	 *
 	 * @returns 正文元素。
 	 */
@@ -803,7 +805,16 @@ function GitDiffTab(props) {
 		React.createElement(
 			'div',
 			{ className: css.diffTabBody, ref: scrollRoot },
-			renderDiffBody(),
+			/*
+			 * 正文外面套一层渲染守卫：单个文件渲染失败只让正文画成说明，页头、文件切换与
+			 * 本页其它控件照常可用。换文件或换作用域时换 key 重新挂载，上一份的失败不跟到
+			 * 下一个文件。
+			 */
+			React.createElement(
+				DiffRenderGuard,
+				{ key: `${commitHash}\0${String(staged)}\0${baseHash}\0${currentPath}` },
+				renderDiffBody(),
+			),
 		),
 	);
 }

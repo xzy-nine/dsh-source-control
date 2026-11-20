@@ -14,6 +14,7 @@ import { ReviewComposer, type ReviewActions } from '@deepseek-ai/dsh-experimenta
 import type { ReviewSelection } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/review.ts';
 import { SectionReach } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/section-reach.ts';
 import { textLines } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/diff-rows.ts';
+import { chunkHunks } from './hunk-chunking.ts';
 import { forgePanelCopy } from './forge-locales.ts';
 import { formatCommentQuote } from './comment-reference.ts';
 import { gutterPressed, markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
@@ -25,22 +26,23 @@ import css from '../css/forge-adapter.module.css';
 export { SectionReach };
 
 /**
- * 本插件的一个 hunk 能否直接喂给 forge 的 `ForgeDiffHunk`。
+ * 把宿主的 hunk 映射成 forge 的 `ForgeDiffHunk`。
  *
  * 两边形状逐字段一致（`oldStart`/`oldLines`/`newStart`/`newLines`/`lines`），
- * 唯一差别是只读标记，因此这里是结构映射而非转换。
+ * 唯一差别是只读标记，因此这里是结构映射而非转换；行数超过上限的块另按行号连续
+ * 切成若干小块，见 `hunk-chunking.ts` 的 {@link chunkHunks}。
  *
  * @param content - 宿主算出的差异内容。
  * @returns forge 形状的逐块差异。
  */
 export function toForgeHunks(content: FileDiffContent): ForgeDiffFile['hunks'] {
-	return content.hunks.map((hunk) => ({
+	return chunkHunks(content.hunks.map((hunk) => ({
 		oldStart: hunk.oldStart,
 		oldLines: hunk.oldLines,
 		newStart: hunk.newStart,
 		newLines: hunk.newLines,
 		lines: hunk.lines,
-	}));
+	})));
 }
 
 /**

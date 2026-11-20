@@ -29,6 +29,8 @@ function makeReact() {
 		useRef: (init) => ({ current: init ?? null }),
 		// 真实 React 的 memo 返回组件；冒烟只关心调用形态，原样返回。
 		memo: (component) => component,
+		// 类组件只在错误边界上用到；冒烟只需要它可被继承。
+		Component: class Component { constructor(props) { this.props = props; } setState() {} },
 		Fragment: Symbol('Fragment'),
 	};
 	return React;
