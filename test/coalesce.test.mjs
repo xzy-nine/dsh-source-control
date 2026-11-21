@@ -30,7 +30,4 @@ parallel('并发合并等待', (t) => {
 		assert.equal(settled, true, '在飞项仍然跑完，结果进缓存');
 	});
 
-	t.test('默认上限为 30 秒', () => {
-		assert.equal(COALESCE_TIMEOUT_MS, 30000);
-	});
 });

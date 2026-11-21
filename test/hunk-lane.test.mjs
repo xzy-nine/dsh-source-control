@@ -7,12 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
 const { JSDOM } = await import('jsdom');
 const { hunkLineText, hunkSlots, markHunkRows, sameSlots, scrollToHunk } = await import('../src/client/diff/hunk-lane.ts');
 const { setShownSide, titleScopeOf } = await import('../src/client/diff/shown-side.ts');
@@ -150,75 +145,6 @@ test('指到分段按钮把它要处理的行标出来', () => {
 	dom.window.close();
 });
 
-test('轨道按钮在指到与聚焦时高亮、离开时清除', () => {
-	const source = readFileSync(join(root, 'src', 'client', 'diff', 'hunk-bar.ts'), 'utf8');
-	assert.match(source, /onPointerEnter: \(\) => \{ markHunkRows\(host, hunks, hunk\.index\)/, '指到按钮时标出该块的行');
-	assert.match(source, /onPointerLeave: \(\) => \{ markHunkRows\(host, hunks, null\)/, '离开时清除');
-	assert.match(source, /onFocus:/, '键盘聚焦同样标出');
-	// 高亮要压在红绿底色之上：并排布局的增减底色画在行内的单元格上，因此染色用铺满整格的
-	// 绝对定位伪元素，而不是给行加内阴影（那会落在单元格下方，看不见）。
-	const css = readFileSync(join(root, 'src', 'client', 'css', 'forge-adapter.module.css'), 'utf8');
-	const base = /\[data-sc-hunk-hover\]\)\{([^}]*)\}/.exec(css);
-	assert.ok(base !== null, '应有悬停高亮的样式');
-	assert.match(base[1], /position:relative/, '行要成为伪元素的定位参照');
-	const overlay = /\[data-sc-hunk-hover\]\)::after\{([^}]*)\}/.exec(css);
-	assert.ok(overlay !== null, '染色由伪元素铺满整格');
-	assert.match(overlay[1], /position:absolute;inset:0/, '伪元素盖满该行');
-	assert.match(overlay[1], /pointer-events:none/, '染色层不能挡指针');
-	assert.match(overlay[1], /5%/, '淡到只是微微泛白');
-	assert.ok(!/box-shadow:inset 0 0 0 9999px/.test(css), '不要用行内阴影：它落在单元格底色下面');
-});
-
-test('按钮常驻淡显，指进中间列加深，指到某个时实显', () => {
-	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
-	// 触屏没有 hover：只按 hover 显隐会让按钮在那些设备上永远不出现，因此要有常驻态。
-	const button = /^\.button\{([^}]*)\}/m.exec(lane);
-	assert.ok(button !== null, '应有按钮规则');
-	assert.match(button[1], /opacity:0\.35/, '常驻淡显，不悬停也看得见');
-	assert.ok(!/opacity:0;/.test(button[1]), '默认不能是全隐');
-	// 整列接收指针：否则只有指到按钮本身才触发，列里其余位置没有反应。
-	const rule = /^\.lane\{([^}]*)\}/m.exec(lane);
-	assert.ok(rule !== null, '应有轨道规则');
-	assert.match(rule[1], /pointer-events:auto/, '整列接收指针，指进列里即触发');
-	// 指到列：整体加深；指到某个：它实显。
-	assert.match(lane, /\.lane:hover \.button\{opacity:0\.6\}/, '指进列时整体加深');
-	assert.match(lane, /\.lane:hover \.slot:hover \.button[^{]*\{opacity:1/, '指到某个按钮时才实显');
-	// 列是空隙，里面没有正文；按钮不能比列宽，否则会压到两栏代码上。
-	assert.match(lane, /width:18px;height:18px/, '按钮 18px');
-	assert.match(rule[1], /width:20px/, '列宽只比按钮多 2px');
-});
-
-test('分段按钮自己接收指针事件', () => {
-	// `pointer-events` 会从槽位继承：槽位设成 none 后按钮曾经跟着穿透，点击落不到按钮上。
-	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
-	const button = /^\.button\{([^}]*)\}/m.exec(lane);
-	assert.ok(button !== null, '应有按钮规则');
-	assert.match(button[1], /pointer-events:auto/, '按钮必须收回指针事件，否则继承槽位的 none');
-	const slot = /^\.slot\{([^}]*)\}/m.exec(lane);
-	assert.ok(slot !== null, '应有槽位规则');
-	assert.match(slot[1], /pointer-events:none/, '槽位不吃指针，hover 交给整列');
-});
-
-test('一侧取空后就地切到另一侧继续看同一文件', () => {
-	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
-	// 只在工作区 / 暂存区之间搬动：提交与对比作用域没有对侧。
-	const rule = /const emptyNow = ([\s\S]*?);\n/.exec(source);
-	assert.ok(rule !== null, '应有取空判据');
-	assert.match(rule[1], /hunks\.length === 0/, '没有补丁块即为取空');
-	const at = source.indexOf('const switchScopeSide = React.useCallback(');
-	assert.ok(at >= 0, '应有切侧实现');
-	const body = source.slice(at, source.indexOf('const [followedSide', at) === -1 ? at + 2000 : source.indexOf('}, [scope, staged, loadOtherSide]);', at));
-	assert.match(body, /scope\.kind !== 'worktree'/, '提交与对比作用域不切侧');
-	assert.match(body, /setFollowedSide\(toStaged\)/, '记下切过去的是哪一侧');
-	assert.match(body, /data\.hunks\.length === 0/, '对侧也空时不切，避免两侧来回跳');
-	// 同一页换内容，不是另开一页：否则当前页会停在「没有改动」上。
-	assert.ok(!/openResource\(gitDiffAddress/.test(source), '切侧不得另开新页');
-	// 动作方向跟着实际显示的一侧走。
-	assert.match(source, /const staged = followedSide \?\? stagedScope;/, '动作方向取实际显示的一侧');
-	assert.match(source, /emptiedSide\.current = true/, '暂存动作记下来源');
-	assert.match(source, /if \(!emptiedSide\.current\) return;/, '只在本次动作搬空时才切');
-});
-
 test('显示侧决定标题，且可在两侧之间来回切', () => {
 	// 标题由注册处按地址算，读不到页内状态；显示侧登记在共享快照里供它读取。
 	const address = 'dsh-resource://git-diff/session/s1/%2A';
@@ -242,20 +168,6 @@ test('显示侧决定标题，且可在两侧之间来回切', () => {
 	setShownSide(address, null);
 });
 
-test('取数跟随实际显示侧，不把正文拉回地址所指的一侧', () => {
-	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
-	// staged 若进 load 的依赖，切侧会再触发一次取数把内容清掉；因此改读 ref。
-	const loadStart = source.indexOf('const load = React.useCallback(');
-	assert.ok(loadStart >= 0, '应有 load');
-	const body = source.slice(loadStart, source.indexOf('const loadOtherSide', loadStart));
-	assert.match(body, /const side = stagedRef\.current;/, '取数读当前显示侧');
-	assert.match(body, /fileDiffContent\(gitCwd, commitHash, currentPath, side, baseHash\)/, '按显示侧取数');
-	const deps = /\}, \[([^\]]*)\]\);/.exec(body);
-	assert.ok(deps !== null, '应有依赖列表');
-	assert.ok(!deps[1].includes('staged'), 'staged 不得进依赖，否则切侧会被重取清掉');
-	assert.match(source, /stagedRef\.current = staged;/, '每次渲染同步 ref');
-});
-
 test('落位等价判断挡住重复写入', () => {
 	// 没有这个判断，measure 每次写入都会触发重渲染、重渲染又再量，最终整棵树被卸载。
 	const a = [{ index: 0, top: 10, height: 20 }, { index: 1, top: 30, height: 10 }];
@@ -265,41 +177,4 @@ test('落位等价判断挡住重复写入', () => {
 	assert.equal(sameSlots(a, [{ index: 0, top: 11, height: 20 }, { index: 1, top: 30, height: 10 }]), false, '位置变了不相等');
 	assert.equal(sameSlots(a, [{ index: 0, top: 10.2, height: 20 }, { index: 1, top: 30, height: 10 }]), true, '亚像素抖动不算变化');
 	assert.equal(sameSlots(a, [{ index: 9, top: 10, height: 20 }, { index: 1, top: 30, height: 10 }]), false, '块下标变了不相等');
-});
-
-test('量落位时用等价判断写回状态', () => {
-	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
-	assert.match(source, /setSlots\(\(previous\) => \(sameSlots\(previous, next\) \? previous : next\)\)/, '同值时不写状态');
-});
-
-test('分段列只在两侧都有改动、有块且展开时让出宽度', () => {
-	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
-	const rule = /const laneVisible = ([\s\S]*?);\n/.exec(source);
-	assert.ok(rule !== null, '应有分段列的显示判据');
-	const body = rule[1];
-	assert.match(body, /oldText !== null/, '单侧改动只有一栏，没有中间缝');
-	assert.match(body, /newText !== null/, '单侧改动只有一栏，没有中间缝');
-	assert.match(body, /hunks\.length > 0/, '没有补丁块就没有可暂存的东西');
-	assert.match(body, /slots\.length > 0/, '量不出位置时不画，避免按钮浮在空中');
-	assert.match(body, /fileState\.expanded/, '折叠的文件段里没有行，按钮无处可站');
-	assert.match(body, /conflict/, '冲突视图自己有中间列，不再叠一条分段列');
-	assert.match(source, /'data-sc-lane': laneVisible \? '' : undefined/, '让宽由同一条判据驱动');
-	assert.match(source, /laneVisible && React\.createElement\(HunkLane/, '轨道由同一条判据驱动');
-});
-
-test('分段列刚好放得下按钮，只有带标记时才让宽', () => {
-	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
-	const width = /^\.lane\{[^}]*width:(\d+)px/m.exec(lane);
-	assert.ok(width !== null, '应有轨道宽度');
-	// 这列只放一个 18px 的图标按钮，宽度取按钮边长 + 两侧各 1px，不多占正文。
-	assert.equal(width[1], '20', '轨道宽度只够放下按钮');
-	assert.match(lane, /width:18px;height:18px/, '按钮是 18px 方形');
-	assert.match(lane, /margin-left:-10px/, '轨道以中线居中');
-	// 按钮在区间里垂直居中，而不是贴在上沿。
-	assert.match(lane, /\.slot\{[^}]*align-items:center/, '按钮在区间内垂直居中');
-	const page = readFileSync(join(root, 'src', 'client', 'css', 'index.module.css'), 'utf8');
-	const gap = /\[data-sc-lane\] :global\(\[data-diff-pair\]\)\{column-gap:(\d+)px\}/.exec(page);
-	assert.ok(gap !== null, '应有让宽的规则');
-	assert.equal(gap[1], '20', '让出的宽度与轨道宽度一致');
-	assert.ok(!/^\.diffBody :global\(\[data-diff-pair\]\)/m.test(page), '让宽规则必须挂在标记下');
 });

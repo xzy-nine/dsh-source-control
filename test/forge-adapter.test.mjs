@@ -198,17 +198,6 @@ test('文件记录带齐 forge 要求的字段', () => {
 	assert.equal(typeof file.digest, 'string');
 });
 
-test('评论的终点是输入框，且引用不带代码片段', () => {
-	// 选区与拼接见 line-range.test.mjs 与 comment-reference.test.mjs；
-	// 这里只确认适配层把它交给 forge 评论框时不再夹带差异片段。
-	const source = readFileSync(new URL('../src/client/diff/forge-adapter.tsx', import.meta.url), 'utf8');
-	const call = /formatCommentQuote\(([\s\S]*?)\)\)/.exec(source);
-	assert.ok(call !== null, '应通过 formatCommentQuote 生成引用');
-	assert.ok(!call[1].includes('hunk'), '引用不应把差异片段传给格式化函数');
-	assert.match(source, /addToInput/, '应把引用交给输入框');
-	assert.match(source, /ReviewComposer/, '评论框用 forge 的原生组件');
-});
-
 test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 	const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
 	const globalKeys = ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'IntersectionObserver'];

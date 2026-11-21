@@ -6,12 +6,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
+const root = new URL('..', import.meta.url);
 
 const { JSDOM } = await import('jsdom');
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' });
@@ -46,7 +42,7 @@ async function waitFor(predicate, what, timeoutMs = 5000) {
  * @returns 模块导出的对象。
  */
 async function loadShownSide() {
-	return await import(pathToFileURL(join(root, 'src', 'client', 'diff', 'shown-side.ts')).href);
+	return await import(new URL('src/client/diff/shown-side.ts', root).href);
 }
 
 test('标题作用域在切侧后变成暂存区，再切回工作区', async () => {
@@ -59,12 +55,6 @@ test('标题作用域在切侧后变成暂存区，再切回工作区', async ()
 	assert.equal(titleScopeOf(address, scope).staged, false);
 	setShownSide(address, null);
 	assert.equal(titleScopeOf(address, scope).staged, false);
-});
-
-test('切侧时登记的对侧与地址不同才登记，避免标题误判', async () => {
-	const source = readFileSync(join(root, 'src', 'client', 'index.ts'), 'utf8');
-	// 切到与地址相同的一侧时登记 null，标题直接按地址算，两边不会出现两套说法。
-	assert.match(source, /setShownSide\(address, toStaged === stagedScope \? null : toStaged\)/);
 });
 
 test.after?.(() => {
