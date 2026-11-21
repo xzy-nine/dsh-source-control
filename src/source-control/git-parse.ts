@@ -403,6 +403,25 @@ function tagOf(refname: string, objectname: string, peeled: string): RefTag {
 }
 
 /**
+ * 一次引用枚举要填充的三组引用，以及远程引用的隐藏前缀。
+ *
+ * 两个引用解析器逐条分流到同三组里，空的容器与隐藏前缀因此只有一处定义。
+ *
+ * @param hideRemotes - 要隐藏的远程名。
+ * @returns 三组空引用与隐藏前缀。
+ */
+function emptyRefBuckets(hideRemotes: readonly string[]): {
+	heads: RefEntry[]; tags: RefTag[]; remotes: RefEntry[]; hidePrefixes: string[];
+} {
+	return {
+		heads: [],
+		tags: [],
+		remotes: [],
+		hidePrefixes: hideRemotes.map((remote) => `refs/remotes/${remote}/`),
+	};
+}
+
+/**
  * 解析 `git for-each-ref --format=<REF_FORMAT>` 的输出。
  *
  * 记录以换行分隔、字段以 NUL 分隔。附注标签的 `%(objectname)` 是标签对象本身，
@@ -414,10 +433,7 @@ function tagOf(refname: string, objectname: string, peeled: string): RefTag {
  * @returns 引用集合。
  */
 export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], showRemoteHeads = false): RefData {
-	const heads: RefEntry[] = [];
-	const tags: RefTag[] = [];
-	const remotes: RefEntry[] = [];
-	const hidePrefixes = hideRemotes.map((remote) => `refs/remotes/${remote}/`);
+	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
 
 	for (const line of stdout.split('\n')) {
 		if (line === '') continue;
@@ -452,11 +468,8 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
  * @returns 引用集合、分支名列表与当前分支名。
  */
 export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
-	const heads: RefEntry[] = [];
-	const tags: RefTag[] = [];
-	const remotes: RefEntry[] = [];
+	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
 	const branches: string[] = [];
-	const hidePrefixes = hideRemotes.map((remote) => `refs/remotes/${remote}/`);
 	let branch: string | null = null;
 
 	for (const line of stdout.split('\n')) {
@@ -528,6 +541,23 @@ export function parseConfigList(stdout: string): Record<string, string> {
 	return configs;
 }
 
+/**
+ * 把 `-z` 的差异输出切成字段：去掉末尾空字段，按需跳过首条记录的对象名。
+ *
+ * `git diff-tree` 的 `-z` 输出以被查询的提交对象名开头，`git diff` 两个修订的形式没有；
+ * 两个差异解析器共用这段切分，跳过与否只由调用方决定。
+ *
+ * @param stdout - git 的标准输出。
+ * @param options - 见 {@link DiffParseOptions}。
+ * @returns 字段数组。
+ */
+function diffFieldsOf(stdout: string, options: DiffParseOptions): string[] {
+	const parts = stdout.split(FIELD);
+	if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
+	if (options.skipLeadingObjectName === true) parts.shift();
+	return parts;
+}
+
 /** `--name-status` / `--numstat` 的解析选项。 */
 export interface DiffParseOptions {
 	/**
@@ -549,9 +579,7 @@ export interface DiffParseOptions {
  * @returns 改动记录。
  */
 export function parseNameStatus(stdout: string, options: DiffParseOptions = {}): DiffNameStatusRecord[] {
-	const parts = stdout.split(FIELD);
-	if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
-	if (options.skipLeadingObjectName === true) parts.shift();
+	const parts = diffFieldsOf(stdout, options);
 	const records: DiffNameStatusRecord[] = [];
 	let i = 0;
 	while (i < parts.length) {
@@ -586,9 +614,7 @@ export function parseNameStatus(stdout: string, options: DiffParseOptions = {}):
  * @returns 增删统计。
  */
 export function parseNumStat(stdout: string, options: DiffParseOptions = {}): DiffNumStatRecord[] {
-	const parts = stdout.split(FIELD);
-	if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
-	if (options.skipLeadingObjectName === true) parts.shift();
+	const parts = diffFieldsOf(stdout, options);
 	const records: DiffNumStatRecord[] = [];
 	let i = 0;
 	while (i < parts.length) {

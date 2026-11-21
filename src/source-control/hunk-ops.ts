@@ -9,6 +9,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitOrThrow } from './git-exec.js';
+import { errorText } from '../shared/error-text.js';
 import { parsePatch, patchOf } from '../shared/patch-hunks.js';
 
 /** 一次分段操作的结果。 */
@@ -61,7 +62,7 @@ async function applyPatch(repo: string, patchText: string, args: readonly string
 		await gitOrThrow(['apply', '--unidiff-zero', ...args, '--whitespace=nowarn', '--', file], repo);
 		return null;
 	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
+		return errorText(error);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

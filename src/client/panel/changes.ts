@@ -414,6 +414,21 @@ function ChangeGroupView({
 		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(tracked.length)} 个已跟踪、${String(untrackedPaths.length)} 个未跟踪）` });
 	}, [run, discardPaths, workingTreePath]);
 	/**
+	 * 文件夹、分组与单条路径共用同一条确认与执行路径。
+	 *
+	 * @param message - 确认框正文。
+	 * @param tracked - 已跟踪的路径。
+	 * @param untrackedPaths - 未跟踪的路径。
+	 * @param confirmLabel - 确认按钮文案。
+	 * @returns 无。
+	 */
+	const confirmDiscard = React.useCallback((message: string, tracked: readonly string[], untrackedPaths: readonly string[], confirmLabel = '丢弃'): void => {
+		void (async () => {
+			const ok = await showConfirmation({ title: '丢弃改动', message, confirmLabel, danger: true });
+			if (ok) await discardBoth(tracked, untrackedPaths);
+		})();
+	}, [discardBoth]);
+	/**
 	 * 丢弃某个文件夹下的全部改动。
 	 *
 	 * @param folderPath - 文件夹路径，相对仓库根。
@@ -421,40 +436,20 @@ function ChangeGroupView({
 	const onDiscardFolder = React.useCallback((folderPath: string): void => {
 		const inside = visible.filter((entry) => entry.path.startsWith(folderPath + '/'));
 		const { tracked, untracked: untrackedPaths } = splitUntracked(inside);
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				message: discardMessage(folderPath + ' 下', inside.length, untrackedPaths.length),
-				confirmLabel: '丢弃', danger: true,
-			});
-			if (!ok) return;
-			await discardBoth(tracked, untrackedPaths);
-		})();
-	}, [visible, discardBoth]);
+		confirmDiscard(discardMessage(folderPath + ' 下', inside.length, untrackedPaths.length), tracked, untrackedPaths);
+	}, [visible, confirmDiscard]);
 	const onDiscard = React.useCallback((paths: readonly string[], untracked: boolean): void => {
 		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				// 未跟踪文件是被真正删除，而不是还原到某个版本，措辞需说清。
-				message: untracked
-					? (paths.length === 1
-						? '确定删除未跟踪文件 ' + paths[0] + '？删除后无法恢复。'
-						: '确定删除这 ' + String(paths.length) + ' 个未跟踪文件？删除后无法恢复。')
-					: (paths.length === 1
-						? '确定丢弃 ' + paths[0] + ' 的改动？未提交的改动会丢失，且无法恢复。'
-						: '确定丢弃这 ' + String(paths.length) + ' 个文件的改动？未提交的改动会丢失，且无法恢复。'),
-				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
-			});
-			if (!ok) return;
-			/** 本次真正丢弃的路径；未能丢弃的条目必须留在列表里。 */
-			const discarded: string[] = [];
-			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
-			await run('commit', async () => {
-				discarded.push(...(await discardPaths(workingTreePath, paths, untracked)).discarded);
-			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(paths.length)} 个${untracked ? '未跟踪' : '已跟踪'}路径）` });
-		})();
-	}, [run, discardPaths, workingTreePath]);
+		// 未跟踪文件是被真正删除，而不是还原到某个版本，措辞需说清。
+		const message = untracked
+			? (paths.length === 1
+				? '确定删除未跟踪文件 ' + paths[0] + '？删除后无法恢复。'
+				: '确定删除这 ' + String(paths.length) + ' 个未跟踪文件？删除后无法恢复。')
+			: (paths.length === 1
+				? '确定丢弃 ' + paths[0] + ' 的改动？未提交的改动会丢失，且无法恢复。'
+				: '确定丢弃这 ' + String(paths.length) + ' 个文件的改动？未提交的改动会丢失，且无法恢复。');
+		confirmDiscard(message, untracked ? [] : paths, untracked ? paths : [], untracked ? '删除' : '丢弃');
+	}, [confirmDiscard]);
 	/**
 	 * 丢弃该分组内全部改动。
 	 *
@@ -462,16 +457,8 @@ function ChangeGroupView({
 	 */
 	const onDiscardAll = React.useCallback((): void => {
 		const { tracked, untracked: untrackedPaths } = splitUntracked(visible);
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				message: discardMessage('', allPaths.length, untrackedPaths.length),
-				confirmLabel: '丢弃', danger: true,
-			});
-			if (!ok) return;
-			await discardBoth(tracked, untrackedPaths);
-		})();
-	}, [visible, allPaths, discardBoth]);
+		confirmDiscard(discardMessage('', allPaths.length, untrackedPaths.length), tracked, untrackedPaths);
+	}, [visible, allPaths, confirmDiscard]);
 	// 点击文件行时把本分组的文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
 	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
