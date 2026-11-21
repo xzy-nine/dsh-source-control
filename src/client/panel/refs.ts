@@ -177,10 +177,10 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 	 */
 	if (upstream !== null && upstream !== '') starts.push(upstream);
 	/*
-	 * 分叉来源与上游或当前分支是同一个引用时不再重复。
+	 * 分叉来源与上游或当前分支是同一个引用时不重复加入。
 	 *
 	 * 判重必须用完整引用：短名 `origin/main` 可能同时是本地分支名与远程跟踪引用，
-	 * 按短名比较会把其实是另一个引用的来源误判成重复而跳过。
+	 * 按短名比较会把另一个引用的来源误判成重复而跳过。
 	 */
 	const baseStart = context.baseRef ?? context.base;
 	const upstreamStart = upstream !== null && upstream !== '' ? upstream : null;

@@ -61,12 +61,18 @@ const EXEMPTION = /prose-ok\s*[:：]\s*(.*)$/
  *
  * 每条规则对应一种泄漏或赘余类型。词形取宽：漏过一处解释性注释比误伤一处合法
  * 注释代价更大，误伤由基线或 `prose-ok` 标记逐条消化，漏过则无人发现。
+ *
+ * 词形必须只有解释性读法。指代输入值与普通位置的词（`原有顺序`、`之前`、`换成`）
+ * 与当前行为描述同形，收进规则会让基线累积大量误伤，耗尽「只允许调低」的预算。
+ *
+ * 标准 JSDoc 取值标签（见 {@link JSDOC_VALUE_TAG}）不做散文判定：那是签名文档，
+ * 标签里的「本次」「本轮」指代调用点而不是编写会话。
  */
 export const PROSE_RULES: readonly ProseRule[] = [
 	{
 		id: 'change-narration',
 		summary: '变更叙述：陈述旧状态或新旧对照，而非当前行为',
-		pattern: /(?:旧版本?|旧实现|旧写法|旧格式|旧逻辑|旧行为|旧键|老版本|早期版本|曾经|此前|以前|原先|原来|之前|原有|原实现|原方案|原逻辑|不再|改成|改为|换成|替换为|迁移前|迁移后|升级前|升级后|\bused to\b|\bno longer\b|\bpreviously\b|\bformerly\b|\bold (?:behaviou?r|version|implementation|format)\b)/i,
+		pattern: /(?:旧版本?|旧实现|旧写法|旧格式|旧逻辑|旧行为|旧键|老版本|早期版本|曾经|此前|以前|原先|原来|原实现|原方案|原逻辑|不再|改成|改为|迁移前|迁移后|升级前|升级后|\bused to\b|\bno longer\b|\bpreviously\b|\bformerly\b|\bold (?:behaviou?r|version|implementation|format)\b)/i,
 	},
 	{
 		id: 'session-scope',
@@ -101,9 +107,18 @@ export const PROSE_RULES: readonly ProseRule[] = [
 	{
 		id: 'decorative-metaphor',
 		summary: '隐喻词：用比喻指代已有确切名称的对象',
-		pattern: /(?:\bseam\b|\bvocabulary\b|词汇表|桥梁|胶水|魔法|管道|载体)/i,
+		pattern: /(?:\bseam\b|\bvocabulary\b|词汇表|桥梁|胶水|魔法|管道)/i,
 	},
 ]
+
+/**
+ * 标准 JSDoc 取值标签所在的行：`@param`、`@returns`、`@return`、`@yields`、`@yield`、
+ * `@throws`、`@exception`。
+ *
+ * 这些标签的参数名与说明属于公开签名文档，`本次`、`本轮` 在其中指代调用点，不是
+ * 编写会话的范围限定，因此整行不做散文判定。其余标签与标签外的注释照常扫描。
+ */
+const JSDOC_VALUE_TAG = /^\s*\*?\s*@(?:param|arg|argument|returns?|yields?|throws?|exception)(?:\s|\{|$)/i
 
 /** 扫描状态以外的一条抽取结果：注释在原文件中的起止偏移与种类。 */
 interface CommentRange {
@@ -273,6 +288,7 @@ export function scanSource(file: string, source: string): Violation[] {
 			out.push({ file, line: block.marker.line, rule: MARKER_WITHOUT_REASON, text: text.trim() })
 		}
 		for (const entry of block.lines) {
+			if (JSDOC_VALUE_TAG.test(entry.text)) continue
 			const rule = PROSE_RULES.find((candidate) => candidate.pattern.test(entry.text))
 			if (rule !== undefined) out.push({ file, line: entry.line, rule: rule.id, text: entry.text.trim() })
 		}

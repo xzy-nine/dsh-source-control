@@ -68,11 +68,44 @@ test('命中：带归属的待办与纯行为描述放行', () => {
 	for (const line of allowed) assert.deepEqual(rulesOf(line), [], line);
 });
 
-test('命中：位置描述里的「之前」同样拦下，靠标记豁免', () => {
-	// 宽口径的代价是误伤；这类命中用 prose-ok 就地豁免，而不是把词形从规则里删掉。
-	const line = '// 首个 hunk 之前是文件头，与 hunk 无关';
+test('命中：位置与输入值属于行为描述，规则不拦', () => {
+	// 这些词与解释性写法同形却指代真实取值：拦下它们只会让基线累积误伤，
+	// 因而留在规则之外；解释性用法由第一条测试的「不再 / 旧版」等词形承担。
+	const allowed = [
+		'// 首个 hunk 之前是文件头，与 hunk 无关',
+		'// 把一侧替换成另一侧',
+		'// 载体文件在提交过程内即删',
+	];
+	for (const line of allowed) assert.deepEqual(rulesOf(line), [], line);
+});
+
+test('豁免：标准 JSDoc 取值标签不做散文判定', () => {
+	const source = [
+		'/**',
+		' * @param ms - 本次耗时（毫秒）。',
+		' * @returns 本次启动的日志文件路径。',
+		' * @throws 本轮取数尚未就绪',
+		' */',
+		'export const a = 1',
+	].join('\n');
+	assert.deepEqual(rulesOf(source), []);
+});
+
+test('豁免：取值标签之外与被排除标签以外的行照常扫描', () => {
+	// 标签外的正文与不在取值标签范围内的标签（如 @example、@see）仍属散文。
+	const body = '/**\n * 本次会话内单调递增。\n */\nexport const a = 1';
+	assert.deepEqual(rulesOf(body), ['session-scope']);
+	const other = '/**\n * @example 本次调用返回 null\n */\nexport const a = 1';
+	assert.deepEqual(rulesOf(other), ['session-scope']);
+	// 取值标签只豁免所在行：同段落的其它行不受牵连。
+	const mixed = '/**\n * 本次取数只读快照。\n * @param graph - 本轮取回的提交图数据。\n */\nexport const a = 1';
+	assert.deepEqual(rulesOf(mixed), ['session-scope']);
+});
+
+test('豁免：命中的写法同样可就地标记豁免', () => {
+	const line = '// 旧版把草稿写在宿主';
 	assert.deepEqual(rulesOf(line), ['change-narration']);
-	assert.deepEqual(rulesOf(line + ' prose-ok: 描述文件头位置'), []);
+	assert.deepEqual(rulesOf(line + ' prose-ok: 迁移代码必须读旧键'), []);
 });
 
 test('豁免：带理由的标记让整段跳过', () => {

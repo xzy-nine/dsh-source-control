@@ -72,6 +72,9 @@ function fragmentDigest(a, b) {
  * 指纹不含行号：行号随无关改动漂移。文件对 + 片段长度 + 片段内容摘要共同定位一处重复，
  * 因此同文件对、同长度但内容被替换时视为新的重复。
  *
+ * 长度取两侧行数的较小值，两侧各自先取绝对值：jscpd 合并相邻窗口时会给出一侧起止行反向的
+ * 区间，直接对 `end - start + 1` 取小会把 4 行重复记成数百行（记下的是行号跨度）。
+ *
  * @param clones - 克隆列表。
  * @returns 指纹数组，已排序。
  */
@@ -84,8 +87,10 @@ function fingerprints(clones) {
 				.map((name) => name.slice(root.length + 1).replace(/\\/g, '/'))
 				.sort()
 				.join('|');
-			// jscpd 合并相邻窗口时会给出一条反向的起止行，长度取绝对值并保证至少 1 行。
-			const lines = Math.max(1, Math.abs(Math.min(a.end.line - a.start.line + 1, b.end.line - b.start.line + 1)));
+			const lines = Math.max(1, Math.min(
+				Math.abs(a.end.line - a.start.line + 1),
+				Math.abs(b.end.line - b.start.line + 1),
+			));
 			return `${pair}|${lines}|${fragmentDigest(a.fragment ?? '', b.fragment ?? '')}`;
 		})
 		.sort();

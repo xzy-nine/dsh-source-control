@@ -1,17 +1,7 @@
 {
   "note": "已接受的存量解释性注释；只允许调低。新增命中应改写散文或就地加 prose-ok 标记。",
-  "count": 364,
+  "count": 248,
   "entries": [
-    [
-      "src/client/api/ai.ts",
-      "change-narration",
-      "* 使译文保留原有换行结构。"
-    ],
-    [
-      "src/client/api/http.ts",
-      "change-narration",
-      "* 供需要按错误内容分支的调用方使用（如把 git 的英文长文替换为可读提示）；只关心"
-    ],
     [
       "src/client/api/http.ts",
       "change-narration",
@@ -33,16 +23,6 @@
       "* 该文件是否为本次新建。"
     ],
     [
-      "src/client/api/remotes.ts",
-      "change-narration",
-      "用 raw 版本取回原始错误文本，调用方据此把 git 的英文长文替换为可读提示。"
-    ],
-    [
-      "src/client/api/repo-events.ts",
-      "change-narration",
-      "* @returns 取消订阅；调用后不再重连。"
-    ],
-    [
       "src/client/api/repos.ts",
       "change-narration",
       "* `stashes`，本函数直接用它们组装结果，不再补取仓库信息；两者都未给出时才回退一次"
@@ -56,11 +36,6 @@
       "src/client/api/repos.ts",
       "change-narration",
       "* 已知远程与贮藏都给出时不再补取仓库信息：本批响应已足够组装结果，补取只会多起一组子进程。"
-    ],
-    [
-      "src/client/api/repos.ts",
-      "session-scope",
-      "* @param refreshId - 本轮刷新的编号；宿主按它把同轮命令归成一组记耗时。"
     ],
     [
       "src/client/api/repos.ts",
@@ -138,11 +113,6 @@
       "搬完清掉浏览器里的旧键：此后宿主是唯一数据源。"
     ],
     [
-      "src/client/api/working-tree.ts",
-      "session-scope",
-      "* @param paths - 本次请求的路径，作为缺失字段的兜底。"
-    ],
-    [
       "src/client/diff/composer-placement.ts",
       "session-scope",
       "* 浮窗尺寸会随落位结果变化，而落位又要读浮窗高度，因此必须能判断「这次算出来的和上次"
@@ -151,11 +121,6 @@
       "src/client/diff/diff-view.ts",
       "change-narration",
       "* 因此不再提供切换。换行选择是面板设置的一部分，与其它视图开关同源、随设置持久化"
-    ],
-    [
-      "src/client/diff/forge-adapter.tsx",
-      "change-narration",
-      "* 评论的终点换成「插进对话输入框的定位引用」，而不是代码托管平台的评审。"
     ],
     [
       "src/client/diff/forge-adapter.tsx",
@@ -198,11 +163,6 @@
       "* `t`，改为直接绑它发布的字典；这样文案与 forge 面板本身完全一致，也不会因为"
     ],
     [
-      "src/client/diff/merge-view.ts",
-      "change-narration",
-      "* 把一侧替换成另一侧。"
-    ],
-    [
       "src/client/diff/resource-path.ts",
       "change-narration",
       "* 兼容旧格式 `session/<id>/<hash>/<path>`：多出的路径段原样带回 `legacyPath`。"
@@ -211,46 +171,6 @@
       "src/client/diff/resource-path.ts",
       "change-narration",
       "* 旧格式地址里的路径；新格式把路径放在导航参数里，此处为空串。"
-    ],
-    [
-      "src/client/graph/index.ts",
-      "change-narration",
-      "* 把提交信息中的 Issue 编号替换成链接。"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "* 原有行依次下移。"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "* 线画到行底，下一次加载由同一泳道接续。布局只依赖本行之前的输入，因此窗口变长时"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "* 领先/落后以虚拟行插入：云端领先插在远端尖端之前，本地领先插在 HEAD 之前，"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "云端领先插在远端尖端之前；本地领先插在 HEAD 之前。"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "色池游标随种子续接：否则裁头后新分配的泳道会与裁之前不同色。"
-    ],
-    [
-      "src/client/graph/lanes.ts",
-      "change-narration",
-      "领先/落后：以虚拟行插入，原有行下移。"
-    ],
-    [
-      "src/client/graph/use-graph-windowing.ts",
-      "change-narration",
-      "* 最近一次渲染的行列表；定位按它把哈希换成行下标。"
     ],
     [
       "src/client/graph/use-graph-windowing.ts",
@@ -266,11 +186,6 @@
       "src/client/index.ts",
       "change-narration",
       "换文件后重新与地址对齐，标题不再沿用上一个文件的显示侧。"
-    ],
-    [
-      "src/client/index.ts",
-      "change-narration",
-      "覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。"
     ],
     [
       "src/client/index.ts",
@@ -345,42 +260,7 @@
     [
       "src/client/panel/change-events.ts",
       "session-scope",
-      "* @param changed - 本轮抓取是否拉回了新引用。"
-    ],
-    [
-      "src/client/panel/change-events.ts",
-      "session-scope",
-      "* @param currentMs - 本轮的间隔毫秒数。"
-    ],
-    [
-      "src/client/panel/change-events.ts",
-      "session-scope",
-      "* @param signature - 本次读到的签名。"
-    ],
-    [
-      "src/client/panel/change-events.ts",
-      "session-scope",
       "* 本次事件是否应触发自动刷新。"
-    ],
-    [
-      "src/client/panel/change-menu.ts",
-      "change-narration",
-      "* 按目标过滤操作，构建出非空项后按分组插分隔线：相邻两项分组不同才插，因此首项之前与"
-    ],
-    [
-      "src/client/panel/changes.ts",
-      "change-narration",
-      "* @returns 已跟踪与未跟踪的路径，各自保持原有顺序。"
-    ],
-    [
-      "src/client/panel/changes.ts",
-      "change-narration",
-      "悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。"
-    ],
-    [
-      "src/client/panel/changes.ts",
-      "change-narration",
-      "记忆化必须在提前返回之前：它也是 hook。"
     ],
     [
       "src/client/panel/changes.ts",
@@ -406,16 +286,6 @@
       "src/client/panel/commit-menu.ts",
       "change-narration",
       "* 因此这里平铺、不再套一层「标签」分组；多标签时各操作自身已收进以标签名为子项的"
-    ],
-    [
-      "src/client/panel/conflict-group.ts",
-      "change-narration",
-      "* 因此这一组的行内动作换成解决动作。分组常驻在暂存/未暂存两组之前，与 VS Code 的"
-    ],
-    [
-      "src/client/panel/conflicts.ts",
-      "change-narration",
-      "* @returns 三个分组各自的条目，保持原有顺序。"
     ],
     [
       "src/client/panel/enrich-claims.ts",
@@ -453,11 +323,6 @@
       "* 取消订阅只结算一次：重复调用不再扣减订阅者数。"
     ],
     [
-      "src/client/panel/git-messages.ts",
-      "change-narration",
-      "* git 失败文本的展示化：把会改写工作区的常见拒绝原因换成可读说明。"
-    ],
-    [
       "src/client/panel/graph-state.ts",
       "change-narration",
       "* 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。父提交必须已在列表中，宿主不再负责"
@@ -465,22 +330,7 @@
     [
       "src/client/panel/graph-state.ts",
       "session-scope",
-      "* @param snapshot - 本轮工作区快照。"
-    ],
-    [
-      "src/client/panel/graph-state.ts",
-      "session-scope",
-      "* @param snapshot - 本轮工作区快照。"
-    ],
-    [
-      "src/client/panel/graph-state.ts",
-      "session-scope",
       "手里已有本轮快照：变更列表那一路就是就绪的，与提交图是否还在取数无关。"
-    ],
-    [
-      "src/client/panel/graph-target.ts",
-      "change-narration",
-      "* HEAD 之前已排着几百条别的分支的提交。定位因此分两步：先补齐目标所属的那一页，再滚动过去。"
     ],
     [
       "src/client/panel/graph-window-cache.ts",
@@ -490,27 +340,7 @@
     [
       "src/client/panel/graph-window-cache.ts",
       "session-scope",
-      "* @returns 本次会话内单调递增的编号。"
-    ],
-    [
-      "src/client/panel/graph-window-cache.ts",
-      "session-scope",
       "* 本次会话的编号前缀。"
-    ],
-    [
-      "src/client/panel/index.ts",
-      "change-narration",
-      "* 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立，两个分区不再显示空态。"
-    ],
-    [
-      "src/client/panel/index.ts",
-      "change-narration",
-      "* 影响。`read` 影响面的操作自身已经刷新，不再追加一次；目标是别的仓库时也不刷新当前仓库，"
-    ],
-    [
-      "src/client/panel/index.ts",
-      "change-narration",
-      "* （此前漏了这一处回填，表现为重启后筛选回到默认自动）。"
     ],
     [
       "src/client/panel/index.ts",
@@ -558,26 +388,6 @@
       "* 当前是否具备刷新条件；为 false 时放弃本次刷新。"
     ],
     [
-      "src/client/panel/refresh-status.ts",
-      "session-scope",
-      "* @param current - 本轮基线。"
-    ],
-    [
-      "src/client/panel/refs.ts",
-      "author-voice",
-      "* 按短名比较会把其实是另一个引用的来源误判成重复而跳过。"
-    ],
-    [
-      "src/client/panel/refs.ts",
-      "change-narration",
-      "* @param value - 旧版持久化值（任意值）。"
-    ],
-    [
-      "src/client/panel/refs.ts",
-      "change-narration",
-      "* 分叉来源与上游或当前分支是同一个引用时不再重复。"
-    ],
-    [
       "src/client/panel/refs.ts",
       "change-narration",
       "* 旧版本按仓库分别存成独立键，勾选记的是引用短名；升级后统一为按仓库键的持久化表，"
@@ -610,16 +420,6 @@
     [
       "src/client/panel/repo-preload.ts",
       "change-narration",
-      "* 变化之前，结果必然不含该变化。"
-    ],
-    [
-      "src/client/panel/repo-preload.ts",
-      "change-narration",
-      "* 可替换成立即 resolve 的版本。"
-    ],
-    [
-      "src/client/panel/repo-preload.ts",
-      "change-narration",
       "* 同一批请求再打一遍。间隔按已重试的轮次递增，成功即不再进入这里。"
     ],
     [
@@ -631,16 +431,6 @@
       "src/client/panel/repo-preload.ts",
       "change-narration",
       "整棵树作废：此前取过的同步值连同节点一起丢掉，重扫后逐个重新取。"
-    ],
-    [
-      "src/client/panel/repo-preload.ts",
-      "session-scope",
-      "* @param controller - 本轮取消控制器。"
-    ],
-    [
-      "src/client/panel/repo-preload.ts",
-      "session-scope",
-      "* @param controller - 本轮取消控制器。"
     ],
     [
       "src/client/panel/repo-preload.ts",
@@ -663,11 +453,6 @@
       "* 用户主动重扫用它：先清空再重取。结构事件驱动的重扫用 {@link refreshWorkspace}，它不清空树。"
     ],
     [
-      "src/client/panel/repo-tree.ts",
-      "session-scope",
-      "* @param {object[]} nodes - 本次发现得到的节点。"
-    ],
-    [
       "src/client/panel/sections/changes.ts",
       "change-narration",
       "* 当前分支是纯本地分支（无上游）且无改动时，提交按钮改为发布。"
@@ -676,26 +461,6 @@
       "src/client/panel/sections/changes.ts",
       "session-scope",
       "* 本次提交与推送是否运行钩子。"
-    ],
-    [
-      "src/client/panel/sections/graph.ts",
-      "change-narration",
-      "* 取回更早的一段（窗口头部之前）。"
-    ],
-    [
-      "src/client/panel/sections/graph.ts",
-      "change-narration",
-      "* 留存提交之前的泳道状态；裁头后由此续算。"
-    ],
-    [
-      "src/client/panel/sections/graph.ts",
-      "change-narration",
-      "* 窗口头部之前是否还有更早的提交。"
-    ],
-    [
-      "src/client/panel/sections/graph.ts",
-      "change-narration",
-      "拖拽手柄落在工作区与图形的分界线上（图形标题之前）。"
     ],
     [
       "src/client/panel/sections/graph.ts",
@@ -740,21 +505,6 @@
     [
       "src/client/panel/use-commit-composer.ts",
       "change-narration",
-      "* 提交信息草稿：写入必须等草稿读完。message 初始为空串，若在读回之前就写入，会把刚切换过来"
-    ],
-    [
-      "src/client/panel/use-commit-composer.ts",
-      "change-narration",
-      "* 翻译提交信息：按行请求，保持原有换行结构。"
-    ],
-    [
-      "src/client/panel/use-commit-composer.ts",
-      "change-narration",
-      "* 草稿是否已读完；读完之前不得写入。"
-    ],
-    [
-      "src/client/panel/use-commit-composer.ts",
-      "change-narration",
       "早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。"
     ],
     [
@@ -766,11 +516,6 @@
       "src/client/panel/use-commit-composer.ts",
       "planning-residue",
       "* 换仓库即回到「运行钩子」：勾选是临时选择，不跨仓库、不跨会话保留。"
-    ],
-    [
-      "src/client/panel/use-commit-composer.ts",
-      "session-scope",
-      "* 提交钩子或推送钩子存在时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择："
     ],
     [
       "src/client/panel/use-commit-composer.ts",
@@ -799,11 +544,6 @@
     ],
     [
       "src/client/panel/use-commit-selection.ts",
-      "change-narration",
-      "* 只定出目标并推动一轮定位：目标可能在已加载窗口之外（当前分支落后于上游时，HEAD 之前排着"
-    ],
-    [
-      "src/client/panel/use-commit-selection.ts",
       "planning-residue",
       "* 待定位的目标提交哈希；null 表示没有进行中的定位。"
     ],
@@ -826,11 +566,6 @@
       "src/client/panel/use-commit-stats.ts",
       "change-narration",
       "统计失败只影响卡片上的那一行，不再提示。"
-    ],
-    [
-      "src/client/panel/use-file-change-refresh.ts",
-      "change-narration",
-      "首次通知只建立基线：订阅之前的历史写入不该触发重载。"
     ],
     [
       "src/client/panel/use-graph-data.ts",
@@ -871,26 +606,6 @@
       "src/client/panel/use-graph-data.ts",
       "change-narration",
       "换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。"
-    ],
-    [
-      "src/client/panel/use-graph-data.ts",
-      "session-scope",
-      "* @param graph - 本轮取回的提交图数据。"
-    ],
-    [
-      "src/client/panel/use-graph-data.ts",
-      "session-scope",
-      "* @param known - 本轮取数前是否已有已知值；已有则无需重记。"
-    ],
-    [
-      "src/client/panel/use-graph-data.ts",
-      "session-scope",
-      "* @param snapshot - 本轮已读到的工作区快照。"
-    ],
-    [
-      "src/client/panel/use-graph-data.ts",
-      "session-scope",
-      "* @returns 本轮请求的提交数上限。"
     ],
     [
       "src/client/panel/use-graph-data.ts",
@@ -945,16 +660,6 @@
     [
       "src/client/panel/use-remote-sync.ts",
       "change-narration",
-      "* push.default=simple 拒绝。只在这条同步路径上传，其余调用保持原有语义。"
-    ],
-    [
-      "src/client/panel/use-remote-sync.ts",
-      "change-narration",
-      "* 未配置远程或当前分支没有上游时，git 给出的是多行长文，这里替换为可读提示；"
-    ],
-    [
-      "src/client/panel/use-remote-sync.ts",
-      "change-narration",
       "完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。"
     ],
     [
@@ -966,11 +671,6 @@
       "src/client/panel/use-remote-sync.ts",
       "session-scope",
       "推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。"
-    ],
-    [
-      "src/client/panel/use-repo-commands.ts",
-      "change-narration",
-      "写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。"
     ],
     [
       "src/client/panel/use-repo-commands.ts",
@@ -1005,17 +705,7 @@
     [
       "src/client/ui/context-menu-host.ts",
       "change-narration",
-      "* 只当待复核信号，微任务里再看活动目标：仍是本份就继续活着，留空（真关闭）或换成别的"
-    ],
-    [
-      "src/client/ui/context-menu-host.ts",
-      "change-narration",
       "* 收尾推迟到选中动作之后，且判据是「活动目标不再是这一份」。"
-    ],
-    [
-      "src/client/ui/context-menu-host.ts",
-      "change-narration",
-      "* 目标（被替换）才收尾。订阅仍须在 open 之前建立，否则首个快照变化会被漏掉。"
     ],
     [
       "src/client/ui/context-menu.ts",
@@ -1036,16 +726,6 @@
       "src/client/ui/dialog.ts",
       "step-narration",
       "先让出一帧再摘除：退出动画在这段时间里播放。"
-    ],
-    [
-      "src/client/ui/native-open.ts",
-      "review-audience",
-      "* 宿主不具备桌面能力时整个控件不渲染，与 DSH 的评审视图一致。"
-    ],
-    [
-      "src/client/ui/native-open.ts",
-      "step-narration",
-      "* 能力来自宿主 Remote 的会话命名空间：先探测可用性，再列出该文件的注册应用。"
     ],
     [
       "src/client/ui/ref-icons.ts",
@@ -1073,21 +753,6 @@
       "* 插件加载顺序不保证 `storageDomain` 在本次 `apply` 里已就位；有界重试后仍取不到时按「未装载」"
     ],
     [
-      "src/index.ts",
-      "step-narration",
-      "* 先接域、再清理、最后预扫。"
-    ],
-    [
-      "src/shared/lru-map.ts",
-      "change-narration",
-      "* @returns 原先是否存在该键。"
-    ],
-    [
-      "src/shared/merge-ranges.ts",
-      "change-narration",
-      "* 加上两侧各自换成什么。两个差异区间在基线上相交或相邻就并成同一个合并区间，"
-    ],
-    [
       "src/source-control/api/coalesce.ts",
       "change-narration",
       "* 超过它等待方改为自己执行一遍：某个请求的处理体异常退出而没回投时，后来者不能一直挂着。"
@@ -1096,16 +761,6 @@
       "src/source-control/api/cost.ts",
       "change-narration",
       "* 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的、或旧版客户端）按仓库与时间窗口归组。"
-    ],
-    [
-      "src/source-control/api/cost.ts",
-      "session-scope",
-      "* @param ms - 本次耗时（毫秒）。"
-    ],
-    [
-      "src/source-control/api/cost.ts",
-      "session-scope",
-      "* @param spawns - 本轮已启动的 git 子进程数；取自该命令所在轮次的登记。"
     ],
     [
       "src/source-control/api/cost.ts",
@@ -1136,26 +791,6 @@
       "src/source-control/api/cost.ts",
       "session-scope",
       "* 本轮累计耗时（毫秒）。"
-    ],
-    [
-      "src/source-control/api/graph.ts",
-      "change-narration",
-      "* 提交图的引用标记不再来自这里：它取自同一次 `git log` 的装饰。"
-    ],
-    [
-      "src/source-control/api/graph.ts",
-      "change-narration",
-      "* 非仓库路径直接回空信息，不起子进程。原先靠 getRepoInfo 失败后再启一次"
-    ],
-    [
-      "src/source-control/api/graph.ts",
-      "step-narration",
-      "* `git rev-parse` 反判，等于先失败一遍再确认。"
-    ],
-    [
-      "src/source-control/api/history.ts",
-      "author-voice",
-      "* 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。"
     ],
     [
       "src/source-control/api/history.ts",
@@ -1198,26 +833,6 @@
       "* 新路径已经代表了这次改动。"
     ],
     [
-      "src/source-control/conflict-ops.ts",
-      "dead-session-ref",
-      "* 我方删除时比阶段 1 与对方内容，对方删除时比阶段 1 与我方内容。"
-    ],
-    [
-      "src/source-control/conflict-ops.ts",
-      "review-audience",
-      "* 与代码托管平台的评审视图同一口径：双方都留下内容时拿工作区（含冲突标记）比 HEAD；"
-    ],
-    [
-      "src/source-control/diff-hunks.ts",
-      "change-narration",
-      "* 只读取 hunk：文件头（`diff --git`、`---`、`+++`、`index` 等）在首个 `@@` 之前一律跳过；"
-    ],
-    [
-      "src/source-control/diff-hunks.ts",
-      "change-narration",
-      "首个 hunk 之前是文件头，与 hunk 无关。"
-    ],
-    [
       "src/source-control/diff-hunks.ts",
       "step-narration",
       "末尾换行是行终止符而非额外空行，先去掉再切分。"
@@ -1226,11 +841,6 @@
       "src/source-control/discard.ts",
       "change-narration",
       "* 不会清理内部改动；这里改为显式移动子模块 HEAD，并且**不触碰子模块内部的未提交改动**，"
-    ],
-    [
-      "src/source-control/dsh-home.ts",
-      "change-narration",
-      "* 三处调用方（状态文档、文本日志、旧会话解析）共用本模块，不再各自展开环境变量。"
     ],
     [
       "src/source-control/dsh-home.ts",
@@ -1248,49 +858,9 @@
       "* 随本次反馈提交的日志文件名；未附带日志时为空数组。"
     ],
     [
-      "src/source-control/feedback.ts",
-      "decorative-metaphor",
-      "* 载体文件在提交过程内即删；提交中途失败留下的那几个由下次启动的 `cleanLogs()` 整目录清掉。"
-    ],
-    [
-      "src/source-control/gh-cli.ts",
-      "session-scope",
-      "* @param action - 本次动作的语义。"
-    ],
-    [
-      "src/source-control/gh-cli.ts",
-      "session-scope",
-      "* @param action - 本次动作的语义；`create-repo` 会把 404 解释为无权限。"
-    ],
-    [
-      "src/source-control/git-actions.ts",
-      "change-narration",
-      "* @param pushUrlOld - 原推送 URL；null 表示原先未单独配置。"
-    ],
-    [
-      "src/source-control/git-actions.ts",
-      "change-narration",
-      "* @param urlOld - 原抓取 URL；null 表示原先未单独配置。"
-    ],
-    [
-      "src/source-control/git-actions.ts",
-      "change-narration",
-      "* @returns 各远程的结果错误；无错误时为空数组，遇到首个错误后不再继续推送。"
-    ],
-    [
-      "src/source-control/git-actions.ts",
-      "change-narration",
-      "* @returns 各远程的结果错误；无错误时为空数组，遇到首个错误后不再继续推送。"
-    ],
-    [
       "src/source-control/git-actions.ts",
       "change-narration",
       "* stderr 文本。多步操作按顺序执行，任一步失败即返回该步错误，后续步骤不再执行。"
-    ],
-    [
-      "src/source-control/git-actions.ts",
-      "change-narration",
-      "* 把分支与标签取回。任一步失败即返回该步错误，之前已完成的步骤保留，重试时按当前状态继续。"
     ],
     [
       "src/source-control/git-actions.ts",
@@ -1301,21 +871,6 @@
       "src/source-control/git-actions.ts",
       "step-narration",
       "* `checkout` 与 `force` 同时为真时先强制重建分支再检出，检出失败会追加到结果列表。"
-    ],
-    [
-      "src/source-control/git-exec.ts",
-      "change-narration",
-      "* git 允许全局选项出现在子命令之前，本仓库用过的是 `-c key=value`（见 `git-query.ts` 的"
-    ],
-    [
-      "src/source-control/git-exec.ts",
-      "session-scope",
-      "* @param readOnly - 本次命令是否只读。"
-    ],
-    [
-      "src/source-control/git-exec.ts",
-      "session-scope",
-      "* @param readOnly - 本次命令是否只读。"
     ],
     [
       "src/source-control/git-exec.ts",
@@ -1334,11 +889,6 @@
     ],
     [
       "src/source-control/git-parse.ts",
-      "change-narration",
-      "插入贮藏：已在列表中的直接标记；只在基提交上出现的插入到基提交之前。"
-    ],
-    [
-      "src/source-control/git-parse.ts",
       "step-narration",
       "* `-z` 会在每条记录后补一个 NUL，因此先去掉末尾空串，再按字段数分组；"
     ],
@@ -1350,42 +900,12 @@
     [
       "src/source-control/git-query.ts",
       "change-narration",
-      "* 点之前的部分，因此名称本身含点时同样解析正确。只要某个远程在配置里出现过任意一个子键就计入，"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "change-narration",
-      "* 贮藏插入到其基提交之前。"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "change-narration",
       "`--decorate=full` 让 `%D` 给出完整引用名；提交图的引用标记据此装配，不再单独枚举引用。"
     ],
     [
       "src/source-control/git-query.ts",
       "change-narration",
       "上游已消失时退回本地分支；上游的完整引用由 git 给出，不再按短名拼。"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "planning-residue",
-      "* @param remotes - 已知远程名，用于标注远程分支所属远程；可直接给出，也可给一个待定的取值。"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "planning-residue",
-      "* @param remotes - 已知远程名；可直接给出，也可给一个待定的取值（仅在需要隐藏远程时使用）。"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "session-scope",
-      "* @param refs - 本次读到的引用集合。"
-    ],
-    [
-      "src/source-control/git-query.ts",
-      "session-scope",
-      "* @param status - 本轮用于叠加未跟踪 / 已删除路径的读取结果；不需要时为 null。"
     ],
     [
       "src/source-control/git-query.ts",
@@ -1426,16 +946,6 @@
       "src/source-control/host-cache.ts",
       "step-narration",
       "* 仍然有效；清掉它们会让紧接着的全量刷新重跑一次 `git log` 与仓库信息批。"
-    ],
-    [
-      "src/source-control/host-runtime.ts",
-      "decorative-metaphor",
-      "* @param kind - 事件类型；seam 的监视不提供类型时为 null。"
-    ],
-    [
-      "src/source-control/host-runtime.ts",
-      "decorative-metaphor",
-      "* @param name - 变化的文件名；seam 的监视不提供名字时为 null。"
     ],
     [
       "src/source-control/host-runtime.ts",
@@ -1504,33 +1014,8 @@
     ],
     [
       "src/source-control/log-redact.ts",
-      "change-narration",
-      "* 因此每处命中先换成 `\\u0000<序号>`，全部规则跑完后再换回。"
-    ],
-    [
-      "src/source-control/log-redact.ts",
-      "change-narration",
-      "* 本地路径不处理——排查问题需要看清文件位置。其余敏感内容替换为可分辨用途的占位符："
-    ],
-    [
-      "src/source-control/log-redact.ts",
       "session-scope",
       "* 脱敏摘要，写进反馈正文，告知收件方本次屏蔽了什么。"
-    ],
-    [
-      "src/source-control/log-retention.ts",
-      "decorative-metaphor",
-      "* 目录里只有一次性的取用物——提交 issue 与评论时 `--body-file` 的载体文件。"
-    ],
-    [
-      "src/source-control/logger.ts",
-      "decorative-metaphor",
-      "* 目录里只有一次性的取用物：提交 issue 与日志评论时 `--body-file` 的载体文件。"
-    ],
-    [
-      "src/source-control/logger.ts",
-      "session-scope",
-      "* @returns 本次启动的日志文件路径。"
     ],
     [
       "src/source-control/logger.ts",
@@ -1553,24 +1038,9 @@
       "* 工作区与本次改动无关，全量清空会让它们下次各自重新扫描。"
     ],
     [
-      "src/source-control/repo-discovery.ts",
-      "change-narration",
-      "* 同时纳入结构监视：面板首次请求之前创建的仓库与工作树也能被发现。"
-    ],
-    [
       "src/source-control/repo-enrich.ts",
       "change-narration",
       "* 子模块仅作为叶子节点列出，不再下钻内部结构。"
-    ],
-    [
-      "src/source-control/repo-facts.ts",
-      "change-narration",
-      "* 写命令结束后作废目标仓库的布局：仓库可能被换成工作树、被移除或重新初始化。"
-    ],
-    [
-      "src/source-control/repo-facts.ts",
-      "change-narration",
-      "* 同一份事实。两项的变化都很慢（仓库被换成工作树或子模块、`pack-refs` 重写），因此按进程"
     ],
     [
       "src/source-control/repo-facts.ts",
@@ -1590,22 +1060,12 @@
     [
       "src/source-control/repo-watcher.ts",
       "change-narration",
-      "* 只读文件系统。建立基线发生在挂句柄之前（见 `sync`），因此正常路径上总有记录可比；"
-    ],
-    [
-      "src/source-control/repo-watcher.ts",
-      "change-narration",
       "* 已知仓库不再有 git 目录时把它移出已知集合：仓库已消失，留在集合里会让此后每一条"
     ],
     [
       "src/source-control/repo-watcher.ts",
       "change-narration",
       "* 递归监视工作区根：新建的仓库与工作树此前没有任何句柄，仓库级监视发现不了它们。已知仓库"
-    ],
-    [
-      "src/source-control/repo-watcher.ts",
-      "change-narration",
-      "挂句柄之前先记下结构状态：此后名字缺失的事件才有基线可比。"
     ],
     [
       "src/source-control/repo-watcher.ts",
@@ -1619,48 +1079,8 @@
     ],
     [
       "src/source-control/routes.ts",
-      "change-narration",
-      "* 0 是旧版客户端的缺省值，与真实轮次 0 无法区分，因此统一当成没有编号。"
-    ],
-    [
-      "src/source-control/routes.ts",
-      "change-narration",
-      "* 并发合并：同一键已有请求在飞时直接等它的载荷，不再执行一遍。"
-    ],
-    [
-      "src/source-control/routes.ts",
-      "change-narration",
-      "兜底：处理函数自身抛错时响应还没写，这里的错误以前只回给前端。"
-    ],
-    [
-      "src/source-control/routes.ts",
-      "session-scope",
-      "* @param scope - 本轮的子进程登记。"
-    ],
-    [
-      "src/source-control/routes.ts",
       "session-scope",
       "* 本轮结果的落定函数；非合并命令为 null。"
-    ],
-    [
-      "src/source-control/state-store.ts",
-      "change-narration",
-      "* @param existing - 现有工作区表；合并浏览器旧键时保留其中未被覆盖的字段与时间戳。"
-    ],
-    [
-      "src/source-control/state-store.ts",
-      "change-narration",
-      "* @param raw - 旧版文件原始对象。"
-    ],
-    [
-      "src/source-control/state-store.ts",
-      "change-narration",
-      "* @param value - 旧版持久化值。"
-    ],
-    [
-      "src/source-control/state-store.ts",
-      "change-narration",
-      "* @returns 接上时为 true；回退到旧版文件时为 false。"
     ],
     [
       "src/source-control/state-store.ts",
