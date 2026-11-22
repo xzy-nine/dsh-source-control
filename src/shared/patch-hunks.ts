@@ -109,10 +109,18 @@ export function patchOf(patch: ParsedPatch, indexes: readonly number[]): string 
  * @returns 各块的旧侧行数、新侧行数与块头，按出现顺序。
  */
 export function hunkRanges(hunks: readonly PatchHunk[]): HunkRange[] {
-	return hunks.map((hunk) => ({
-		oldStart: hunk.oldStart,
-		oldLines: hunk.oldLines,
-		newStart: hunk.newStart,
-		newLines: hunk.newLines,
-	}));
+	return hunks.map(rangeOf);
+}
+
+/**
+ * 取一个补丁块的范围内字段。
+ *
+ * 两块视图（客户端分段暂存与宿主的块列表）都只需要这四个字段，投影只写这一处。
+ *
+ * @param hunk - 补丁块。
+ * @returns 两侧行号区间。
+ */
+export function rangeOf(hunk: HunkRange): HunkRange {
+	const { oldStart, oldLines, newStart, newLines } = hunk;
+	return { oldStart, oldLines, newStart, newLines };
 }

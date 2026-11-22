@@ -27,7 +27,7 @@ import { useSharedContextMenu } from './ui/context-menu.ts';
 import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
 import {
 	API_PATH, applyHunk as applyHunkCommand, applyMergeChoices, fileDiffContent, installClientLog,
-	loadFileHunks, loadMergeContents, logClient, resolveConflict,
+	loadFileHunks, loadMergeContents, logClient, resolveConflict, stringsOf,
 	type FileDiffContent, type FileHunk, type MergeContentsPayload,
 } from './api/index.ts';
 import { MergeView } from './diff/merge-view.ts';
@@ -165,7 +165,7 @@ function GitGraphTab(props) {
 				? { kind: 'worktree', staged }
 				: { kind: 'commit', hash };
 		const address = gitDiffAddress(sessionId, scope);
-		const files = Array.isArray(diff.files) ? diff.files.filter((item): item is string => typeof item === 'string') : [];
+		const files = stringsOf(diff.files);
 		try {
 			tabActions.openResource(address, { params: { path, files, repoRoot } });
 		} catch (error) {
@@ -248,7 +248,7 @@ function GitDiffTab(props) {
 	const [followedSide, setFollowedSide] = React.useState<boolean | null>(null);
 	const staged = followedSide ?? stagedScope;
 	const files = React.useMemo<readonly string[]>(
-		() => (Array.isArray(navParams?.files) ? navParams.files.filter((item): item is string => typeof item === 'string') : []),
+		() => stringsOf(navParams?.files),
 		[navParams],
 	);
 	const currentPath = typeof navParams?.path === 'string' && navParams.path !== ''

@@ -132,9 +132,7 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 	}
 	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
 	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
-	const nodes: RepoNode[] = [];
-	const submoduleIds = new Set<string>();
-	const visited = new Set<string>();
+	const { nodes, submoduleIds, visited } = newDiscoveryTally();
 	let visitedCount = 0;
 	let truncated = false;
 	let level: Array<{ dir: string; depth: number }> = [{ dir: resolve(root), depth: 0 }];
@@ -185,14 +183,24 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
  * @param shallow - 只产出顶层节点时为 true。
  * @returns 仓库扁平列表与是否被截断（快路径不截断）。
  */
+/**
+ * 一次仓库发现的三份累加状态。
+ *
+ * 两条发现路径（逐层扫描与按已知路径核对）都要维护同一组：已产出的节点、子模块路径集合
+ * 与已访问目录集合；后两者共同保证同一目录只被处理一次。
+ *
+ * @returns 节点列表与两个去重集合。
+ */
+function newDiscoveryTally(): { nodes: RepoNode[]; submoduleIds: Set<string>; visited: Set<string> } {
+	return { nodes: [], submoduleIds: new Set<string>(), visited: new Set<string>() };
+}
+
 async function discoverKnownRepositories(
 	root: string,
 	known: readonly string[],
 	shallow: boolean,
 ): Promise<DiscoveryResult> {
-	const nodes: RepoNode[] = [];
-	const submoduleIds = new Set<string>();
-	const visited = new Set<string>();
+	const { nodes, submoduleIds, visited } = newDiscoveryTally();
 	// 顺序去重：保留首次出现的路径，已在 visited 或子模块集合中的路径跳过。
 	const candidates = dedupeCandidates(known, visited, submoduleIds);
 	// `.git` 探测并发；仍是仓库的路径按原顺序并发构造节点。

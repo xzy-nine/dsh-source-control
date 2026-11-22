@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
-import css from '../../css/sections.module.css';
+import { iconButton } from './icon-button.ts';
 
 /**
  * 分区标题栏的刷新按钮。
@@ -19,13 +19,11 @@ import css from '../../css/sections.module.css';
  */
 export function refreshButton(disabled: boolean, refreshing: boolean, lastRefresh: string, onRefresh: () => void): React.ReactElement {
 	const title = lastRefresh === '' ? '刷新' : '刷新（上次刷新：' + lastRefresh + '）';
-	return React.createElement('button', {
-		type: 'button',
-		className: css.iconBtn,
+	return iconButton({
 		title,
-		'aria-label': '刷新',
-		'data-refreshing': refreshing ? '1' : undefined,
 		disabled,
-		onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onRefresh(); },
-	}, React.createElement(IconRefreshOutlineRegular, { size: 14 }));
+		onClick: onRefresh,
+		extra: { 'data-refreshing': refreshing ? '1' : undefined },
+		children: React.createElement(IconRefreshOutlineRegular, { size: 14 }),
+	});
 }

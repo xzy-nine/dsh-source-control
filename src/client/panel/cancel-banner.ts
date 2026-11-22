@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
-import { showConfirmation } from '../ui/dialog.ts';
+import { primaryButton, showConfirmation } from '../ui/dialog.ts';
 import { cancellableEntriesOf } from './busy.ts';
 import type { CancellableEntry } from './busy.ts';
 import type { BusyEntry } from '../shared/types.ts';
@@ -87,10 +87,7 @@ export function CancelDialog({ busy, onCancel, onClose }: CancelDialogProps): Re
 		{ className: css.cancelDialog, open: true },
 		React.createElement('div', { className: css.dialogTitle }, '正在执行'),
 		React.createElement('div', { className: css.dialogHint }, `${entry.label} 需要一段时间，期间面板的部分功能不可用。`),
-		React.createElement(Button, {
-			variant: 'primary', size: 'sm',
-			onClick: () => { void confirmCancel(entry, onCancel).then(onClose); },
-		}, '停止'),
+		primaryButton({ label: '停止', onClick: () => { void confirmCancel(entry, onCancel).then(onClose); } }),
 		React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: onClose }, '继续等待'),
 	);
 }

@@ -3,9 +3,9 @@
  *
  * 字段名即前端契约：`src/client/shared/types.ts` 与 `src/client/api/` 按这些名字读取响应。
  */
-import type { StashEntry } from '../shared/stash.js';
+import type { CommitSignatureFields, StashEntry } from '../shared/stash.js';
 
-export type { StashEntry };
+export type { CommitSignatureFields, StashEntry };
 
 
 /** 错误信息；null 表示无错误。 */

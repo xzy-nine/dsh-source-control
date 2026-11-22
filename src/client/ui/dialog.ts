@@ -105,12 +105,7 @@ function confirmFooter(
 		React.Fragment,
 		null,
 		React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: onCancel }, cancelLabel),
-		React.createElement(Button, {
-			variant: 'primary', size: 'sm',
-			disabled: confirmDisabled,
-			className: danger ? css.btnDanger : undefined,
-			onClick: onConfirm,
-		}, confirmLabel),
+		primaryButton({ label: confirmLabel, onClick: onConfirm, disabled: confirmDisabled, danger }),
 	);
 }
 
@@ -221,7 +216,7 @@ export function showMessage({ title, message, closeLabel = '知道了' }: Messag
 	return runDialog<undefined>((finish) => function Content(): React.ReactElement {
 		return closedDialog(title, finish, undefined,
 			React.createElement('div', { className: css.dialogHint }, messageText(message)),
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, closeLabel));
+			primaryButton({ label: closeLabel, onClick: () => { finish(undefined); } }));
 	});
 }
 
@@ -279,7 +274,7 @@ export function showMessageWithLinks({ title, message, links = [], checkboxLabel
 				),
 				checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
 			),
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: close }, closeLabel),
+			primaryButton({ label: closeLabel, onClick: close }),
 		);
 	});
 }
@@ -463,6 +458,59 @@ function initialValues(fields: readonly FormField[]): Record<string, unknown> {
 }
 
 /**
+ * 弹窗里的主操作按钮。
+ *
+ * 弹窗的确认、关闭与保存都长这一颗：主色、小号、可带危险样式。语序与尺寸因此只有一处。
+ *
+ * @param props.label - 按钮文案。
+ * @param props.onClick - 点击处理。
+ * @param props.disabled - 是否禁用。
+ * @param props.danger - 是否用危险样式。
+ * @returns 按钮元素。
+ */
+export function primaryButton({ label, onClick, disabled = false, danger = false }: {
+	readonly label: string;
+	readonly onClick: () => void;
+	readonly disabled?: boolean;
+	readonly danger?: boolean;
+}): React.ReactElement {
+	return React.createElement(Button, {
+		variant: 'primary', size: 'sm',
+		disabled,
+		className: danger ? css.btnDanger : undefined,
+		onClick,
+	}, label);
+}
+
+/**
+ * 单个值对象的字段写入器。
+ *
+ * @param setValues - 值对象的状态写入器。
+ * @returns 按字段名写入的回调。
+ */
+function fieldSetter(
+	setValues: React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
+): (name: string, value: unknown) => void {
+	return (name, value) => { setValues((previous) => ({ ...previous, [name]: value })); };
+}
+
+/**
+ * 分页表单里某一页的字段写入器。
+ *
+ * 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
+ *
+ * @param setValues - 全部页面的状态写入器。
+ * @param page - 当前页的键。
+ * @returns 按字段名写入的回调。
+ */
+function pageFieldSetter(
+	setValues: React.Dispatch<React.SetStateAction<Record<string, Record<string, unknown>>>>,
+	page: string,
+): (name: string, value: unknown) => void {
+	return (name, value) => { setValues((previous) => ({ ...previous, [page]: { ...(previous[page] ?? {}), [name]: value } })); };
+}
+
+/**
  * 表单：支持文本、下拉、单选、勾选与多选项。
  *
  * @param options - 见 {@link FormOptions}。
@@ -471,7 +519,7 @@ function initialValues(fields: readonly FormField[]): Record<string, unknown> {
 export function showForm({ title, message = '', fields, confirmLabel = '确定' }: FormOptions): Promise<Record<string, unknown> | null> {
 	return runDialog<Record<string, unknown> | null>((finish) => function Content(): React.ReactElement {
 		const [values, setValues] = React.useState<Record<string, unknown>>(() => initialValues(fields));
-		const setField = (name: string, value: unknown): void => { setValues((previous) => ({ ...previous, [name]: value })); };
+		const setField = fieldSetter(setValues);
 		const submit = (): void => { finish(values); };
 		return cancelableModal(
 			title,
@@ -521,10 +569,7 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 		const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
 		const active = pages.find((page) => page.value === activeValue) ?? pages[0];
 		const activeValues = values[active.value] ?? {};
-		const setField = (name: string, value: unknown): void => { setValues((previous) => ({
-			...previous,
-			[active.value]: { ...(previous[active.value] ?? {}), [name]: value },
-		})); };
+		const setField = pageFieldSetter(setValues, active.value);
 		// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 		const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 			{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
