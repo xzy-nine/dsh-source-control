@@ -4,7 +4,7 @@
  * 浏览器没有文件系统，日志经 `logEvent` 命令交给宿主。上报是尽力而为：
  * 队列有上限，发送失败把条目放回队首，且不上报自身失败（见 http.ts）。
  */
-import { API_PATH, setApiFailureReporter } from './http.ts';
+import { API_PATH, postJson, setApiFailureReporter } from './http.ts';
 import { createCoalesceTimer } from '../../shared/coalesce-timer.ts';
 
 /** 客户端日志级别。 */
@@ -58,11 +58,7 @@ export async function flushClientLog(): Promise<void> {
 	queue = [];
 	sending = true;
 	try {
-		await fetch(API_PATH, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ repo: '', command: 'logEvent', entries }),
-		});
+		await postJson(API_PATH, { repo: '', command: 'logEvent', entries });
 	} catch {
 		// 放回队首：下一次发送一起带上，仍受总量上限约束。
 		queue = [...entries, ...queue].slice(0, QUEUE_LIMIT);

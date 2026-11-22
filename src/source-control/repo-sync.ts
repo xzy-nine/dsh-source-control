@@ -42,8 +42,8 @@ export async function loadRepoSync(repo: string): Promise<{
 	if (sync.branch !== null) return sync;
 	const head = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
 	const branch = head.code === 0 ? head.stdout.trim() : '';
-	if (branch === '') return { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
-	return { branch, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
+	if (branch === '') return EMPTY_SYNC;
+	return { ...EMPTY_SYNC, branch };
 }
 
 /**
@@ -67,15 +67,10 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 	}
 	return Promise.all(unique.map((path) => syncLimiter(async () => {
 		try {
-			const sync = await loadRepoSync(path);
-			return {
-				path, branch: sync.branch, upstream: sync.upstream,
-				upstreamRef: sync.upstreamRef, upstreamRemote: sync.upstreamRemote,
-				ahead: sync.ahead, behind: sync.behind,
-			};
+			return { path, ...(await loadRepoSync(path)) };
 		} catch (error) {
 			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${error instanceof Error ? error.message : String(error)}`);
-			return { path, branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
+			return { path, ...EMPTY_SYNC };
 		}
 	})));
 }

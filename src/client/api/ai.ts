@@ -1,7 +1,7 @@
 /**
  * AI 模型目录、流式提交信息生成与翻译。
  */
-import { callApi } from './http.ts';
+import { callApi, postJson } from './http.ts';
 import { readStreamText } from './stream.ts';
 
 /** AI 模型目录端点。 */
@@ -87,12 +87,7 @@ export async function generateCommitMessage(
 	cwd: string, provider: string, model: string, rules: string,
 	handlers: CommitMessageHandlers, amend = false, language = '',
 ): Promise<void> {
-	const res = await fetch(AI_COMMIT_PATH, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ repo: cwd, provider, model, rules, amend, language }),
-		signal: handlers.signal,
-	});
+	const res = await postJson(AI_COMMIT_PATH, { repo: cwd, provider, model, rules, amend, language }, handlers.signal);
 	if (!res.ok) {
 		const json = await res.json().catch(() => ({})) as { error?: string };
 		throw new Error(json.error || `宿主返回 ${res.status}`);

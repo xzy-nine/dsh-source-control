@@ -69,7 +69,7 @@ export interface RemoteSync {
  * @returns 完整引用名。
  */
 function remoteTrackingRef(sync: RepoSync): string {
-	// 完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。
+	// 完整引用由宿主给出（git 的 %(upstream) / branch.upstream），有则直接用它；缺失时按短名拼远程跟踪引用。
 	return sync.upstreamRef ?? refIdOf(sync.upstream ?? '', 'remote');
 }
 

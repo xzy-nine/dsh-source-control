@@ -4,6 +4,7 @@
  * 子进程一律用数组参数直接 spawn、不经 shell，与 `working-tree.ts` 的 git 执行方式一致。
  * 需要凭据的操作在没有 `gh` 或未登录时返回可读错误，由前端提示。
  */
+import { describeMaskedArgs } from './git-exec.js';
 import { runCollect } from './host-runtime.js';
 import { logDebug, logWarn } from './logger.js';
 
@@ -73,6 +74,9 @@ export async function runGh(args: readonly string[], cwd: string): Promise<GhRes
 /** 值属于自由文本的 `gh` 参数：日志里屏蔽其取值。 */
 const GH_MASKED_ARGS: ReadonlySet<string> = new Set(['--body', '-b', '--body-file', '-F', '--input', '--notes']);
 
+/** `gh` 里取值可读的参数：它们是本地路径，排查时需要知道读了哪个文件。 */
+const GH_READABLE_VALUE_ARGS: ReadonlySet<string> = new Set(['--body-file', '-F', '--input']);
+
 /**
  * `gh` 参数的可读描述，屏蔽正文类取值。
  *
@@ -80,18 +84,7 @@ const GH_MASKED_ARGS: ReadonlySet<string> = new Set(['--body', '-b', '--body-fil
  * @returns 描述文本。
  */
 export function describeGhArgs(args: readonly string[]): string {
-	const parts: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const arg = args[index];
-		const masked = GH_MASKED_ARGS.has(arg);
-		parts.push(masked ? `${arg}=<已屏蔽>` : arg);
-		// --body-file 的取值是本地路径，保留可读（排查时需要知道读了哪个文件）。
-		if (masked && index + 1 < args.length) {
-			parts.push(arg === '--body-file' || arg === '-F' || arg === '--input' ? args[index + 1] : '<已屏蔽>');
-			index += 1;
-		}
-	}
-	return parts.join(' ');
+	return describeMaskedArgs(args, GH_MASKED_ARGS, GH_READABLE_VALUE_ARGS);
 }
 
 /**

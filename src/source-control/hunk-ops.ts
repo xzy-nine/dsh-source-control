@@ -8,8 +8,7 @@
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gitOrThrow } from './git-exec.js';
-import { errorText } from '../shared/error-text.js';
+import { gitOrThrow, runGitAttempt } from './git-exec.js';
 import { parsePatch, patchOf } from '../shared/patch-hunks.js';
 
 /** 一次分段操作的结果。 */
@@ -59,10 +58,7 @@ async function applyPatch(repo: string, patchText: string, args: readonly string
 	const file = join(dir, 'patch.diff');
 	try {
 		writeFileSync(file, patchText, 'utf8');
-		await gitOrThrow(['apply', '--unidiff-zero', ...args, '--whitespace=nowarn', '--', file], repo);
-		return null;
-	} catch (error) {
-		return errorText(error);
+		return await runGitAttempt(['apply', '--unidiff-zero', ...args, '--whitespace=nowarn', '--', file], repo);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

@@ -152,42 +152,49 @@ function remoteNamesFromConfig(configs: Record<string, string>): string[] | null
 	return names.size === 0 ? null : [...names].sort();
 }
 
+/** 一次提交图取数与日志取数共用的取数参数。 */
+interface LogQuery {
+	/** 要显示的提交起点；null 表示全部（`--branches` 等）。 */
+	readonly branches: readonly string[] | null;
+	/** 取回的提交数；`getCommits` 传上限加一用来判定是否还有更多。 */
+	readonly num: number;
+	/** 是否包含仅被标签引用的提交。 */
+	readonly includeTags: boolean;
+	/** 是否包含远程分支，并按 {@link remotes} 与 {@link hideRemotes} 过滤。 */
+	readonly includeRemotes: boolean;
+	/** 是否包含仅被 reflog 提及的提交。 */
+	readonly includeCommitsMentionedByReflogs: boolean;
+	/** 是否只沿第一父提交回溯。 */
+	readonly onlyFollowFirstParent: boolean;
+	/** 提交排序方式。 */
+	readonly ordering: CommitOrdering;
+	/** 已知远程名，用于远程分支过滤；可直接给出，也可给一个 promise。 */
+	readonly remotes: readonly string[] | Promise<readonly string[]>;
+	/** 要隐藏的远程名。 */
+	readonly hideRemotes: readonly string[];
+	/** 仓库中的贮藏；其基提交一并作为取数起点。 */
+	readonly stashes: readonly StashEntry[];
+	/** 从起点跳过的提交数；双向分页都按绝对偏移取用。 */
+	readonly skip: number;
+}
+
 /**
  * 读取提交图。
  *
- * 提交取 `maxCommits + 1` 条以判定是否还有更多；未提交变更以哈希为 `*` 的伪提交排在最前；
+ * 提交取 `num` 条以判定是否还有更多；未提交变更以哈希为 `*` 的伪提交排在最前；
  * 贮藏插入到其基提交之前。
  *
  * @param repo - 仓库路径。
- * @param branches - 要显示的提交起点；null 表示全部（`--branches` 等）。
- * @param maxCommits - 返回的提交数上限。
- * @param showTags - 是否标注标签。
- * @param showRemoteBranches - 是否包含并标注远程分支。
- * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
- * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
- * @param commitOrdering - 提交排序方式。
- * @param remotes - 已知远程名，用于标注远程分支所属远程；可直接给出，也可给一个待定的取值。
- * @param hideRemotes - 要隐藏的远程名。
- * @param stashes - 仓库中的贮藏。
- * @param skip - 从起点跳过的提交数；双向分页都按绝对偏移取用。
+ * @param query - 取数参数。
  * @param head - 当前 HEAD 指向的提交哈希；`HEAD` 文件由调用方读取，本函数不重复读。
  * @returns 提交图；读取失败时为空图且 `error` 为错误文本。
  */
 export async function getCommits(
 	repo: string,
-	branches: readonly string[] | null,
-	maxCommits: number,
-	showTags: boolean,
-	showRemoteBranches: boolean,
-	includeCommitsMentionedByReflogs: boolean,
-	onlyFollowFirstParent: boolean,
-	commitOrdering: CommitOrdering,
-	remotes: readonly string[] | Promise<readonly string[]>,
-	hideRemotes: readonly string[],
-	stashes: readonly StashEntry[],
-	skip = 0,
+	query: LogQuery,
 	head: string | null = null,
 ): Promise<CommitData> {
+	const { stashes, skip, num, remotes, hideRemotes, includeTags, includeRemotes } = query;
 	try {
 		/*
 		 * 引用标记来自 `git log` 的装饰（`--decorate=full` 的 `%D`），不再单独枚举引用：
@@ -195,10 +202,10 @@ export async function getCommits(
 		 *
 		 * 远程名可能与仓库信息同批取，标注要用它，因此这里才等它落地；日志与它并行。
 		 */
-		const logSource = getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip);
+		const logSource = getLog(repo, query);
 		const [records, remoteNames] = await Promise.all([logSource, remotes]);
-		const refs: RefData = { ...refsFromDecorations(records, hideRemotes, showRemoteBranches), head };
-		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits, skip), error: null };
+		const refs: RefData = { ...refsFromDecorations(records, hideRemotes, includeRemotes), head };
+		return { ...assembleCommits(records, refs, stashes, remoteNames, includeTags, num, skip), error: null };
 	} catch (error) {
 		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, nextSkip: skip, error: errorText(error) };
 	}
@@ -639,35 +646,14 @@ export async function getRemoteNames(repo: string): Promise<string[]> {
  * 读取原始提交记录。
  *
  * @param repo - 仓库路径。
- * @param branches - 提交起点；null 表示全部。
- * @param num - 取回的提交数。
- * @param includeTags - 是否包含仅被标签引用的提交。
- * @param includeRemotes - 是否包含远程分支。
- * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
- * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
- * @param order - 提交排序方式。
- * @param remotes - 已知远程名；可直接给出，也可给一个待定的取值（仅在需要隐藏远程时使用）。
- * @param hideRemotes - 要隐藏的远程名。
- * @param stashes - 仓库中的贮藏。
+ * @param query - 取数参数。
  * @returns 提交记录。
  */
-async function getLog(
-	repo: string,
-	branches: readonly string[] | null,
-	num: number,
-	includeTags: boolean,
-	includeRemotes: boolean,
-	includeCommitsMentionedByReflogs: boolean,
-	onlyFollowFirstParent: boolean,
-	order: CommitOrdering,
-	remotes: readonly string[] | Promise<readonly string[]>,
-	hideRemotes: readonly string[],
-	stashes: readonly StashEntry[],
-	skip = 0,
-): Promise<LogRecord[]> {
-	// `--decorate=full` 让 `%D` 给出完整引用名；提交图的引用标记据此装配，不再单独枚举引用。
-	const args = ['-c', 'log.showSignature=false', 'log', '-z', '--decorate=full', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${order}-order`];
-	if (onlyFollowFirstParent) args.push('--first-parent');
+async function getLog(repo: string, query: LogQuery): Promise<LogRecord[]> {
+	const { branches, num, includeTags, includeRemotes, hideRemotes, remotes, stashes, skip, ordering } = query;
+	// `--decorate=full` 让 `%D` 给出完整引用名；提交图的引用标记据此装配。
+	const args = ['-c', 'log.showSignature=false', 'log', '-z', '--decorate=full', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${ordering}-order`];
+	if (query.onlyFollowFirstParent) args.push('--first-parent');
 	// 偏移分页：跳过前 skip 条再输出本页；正反向都用它，因此上下滚动都能取。
 	if (skip > 0) args.push(`--skip=${skip}`);
 
@@ -676,7 +662,7 @@ async function getLog(
 	} else {
 		args.push('--branches');
 		if (includeTags) args.push('--tags');
-		if (includeCommitsMentionedByReflogs) args.push('--reflog');
+		if (query.includeCommitsMentionedByReflogs) args.push('--reflog');
 		if (includeRemotes) {
 			if (hideRemotes.length === 0) {
 				// 不隐藏任何远程时不需要远程名，日志因此不必等仓库信息。
@@ -917,6 +903,22 @@ async function defaultRemoteBranch(repo: string): Promise<{ short: string; ref: 
  * @param repo - 仓库路径。
  * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
  */
+/**
+ * 把候选来源名解析成分叉来源。
+ *
+ * 名字为空、或解析不到对应引用时返回 null，由调用方继续试下一个候选。
+ *
+ * @param repo - 仓库路径。
+ * @param branch - 当前分支名。
+ * @param name - 候选来源的引用名；空串表示该候选不存在。
+ * @returns 分叉来源；候选不可用时为 null。
+ */
+async function baseOfName(repo: string, branch: string, name: string | null): Promise<BranchBase | null> {
+	if (name === null || name === '') return null;
+	const resolved = await resolveRefName(repo, name);
+	return resolved === null ? null : { branch, base: resolved.short, baseRef: resolved.ref };
+}
+
 export async function getBranchBase(repo: string): Promise<BranchBase> {
 	const head = await repoHead(repo);
 	const branch = head?.branch ?? null;
@@ -924,18 +926,12 @@ export async function getBranchBase(repo: string): Promise<BranchBase> {
 
 	const configured = await runGit(['config', '--get', `branch.${branch}.vscode-merge-base`], repo);
 	const configuredName = configured.code === 0 ? configured.stdout.trim() : '';
-	if (configuredName !== '') {
-		const resolved = await resolveRefName(repo, configuredName);
-		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
-	}
+	const fromConfigured = await baseOfName(repo, branch, configuredName);
+	if (fromConfigured !== null) return fromConfigured;
 
-	const fromReflog = await reflogCreatedFrom(repo, branch);
+	const fromReflog = await baseOfName(repo, branch, await reflogCreatedFrom(repo, branch));
 
-	if (fromReflog !== null) {
-		const resolved = await resolveRefName(repo, fromReflog);
-		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
-	}
-
+	if (fromReflog !== null) return fromReflog;
 
 	const fallback = await defaultRemoteBranch(repo);
 	return { branch, base: fallback?.short ?? null, baseRef: fallback?.ref ?? null };

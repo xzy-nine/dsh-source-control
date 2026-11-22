@@ -8,7 +8,7 @@ import React from 'react';
 import {
 	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, writeClipboard, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { Dropdown, type DropdownOption } from './dropdown.ts';
+import { Dropdown, type DropdownOption, type DropdownValueProps } from './dropdown.ts';
 import { AnsiText } from './ansi.ts';
 import { pushDialog, removeDialog } from './overlay-host.ts';
 import css from '../css/dialog.module.css';
@@ -573,16 +573,10 @@ function labeledField(field: FormField, control: React.ReactElement): React.Reac
  * @param props.onChange - 变更回调。
  * @returns 字段元素。
  */
-function DropdownField({ name, label, options, value, onChange }: {
-	name: string;
-	label?: string | undefined;
-	options: ReadonlyArray<DropdownOption>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
+function DropdownField({ name, label, ...choice }: { name: string; label?: string | undefined } & DropdownValueProps): React.ReactElement {
 	return labeledField(
-		{ name, label, type: 'dropdown', options },
-		React.createElement(Dropdown, { id: `ggg-field-${name}`, options, value, onChange }),
+		{ name, label, type: 'dropdown', options: choice.options },
+		React.createElement(Dropdown, { ...choice, id: `ggg-field-${name}` }),
 	);
 }
 

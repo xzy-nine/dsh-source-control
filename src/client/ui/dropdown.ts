@@ -14,6 +14,9 @@ export interface DropdownOption {
 	readonly title?: string;
 }
 
+/** 下拉控件的数据面：选项、当前值与变更回调。设置行与对话框字段共用这一形状。 */
+export type DropdownValueProps = Pick<DropdownProps, 'options' | 'value' | 'onChange'>;
+
 /** 下拉控件的属性。 */
 export interface DropdownProps {
 	/** 选项。 */

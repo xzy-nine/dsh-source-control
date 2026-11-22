@@ -15,7 +15,7 @@ import { recordCommandCost } from './api/cost.js';
 import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
 import { collectDiff } from './commit-diff.js';
 import { buildCommitRequest, droppedNotice } from './ai-commit-request.js';
-import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
+import { coalesceKeyOf, openEventStream, readBody, sendBadRequest, sendJson } from './api/http.js';
 import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
 import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
 import type { AiCommitDeps } from './ai-deps.js';
@@ -458,11 +458,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			};
 			if (off) streamOpts.reasoningEffort = 'off';
 
-			res.writeHead(200, {
-				'content-type': 'text/event-stream; charset=utf-8',
-				'cache-control': 'no-store',
-				'connection': 'keep-alive',
-			});
+			openEventStream(res);
 			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
 			if (warning !== '') sse('warning', warning);
 			const dropped = droppedNotice(collected.dropped);

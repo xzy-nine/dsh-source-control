@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { Checkbox, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
-import { Dropdown } from '../ui/dropdown.ts';
+import { Dropdown, type DropdownValueProps } from '../ui/dropdown.ts';
 import css from '../css/settings.module.css';
 import { cx } from '../css/cx.ts';
 
@@ -140,16 +140,11 @@ export function FieldBlock({ label, placeholder, value, onChange }: {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-export function SelectRow({ label, options, value, onChange }: {
-	label: string;
-	options: ReadonlyArray<{ value: string; label: string; title?: string }>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
+export function SelectRow({ label, ...choice }: { label: string } & DropdownValueProps): React.ReactElement {
 	return React.createElement(SettingRow, {
 		label,
 		labelClass: css.setRowText,
-		control: React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
+		control: React.createElement(SegmentedControl, { ...choice, id: `ggg-set-${label}`, label }),
 	});
 }
 
@@ -162,11 +157,6 @@ export function SelectRow({ label, options, value, onChange }: {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-export function DropdownRow({ label, options, value, onChange }: {
-	label: string;
-	options: ReadonlyArray<{ value: string; label: string }>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
-	return React.createElement(SettingRow, { label, labelClass: css.setLabel, control: React.createElement(Dropdown, { options, value, onChange }) });
+export function DropdownRow({ label, ...choice }: { label: string } & DropdownValueProps): React.ReactElement {
+	return React.createElement(SettingRow, { label, labelClass: css.setLabel, control: React.createElement(Dropdown, choice) });
 }

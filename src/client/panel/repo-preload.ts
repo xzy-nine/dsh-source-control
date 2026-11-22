@@ -87,8 +87,8 @@ interface WorkspaceEntry {
 	/**
 	 * 上一轮各节点在磁盘上是否存在。
 	 *
-	 * 子模块从「未检出」变成「已检出」时它的领先/落后要重取：未检出时读到的空状态是
-	 * 该目录的事实，检出后就不再成立，而节点 id 没变，只按 id 判「已取过」会一直沿用空值。
+	 * 子模块从「未检出」变成「已检出」时它的领先/落后要重取：未检出的空状态只对未检出的目录
+	 * 成立，而节点 id 没变，只按 id 判「已取过」会一直沿用空值。
 	 */
 	availabilityById: Map<string, boolean>;
 	/**
@@ -385,8 +385,8 @@ async function enrichAll(entry: WorkspaceEntry, controller: AbortController): Pr
 		}
 		if (!state.retry || cancelled()) return;
 		/*
-		 * 重试前退避：宿主连续返回空或失败时，紧跟着的下一轮同样会失败，立刻重发只是把
-		 * 同一批请求再打一遍。间隔按已重试的轮次递增，成功即不再进入这里。
+		 * 重试前退避：宿主连续返回空或失败时，紧邻的下一次同样会失败，立刻重发只是把
+		 * 同一批请求再打一遍。间隔按已重试的次数递增，取数成功即退出这段重试。
 		 */
 		if (cancelled()) return;
 		await delayRef.current(retryDelayMs(attempt));
@@ -554,7 +554,7 @@ function start(entry: WorkspaceEntry): void {
 			 * 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
 			 *
 			 * 不每次都扫：持久化位置命中时本可以只核对已知路径，每次都跟一次全目录扫描会让
-			 * 「命中缓存」反而更慢。改为按 {@link FULL_SCAN_INTERVAL_MS} 节流，另外在快路径
+			 * 「命中缓存」反而更慢。因此按 {@link FULL_SCAN_INTERVAL_MS} 节流，另外在快路径
 			 * 结果为空时立即重扫——那说明缓存整体失效，只能靠完整扫描找回。
 			 */
 			const now = Date.now();
@@ -583,7 +583,7 @@ function start(entry: WorkspaceEntry): void {
 		entry.running = null;
 		entry.controller = null;
 		/*
-		 * 取数期间登记的结构变更：它发生在本次发现之后，本次结果必然不含它，因此立即再取一次，
+		 * 取数期间登记的结构变更：它发生在那次发现之后，那批结果必然不含它，因此立即再取一次，
 		 * 不按冷却等待。挂起标志清掉后只重取一次，不会因同一批事件反复重取。
 		 */
 		if (entry.pendingRefresh) {
@@ -622,7 +622,7 @@ export function preloadWorkspace(root: string, options: PreloadOptions = {}): vo
  * 保留工作区条目与订阅者，只重置取数状态与缓存数据，并发布一份空的 loading 快照。重新扫描后
  * 树先回到占位，随后由 {@link preloadWorkspace} 重新取数并逐阶段发布。
  *
- * 用户主动重扫用它：先清空再重取。结构事件驱动的重扫用 {@link refreshWorkspace}，它不清空树。
+ * 用户主动重扫用它：重置状态并重取。结构事件驱动的重扫用 {@link refreshWorkspace}，它不清空树。
  *
  * @param root - 工作区根路径。
  * @returns 无。
@@ -640,7 +640,7 @@ export function dropWorkspace(root: string): void {
 	entry.baseNodes = [];
 	entry.childrenByPath = new Map();
 	entry.claims.clear();
-	// 整棵树作废：此前取过的同步值连同节点一起丢掉，重扫后逐个重新取。
+	// 整棵树作废：已取过的同步值连同节点一起丢掉，重扫后逐个重新取。
 	entry.syncedIds = new Set();
 	publish(entry, {
 		nodes: [], truncated: false, usedCache: false, status: 'loading', error: null,
@@ -668,7 +668,7 @@ function clearPendingRefresh(entry: WorkspaceEntry): void {
  * 移除时，移除落在冷却期内，树会一直保留已不存在的工作树（点击它还报 `spawn git ENOENT`）。
  * 冷却只用于面板挂载触发的重取，那里的重复请求没有语义差别。
  *
- * 在途期间到达的请求登记为 `pendingRefresh`，本次取数结束后立即再取一次：本次发现发生在
+ * 在途期间到达的请求登记为 `pendingRefresh`，那次取数结束后立即再取一次：发现发生在
  * 变化之前，结果必然不含该变化。
  *
  * @param root - 工作区根路径。
@@ -683,7 +683,7 @@ export function refreshWorkspace(root: string): void {
 		return;
 	}
 	if (entry.running !== null) {
-		// 取数进行中：登记挂起请求，由本轮取数结束后统一触发一次后续重取。
+		// 取数进行中：登记挂起请求，由那次取数结束后统一触发一次后续重取。
 		entry.pendingRefresh = true;
 		return;
 	}
