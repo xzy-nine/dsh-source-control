@@ -15,6 +15,7 @@ import type { FeedbackInfo, FeedbackType } from '../api/index.ts';
 import { showMessage, showMessageWithLinks } from '../ui/dialog.ts';
 import { openExternal } from '../ui/context-menu.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
+import type { ExternalOpenHandlers } from './settings.ts';
 import { FileRow, FolderRow } from './tree-rows.tsx';
 import css from '../css/settings.module.css';
 import changesCss from '../css/changes.module.css';
@@ -27,17 +28,13 @@ const TYPE_OPTIONS = [
 ];
 
 /** 反馈页签属性。 */
-export interface FeedbackTabProps {
+export interface FeedbackTabProps extends ExternalOpenHandlers {
 	/** 会话工作区路径；提交 gh 命令的工作目录。 */
 	readonly cwd: string | null;
 	/** 插件版本。 */
 	readonly pluginVersion: string;
 	/** 打开一个外部地址；缺省用浏览器新标签页。 */
 	readonly onOpenExternal?: ((url: string) => void) | undefined;
-	/** 按绝对路径打开一个文件；缺省不做任何事。 */
-	readonly onOpenFile?: ((path: string) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；缺省不做任何事。返回的 promise 用于排定打开顺序。 */
-	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 }
 
 /** 日志天数选项：与宿主保留期一致，最长一档就是全部保留期。 */

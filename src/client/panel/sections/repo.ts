@@ -7,7 +7,7 @@ import React from 'react';
 import {
 	IconPaperPlaneOutlineRegular, IconPlusOutlineRegular, IconSettingsOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { RepoRow } from '../repo-row.ts';
+import { RepoRow, type RepoRowCallbacks } from '../repo-row.ts';
 import type { BusyFlags, RepoNode, RepoSync } from '../../shared/types.ts';
 import { SectionHead } from './section-head.ts';
 import { iconButton } from './icon-button.ts';
@@ -15,7 +15,7 @@ import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
 
 /** 存储库分区。 */
-export interface RepoSectionProps {
+export interface RepoSectionProps extends RepoRowCallbacks {
 	readonly open: boolean;
 	readonly height: number;
 	readonly busy: BusyFlags;
@@ -42,10 +42,6 @@ export interface RepoSectionProps {
 	readonly onClone: () => void;
 	/** 克隆进行中：只禁用克隆入口，不影响其它控件。 */
 	readonly cloneBusy: boolean;
-	readonly onSelect: (node: RepoNode) => void;
-	readonly onToggle: (node: RepoNode) => void;
-	readonly onMoreActions: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
-	readonly onBranchClick: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
 	readonly onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 

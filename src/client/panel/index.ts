@@ -42,7 +42,7 @@ import { findNodeByPath } from './repo-tree.ts';
 import { workspaceEmptyOf } from './workspace-empty.ts';
 import { addBusy, busyFlagsOf, removeBusy, setBusyLabel } from './busy.ts';
 import { primaryActionOf } from './submit-state.ts';
-import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
+import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel, type ExternalOpenHandlers } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { upstreamPartsOf, useRemoteSync } from './use-remote-sync.ts';
@@ -61,15 +61,14 @@ const INITIAL_MAX_COMMITS = 200;
 
 
 /** 面板属性。 */
-export interface GitGraphPanelProps {
+export interface GitGraphPanelProps extends Pick<ExternalOpenHandlers, 'onRevealPath'> {
 	/** 会话工作区路径；没有工作区时为 undefined。 */
 	readonly cwd?: string | undefined;
 	/** 会话 id，用于持久化存储库选中与展开状态。 */
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
-	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
+
 	/** 打开宿主目录选择器；未装载时为 undefined。 */
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
