@@ -2,8 +2,6 @@
  * 其余命令：清理未跟踪文件、归档、GitHub 集成、平台占位、差异内容、用户身份、缓存作废、
  * 反馈与客户端日志。
  */
-import fs from 'node:fs/promises';
-import nodePath from 'node:path';
 import {
 	cleanUntrackedFiles, resetFileToRevision, setConfigValue, unsetConfigValue,
 } from '../git-actions.js';
@@ -12,7 +10,7 @@ import { cancelGitOperation, gitOrThrow, runGit } from '../git-exec.js';
 import { getConfig, getRepoInfo } from '../git-query.js';
 import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
-import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, CONFLICT_ACTIONS, resolveConflicts } from '../conflict-ops.js';
+import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, CONFLICT_ACTIONS, contentAt, resolveConflicts, worktreeText } from '../conflict-ops.js';
 import { conflictKindOfPair } from '../../shared/conflict-kind.js';
 import type { ConflictAction, ConflictStages } from '../conflict-ops.js';
 import type { ConflictKind } from '../../shared/conflict-kind.js';
@@ -339,24 +337,17 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				let hasParent = true;
 				if (baseHash !== '') {
 					// 两提交对比：旧侧取 baseHash，新侧取 commitHash（'*' 表示工作区文件）。
-					try { oldText = await gitOrThrow(['show', `${baseHash}:${filePath}`], repo); } catch { oldText = null; }
-					if (commitHash === '*') {
-						try { newText = await fs.readFile(nodePath.resolve(repo, filePath), 'utf8'); } catch { newText = null; }
-					} else {
-						try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
-					}
+					oldText = await contentAt(repo, baseHash, filePath);
+					newText = commitHash === '*' ? await worktreeText(repo, filePath) : await contentAt(repo, commitHash, filePath);
 				} else if (commitHash === '*') {
 					if (staged) {
 						// 暂存区 vs HEAD
-						try { oldText = await gitOrThrow(['show', `HEAD:${filePath}`], repo); } catch { oldText = null; }
-						try { newText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { newText = null; }
+						oldText = await contentAt(repo, 'HEAD', filePath);
+						newText = await contentAt(repo, ':', filePath);
 					} else {
 						// 工作区 vs 暂存区
-						try { oldText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { oldText = null; }
-						try {
-							const fullPath = nodePath.resolve(repo, filePath);
-							newText = await fs.readFile(fullPath, 'utf8');
-						} catch { newText = null; }
+						oldText = await contentAt(repo, ':', filePath);
+						newText = await worktreeText(repo, filePath);
 					}
 				} else {
 					/*
@@ -365,10 +356,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 					 * 根提交没有父提交：直接给空旧侧，不先跑一条注定失败的 `show <hash>~1:<path>`。
 					 */
 					hasParent = await revParseHasParent(repo, commitHash);
-					if (hasParent) {
-						try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
-					}
-					try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
+					if (hasParent) oldText = await contentAt(repo, `${commitHash}~1`, filePath);
+					newText = await contentAt(repo, commitHash, filePath);
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
@@ -446,10 +435,10 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'applyHunk': {
-			const filePath = str('filePath');
+			const filePath = requiredFilePathOf(str, sendBadRequest);
+			if (filePath === null) break;
 			const direction = str('direction') === 'unstage' ? 'unstage' : 'stage';
 			const indexes = arr<number>('indexes').filter((value) => Number.isInteger(value) && value >= 0);
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
 			await respondResult('applyHunk', async () => {
 				const outcome = await applyHunks(repo, filePath, indexes, direction);
 				if (outcome.error !== null) throw new Error(outcome.error);
@@ -459,9 +448,9 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'fileHunks': {
-			const filePath = str('filePath');
+			const filePath = requiredFilePathOf(str, sendBadRequest);
+			if (filePath === null) break;
 			const staged = bool('staged');
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
 			await respondResult('fileHunks', async () => ({ repo, hunks: await hunkListOf(repo, filePath, staged) }));
 			break;
 		}

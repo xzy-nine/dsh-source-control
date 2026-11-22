@@ -1,6 +1,7 @@
 /**
  * 宿主 API 传输层：统一构造 POST 请求、解析响应并把错误文本转成异常。
  */
+import { errorText } from '../../shared/error-text.ts';
 
 /** API 路由，与宿主注册的路径一致。 */
 export const API_PATH = '/dsh-source-control/gg/api';
@@ -89,7 +90,7 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 		response = await postJson(API_PATH, { repo: cwd, ...message }, signal);
 	} catch (error) {
 		// 取消不是失败：面板中止在途请求是常规操作。
-		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${error instanceof Error ? error.message : String(error)}`);
+		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${errorText(error)}`);
 		throw error;
 	}
 	const text = await response.text();

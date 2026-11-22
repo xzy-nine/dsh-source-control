@@ -2,6 +2,7 @@
  * 仓库树批量领先/落后取数：每个仓库一次 `for-each-ref`，入队限流。
  */
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
+import { errorText } from '../shared/error-text.js';
 import { createLimiter } from './limiter.js';
 import { logDebug } from './logger.js';
 import { runGit } from './working-tree.js';
@@ -73,7 +74,7 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<Rep
 		try {
 			return { path, ...(await loadRepoSync(path)) };
 		} catch (error) {
-			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${error instanceof Error ? error.message : String(error)}`);
+			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${errorText(error)}`);
 			return { path, ...EMPTY_SYNC };
 		}
 	})));

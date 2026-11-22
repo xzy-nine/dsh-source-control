@@ -9,6 +9,7 @@
  * 提交成功后由一个结果弹窗承接去向，表单页只留输入与提交按钮。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import { Button, Checkbox, fileSizeText, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
 import { loadFeedbackInfo, logClient, submitFeedback } from '../api/index.ts';
 import type { FeedbackInfo, FeedbackType } from '../api/index.ts';
@@ -16,6 +17,8 @@ import { showMessage, showMessageWithLinks } from '../ui/dialog.ts';
 import { openExternal } from '../ui/context-menu.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { ExternalOpenHandlers } from './settings.ts';
+import { cutoffDayKey } from '../../shared/day-key.ts';
+import { toggleIn } from '../shared/set-ops.ts';
 import { FileRow, FolderRow } from './tree-rows.tsx';
 import css from '../css/settings.module.css';
 import changesCss from '../css/changes.module.css';
@@ -55,14 +58,6 @@ const LOG_DAY_OPTIONS = [
  * @param days - 天数。
  * @returns `YYYY-MM-DD` 形态的下界。
  */
-function cutoffDayKey(now: Date, days: number): string {
-	const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-	cutoff.setDate(cutoff.getDate() - Math.max(0, days - 1));
-	const month = String(cutoff.getMonth() + 1).padStart(2, '0');
-	const day = String(cutoff.getDate()).padStart(2, '0');
-	return `${String(cutoff.getFullYear())}-${month}-${day}`;
-}
-
 /** 日志文件的树条目：路径是 `日期/文件名`，真实路径另存。 */
 interface LogTreeEntry {
 	readonly path: string;
@@ -146,7 +141,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 		try {
 			await onRevealPath(path);
 		} catch (error) {
-			logClient('W', 'feedback', `定位日志位置失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			logClient('W', 'feedback', `定位日志位置失败 ${path}：${errorText(error)}`);
 		}
 	};
 
@@ -199,8 +194,8 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				});
 				if (openNow && url !== '') onOpenExternal(url);
 			} catch (error) {
-				logClient('E', 'feedback', `反馈提交过程出错：${error instanceof Error ? error.message : String(error)}`);
-				await showMessage({ title: '反馈未提交', message: error instanceof Error ? error.message : String(error) });
+				logClient('E', 'feedback', `反馈提交过程出错：${errorText(error)}`);
+				await showMessage({ title: '反馈未提交', message: errorText(error) });
 			} finally {
 				setBusy(false);
 			}
@@ -278,12 +273,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					if (row.kind === 'folder') {
 						return React.createElement(FolderRow, {
 							key: `f:${row.path}`, path: row.path, name: row.name, depth: row.depth, open: row.open, count: row.count,
-							onToggle: () => { setOpenLogs((previous) => {
-								const next = new Set(previous);
-								if (next.has(row.path)) next.delete(row.path);
-								else next.add(row.path);
-								return next;
-							}); },
+							onToggle: () => { setOpenLogs((previous) => toggleIn(previous, row.path)); },
 						});
 					}
 					const entry = row.entry;

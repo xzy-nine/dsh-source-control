@@ -7,6 +7,7 @@
  * 预加载状态放在模块级映射里，因此多个面板实例（同一工作区的多个会话）共用一份结果。
  */
 import { discoverRepositories, enrichRepositories, loadReposSync } from '../api/index.ts';
+import { errorText } from '../../shared/error-text.ts';
 import { createEnrichClaims, ENRICH_FAILURE_LIMIT, type EnrichClaims } from './enrich-claims.ts';
 import { runEnrichBatch } from './enrich-run.ts';
 import { attachChildren } from './repo-tree.ts';
@@ -570,7 +571,7 @@ function start(entry: WorkspaceEntry): void {
 			if (cancelled()) return;
 			publish(entry, {
 				status: 'error',
-				error: error instanceof Error ? error.message : String(error),
+				error: errorText(error),
 			});
 		}
 	})();

@@ -3,6 +3,7 @@
  * 仓库目录的出现与消失。
  */
 import { basename, dirname, join, resolve } from 'node:path';
+import { errorText } from '../shared/error-text.js';
 import { nodeId, shouldPruneDirectory } from './repo-node.js';
 import { listDirAt, probePathAt, readTextAt, watchDirAt, type DirChangeListener } from './host-runtime.js';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
@@ -186,6 +187,30 @@ async function childNames(path: string): Promise<string> {
 }
 
 /**
+ * 取一个工作区的监视状态。
+ *
+ * 工作区可能在异步调用期间被关闭，因此每个用到它的入口都要重新取一次。
+ *
+ * @param key - 规范化后的工作区根。
+ * @returns 监视状态；该工作区已不在监视时为 null。
+ */
+function workspaceOf(key: string): WorkspaceWatch | null {
+	return workspaces.get(key) ?? null;
+}
+
+/**
+ * 关闭一个句柄，忽略关闭时的失败。
+ *
+ * 句柄可能已被对端关闭，关闭失败不代表监视出问题；多处收尾都按这一口径处理。
+ *
+ * @param close - 关闭函数。
+ * @returns 无。
+ */
+function closeQuietly(close: WatchCloser): void {
+	closeQuietly(close);
+}
+
+/**
  * 关闭一个公共目录的全部监视句柄。
  *
  * @param key - 规范化后的公共目录。
@@ -198,9 +223,7 @@ function closeHandles(key: string): void {
 	commonDirOf.delete(key);
 	lastState.delete(key);
 	if (existing === undefined) return;
-	for (const close of existing.values()) {
-		void close().catch(() => { /* 句柄已关闭 */ });
-	}
+	for (const close of existing.values()) closeQuietly(close);
 }
 
 /**
@@ -245,7 +268,7 @@ function watchTarget(key: string, target: WatchTarget): WatchCloser | null {
 		return close;
 	}).catch((error: unknown) => {
 		// 目录尚不存在：由上级目录的事件触发补挂。
-		logDebug('watcher', `暂时无法监视，等待上级目录事件后再挂：${target.directory}：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('watcher', `暂时无法监视，等待上级目录事件后再挂：${target.directory}：${errorText(error)}`);
 		return null;
 	});
 	void pending;
@@ -308,7 +331,7 @@ function sync(key: string): void {
 			}
 			for (const [directory, close] of [...current]) {
 				if (wanted.has(directory)) continue;
-				void close().catch(() => { /* 句柄已关闭 */ });
+				closeQuietly(close);
 				current.delete(directory);
 			}
 			for (const target of targets) {
@@ -585,7 +608,7 @@ export function watchWorkspace(root: string): void {
 	workspaceSignals.set(key, controller);
 	void workspaceWatch(key, root, controller.signal).then(async (close) => {
 		const current = workspaces.get(key);
-		if (current === undefined) { await close().catch(() => { /* 句柄已关闭 */ }); return; }
+		if (current === undefined) { await close().catch(() => undefined); return; }
 		current.handle = close;
 		// 先记基线：此后「目录变了」的事件才能据此判断仓库集合是否真的变了。
 		await repositorySetChangedUnder(root);
@@ -594,7 +617,7 @@ export function watchWorkspace(root: string): void {
 	}).catch((error: unknown) => {
 		// 工作区不可监视：目录不存在或没有权限。
 		closeWorkspace(key);
-		logWarn('watcher', `工作区无法监视，仓库集合变化将不会被自动发现：${root}：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('watcher', `工作区无法监视，仓库集合变化将不会被自动发现：${root}：${errorText(error)}`);
 	}).finally(() => {
 		while (workspaces.size > MAX_WATCHED_WORKSPACES) {
 			const oldest = workspaces.keys().next();
@@ -614,8 +637,8 @@ export function watchWorkspace(root: string): void {
  * @returns 无。
  */
 async function syncWorkspaceChildren(key: string): Promise<void> {
-	const watchState = workspaces.get(key);
-	if (watchState === undefined) return;
+	const watchState = workspaceOf(key);
+	if (watchState === null) return;
 	const signal = workspaceSignals.get(key)?.signal;
 	if (signal === undefined) return;
 	let entries;
@@ -633,7 +656,7 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 	}
 	for (const [childKey, close] of [...watchState.children]) {
 		if (wanted.has(childKey)) continue;
-		void close().catch(() => { /* 句柄已关闭 */ });
+		closeQuietly(close);
 		watchState.children.delete(childKey);
 	}
 	for (const [childKey, dir] of wanted) {
@@ -646,14 +669,14 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 		});
 		void workspaceChildWatch(key, dir, signal).then((close) => {
 			const current = workspaces.get(key);
-			if (current === undefined || !current.children.has(childKey)) { void close().catch(() => { /* 句柄已关闭 */ }); return; }
+			if (current === undefined || !current.children.has(childKey)) { closeQuietly(close); return; }
 			placeholder.close = close;
 			current.children.set(childKey, close);
 			// 子目录同样先记基线，否则它内部的第一次变化会被当成「没有基线」。
 			void repositorySetChangedUnder(dir);
 		}).catch((error: unknown) => {
 			watchState.children.delete(childKey);
-			logDebug('watcher', `子目录无法监视，其内部新建的仓库不会被自动发现：${dir}：${error instanceof Error ? error.message : String(error)}`);
+			logDebug('watcher', `子目录无法监视，其内部新建的仓库不会被自动发现：${dir}：${errorText(error)}`);
 		});
 	}
 }
@@ -671,8 +694,8 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
  * @returns 无。
  */
 function noteDirectoryChange(key: string, scope: string, filename: string | null | undefined, kind: string | null | undefined): void {
-	const watchState = workspaces.get(key);
-	if (watchState === undefined) return;
+	const watchState = workspaceOf(key);
+	if (watchState === null) return;
 	const target = typeof filename === 'string' && filename !== '' ? join(scope, filename) : null;
 	void isRepositorySetChange(target, kind ?? 'change', knownRepos, scope).then((changed) => {
 		if (changed) scheduleWorkspace(watchState);
@@ -739,7 +762,7 @@ function closeWorkspace(key: string): void {
 	if (watchState.timer !== null) clearTimeout(watchState.timer);
 	void watchState.handle?.().catch(() => { /* 句柄已关闭 */ });
 	for (const close of watchState.children.values()) {
-		void close().catch(() => { /* 句柄已关闭 */ });
+		closeQuietly(close);
 	}
 	watchState.children.clear();
 	lastWorkspaceRepos.delete(nodeId(watchState.root));

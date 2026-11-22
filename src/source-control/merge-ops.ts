@@ -6,6 +6,7 @@
  * 结果由选择表算出来再写回工作区，写回后 `add` 落索引。
  */
 import fs from 'node:fs/promises';
+import { errorText } from '../shared/error-text.js';
 import nodePath from 'node:path';
 import { contentAt, worktreeText } from './conflict-ops.js';
 import { analyzeMerge, resultLinesOf, type MergeChoice } from '../shared/merge-ranges.js';
@@ -75,7 +76,7 @@ export async function applyMergeChoices(
 		await fs.writeFile(nodePath.join(repo, ...path.split('/')), text, 'utf8');
 		return { unresolved, error: null };
 	} catch (error) {
-		return { unresolved, error: error instanceof Error ? error.message : String(error) };
+		return { unresolved, error: errorText(error) };
 	}
 }
 

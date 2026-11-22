@@ -4,6 +4,7 @@
  * 节点构造（工作树与子模块枚举）在 `repo-enrich.ts`，发现流程在 `repo-discovery.ts`。
  */
 import { join, resolve, sep } from 'node:path';
+import { errorText } from '../shared/error-text.js';
 import { listDirAt, probePathAt } from './host-runtime.js';
 import { logDebug } from './logger.js';
 import type { RepoNode } from '../shared/repo-node.js';
@@ -149,7 +150,7 @@ export async function subdirectories(dir: string): Promise<string[]> {
 			.map((entry) => join(dir, entry.name));
 	} catch (error) {
 		// 权限不足或目录已消失：不影响其它层级的发现，但要知道是哪一层没读到。
-		logDebug('repo', `无法读取目录 ${dir}，跳过其子目录：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `无法读取目录 ${dir}，跳过其子目录：${errorText(error)}`);
 		return [];
 	}
 }

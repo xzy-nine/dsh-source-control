@@ -9,6 +9,7 @@
  * 带行号的差异视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
  */
 import React from 'react';
+import { errorText } from '../shared/error-text.ts';
 import {
 	IconChevronDownOutlineRegular, IconChevronsUpDownOutlineRegular, IconChevronUpOutlineRegular, IconInspectOutlineRegular,
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
@@ -67,7 +68,7 @@ const DIFF_TAB_KIND = 'devGitGraphDiff';
  * @returns 无。
  */
 async function reportFailure(error: unknown): Promise<void> {
-	await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
+	await showMessage({ title: '操作失败', message: errorText(error) });
 }
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
@@ -314,7 +315,7 @@ function GitDiffTab(props) {
 			.catch((error: unknown) => {
 				setDiffData(null);
 				setLoading(false);
-				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${side ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${side ? '暂存区' : '工作区'}）：${errorText(error)}`);
 			});
 	}, [parsed, commitHash, currentPath, gitCwd, baseHash]);
 	/**
@@ -1036,7 +1037,7 @@ export function apply(ctx) {
 			if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝在文件管理器中打开路径 ${path}`);
 			return result.ok === true;
 		} catch (error) {
-			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${errorText(error)}`);
 			return false;
 		}
 	};

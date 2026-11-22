@@ -3,6 +3,7 @@
  *
  */
 import { dirname, resolve } from 'node:path';
+import { errorText } from '../shared/error-text.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
 import { logDebug } from './logger.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
@@ -272,7 +273,7 @@ export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string
 		return foreignWorktreeBranches(await readWorktrees(commonDir), repo, nodeId);
 	} catch (error) {
 		// 枚举失败时不排除任何分支：宁可让用户点到会被 git 拒绝的项，也不要漏掉可用分支。
-		logDebug('repo', `枚举别的工作树占用分支失败，本次不排除任何分支：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `枚举别的工作树占用分支失败，本次不排除任何分支：${errorText(error)}`);
 		return new Set();
 	}
 }
@@ -294,7 +295,7 @@ export async function primeCachedWorkspaces(): Promise<void> {
 			watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
 			watchWorkspace(root);
 		} catch (error) {
-			logDebug('repo', `预扫工作区失败，不影响后续请求：${root}：${error instanceof Error ? error.message : String(error)}`);
+			logDebug('repo', `预扫工作区失败，不影响后续请求：${root}：${errorText(error)}`);
 		}
 	}
 }
