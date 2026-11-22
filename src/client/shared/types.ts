@@ -269,6 +269,8 @@ export interface RefItem {
 export interface RefInfo {
 	readonly type: string | null;
 	readonly name: string | null;
+	/** 远程分支所属的远程名；其它引用类型为 null。 */
+	readonly remote?: string | null;
 }
 
 /** 面板加载阶段。 */

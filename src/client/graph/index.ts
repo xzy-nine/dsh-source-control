@@ -23,6 +23,7 @@ import {
 import { RemoteRefIcon, TagRefIcon, TranslateIcon } from '../ui/ref-icons.ts';
 import { GitGraphIcon } from '../ui/plugin-icon.ts';
 import { interfaceLanguage, showTranslateEntry, translatedTitle } from '../panel/language.ts';
+import { remoteNameOfBranch } from '../panel/github.ts';
 import css from '../css/graph.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
@@ -414,8 +415,8 @@ function CommitRowView({
 				const refElement = target.closest('[data-ref-type]');
 				// 点在引用标记上取该标记；点在贮藏行的其他位置时等价于它的贮藏标记。
 				const refInfo = refElement !== null
-					? { type: refElement.getAttribute('data-ref-type'), name: refElement.getAttribute('data-ref-name') }
-					: (stashSelector === null ? null : { type: 'stash', name: stashSelector });
+					? refInfoOf(refElement.getAttribute('data-ref-type'), refElement.getAttribute('data-ref-name'))
+					: (stashSelector === null ? null : { type: 'stash', name: stashSelector, remote: null });
 				onContextMenu?.({ commit, refInfo, event });
 			},
 			// 贮藏行与未提交行没有浮动卡片，不必预取统计与完整信息。
@@ -510,6 +511,19 @@ function defaultTimeFormat(seconds: number): string {
 	return new Date(seconds * 1000).toLocaleString();
 }
 
+/**
+ * 由引用标记的 DOM 属性还原右键目标。
+ *
+ * 远程分支标记的名字形如 `远程名/分支名`，远程名由它拆出：删除与抓取都要按远程名下发，
+ * 名字本身不足以定位远程。
+ *
+ * @param type - 引用类型。
+ * @param name - 引用短名。
+ * @returns 引用目标；名字缺失时为 null 的等价形态由调用方判断。
+ */
+function refInfoOf(type: string | null, name: string | null): { type: string | null; name: string | null; remote: string | null } {
+	return { type, name, remote: type === 'remote' && name !== null ? remoteNameOfBranch(name) : null };
+}
 /**
  * 提交图主体。
  *

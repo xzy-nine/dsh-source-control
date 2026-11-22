@@ -8,6 +8,7 @@ import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
 import type { CheckboxOptions, ConfirmationOptions, TextOptions } from '../../ui/dialog.ts';
 import { refIdOf } from '../../shared/ref-id.ts';
 import { localNameForRemoteBranch } from '../github.ts';
+import { remotePushFailureText } from '../git-messages.ts';
 import type { MenuActionMeta } from '../menu-actions.ts';
 import type { BusyScope, Commit, Remote } from '../../shared/types.ts';
 import type { RepoCommands } from '../use-repo-commands.ts';
@@ -287,7 +288,7 @@ export function deleteRemoteBranchClick(ctx: MenuContext, name: string, remote: 
 	return checkboxThenRun({
 		title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
 		checkboxLabel: '我已知晓并继续', danger: true,
-	}, runHistory(ctx, () => deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)));
+	}, runHistory(ctx, () => deleteRemoteBranch(ctx.repo, shortBranchName(name), remote), remotePushFailureText));
 }
 
 /**

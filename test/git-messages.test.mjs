@@ -5,7 +5,7 @@
  * 改措辞不该让测试变红。
  */
 import assert from 'node:assert/strict';
-import { OVERWRITE_PATTERNS, checkoutFailureText } from '../src/client/panel/git-messages.ts';
+import { OVERWRITE_PATTERNS, REMOTE_FAILURE_PATTERNS, checkoutFailureText, remotePushFailureText } from '../src/client/panel/git-messages.ts';
 import { parallel } from './harness.mjs';
 
 /**
@@ -54,5 +54,26 @@ parallel('git 失败文本', (t) => {
 	t.test('未识别的文本原样返回', () => {
 		const actual = 'fatal: not a git repository (or any of the parent directories): .git';
 		assert.equal(checkoutFailureText(actual), actual);
+	});
+
+	t.test('远程名为空时报出可读说明，而不是 git 的 bad repository', () => {
+		// 删除远程分支时远程名为空串，git 收到的仓库参数是 ''。
+		assert.equal(remotePushFailureText("fatal: bad repository ''"), REMOTE_FAILURE_PATTERNS[0].text);
+	});
+
+	t.test('远程不可访问与远端拒绝删除分别说明', () => {
+		assert.equal(
+			remotePushFailureText("fatal: 'origin' does not appear to be a git repository"),
+			REMOTE_FAILURE_PATTERNS[1].text,
+		);
+		assert.equal(
+			remotePushFailureText('! [remote rejected] main (pre-receive hook declined)'),
+			REMOTE_FAILURE_PATTERNS[2].text,
+		);
+	});
+
+	t.test('远端失败的未识别文本同样原样返回', () => {
+		const actual = 'error: failed to push some refs';
+		assert.equal(remotePushFailureText(actual), actual);
 	});
 });
