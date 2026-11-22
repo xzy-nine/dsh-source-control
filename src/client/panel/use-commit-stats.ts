@@ -5,6 +5,7 @@
  * （只译当前可见窗口内的标题）。两者写入同一份译文缓存，取消批量翻译时只回退该批次。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import { loadCommitStatsAndMessage, translateText } from '../api/index.ts';
 import { trimOldest } from '../shared/cache.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
@@ -68,6 +69,18 @@ function bodyTranslator(
  * @param hashes - 要丢弃的哈希。
  * @returns 新缓存。
  */
+/**
+ * 把「按 hashes 清理一个 map」包成 setState 需要的 drop 回调。
+ *
+ * 三处缓存清理都只做这一件事，差别只在写回哪个 map。
+ *
+ * @param setter - 该 map 的状态写入器。
+ * @returns 接受 hashes 的 drop 回调。
+ */
+function dropFrom<T>(setter: React.Dispatch<React.SetStateAction<Map<string, T>>>): (hashes: Iterable<string>) => void {
+	return (hashes) => { setter((previous) => dropHashes(previous, hashes)); };
+}
+
 function dropHashes<T>(previous: Map<string, T>, hashes: Iterable<string>): Map<string, T> {
 	const next = new Map(previous);
 	for (const hash of hashes) next.delete(hash);
@@ -151,7 +164,35 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	 */
 	const reportTranslateFailure = (controller: AbortController, error: unknown): void => {
 		if (controller.signal.aborted) return;
-		onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+		onTranslateErrorRef.current(errorText(error));
+	};
+
+	/**
+	 * 跑一次翻译请求，并统一收尾。
+	 *
+	 * 失败按同一口径上报；收尾清掉在途登记，未取消时复位进行中状态。取消是调用方的意图，
+	 * 既不报错也不复位。
+	 *
+	 * @param controller - 本次请求的控制器。
+	 * @param ref - 在途控制器的登记位。
+	 * @param reset - 复位进行中状态。
+	 * @param body - 请求体。
+	 * @returns 无。
+	 */
+	const runTranslation = async (
+		controller: AbortController,
+		ref: { current: AbortController | null },
+		reset: () => void,
+		body: () => Promise<void>,
+	): Promise<void> => {
+		try {
+			await body();
+		} catch (error) {
+			reportTranslateFailure(controller, error);
+		} finally {
+			if (ref.current === controller) ref.current = null;
+			if (!controller.signal.aborted) reset();
+		}
 	};
 
 	// 换仓库后旧的统计、信息与译文都不再适用。
@@ -173,22 +214,11 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		translationStamps.current = new Map();
 	}, [workingTreePath]);
 
-	useCacheCleanup({
-		stamps: statsStamps,
-		drop: (hashes) => { setStatsByHash((previous) => dropHashes(previous, hashes)); },
-		periodSeconds: cleanupSeconds,
-	});
-	useCacheCleanup({
-		stamps: messageStamps,
-		drop: (hashes) => { setMessageByHash((previous) => dropHashes(previous, hashes)); },
-		periodSeconds: cleanupSeconds,
-	});
+	useCacheCleanup({ stamps: statsStamps, drop: dropFrom(setStatsByHash), periodSeconds: cleanupSeconds });
+	useCacheCleanup({ stamps: messageStamps, drop: dropFrom(setMessageByHash), periodSeconds: cleanupSeconds });
 	useCacheCleanup({
 		stamps: translationStamps,
-		drop: (hashes) => {
-			setTranslatedByHash((previous) => dropHashes(previous, hashes));
-			setTranslatedFromByHash((previous) => dropHashes(previous, hashes));
-		},
+		drop: (hashes) => { dropFrom(setTranslatedByHash)(hashes); dropFrom(setTranslatedFromByHash)(hashes); },
 		periodSeconds: cleanupSeconds,
 	});
 
@@ -304,18 +334,11 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		const controller = new AbortController();
 		singleAbortRef.current = controller;
 		setTranslatingHash(hash);
-		void (async () => {
-			try {
-				const translated = await translateCommitMessage(source, bodyTranslator(workingTreePath, locale, controller));
-				if (controller.signal.aborted) return;
-				storeTranslation(hash, source, translated);
-			} catch (error) {
-				reportTranslateFailure(controller, error);
-			} finally {
-				if (singleAbortRef.current === controller) singleAbortRef.current = null;
-				if (!controller.signal.aborted) setTranslatingHash(null);
-			}
-		})();
+		void runTranslation(controller, singleAbortRef, () => { setTranslatingHash(null); }, async () => {
+			const translated = await translateCommitMessage(source, bodyTranslator(workingTreePath, locale, controller));
+			if (controller.signal.aborted) return;
+			storeTranslation(hash, source, translated);
+		});
 	}, [workingTreePath, translateReady, translatingHash, storeTranslation]);
 
 	/**
@@ -334,25 +357,18 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		graphBatchRef.current = targets.map((item) => item.hash);
 		const locale = interfaceLanguage();
 		setGraphTranslating({ done: 0, total: targets.length });
-		void (async () => {
+		void runTranslation(controller, graphAbortRef, () => { setGraphTranslating(null); }, async () => {
 			let done = 0;
-			try {
-				for (const item of targets) {
-					const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
-					// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
-					if (controller.signal.aborted) return;
-					storeTranslation(item.hash, item.text, translated);
-					done++;
-					setGraphTranslating({ done, total: targets.length });
-				}
-				setGraphTranslated(true);
-			} catch (error) {
-				reportTranslateFailure(controller, error);
-			} finally {
-				if (graphAbortRef.current === controller) graphAbortRef.current = null;
-				if (!controller.signal.aborted) setGraphTranslating(null);
+			for (const item of targets) {
+				const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
+				// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
+				if (controller.signal.aborted) return;
+				storeTranslation(item.hash, item.text, translated);
+				done++;
+				setGraphTranslating({ done, total: targets.length });
 			}
-		})();
+			setGraphTranslated(true);
+		});
 	}, [workingTreePath, translateReady, graphTranslating, storeTranslation]);
 
 	/**

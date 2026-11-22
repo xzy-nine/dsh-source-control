@@ -17,7 +17,7 @@ import { textLines } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/cli
 import { chunkHunks } from './hunk-chunking.ts';
 import { forgePanelCopy } from './forge-locales.ts';
 import { formatCommentQuote } from './comment-reference.ts';
-import { gutterPressed, markRange, rangeBetween, selectableRows, ROW_SELECTOR } from './line-range.ts';
+import { gutterPressed, markRange, rangeBetween, rowAt, rowIndexAt, selectableRows } from './line-range.ts';
 import { placeComposer, sameBox, type ComposerBox } from './composer-placement.ts';
 import type { GitDiffScope } from './resource-path.ts';
 import type { FileDiffContent } from '../api/commits.ts';
@@ -236,10 +236,10 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		 * 两套手势因此不会互相抢指针。
 		 */
 		const down = (event: PointerEvent): void => {
-			if (event.button !== 0 || !(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			if (!gutterPressed(event.target, row)) return;
+			if (event.button !== 0) return;
+			const row = rowAt(event, element);
+			if (row === null) return;
+			if (!gutterPressed(event.target as Element, row)) return;
 			const list = rows();
 			const index = list.indexOf(row);
 			if (index < 0) return;
@@ -254,11 +254,8 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 		/** 划过另一行时扩展区间，行号跨 hunk 也能连成一片。 */
 		const over = (event: PointerEvent): void => {
 			if (anchor.current === null || event.buttons !== 1) return;
-			if (!(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			const index = rows().indexOf(row);
-			if (index < 0) return;
+			const index = rowIndexAt(event, element, rows());
+			if (index === null) return;
 			head.current = index;
 			paint(Math.min(anchor.current, index), Math.max(anchor.current, index));
 		};

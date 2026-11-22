@@ -2,13 +2,24 @@
  * 仓库树批量领先/落后取数：每个仓库一次 `for-each-ref`，入队限流。
  */
 import { BRANCH_SYNC_FORMAT, parseBranchSync } from './git-parse.js';
+import { errorText } from '../shared/error-text.js';
 import { createLimiter } from './limiter.js';
 import { logDebug } from './logger.js';
 import { runGit } from './working-tree.js';
 import { isRepoRoot } from './worktree-branches.js';
 
+/** 一个仓库相对其上游的同步状态。 */
+export interface RepoSyncFields {
+	readonly branch: string | null;
+	readonly upstream: string | null;
+	readonly upstreamRef: string | null;
+	readonly upstreamRemote: string | null;
+	readonly ahead: number;
+	readonly behind: number;
+}
+
 /** 无法读出自身仓库的节点的同步状态：分支、上游与领先/落后都为空。 */
-const EMPTY_SYNC = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 } as const;
+const EMPTY_SYNC: RepoSyncFields = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
 
 /** 仓库树批量领先/落后取数的并发上限。 */
 const SYNC_CONCURRENCY = 5;
@@ -32,18 +43,15 @@ const syncLimiter = createLimiter(SYNC_CONCURRENCY);
  * @param repo - 仓库路径。
  * @returns 分支、上游名与领先/落后数；无上游时两者为 0。
  */
-export async function loadRepoSync(repo: string): Promise<{
-	branch: string | null; upstream: string | null; upstreamRef: string | null; upstreamRemote: string | null;
-	ahead: number; behind: number;
-}> {
+export async function loadRepoSync(repo: string): Promise<RepoSyncFields> {
 	if (!(await isRepoRoot(repo))) return EMPTY_SYNC;
 	const refs = await runGit(['for-each-ref', '--format=' + BRANCH_SYNC_FORMAT, 'refs/heads'], repo);
 	const sync = parseBranchSync(refs.stdout);
 	if (sync.branch !== null) return sync;
 	const head = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], repo);
 	const branch = head.code === 0 ? head.stdout.trim() : '';
-	if (branch === '') return { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
-	return { branch, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
+	if (branch === '') return EMPTY_SYNC;
+	return { ...EMPTY_SYNC, branch };
 }
 
 /**
@@ -54,10 +62,7 @@ export async function loadRepoSync(repo: string): Promise<{
  * @param repos - 仓库路径。
  * @returns 每个入参仓库的同步状态，顺序与去重后的入参一致。
  */
-export async function loadReposSync(repos: readonly string[]): Promise<Array<{
-	path: string; branch: string | null; upstream: string | null; upstreamRef: string | null; upstreamRemote: string | null;
-	ahead: number; behind: number;
-}>> {
+export async function loadReposSync(repos: readonly string[]): Promise<Array<RepoSyncFields & { readonly path: string }>> {
 	const unique: string[] = [];
 	const seen = new Set<string>();
 	for (const repo of repos) {
@@ -67,15 +72,10 @@ export async function loadReposSync(repos: readonly string[]): Promise<Array<{
 	}
 	return Promise.all(unique.map((path) => syncLimiter(async () => {
 		try {
-			const sync = await loadRepoSync(path);
-			return {
-				path, branch: sync.branch, upstream: sync.upstream,
-				upstreamRef: sync.upstreamRef, upstreamRemote: sync.upstreamRemote,
-				ahead: sync.ahead, behind: sync.behind,
-			};
+			return { path, ...(await loadRepoSync(path)) };
 		} catch (error) {
-			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${error instanceof Error ? error.message : String(error)}`);
-			return { path, branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
+			logDebug('repo', `读取仓库同步状态失败，按无上游处理：${path}：${errorText(error)}`);
+			return { path, ...EMPTY_SYNC };
 		}
 	})));
 }

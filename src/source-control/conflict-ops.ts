@@ -8,10 +8,9 @@
  */
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
-import { gitOrThrow } from './git-exec.js';
-import { parseIndexEntries } from './git-parse.js';
+import { gitOrThrow, runGitAttempt } from './git-exec.js';
+import { parseIndexEntries, type IndexEntry } from './git-parse.js';
 import { conflictKindOfPair, type ConflictKind } from '../shared/conflict-kind.js';
-import { errorText } from '../shared/error-text.js';
 
 /** 索引里某个路径的三个阶段是否存在。 */
 export interface ConflictStages {
@@ -47,9 +46,19 @@ export const CONFLICT_ACTIONS: ReadonlySet<string> = new Set([
  * @returns 三个阶段是否存在；不是未合并条目时三者全为 false。
  */
 export async function conflictStagesOf(repo: string, path: string): Promise<ConflictStages> {
-	const stdout = await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo);
-	const stages = new Set(parseIndexEntries(stdout).map((entry) => entry.stage));
+	const stages = new Set((await unmergedEntriesOf(repo, path)).map((entry) => entry.stage));
 	return { base: stages.has(1), ours: stages.has(2), theirs: stages.has(3) };
+}
+
+/**
+ * 读一个路径在索引里的未合并条目。
+ *
+ * @param repo - 仓库路径。
+ * @param path - 文件路径，相对仓库根。
+ * @returns 未合并条目；该路径没有冲突时为空数组。
+ */
+async function unmergedEntriesOf(repo: string, path: string): Promise<IndexEntry[]> {
+	return parseIndexEntries(await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo));
 }
 
 /** 差异的一侧：取哪个引用、或直接取工作区文件。 */
@@ -133,14 +142,16 @@ export async function conflictDiffOf(repo: string, path: string, sources: Confli
 }
 
 /**
- * 取一个未合并路径的一侧内容。
+ * 取一个路径在某个引用前缀下的内容。
+ *
+ * 前缀形如 `HEAD:` 或 `:2:`；合并时的各阶段内容也经这一处读，因此导出供 `merge-ops` 复用。
  *
  * @param repo - 仓库路径。
  * @param path - 文件路径，相对仓库根。
- * @param ref - 引用前缀，形如 `HEAD:` 或 `:2:`。
+ * @param ref - 引用前缀。
  * @returns 内容；该侧不存在时返回 null。
  */
-async function contentAt(repo: string, path: string, ref: string): Promise<string | null> {
+export async function contentAt(repo: string, path: string, ref: string): Promise<string | null> {
 	try {
 		return await gitOrThrow(['show', `${ref}${path}`], repo);
 	} catch {
@@ -180,22 +191,6 @@ export async function worktreeText(repo: string, path: string): Promise<string |
 }
 
 /**
- * 跑一条解决动作的 git 命令，把失败折成可读文本。
- *
- * @param repo - 仓库路径。
- * @param args - 参数数组。
- * @returns 失败原因；成功为 null。
- */
-async function attempt(repo: string, args: readonly string[]): Promise<string | null> {
-	try {
-		await gitOrThrow(args, repo);
-		return null;
-	} catch (error) {
-		return errorText(error);
-	}
-}
-
-/**
  * 判断一个路径当前是否仍是未合并条目。
  *
  * @param repo - 仓库路径。
@@ -203,8 +198,7 @@ async function attempt(repo: string, args: readonly string[]): Promise<string | 
  * @returns 索引里仍有非 0 阶段时为 true。
  */
 async function stillUnmerged(repo: string, path: string): Promise<boolean> {
-	const stdout = await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo);
-	return parseIndexEntries(stdout).length > 0;
+	return (await unmergedEntriesOf(repo, path)).length > 0;
 }
 
 /**
@@ -219,13 +213,13 @@ async function stillUnmerged(repo: string, path: string): Promise<boolean> {
  * @returns 失败原因；成功为 null。
  */
 async function checkoutStage(repo: string, path: string, stage: 2 | 3): Promise<string | null> {
-	const checkoutError = await attempt(repo, ['checkout-index', '-f', '-u', `--stage=${String(stage)}`, '--', path]);
+	const checkoutError = await runGitAttempt(['checkout-index', '-f', '-u', `--stage=${String(stage)}`, '--', path], repo);
 	if (checkoutError !== null) return checkoutError;
 	/*
 	 * `checkout-index` 只把该阶段的内容写进工作区，条目仍是未合并状态；要让冲突真正结束
 	 * 还得把它写进索引，即再 `add` 一次。
 	 */
-	return attempt(repo, ['add', '-A', '--', path]);
+	return runGitAttempt(['add', '-A', '--', path], repo);
 }
 
 /**
@@ -236,7 +230,7 @@ async function checkoutStage(repo: string, path: string, stage: 2 | 3): Promise<
  * @returns 失败原因；成功为 null。
  */
 async function removePath(repo: string, path: string): Promise<string | null> {
-	return attempt(repo, ['rm', '-f', '--', path]);
+	return runGitAttempt(['rm', '-f', '--', path], repo);
 }
 
 /**
@@ -250,7 +244,7 @@ async function removePath(repo: string, path: string): Promise<string | null> {
  * @returns 失败原因；成功为 null。
  */
 async function markResolved(repo: string, path: string): Promise<string | null> {
-	const addError = await attempt(repo, ['add', '-A', '--', path]);
+	const addError = await runGitAttempt(['add', '-A', '--', path], repo);
 	if (addError === null) return null;
 	return (await removePath(repo, path)) === null ? null : addError;
 }
@@ -266,7 +260,7 @@ async function markResolved(repo: string, path: string): Promise<string | null> 
  * @returns 失败原因；成功为 null。
  */
 async function restoreMarkers(repo: string, path: string): Promise<string | null> {
-	return attempt(repo, ['checkout', '-m', '--', path]);
+	return runGitAttempt(['checkout', '-m', '--', path], repo);
 }
 
 /**

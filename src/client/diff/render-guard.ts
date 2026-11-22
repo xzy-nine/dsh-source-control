@@ -6,6 +6,7 @@
  * 重试入口；换文件时由调用方换 `key` 重新挂载。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import css from '../css/index.module.css';
 
 /** 守卫的状态。 */
@@ -30,7 +31,7 @@ export class DiffRenderGuard extends React.Component<{ readonly children?: React
 	 * @returns 新状态。
 	 */
 	static getDerivedStateFromError(error: unknown): DiffRenderGuardState {
-		return { failure: error instanceof Error ? error.message : String(error) };
+		return { failure: errorText(error) };
 	}
 
 	/**

@@ -8,7 +8,7 @@ import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } fr
 import type { RemoteProtocolSlot } from '../git/remote-url.ts';
 import type { SshStatusInfo } from '../api/index.ts';
 import type { Remote } from '../shared/types.ts';
-import { FieldBlock } from './settings-rows.ts';
+import { FieldBlock, formActions, formShell } from './settings-rows.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
 import css from '../css/settings.module.css';
 
@@ -120,15 +120,17 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		return next ?? push;
 	};
 
+	/** 清空表单三格。 */
+	const resetForm = (): void => { setName(''); setUrl(''); setPushUrl(''); };
 	const submitAdd = (): void => {
 		if (!name || !url) return;
 		onAddRemote?.(name, url, pushUrl || null);
-		setAdding(false); setName(''); setUrl(''); setPushUrl('');
+		setAdding(false); resetForm();
 	};
 	const submitEdit = (): void => {
 		if (!editing || !name) return;
 		onEditRemote?.(editing.name, name, editing.url ?? null, url || null, editing.pushUrl ?? null, pushUrl || null);
-		setEditing(null); setName(''); setUrl(''); setPushUrl('');
+		setEditing(null); resetForm();
 	};
 	const beginEdit = (remote: Remote): void => {
 		setEditing(remote);
@@ -148,9 +150,7 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		if (pushUrl.trim() !== '') setPushUrl(convertPushUrl(pushUrl, url, target));
 		setUrl(next);
 	};
-	const form = React.createElement(
-		'div',
-		{ className: css.setForm },
+	const form = formShell(
 		React.createElement(FieldBlock, { label: '名称', placeholder: 'origin', value: name, onChange: setName }),
 		React.createElement(FieldBlock, {
 			label: 'URL',
@@ -173,10 +173,10 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 			value: pushUrl,
 			onChange: setPushUrl,
 		}),
-		React.createElement('div', { className: css.setFormActions },
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
-			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
-		),
+		formActions([
+			React.createElement(Button, { variant: 'primary', size: 'sm', key: 'ok', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
+			React.createElement(Button, { variant: 'toolbar', size: 'sm', key: 'cancel', onClick: () => { setAdding(false); setEditing(null); resetForm(); } }, '取消'),
+		]),
 	);
 	const probeTarget = remotes
 		.map((remote) => ({ host: remoteHostOf(remote.url ?? ''), sshUrl: toSshRemoteUrl(remote.url ?? '') }))
@@ -212,12 +212,12 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		!adding && editing === null
 			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => { setAdding(true); } }, '添加远程')
 			: form,
-		React.createElement('div', { className: css.setFormActions },
+		formActions([
 			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', disabled: sshBusy,
+				variant: 'toolbar', size: 'sm', key: 'ssh', disabled: sshBusy,
 				onClick: () => { void checkSsh(probeTarget.host, probeTarget.sshUrl ?? '', true); },
 			}, '检测 SSH 状态'),
-		),
+		]),
 		sshNote !== null && React.createElement('div', { className: css.setNote }, sshNote),
 	);
 }

@@ -1,7 +1,7 @@
 /**
  * 忽略规则写入与本地排除文件状态。
  */
-import { callApi } from './http.ts';
+import { callApi, stringsOf } from './http.ts';
 import type { IgnoreWriteResult, LocalExcludeState } from '../../shared/ignore-types.ts';
 
 export type { IgnoreWriteResult, LocalExcludeState } from '../../shared/ignore-types.ts';
@@ -55,6 +55,6 @@ export async function localExcludeState(cwd: string): Promise<LocalExcludeState>
  */
 function localExcludeStateOf(payload: Record<string, unknown>): LocalExcludeState {
 	const state = (payload.state ?? {}) as Record<string, unknown>;
-	const entries = Array.isArray(state.entries) ? state.entries.filter((item): item is string => typeof item === 'string') : [];
+	const entries = stringsOf(state.entries);
 	return { path: typeof state.path === 'string' ? state.path : '', entries };
 }

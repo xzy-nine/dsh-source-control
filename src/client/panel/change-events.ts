@@ -194,32 +194,38 @@ interface Pending {
  * @returns 报错时为 true。
  */
 function resultIsError(data: Record<string, unknown>): boolean {
-	const message = data.message;
-	if (message !== null && typeof message === 'object') {
-		const candidate = message as { isError?: unknown; content?: unknown };
-		if (candidate.isError === true) return true;
-		if (Array.isArray(candidate.content)) {
-			for (const block of candidate.content) {
-				if (block !== null && typeof block === 'object' && (block as { isError?: unknown }).isError === true) return true;
-			}
+	const message = objectField(data, 'message');
+	if (message === null) return data.isError === true;
+	if (message.isError === true) return true;
+	if (Array.isArray(message.content)) {
+		for (const block of message.content) {
+			if (block !== null && typeof block === 'object' && (block as { isError?: unknown }).isError === true) return true;
 		}
 	}
 	return data.isError === true;
 }
 
+/**
+ * 取载荷里的对象字段。
+ *
+ * @param data - 载荷。
+ * @param key - 字段名。
+ * @returns 该字段为对象时返回它，否则为 null。
+ */
+function objectField(data: Record<string, unknown>, key: string): Record<string, unknown> | null {
+	const value = data[key];
+	return value !== null && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
 /** 取工具结果消息里的调用 id。 */
 function resultCallId(data: Record<string, unknown>): string | null {
-	const message = data.message;
-	if (message !== null && typeof message === 'object') {
-		const source = (message as { source?: unknown }).source;
-		if (source !== null && typeof source === 'object') {
-			const callId = (source as { callId?: unknown }).callId;
-			if (typeof callId === 'string' && callId !== '') return callId;
-		}
-		const direct = (message as { toolCallId?: unknown }).toolCallId;
-		if (typeof direct === 'string' && direct !== '') return direct;
-	}
-	return null;
+	const message = objectField(data, 'message');
+	if (message === null) return null;
+	const source = objectField(message, 'source');
+	const callId = source === null ? undefined : source.callId;
+	if (typeof callId === 'string' && callId !== '') return callId;
+	const direct = message.toolCallId;
+	return typeof direct === 'string' && direct !== '' ? direct : null;
 }
 
 /**
@@ -232,6 +238,19 @@ function resultCallId(data: Record<string, unknown>): string | null {
  */
 export function settledFileChanges(events: readonly SessionEventLike[]): FileChange[] {
 	const pending = new Map<string, Pending>();
+	/**
+	 * 记下某个调用的结局。
+	 *
+	 * 结果帧与派发帧都只做这一件事：按调用 id 找到登记，写入成败。未登记的调用忽略。
+	 *
+	 * @param callId - 调用 id。
+	 * @param ok - 该调用是否成功。
+	 * @returns 无。
+	 */
+	const settle = (callId: string, ok: boolean): void => {
+		const entry = pending.get(callId);
+		if (entry !== undefined) entry.settled = ok;
+	};
 	const settled: FileChange[] = [];
 	for (const event of events) {
 		const data = event.data ?? {};
@@ -246,21 +265,11 @@ export function settledFileChanges(events: readonly SessionEventLike[]): FileCha
 			pending.set(callId, { kind, path, settled: null });
 			continue;
 		}
-		if (event.type === 'tool/result') {
-			const callId = resultCallId(data);
-			if (callId === null) continue;
-			const entry = pending.get(callId);
-			if (entry === undefined) continue;
-			entry.settled = !resultIsError(data);
-			continue;
-		}
-		if (event.type === 'tool/ptc-dispatch') {
-			const callId = data.subCallId;
-			if (typeof callId !== 'string') continue;
-			const entry = pending.get(callId);
-			if (entry === undefined) continue;
-			entry.settled = !resultIsError(data);
-		}
+		// 两帧都以「哪个调用结束了」为内容：结果帧按结果 id 定位，派发帧按子调用 id 定位。
+		const callId = event.type === 'tool/result'
+			? resultCallId(data)
+			: event.type === 'tool/ptc-dispatch' && typeof data.subCallId === 'string' ? data.subCallId : null;
+		if (callId !== null) settle(callId, !resultIsError(data));
 	}
 	for (const [callId, entry] of pending) {
 		if (entry.settled === true) settled.push({ callId, kind: entry.kind, path: entry.path });

@@ -4,6 +4,7 @@
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { gitOrThrow } from './git-exec.js';
+import { walkUp } from '../shared/path-walk.js';
 import { isSubmodulePathWithin, parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 
 /**
@@ -66,19 +67,14 @@ export async function initSubmodule(repo: string, submodulePath: string): Promis
 async function declaringRepoOf(target: string): Promise<{ root: string; relative: string } | null> {
 	const fold = (value: string): string => (/^[a-zA-Z]:\//.test(value) ? value.toLowerCase() : value);
 	const wanted = fold(target);
-	let dir = nodePath.dirname(target);
-	for (;;) {
+	const found = await walkUp(nodePath.dirname(target), async (dir) => {
 		const root = normalizeSlashes(dir);
-		const prefix = fold(root);
-		if (wanted.startsWith(`${prefix}/`)) {
-			const relative = target.slice(root.length + 1);
-			const declared = await declaredSubmodules(root);
-			if (declared.includes(relative)) return { root, relative };
-		}
-		const parent = nodePath.dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
+		if (!wanted.startsWith(`${fold(root)}/`)) return undefined;
+		const relative = target.slice(root.length + 1);
+		const declared = await declaredSubmodules(root);
+		return declared.includes(relative) ? { root, relative } : undefined;
+	});
+	return found ?? null;
 }
 
 /**

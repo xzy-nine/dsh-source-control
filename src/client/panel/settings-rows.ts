@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { Checkbox, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives';
-import { Dropdown } from '../ui/dropdown.ts';
+import { Dropdown, type DropdownValueProps } from '../ui/dropdown.ts';
 import css from '../css/settings.module.css';
 import { cx } from '../css/cx.ts';
 
@@ -72,15 +72,40 @@ export function NumberRow({ label, value, min, max, onChange }: {
 		if (!Number.isFinite(parsed)) { setDraft(String(value)); return; }
 		onChange(Math.min(max, Math.max(min, parsed)));
 	};
-	return React.createElement(SettingRow, {
-		label,
-		labelClass: css.setRowText,
-		control: React.createElement(Input, {
-			value: draft, type: 'number', min, max,
-			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setDraft(event.target.value); },
-			onBlur: (event: React.FocusEvent<HTMLInputElement>) => { commit(event.target.value); },
-		}),
-	});
+	return textRow(label, React.createElement(Input, {
+		value: draft, type: 'number', min, max,
+		onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setDraft(event.target.value); },
+		onBlur: (event: React.FocusEvent<HTMLInputElement>) => { commit(event.target.value); },
+	}));
+}
+
+/**
+ * 行内文字标签加控件的设置行。
+ *
+ * @param label - 行标签。
+ * @param control - 控件元素。
+ * @returns 行元素。
+ */
+function textRow(label: string, control: React.ReactElement): React.ReactElement {
+	return React.createElement(SettingRow, { label, labelClass: css.setRowText, control });
+}
+/**
+ * 表单外壳：按字段顺序竖排。
+ *
+ * @param children - 表单内容。
+ * @returns 表单元素。
+ */
+export function formShell(...children: React.ReactNode[]): React.ReactElement {
+	return React.createElement('div', { className: css.setForm }, ...children);
+}
+/**
+ * 表单底部的动作行。
+ *
+ * @param actions - 按钮元素，按给出顺序排列。
+ * @returns 动作行元素。
+ */
+export function formActions(actions: readonly React.ReactElement[]): React.ReactElement {
+	return React.createElement('div', { className: css.setFormActions }, ...actions);
 }
 
 /**
@@ -140,17 +165,8 @@ export function FieldBlock({ label, placeholder, value, onChange }: {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-export function SelectRow({ label, options, value, onChange }: {
-	label: string;
-	options: ReadonlyArray<{ value: string; label: string; title?: string }>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
-	return React.createElement(SettingRow, {
-		label,
-		labelClass: css.setRowText,
-		control: React.createElement(SegmentedControl, { id: `ggg-set-${label}`, label, value, onChange, options }),
-	});
+export function SelectRow({ label, ...choice }: { label: string } & DropdownValueProps): React.ReactElement {
+	return textRow(label, React.createElement(SegmentedControl, { ...choice, id: `ggg-set-${label}`, label }));
 }
 
 /**
@@ -162,11 +178,6 @@ export function SelectRow({ label, options, value, onChange }: {
  * @param props.onChange - 变更回调。
  * @returns 行元素。
  */
-export function DropdownRow({ label, options, value, onChange }: {
-	label: string;
-	options: ReadonlyArray<{ value: string; label: string }>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
-	return React.createElement(SettingRow, { label, labelClass: css.setLabel, control: React.createElement(Dropdown, { options, value, onChange }) });
+export function DropdownRow({ label, ...choice }: { label: string } & DropdownValueProps): React.ReactElement {
+	return React.createElement(SettingRow, { label, labelClass: css.setLabel, control: React.createElement(Dropdown, choice) });
 }

@@ -10,8 +10,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
-import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
-import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
+import { changeMenuItems, type ChangeMenuContext, type ChangeMenuDeps } from './change-menu.ts';
+import { discardEntries, isUntrackedEntry, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { ChangeTreeGroupFields } from './change-tree-group.ts';
 import { guidesOf } from './tree-rows.tsx';
@@ -65,6 +65,58 @@ export function openTargetMenu(event: React.MouseEvent<HTMLElement>, build: () =
 	showContextMenu({
 		x: event.clientX, y: event.clientY, items: build(),
 		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
+	});
+}
+
+/**
+ * 在指针位置弹出某个变更目标的右键菜单。
+ *
+ * 目标行上的右键一律先阻止冒泡：不回传的话，事件会落到外层分组或面板，两次弹菜单。
+ *
+ * @param event - 右键事件。
+ * @param spec - 该目标的菜单上下文。
+ * @returns 无。
+ */
+export function openChangeTargetMenu(event: React.MouseEvent<HTMLElement>, spec: ChangeMenuContext): void {
+	event.stopPropagation();
+	openTargetMenu(event, () => changeMenuItems(spec));
+}
+
+/**
+ * 弹出一个文件行的右键菜单；未跟踪与否决定「丢弃」走哪条命令。
+ *
+ * @param event - 右键事件。
+ * @param deps - 变更区的数据与回调。
+ * @param entry - 文件行条目。
+ * @returns 无。
+ */
+export function openFileChangeMenu(
+	event: React.MouseEvent<HTMLElement>,
+	deps: ChangeMenuDeps,
+	entry: WorkingTreeEntry,
+): void {
+	openChangeTargetMenu(event, {
+		target: 'file', deps, path: entry.path, paths: [entry.path], count: 1,
+		entry, untracked: entry.index === '?' && entry.worktree === '?',
+	});
+}
+
+/**
+ * 弹出一个文件夹行的右键菜单；文件夹按目录整体执行，因此 pathspec 带尾斜杠。
+ *
+ * @param event - 右键事件。
+ * @param deps - 变更区的数据与回调。
+ * @param row - 文件夹行。
+ * @returns 无。
+ */
+export function openFolderChangeMenu(
+	event: React.MouseEvent<HTMLElement>,
+	deps: ChangeMenuDeps,
+	row: Extract<ChangeRow, { kind: 'folder' }>,
+): void {
+	openChangeTargetMenu(event, {
+		target: 'folder', deps, path: row.path, paths: [row.path + '/'], count: row.count,
+		entry: null, untracked: false,
 	});
 }
 
@@ -129,7 +181,7 @@ export interface ChangeNodeRowProps {
  * @returns 没有可比差异、只能按整文件打开时为 true。
  */
 export function isUntrackedFile(entry: WorkingTreeEntry): boolean {
-	return entry.index === '?' && entry.worktree === '?';
+	return isUntrackedEntry(entry);
 }
 
 /** 变更树里的文件夹行。 */
@@ -161,6 +213,25 @@ export function ChangeFolderRow({ row, open, onToggle, onContextMenu }: ChangeFo
 	);
 }
 
+/**
+ * 一个文件夹行的元素：折叠状态取自行自身，点击按目录切换。
+ *
+ * 暂存/未暂存、合并冲突与提交详情三个分组都按同一形态渲染文件夹行。
+ *
+ * @param row - 文件夹行。
+ * @param onToggle - 切换该目录折叠状态的调用方；入参为目录路径。
+ * @returns 文件夹行元素。
+ */
+export function folderChangeNode(
+	row: Extract<ChangeRow, { kind: 'folder' }>,
+	onToggle: (path: string) => void,
+): React.ReactElement {
+	return React.createElement(ChangeFolderRow, {
+		key: `f:${row.path}`, row, open: row.open,
+		onToggle: () => { onToggle(row.path); },
+	});
+}
+
 /** 变更树里文件行的外壳属性：行高亮、点击与右键、缩进、图标与文件名。 */
 export interface ChangeFileShellProps {
 	readonly name: string;
@@ -182,12 +253,54 @@ export function ChangeFileShell({ name, depth, title, children, onClick, onConte
 	return React.createElement(
 		'div',
 		{ className: cx(css.change, css.changeOpenable), title, onClick, onContextMenu },
-		...guidesOf(depth),
-		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: css.changeName },
-			React.createElement('span', { className: css.changeText }, name)),
+		...fileRowLead(depth, name),
+		fileNameNode(name),
 		children,
 	);
+}
+
+/**
+ * 文件行尾的悬停按钮。
+ *
+ * 点按钮不该同时选中该行，因此点击事件在此拦下。
+ *
+ * @param title - 按钮文案，同时作为悬停提示。
+ * @param busy - 进行中：按钮禁用。
+ * @param icon - 按钮图标。
+ * @param action - 点击动作。
+ * @returns 按钮元素。
+ */
+function changeButtonNode(
+	title: string,
+	busy: boolean,
+	icon: React.ComponentType<{ size?: number }>,
+	action: () => void,
+): React.ReactElement {
+	const click = (event: React.MouseEvent<HTMLButtonElement>): void => { event.stopPropagation(); action(); };
+	return React.createElement('button', { type: 'button', className: css.changeBtn, title, disabled: busy, onClick: click },
+		React.createElement(icon, { size: 14 }));
+}
+
+/**
+ * 文件行的缩进导引与类型图标。
+ *
+ * @param depth - 目录深度。
+ * @param name - 文件名，决定图标。
+ * @returns 该行的前置节点。
+ */
+function fileRowLead(depth: number, name: string): React.ReactNode[] {
+	return [...guidesOf(depth), React.createElement(FileTypeIcon, { path: name, size: 14 })];
+}
+
+/**
+ * 文件名节点：外层撑开宽度，内层承接省略号截断。
+ *
+ * @param name - 文件名。
+ * @returns 文件名元素。
+ */
+function fileNameNode(name: string): React.ReactElement {
+	return React.createElement('span', { className: css.changeName },
+		React.createElement('span', { className: css.changeText }, name));
 }
 
 /** 文件夹行或文件行（变更树内）。 */
@@ -196,12 +309,7 @@ function ChangeNodeRowView({
 }: ChangeNodeRowProps): React.ReactElement {
 	if (row.kind === 'folder') {
 		const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
-			event.stopPropagation();
-			openTargetMenu(event, () => changeMenuItems({
-				// 文件夹行按目录整体执行：带尾斜杠的目录 pathspec 命中其下全部条目。
-				target: 'folder', deps: menu, path: row.path, paths: [row.path + '/'], count: row.count,
-				entry: null, untracked: false,
-			}));
+			openFolderChangeMenu(event, menu, row);
 		};
 		return React.createElement(ChangeFolderRow, {
 			row, open, onToggle: () => { toggleChange(groupKey, row.path); }, onContextMenu: handleContextMenu,
@@ -215,10 +323,7 @@ function ChangeNodeRowView({
 	const isNew = isUntrackedFile(entry);
 	const { name } = splitPath(entry.path);
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
-		openTargetMenu(event, () => changeMenuItems({
-			target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1,
-			entry, untracked,
-		}));
+		openFileChangeMenu(event, menu, entry);
 	};
 	// 整行可点：点击文件行即打开该文件；悬停按钮只留暂存/丢弃这类会改状态的动作。
 	const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -234,21 +339,12 @@ function ChangeNodeRowView({
 		},
 		// 悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。
 		fileStaged
-			? React.createElement('button', {
-				type: 'button', className: css.changeBtn, title: '取消暂存', disabled: busy,
-				onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onUnstage([entry.path]); },
-			}, React.createElement(IconCloseOutlineRegular, { size: 14 }))
+			? changeButtonNode('取消暂存', busy, IconCloseOutlineRegular, () => { onUnstage([entry.path]); })
 			: React.createElement(
 				React.Fragment,
 				null,
-				React.createElement('button', {
-					type: 'button', className: css.changeBtn, title: '丢弃改动', disabled: busy,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onDiscard([entry.path], untracked); },
-				}, React.createElement(IconTrashOutlineRegular, { size: 14 })),
-				React.createElement('button', {
-					type: 'button', className: css.changeBtn, title: '暂存改动', disabled: busy,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onStage([entry.path]); },
-				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				changeButtonNode('丢弃改动', busy, IconTrashOutlineRegular, () => { onDiscard([entry.path], untracked); }),
+				changeButtonNode('暂存改动', busy, IconPlusOutlineRegular, () => { onStage([entry.path]); }),
 			),
 		React.createElement('span', { className: cx(css.rowTail, css.status), 'data-type': type }, type),
 	);
@@ -288,22 +384,7 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 		'div',
 		{ className: cx(css.changes, css.detailChanges) },
 		...rows.map((row) => {
-			if (row.kind === 'folder') {
-				return React.createElement(
-					'div',
-					{
-						key: `f:${row.path}`, className: cx(css.change, css.folder), title: row.path,
-						onClick: () => { onToggle(row.path); },
-					},
-					...guidesOf(row.depth),
-					React.createElement('span', {
-						className: cx(shared.repoChevron, !row.open && shared.isCollapsed),
-					}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
-					React.createElement(row.open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
-					React.createElement('span', { className: css.changeName }, row.name),
-					React.createElement('span', { className: css.count }, String(row.count)),
-				);
-			}
+			if (row.kind === 'folder') return folderChangeNode(row, onToggle);
 			const entry = row.entry;
 			const { name } = splitPath(entry.path);
 			const stat = entry.additions !== null;
@@ -315,11 +396,9 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 					key: `e:${entry.path}`, className: cx(css.change, css.changeOpenable), title: entry.path,
 					onClick: () => { if (!busy) onOpen(entry.path, isNew); },
 				},
-				...guidesOf(row.depth),
-				React.createElement(FileTypeIcon, { path: name, size: 14 }),
+				...fileRowLead(row.depth, name),
 				React.createElement('span', { className: css.status, 'data-type': entry.type }, entry.type),
-				React.createElement('span', { className: css.changeName },
-					React.createElement('span', { className: css.changeText }, name)),
+				fileNameNode(name),
 				stat && React.createElement(
 					'span',
 					{ className: css.detailStat },
@@ -508,11 +587,10 @@ function ChangeGroupView({
 		onCopyPath: (path: string) => { void writeClipboard(absolutePathOf(workingTreePath, path)); },
 	}), [busy, staged, truncated, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard, onDiscardFolder, onDiscardAll, onOpenFile, onAddToGitignore, onAddToLocalExclude, workingTreePath]);
 	const handleHeadContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
-		event.stopPropagation();
-		openTargetMenu(event, () => changeMenuItems({
+		openChangeTargetMenu(event, {
 			target: 'group', deps: menu, path: null, paths: [], count: allPaths.length,
 			entry: null, untracked: false,
-		}));
+		});
 	}, [menu, allPaths]);
 	if (visible.length === 0 && !forceShow) return [];
 	return React.createElement(ChangeGroupShell, {

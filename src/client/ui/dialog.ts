@@ -1,14 +1,13 @@
 /**
  * 自建弹窗基础设施：基于 DSH 的 Modal 封装确认框、输入框、表单与单选。
  *
- * 不使用浏览器原生 confirm / prompt，统一走 DSH 的 dialog 外观。
  * 这些封装以 Promise 返回用户操作结果，调用方用 await 串接即可。
  */
 import React from 'react';
 import {
 	Button, Checkbox, Input, Modal, RiskConfirmation, SegmentedControl, SegmentedTabs, writeClipboard, type SegmentedTab,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { Dropdown, type DropdownOption } from './dropdown.ts';
+import { Dropdown, type DropdownOption, type DropdownValueProps } from './dropdown.ts';
 import { AnsiText } from './ansi.ts';
 import { pushDialog, removeDialog } from './overlay-host.ts';
 import css from '../css/dialog.module.css';
@@ -105,12 +104,7 @@ function confirmFooter(
 		React.Fragment,
 		null,
 		React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: onCancel }, cancelLabel),
-		React.createElement(Button, {
-			variant: 'primary', size: 'sm',
-			disabled: confirmDisabled,
-			className: danger ? css.btnDanger : undefined,
-			onClick: onConfirm,
-		}, confirmLabel),
+		primaryButton({ label: confirmLabel, onClick: onConfirm, disabled: confirmDisabled, danger }),
 	);
 }
 
@@ -135,6 +129,41 @@ function runDialog<T>(build: (finish: (result: T) => void) => React.FunctionComp
 	});
 }
 
+/**
+ * 跑一个弹窗，内容由调用方按 `finish` 返回。
+ *
+ * `runDialog` 的入参是「组件工厂」，每个弹窗都还要自己套一层
+ * `function Content(): React.ReactElement`。这里把那一层收进来，调用方只写内容函数。
+ *
+ * @param build - 接收 finish(result) 回调，返回弹窗元素的函数。
+ * @returns 用户操作结果。
+ */
+function dialogContent<T>(build: (finish: (result: T) => void) => React.ReactElement): Promise<T> {
+	return runDialog<T>((finish) => function Content(): React.ReactElement {
+		return build(finish);
+	});
+}
+
+/**
+ * 带一份局部状态的弹窗：状态在内容组件里建立，内容函数拿到当前值与写入器。
+ *
+ * @param initial - 初始值，或惰性给出初始值的函数。
+ * @param build - 内容函数：接收 finish 回调与这份状态。
+ * @returns 用户操作结果。
+ */
+function statefulDialog<T, S>(
+	initial: S | (() => S),
+	build: (
+		finish: (result: T) => void,
+		value: S,
+		setValue: React.Dispatch<React.SetStateAction<S>>,
+	) => React.ReactElement,
+): Promise<T> {
+	return dialogContent<T>((finish) => {
+		const [value, setValue] = React.useState(initial);
+		return build(finish, value, setValue);
+	});
+}
 /**
  * 取消与关闭同义的弹窗：两者都返回 null。
  *
@@ -194,10 +223,10 @@ function closedDialog<T>(
  * @returns 用户点确认返回 true，否则 false。
  */
 export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消', danger = false }: ConfirmationOptions): Promise<boolean> {
-	return runDialog<boolean>((finish) => function Content(): React.ReactElement {
-		return closedDialog(title, finish, false,
-			React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, messageText(message)),
-			confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger));
+	return dialogContent<boolean>((finish) => {
+	return closedDialog(title, finish, false,
+		React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, messageText(message)),
+		confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger));
 	});
 }
 
@@ -218,10 +247,10 @@ export interface MessageOptions {
  * @returns 用户关闭后完成。
  */
 export function showMessage({ title, message, closeLabel = '知道了' }: MessageOptions): Promise<void> {
-	return runDialog<undefined>((finish) => function Content(): React.ReactElement {
-		return closedDialog(title, finish, undefined,
-			React.createElement('div', { className: css.dialogHint }, messageText(message)),
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: () => { finish(undefined); } }, closeLabel));
+	return dialogContent<undefined>((finish) => {
+	return closedDialog(title, finish, undefined,
+		React.createElement('div', { className: css.dialogHint }, messageText(message)),
+		primaryButton({ label: closeLabel, onClick: () => { finish(undefined); } }));
 	});
 }
 
@@ -261,26 +290,25 @@ export interface MessageLinksOptions {
  * @returns 关闭时是否勾选；没有勾选项时恒为 false。
  */
 export function showMessageWithLinks({ title, message, links = [], checkboxLabel, checked = true, closeLabel = '知道了' }: MessageLinksOptions): Promise<boolean> {
-	return runDialog<boolean>((finish) => function Content(): React.ReactElement {
-		const [on, setOn] = React.useState(checked);
-		const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
-		return dialogModal(
-			title,
-			close,
-			dialogBody(
-				message,
-				links.length > 0 && React.createElement(
-					'div',
-					{ className: css.dialogLinks },
-					...links.map((link) => React.createElement('button', {
-						key: link.label, type: 'button', className: css.dialogLink,
-						onClick: link.onClick,
-					}, link.label)),
-				),
-				checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
+	return statefulDialog<boolean, boolean>(checked, (finish, on, setOn) => {
+	const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
+	return dialogModal(
+		title,
+		close,
+		dialogBody(
+			message,
+			links.length > 0 && React.createElement(
+				'div',
+				{ className: css.dialogLinks },
+				...links.map((link) => React.createElement('button', {
+					key: link.label, type: 'button', className: css.dialogLink,
+					onClick: link.onClick,
+				}, link.label)),
 			),
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: close }, closeLabel),
-		);
+			checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
+		),
+		primaryButton({ label: closeLabel, onClick: close }),
+	);
 	});
 }
 
@@ -291,27 +319,26 @@ export function showMessageWithLinks({ title, message, links = [], checkboxLabel
  * @returns 用户关闭后完成。
  */
 export function showError(message: string): Promise<void> {
-	return runDialog<undefined>((finish) => function Content(): React.ReactElement {
-		const [copied, setCopied] = React.useState(false);
-		/** 复制正文；写入失败时按钮文案保持「复制」。 */
-		const copy = async (): Promise<void> => {
-			try {
-				if (await writeClipboard(message)) setCopied(true);
-			} catch {
-				/* 写入失败：按钮文案不变 */
-			}
-		};
-		return dialogModal(
-			'操作失败',
-			() => { finish(undefined); },
-			React.createElement(
-				'div',
-				{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
-				messageText(message),
-			),
-			// 取消位承担复制，确认位承担关闭。
-			confirmFooter(() => { void copy(); }, () => { finish(undefined); }, '知道了', copied ? '已复制' : '复制'),
-		);
+	return statefulDialog<undefined, boolean>(false, (finish, copied, setCopied) => {
+	/** 复制正文；写入失败时按钮文案保持「复制」。 */
+	const copy = async (): Promise<void> => {
+		try {
+			if (await writeClipboard(message)) setCopied(true);
+		} catch {
+			/* 写入失败：按钮文案不变 */
+		}
+	};
+	return dialogModal(
+		'操作失败',
+		() => { finish(undefined); },
+		React.createElement(
+			'div',
+			{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
+			messageText(message),
+		),
+		// 取消位承担复制，确认位承担关闭。
+		confirmFooter(() => { void copy(); }, () => { finish(undefined); }, '知道了', copied ? '已复制' : '复制'),
+	);
 	});
 }
 
@@ -327,21 +354,20 @@ export interface CheckboxOptions extends ConfirmOptions {
  * @returns 用户勾选并确认返回 true，否则 false。
  */
 export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '确认', cancelLabel = '取消' }: CheckboxOptions): Promise<boolean> {
-	return runDialog<boolean>((finish) => function Content(): React.ReactElement {
-		const [acknowledged, setAcknowledged] = React.useState(false);
-		return React.createElement(RiskConfirmation, {
-			open: true,
-			title,
-			description: message,
-			closeLabel: '关闭',
-			cancelLabel,
-			confirmLabel,
-			acknowledged,
-			acknowledgeLabel: checkboxLabel,
-			onAcknowledgedChange: setAcknowledged,
-			onCancel: () => { finish(false); },
-			onConfirm: () => { finish(true); },
-		});
+	return statefulDialog<boolean, boolean>(false, (finish, acknowledged, setAcknowledged) => {
+	return React.createElement(RiskConfirmation, {
+		open: true,
+		title,
+		description: message,
+		closeLabel: '关闭',
+		cancelLabel,
+		confirmLabel,
+		acknowledged,
+		acknowledgeLabel: checkboxLabel,
+		onAcknowledgedChange: setAcknowledged,
+		onCancel: () => { finish(false); },
+		onConfirm: () => { finish(true); },
+	});
 	});
 }
 
@@ -362,23 +388,22 @@ export interface TextOptions {
  * @returns 用户确认返回输入文本，取消返回 null。
  */
 export function showText({ title, message = '', label = '', value = '', placeholder = '', confirmLabel = '确定' }: TextOptions): Promise<string | null> {
-	return runDialog<string | null>((finish) => function Content(): React.ReactElement {
-		const [text, setText] = React.useState(value);
-		const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
-		return cancelableModal(title, finish, dialogBody(
-			message,
-			label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
-			React.createElement(Input, {
-				id: 'ggg-text-input',
-				value: text,
-				placeholder,
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
-				// 单行输入框里回车即确认。
-				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
-					if (event.key === 'Enter') { event.preventDefault(); submit(); }
-				},
-			}),
-		), submit, confirmLabel);
+	return statefulDialog<string | null, string>(value, (finish, text, setText) => {
+	const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
+	return cancelableModal(title, finish, dialogBody(
+		message,
+		label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
+		React.createElement(Input, {
+			id: 'ggg-text-input',
+			value: text,
+			placeholder,
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
+			// 单行输入框里回车即确认。
+			onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+				if (event.key === 'Enter') { event.preventDefault(); submit(); }
+			},
+		}),
+	), submit, confirmLabel);
 	});
 }
 
@@ -403,21 +428,20 @@ export interface SelectOptions {
  * @returns 用户确认返回所选值，取消返回 null。
  */
 export function showSelect({ title, message = '', options, value, confirmLabel = '确定' }: SelectOptions): Promise<string | null> {
-	return runDialog<string | null>((finish) => function Content(): React.ReactElement {
-		const [selected, setSelected] = React.useState(value ?? options.at(0)?.value ?? '');
-		const detail = options.find((option) => option.value === selected)?.description;
-		return cancelableModal(title, finish, dialogBody(
-			message,
-			React.createElement(SegmentedControl, {
-				id: 'ggg-select',
-				label: title,
-				value: selected,
-				onChange: setSelected,
-				className: css.selectControl,
-				options: options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
-			}),
-			detail !== undefined && detail !== '' && React.createElement('div', { className: css.selectDescription }, detail),
-		), () => { finish(selected); }, confirmLabel);
+	return statefulDialog<string | null, string>(value ?? options.at(0)?.value ?? '', (finish, selected, setSelected) => {
+	const detail = options.find((option) => option.value === selected)?.description;
+	return cancelableModal(title, finish, dialogBody(
+		message,
+		React.createElement(SegmentedControl, {
+			id: 'ggg-select',
+			label: title,
+			value: selected,
+			onChange: setSelected,
+			className: css.selectControl,
+			options: options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
+		}),
+		detail !== undefined && detail !== '' && React.createElement('div', { className: css.selectDescription }, detail),
+	), () => { finish(selected); }, confirmLabel);
 	});
 }
 
@@ -463,15 +487,58 @@ function initialValues(fields: readonly FormField[]): Record<string, unknown> {
 }
 
 /**
+ * 弹窗里的主操作按钮。
+ *
+ * 弹窗的确认、关闭与保存都长这一颗：主色、小号、可带危险样式。语序与尺寸因此只有一处。
+ *
+ * @param props.label - 按钮文案。
+ * @param props.onClick - 点击处理。
+ * @param props.disabled - 是否禁用。
+ * @param props.danger - 是否用危险样式。
+ * @returns 按钮元素。
+ */
+export function primaryButton({ label, onClick, disabled = false, danger = false }: {
+	readonly label: string;
+	readonly onClick: () => void;
+	readonly disabled?: boolean;
+	readonly danger?: boolean;
+}): React.ReactElement {
+	return React.createElement(Button, {
+		variant: 'primary', size: 'sm',
+		disabled,
+		className: danger ? css.btnDanger : undefined,
+		onClick,
+	}, label);
+}
+
+/**
+ * 按字段名写入一格值。
+ *
+ * 单个值对象与分页表单的某一页共用这一层：差别只在「写哪一份」，因此由调用方给出写入函数。
+ *
+ * @param setValues - 状态写入器。
+ * @param write - 拿到上一份值与字段名后给出新一份值。
+ * @returns 按字段名写入的回调。
+ */
+function fieldWriter<S>(
+	setValues: React.Dispatch<React.SetStateAction<S>>,
+	write: (previous: S, name: string, value: unknown) => S,
+): (name: string, value: unknown) => void {
+	return (name, value) => { setValues((previous) => write(previous, name, value)); };
+}
+
+
+/**
  * 表单：支持文本、下拉、单选、勾选与多选项。
  *
  * @param options - 见 {@link FormOptions}。
  * @returns 用户确认返回字段值对象，取消返回 null。
  */
 export function showForm({ title, message = '', fields, confirmLabel = '确定' }: FormOptions): Promise<Record<string, unknown> | null> {
-	return runDialog<Record<string, unknown> | null>((finish) => function Content(): React.ReactElement {
-		const [values, setValues] = React.useState<Record<string, unknown>>(() => initialValues(fields));
-		const setField = (name: string, value: unknown): void => { setValues((previous) => ({ ...previous, [name]: value })); };
+	return statefulDialog<Record<string, unknown> | null, Record<string, unknown>>(
+		() => initialValues(fields),
+		(finish, values, setValues) => {
+		const setField = fieldWriter(setValues, (previous, name, value) => ({ ...previous, [name]: value }));
 		const submit = (): void => { finish(values); };
 		return cancelableModal(
 			title,
@@ -480,7 +547,8 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 			submit,
 			confirmLabel,
 		);
-	});
+		},
+	);
 }
 
 /** 分页表单的一页。 */
@@ -513,18 +581,19 @@ export interface TabbedFormOptions {
  * @returns 用户确认返回当前页的字段值（含 `page`），取消返回 null。
  */
 export function showTabbedForm({ title, pages, confirmLabel = '确定' }: TabbedFormOptions): Promise<Record<string, unknown> | null> {
-	return runDialog<Record<string, unknown> | null>((finish) => function Content(): React.ReactElement {
-		// 每页一份值对象，同名不跨页覆盖。
-		const initial: Record<string, Record<string, unknown>> = {};
-		for (const page of pages) initial[page.value] = initialValues(page.fields);
-		const [values, setValues] = React.useState<Record<string, Record<string, unknown>>>(initial);
+	// 每页一份值对象，同名不跨页覆盖。
+	const initial: Record<string, Record<string, unknown>> = {};
+	for (const page of pages) initial[page.value] = initialValues(page.fields);
+	return statefulDialog<Record<string, unknown> | null, Record<string, Record<string, unknown>>>(
+		initial,
+		(finish, values, setValues) => {
 		const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
 		const active = pages.find((page) => page.value === activeValue) ?? pages[0];
 		const activeValues = values[active.value] ?? {};
-		const setField = (name: string, value: unknown): void => { setValues((previous) => ({
-			...previous,
-			[active.value]: { ...(previous[active.value] ?? {}), [name]: value },
-		})); };
+		// 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
+		const setField = fieldWriter(setValues, (previous, name, value) => ({
+			...previous, [active.value]: { ...(previous[active.value] ?? {}), [name]: value },
+		}));
 		// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 		const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 			{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
@@ -544,7 +613,8 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 			hintNode(active.message ?? ''),
 			...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
 		), submit, confirmLabel);
-	});
+		},
+	);
 }
 
 /**
@@ -573,16 +643,10 @@ function labeledField(field: FormField, control: React.ReactElement): React.Reac
  * @param props.onChange - 变更回调。
  * @returns 字段元素。
  */
-function DropdownField({ name, label, options, value, onChange }: {
-	name: string;
-	label?: string | undefined;
-	options: ReadonlyArray<DropdownOption>;
-	value: string;
-	onChange: (next: string) => void;
-}): React.ReactElement {
+function DropdownField({ name, label, ...choice }: { name: string; label?: string | undefined } & DropdownValueProps): React.ReactElement {
 	return labeledField(
-		{ name, label, type: 'dropdown', options },
-		React.createElement(Dropdown, { id: `ggg-field-${name}`, options, value, onChange }),
+		{ name, label, type: 'dropdown', options: choice.options },
+		React.createElement(Dropdown, { ...choice, id: `ggg-field-${name}` }),
 	);
 }
 
@@ -604,6 +668,25 @@ function enterConfirms(onEnter: () => void, shiftInsertsNewline = false): (event
 	};
 }
 
+/**
+ * 一行单独的复选框：自带文案，所在行同时是点击区。
+ *
+ * @param key - React 的兄弟节点键。
+ * @param checked - 当前勾选状态。
+ * @param label - 复选框文案。
+ * @param onChange - 变更回调。
+ * @returns 行元素。
+ */
+function checkboxRow(
+	key: string,
+	checked: boolean,
+	label: string,
+	onChange: (next: boolean) => void,
+): React.ReactElement {
+	/* Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。 */
+	return React.createElement('div', { key, className: cx(css.field, css.fieldInline) },
+		React.createElement(Checkbox, { checked, onChange, label }));
+}
 /**
  * 构造单个表单字段。
  *
@@ -642,16 +725,7 @@ function buildField(
 		}));
 	}
 	if (field.type === 'checkbox') {
-		// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
-		return React.createElement(
-			'div',
-			{ key: field.name, className: cx(css.field, css.fieldInline) },
-			React.createElement(Checkbox, {
-				checked: current === true,
-				onChange: (next: boolean) => { setField(field.name, next); },
-				label: field.label ?? '',
-			}),
-		);
+		return checkboxRow(field.name, current === true, field.label ?? '', (next) => { setField(field.name, next); });
 	}
 	if (field.type === 'select') {
 		return labeledField(field, React.createElement(SegmentedControl, {
@@ -677,23 +751,10 @@ function buildField(
 	return labeledField(field, React.createElement(
 		React.Fragment,
 		null,
-		...field.options.map((option) => {
-			const checked = selected.includes(option.value);
-			// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
-			return React.createElement(
-				'div',
-				{ key: option.value, className: cx(css.field, css.fieldInline) },
-				React.createElement(Checkbox, {
-					checked,
-					onChange: (next: boolean) => {
-						const values2 = next
-							? [...selected, option.value]
-							: selected.filter((item) => item !== option.value);
-						setField(field.name, values2);
-					},
-					label: option.label,
-				}),
-			);
-		}),
+		...field.options.map((option) => checkboxRow(option.value, selected.includes(option.value), option.label, (next) => {
+			setField(field.name, next
+				? [...selected, option.value]
+				: selected.filter((item) => item !== option.value));
+		})),
 	));
 }

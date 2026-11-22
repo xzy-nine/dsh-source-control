@@ -6,11 +6,12 @@
  * 相对路径会被再拼一次，而插件持有的工作区根未必与宿主一致。
  */
 
+import { slashPath } from '../shared/path-key.ts';
+
 /** 地址前缀（scope 为 session）。 */
 const FILE_ADDRESS_PREFIX = 'dsh-resource://file/session/';
 
-/** 统一分隔符并去掉尾斜杠。 */
-const normalize = (path: string | null | undefined): string => (path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+
 
 /**
  * 是否已是绝对路径。
@@ -33,9 +34,9 @@ const isAbsolutePath = (path: string): boolean => /^[a-zA-Z]:\//.test(path) || p
  * @returns `dsh-resource://file/session/<sessionId>/<path>` 地址。
  */
 export function diffFileAddress(sessionId: string, repoRoot: string, filePath: string): string | null {
-	const file = normalize(filePath);
+	const file = slashPath(filePath);
 	if (file === '') return null;
-	const root = normalize(repoRoot);
+	const root = slashPath(repoRoot);
 	const absolute = isAbsolutePath(file) || root === '' ? file : `${root}/${file}`;
 	const encoded = absolute.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/');
 	return `${FILE_ADDRESS_PREFIX}${encodeURIComponent(sessionId)}/${encoded}`;

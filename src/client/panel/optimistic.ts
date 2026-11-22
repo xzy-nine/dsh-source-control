@@ -46,6 +46,23 @@ function matches(entry: WorkingTreeEntry, targets: PathTargets): boolean {
 }
 
 /**
+ * 只改写命中给定路径的条目，其余原样保留。
+ *
+ * @param entries - 当前条目。
+ * @param paths - 目标路径。
+ * @param rewrite - 命中条目的改写。
+ * @returns 新条目。
+ */
+function mapTargets(
+	entries: readonly WorkingTreeEntry[],
+	paths: readonly string[],
+	rewrite: (entry: WorkingTreeEntry) => WorkingTreeEntry,
+): WorkingTreeEntry[] {
+	const target = pathTargets(paths);
+	return entries.map((entry) => (matches(entry, target) ? rewrite(entry) : entry));
+}
+
+/**
  * 工作区变更的签名：路径与状态码逐条拼接。
  *
  * @param entries - 工作区条目。
@@ -55,6 +72,30 @@ export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
 	return entries.map((entry) => `${entry.path}:${entry.index}${entry.worktree}`).join('\n');
 }
 
+/**
+ * 条目是否为未跟踪：索引与工作区两列都是 `?`。
+ *
+ * @param entry - 工作区条目。
+ * @returns 未跟踪时为 true。
+ */
+export function isUntrackedEntry(entry: WorkingTreeEntry): boolean {
+	return entry.index === '?' && entry.worktree === '?';
+}
+/**
+ * 按路径集合改写条目的状态。
+ *
+ * @param entries - 当前条目。
+ * @param paths - 目标路径。
+ * @param nextOf - 由条目给出新状态。
+ * @returns 新条目。
+ */
+function mapEntriesToStatus(
+	entries: readonly WorkingTreeEntry[],
+	paths: readonly string[],
+	nextOf: (entry: WorkingTreeEntry) => { index: string; worktree: string },
+): WorkingTreeEntry[] {
+	return mapTargets(entries, paths, (entry) => ({ ...entry, ...nextOf(entry) }));
+}
 /**
  * 暂存路径：把工作区的内容与状态并入索引。
  *
@@ -66,15 +107,9 @@ export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
  * @returns 新条目。
  */
 export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = pathTargets(paths);
-	return entries.map((entry) => {
-		if (!matches(entry, target)) return entry;
-		if (entry.index === '?' && entry.worktree === '?') {
-			return { ...entry, index: 'A', worktree: ' ' };
-		}
-		const nextIndex = entry.worktree !== ' ' ? entry.worktree : entry.index;
-		return { ...entry, index: nextIndex, worktree: ' ' };
-	});
+	return mapEntriesToStatus(entries, paths, (entry) => (entry.index === '?' && entry.worktree === '?'
+		? { index: 'A', worktree: ' ' }
+		: { index: entry.worktree !== ' ' ? entry.worktree : entry.index, worktree: ' ' }));
 }
 
 /**
@@ -88,13 +123,9 @@ export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readon
  * @returns 新条目。
  */
 export function unstageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = pathTargets(paths);
-	return entries.map((entry) => {
-		if (!matches(entry, target)) return entry;
-		if (entry.index === 'A') return { ...entry, index: '?', worktree: '?' };
-		const nextWorktree = entry.index !== ' ' ? entry.index : entry.worktree;
-		return { ...entry, index: ' ', worktree: nextWorktree };
-	});
+	return mapEntriesToStatus(entries, paths, (entry) => (entry.index === 'A'
+		? { index: '?', worktree: '?' }
+		: { index: ' ', worktree: entry.index !== ' ' ? entry.index : entry.worktree }));
 }
 
 /**

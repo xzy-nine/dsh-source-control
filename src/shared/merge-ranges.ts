@@ -37,8 +37,19 @@ const LCS_BUDGET = 4_000_000;
  */
 export function linesOf(text: string): string[] {
 	if (text === '') return [];
-	const lines = text.split('\n');
-	if (lines[lines.length - 1] === '') lines.pop();
+	return removeTrailingBlankLines(text.split('\n'));
+}
+
+/**
+ * 去掉数组末尾的空行。
+ *
+ * git 的 `-z` 输出与文本切分都会在末尾留下空串，读行之前统一剔掉。
+ *
+ * @param lines - 行数组。
+ * @returns 同一个数组。
+ */
+export function removeTrailingBlankLines<T extends string>(lines: T[]): T[] {
+	while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 	return lines;
 }
 
@@ -275,15 +286,33 @@ export function linesForChoice(range: MergeRange, choice: MergeChoice): string[]
  */
 export function resultLinesOf(analysis: MergeAnalysis, choices: ReadonlyMap<number, MergeChoice>): string[] {
 	const out: string[] = [];
-	let at = 0;
-	for (const range of analysis.ranges) {
-		out.push(...analysis.baseLines.slice(at, range.baseStart));
+	walkRanges(analysis, (lines) => { out.push(...lines); }, (range) => {
 		const choice = choices.get(range.index);
 		out.push(...(choice === undefined
 			? analysis.baseLines.slice(range.baseStart, range.baseStart + range.baseLength)
 			: linesForChoice(range, choice)));
+	});
+	return out;
+}
+
+/**
+ * 按基线顺序走一遍分析结果：每段区间之前给出它之前的普通基线行，最后给出尾部。
+ *
+ * @param analysis - 解析结果。
+ * @param onCommon - 普通段，即区间之间与尾部的基线行。
+ * @param onRange - 一个区间。
+ * @returns 无。
+ */
+export function walkRanges(
+	analysis: MergeAnalysis,
+	onCommon: (lines: readonly string[]) => void,
+	onRange: (range: MergeRange) => void,
+): void {
+	let at = 0;
+	for (const range of analysis.ranges) {
+		if (range.baseStart > at) onCommon(analysis.baseLines.slice(at, range.baseStart));
+		onRange(range);
 		at = range.baseStart + range.baseLength;
 	}
-	out.push(...analysis.baseLines.slice(at));
-	return out;
+	if (at < analysis.baseLines.length) onCommon(analysis.baseLines.slice(at));
 }

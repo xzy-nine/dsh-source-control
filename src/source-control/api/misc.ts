@@ -2,8 +2,6 @@
  * 其余命令：清理未跟踪文件、归档、GitHub 集成、平台占位、差异内容、用户身份、缓存作废、
  * 反馈与客户端日志。
  */
-import fs from 'node:fs/promises';
-import nodePath from 'node:path';
 import {
 	cleanUntrackedFiles, resetFileToRevision, setConfigValue, unsetConfigValue,
 } from '../git-actions.js';
@@ -12,7 +10,7 @@ import { cancelGitOperation, gitOrThrow, runGit } from '../git-exec.js';
 import { getConfig, getRepoInfo } from '../git-query.js';
 import { parseUnifiedDiffHunks } from '../diff-hunks.js';
 import type { DiffHunkText } from '../diff-hunks.js';
-import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, CONFLICT_ACTIONS, resolveConflicts } from '../conflict-ops.js';
+import { conflictDiffOf, conflictSourcesOf, conflictStagesOf, conflictTextsOf, CONFLICT_ACTIONS, contentAt, resolveConflicts, worktreeText } from '../conflict-ops.js';
 import { conflictKindOfPair } from '../../shared/conflict-kind.js';
 import type { ConflictAction, ConflictStages } from '../conflict-ops.js';
 import type { ConflictKind } from '../../shared/conflict-kind.js';
@@ -25,6 +23,7 @@ import { submitFeedback } from '../feedback.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
 import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
+import { errorText } from '../../shared/error-text.js';
 import type { ApiContext } from './context.js';
 
 
@@ -186,6 +185,29 @@ function configLocationOf(str: (name: string) => string): 'local' | 'global' {
 	return str('location') as 'local' | 'global';
 }
 
+/** 一次用户身份配置写入。 */
+type UserDetailWrite = () => Promise<unknown>;
+
+/**
+ * 依次执行用户身份的配置写入。
+ *
+ * 逐条独立失败：一条写不进去不影响其余项，失败的文本按条收集回投。
+ *
+ * @param writes - 写入动作。
+ * @returns 各条失败的文本。
+ */
+async function userDetailWrites(writes: readonly UserDetailWrite[]): Promise<string[]> {
+	const errors: string[] = [];
+	for (const write of writes) {
+		try {
+			await write();
+		} catch (e) {
+			errors.push(errorText(e));
+		}
+	}
+	return errors;
+}
+
 /**
  * 处理其余命令。
  *
@@ -194,6 +216,17 @@ function configLocationOf(str: (name: string) => string): 'local' | 'global' {
  */
 export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 	const { msg, repo, str, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
+	/**
+	 * 需要 `filePath` 的命令：这三个命令都以它为必需参数。
+	 *
+	 * 校验放在 switch 之前：缺失时回 400 并直接结束。
+	 */
+	const FILE_PATH_COMMANDS: ReadonlySet<string> = new Set(['mergeContents', 'applyHunk', 'fileHunks']);
+	const needsFilePath = FILE_PATH_COMMANDS.has(ctx.command);
+	const requiredPath = needsFilePath ? requiredFilePathOf(str, sendBadRequest) : null;
+	if (needsFilePath && requiredPath === null) return true;
+	/** 需要它的三个命令在上方已保证非空。 */
+	const filePath = requiredPath as string;
 	switch (ctx.command) {
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
@@ -339,24 +372,17 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				let hasParent = true;
 				if (baseHash !== '') {
 					// 两提交对比：旧侧取 baseHash，新侧取 commitHash（'*' 表示工作区文件）。
-					try { oldText = await gitOrThrow(['show', `${baseHash}:${filePath}`], repo); } catch { oldText = null; }
-					if (commitHash === '*') {
-						try { newText = await fs.readFile(nodePath.resolve(repo, filePath), 'utf8'); } catch { newText = null; }
-					} else {
-						try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
-					}
+					oldText = await contentAt(repo, filePath, `${baseHash}:`);
+					newText = commitHash === '*' ? await worktreeText(repo, filePath) : await contentAt(repo, filePath, `${commitHash}:`);
 				} else if (commitHash === '*') {
 					if (staged) {
 						// 暂存区 vs HEAD
-						try { oldText = await gitOrThrow(['show', `HEAD:${filePath}`], repo); } catch { oldText = null; }
-						try { newText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { newText = null; }
+						oldText = await contentAt(repo, filePath, 'HEAD:');
+						newText = await contentAt(repo, filePath, ':');
 					} else {
 						// 工作区 vs 暂存区
-						try { oldText = await gitOrThrow(['show', `:${filePath}`], repo); } catch { oldText = null; }
-						try {
-							const fullPath = nodePath.resolve(repo, filePath);
-							newText = await fs.readFile(fullPath, 'utf8');
-						} catch { newText = null; }
+						oldText = await contentAt(repo, filePath, ':');
+						newText = await worktreeText(repo, filePath);
 					}
 				} else {
 					/*
@@ -365,10 +391,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 					 * 根提交没有父提交：直接给空旧侧，不先跑一条注定失败的 `show <hash>~1:<path>`。
 					 */
 					hasParent = await revParseHasParent(repo, commitHash);
-					if (hasParent) {
-						try { oldText = await gitOrThrow(['show', `${commitHash}~1:${filePath}`], repo); } catch { oldText = null; }
-					}
-					try { newText = await gitOrThrow(['show', `${commitHash}:${filePath}`], repo); } catch { newText = null; }
+					if (hasParent) oldText = await contentAt(repo, filePath, `${commitHash}~1:`);
+					newText = await contentAt(repo, filePath, `${commitHash}:`);
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
@@ -396,8 +420,6 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'mergeContents': {
-			const filePath = requiredFilePathOf(str, sendBadRequest);
-			if (filePath === null) break;
 			await respondResult('mergeContents', async () => {
 				const contents = await mergeContentsOf(repo, filePath);
 				const worktree = await readWorktreeText(repo, filePath);
@@ -446,10 +468,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'applyHunk': {
-			const filePath = str('filePath');
 			const direction = str('direction') === 'unstage' ? 'unstage' : 'stage';
 			const indexes = arr<number>('indexes').filter((value) => Number.isInteger(value) && value >= 0);
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
 			await respondResult('applyHunk', async () => {
 				const outcome = await applyHunks(repo, filePath, indexes, direction);
 				if (outcome.error !== null) throw new Error(outcome.error);
@@ -459,9 +479,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'fileHunks': {
-			const filePath = str('filePath');
 			const staged = bool('staged');
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
 			await respondResult('fileHunks', async () => ({ repo, hunks: await hunkListOf(repo, filePath, staged) }));
 			break;
 		}
@@ -497,22 +515,21 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 		}
 		case 'deleteUserDetails': {
 			const location = configLocationOf(str);
-			const errors: string[] = [];
-			if (bool('name')) { try { await unsetConfigValue(repo, 'user.name', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('email')) { try { await unsetConfigValue(repo, 'user.email', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			respond({ command: 'deleteUserDetails', errors });
+			const writes: UserDetailWrite[] = [];
+			if (bool('name')) writes.push(() => unsetConfigValue(repo, 'user.name', location));
+			if (bool('email')) writes.push(() => unsetConfigValue(repo, 'user.email', location));
+			respond({ command: 'deleteUserDetails', errors: await userDetailWrites(writes) });
 			break;
 		}
 		case 'editUserDetails': {
 			const location = configLocationOf(str);
-			const errors: string[] = [];
-			const name = str('name');
-			const email = str('email');
-			try { await setConfigValue(repo, 'user.name', name, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			try { await setConfigValue(repo, 'user.email', email, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			if (bool('deleteLocalName')) { try { await unsetConfigValue(repo, 'user.name', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('deleteLocalEmail')) { try { await unsetConfigValue(repo, 'user.email', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			respond({ command: 'editUserDetails', errors });
+			const writes: UserDetailWrite[] = [
+				() => setConfigValue(repo, 'user.name', str('name'), location),
+				() => setConfigValue(repo, 'user.email', str('email'), location),
+			];
+			if (bool('deleteLocalName')) writes.push(() => unsetConfigValue(repo, 'user.name', 'local'));
+			if (bool('deleteLocalEmail')) writes.push(() => unsetConfigValue(repo, 'user.email', 'local'));
+			respond({ command: 'editUserDetails', errors: await userDetailWrites(writes) });
 			break;
 		}
 		/*

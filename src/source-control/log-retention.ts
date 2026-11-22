@@ -5,6 +5,7 @@
  * 日文件夹名带日期，文件名带启动时刻，因此同一文件夹内按文件名升序即为启动先后。
  */
 import { pad2 } from '../shared/pad-number.js';
+import { cutoffDayKey as cutoffDay, dayKey } from '../shared/day-key.js';
 
 /** 单个日文件夹的体积上限（字节）。 */
 export const DAY_FOLDER_LIMIT_BYTES = 15 * 1024 * 1024;
@@ -44,7 +45,7 @@ export interface LogFileEntry {
  * @returns 日期键。
  */
 export function dayFolderName(time: Date): string {
-	return `${time.getFullYear()}-${pad2(time.getMonth() + 1)}-${pad2(time.getDate())}`;
+	return dayKey(time);
 }
 
 /**
@@ -117,8 +118,6 @@ export function planDayEvictions(files: readonly LogFileEntry[], limitBytes: num
  * @returns 待删除的目录名。
  */
 export function planExpiredDayFolders(names: readonly string[], now: Date, retentionDays: number = LOG_RETENTION_DAYS): string[] {
-	const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-	cutoff.setDate(cutoff.getDate() - Math.max(0, retentionDays - 1));
-	const cutoffKey = dayFolderName(cutoff);
+	const cutoffKey = cutoffDay(now, retentionDays);
 	return names.filter((name) => isDayFolderName(name) && name < cutoffKey);
 }

@@ -8,9 +8,8 @@ import { cancellableKeys, runCollect, terminateAllChildren, terminateCancellable
 import { countSpawnInScope } from './api/refresh-scope.js';
 import { isBrokenSubmoduleFailure, withIgnoredSubmoduleDirt } from './submodule-failure.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
-
-/** 一次失败写进日志的 stderr 字符上限。 */
-const MAX_GIT_LOG_CHARS = 2000;
+import { failureLogTail } from './log-format.js';
+import { errorText } from '../shared/error-text.js';
 
 /** 一次 git 调用的结果。 */
 export interface GitResult {
@@ -233,6 +232,26 @@ function endOperation(repo: string, operation: GitOperation): void {
 }
 
 /**
+ * 是否没有在跑的写操作满足给定判据。
+ *
+ * 只读操作从不计入：两个空闲判据的差别只在是否把联网命令算作「在跑」，遍历与仓库过滤
+ * 因此共用这一处。
+ *
+ * @param repo - 限定仓库；省略时检查所有仓库。
+ * @param matches - 该写操作是否算作阻塞。
+ * @returns 没有匹配合适的写操作在跑时为 true。
+ */
+function noOperationMatches(repo: string | undefined, matches: (operation: GitOperation) => boolean): boolean {
+	for (const [key, set] of runningOperations) {
+		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
+		for (const operation of set) {
+			if (!operation.readOnly && matches(operation)) return false;
+		}
+	}
+	return true;
+}
+
+/**
  * 是否没有写操作在跑（含联网命令）。
  *
  * 只读操作（status / log / diff / refs / config）不算忙：它们之间互不冲突，
@@ -245,13 +264,7 @@ function endOperation(repo: string, operation: GitOperation): void {
  * @returns 没有写操作在跑时为 true。
  */
 export function isGitIdle(repo?: string): boolean {
-	for (const [key, set] of runningOperations) {
-		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
-		for (const operation of set) {
-			if (!operation.readOnly) return false;
-		}
-	}
-	return true;
+	return noOperationMatches(repo, () => true);
 }
 
 /**
@@ -267,13 +280,7 @@ export function isGitIdle(repo?: string): boolean {
  * @returns 没有会改写本地状态的操作在跑时为 true。
  */
 export function isLocalSettled(repo?: string): boolean {
-	for (const [key, set] of runningOperations) {
-		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
-		for (const operation of set) {
-			if (!operation.readOnly && operation.kind !== 'network') return false;
-		}
-	}
-	return true;
+	return noOperationMatches(repo, (operation) => operation.kind !== 'network');
 }
 
 /**
@@ -655,9 +662,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (result.code !== 0 && readOnly && isProbeCommand(args)) {
 			logDebug('git', `只读查询无结果（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else if (result.code !== 0) {
-			// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
-			const detail = result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS);
-			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${detail === '' ? '' : `\n${detail}`}`);
+			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${failureLogTail(result.stderr)}`);
 		} else if (readOnly) {
 			logTrace('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else {
@@ -679,20 +684,62 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 const MASKED_VALUE_ARGS: ReadonlySet<string> = new Set(['-m', '--message', '--body', '-b', '--author', '--committer', '--grep', '-S', '-G']);
 
 /**
+ * 带值参数的可读描述，屏蔽黑名单里的取值。
+ *
+ * 以 `名字=取值` 给出的参数整段换成 `名字=<已屏蔽>`；取值作为下一个参数给出时按 `keepValue`
+ * 决定替换还是保留原文。
+ *
+ * @param args - 参数数组。
+ * @param masked - 取值属于自由文本的参数名。
+ * @param keepValue - 取值即使被屏蔽也保留原文的参数名，用于取值本身可读的参数。
+ * @returns 描述文本。
+ */
+export function describeMaskedArgs(
+	args: readonly string[],
+	masked: ReadonlySet<string>,
+	keepValue: ReadonlySet<string> = new Set<string>(),
+): string {
+	const parts: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		const name = arg.split('=')[0];
+		const hit = masked.has(arg) || masked.has(name);
+		parts.push(hit ? `${name}=<已屏蔽>` : arg);
+		if (hit && !arg.includes('=') && index + 1 < args.length) {
+			parts.push(keepValue.has(name) ? args[index + 1] : '<已屏蔽>');
+			index += 1;
+		}
+	}
+	return parts.join(' ');
+}
+
+/**
  * git 参数的可读描述，屏蔽自由文本取值。
  *
  * @param args - 参数数组。
  * @returns 描述文本。
  */
 export function describeGitArgs(args: readonly string[]): string {
-	const parts: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const arg = args[index];
-		const masked = MASKED_VALUE_ARGS.has(arg);
-		parts.push(masked || MASKED_VALUE_ARGS.has(arg.split('=')[0]) ? `${arg.split('=')[0]}=<已屏蔽>` : arg);
-		if (masked && index + 1 < args.length) { index += 1; }
+	return describeMaskedArgs(args, MASKED_VALUE_ARGS);
+}
+
+/**
+ * 执行一条 git 命令，把失败折成可读文本而不抛错。
+ *
+ * 供一次尝试可失败、失败即结论的调用点使用（分段暂存、冲突解决）。需要区分
+ * 「命令不存在」等查询型失败的调用方用 {@link isProbeCommand} 与原始结果。
+ *
+ * @param args - 参数数组。
+ * @param repo - 仓库路径。
+ * @returns 失败原因；成功为 null。
+ */
+export async function runGitAttempt(args: readonly string[], repo: string): Promise<string | null> {
+	try {
+		await gitOrThrow(args, repo);
+		return null;
+	} catch (error) {
+		return errorText(error);
 	}
-	return parts.join(' ');
 }
 
 /**

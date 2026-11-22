@@ -5,6 +5,7 @@
  * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
  */
 import type http from 'node:http';
+import { errorText } from '../shared/error-text.js';
 import { onRepositoryWrite } from './git-exec.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { clearDiscoveryCache } from './repo-discovery.js';
@@ -15,7 +16,7 @@ import { recordCommandCost } from './api/cost.js';
 import { createRefreshScope, runInRefreshScope, type RefreshScope } from './api/refresh-scope.js';
 import { collectDiff } from './commit-diff.js';
 import { buildCommitRequest, droppedNotice } from './ai-commit-request.js';
-import { coalesceKeyOf, readBody, sendBadRequest, sendJson } from './api/http.js';
+import { coalesceKeyOf, openEventStream, readBody, sendBadRequest, sendJson } from './api/http.js';
 import { COALESCE_TIMEOUT_MS, waitCoalesced } from './api/coalesce.js';
 import { broadcastRepositoryTree, broadcastRepositoryWrite, handleEvents } from './api/events.js';
 import type { AiCommitDeps } from './ai-deps.js';
@@ -97,6 +98,8 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	 * 0 与真实轮次 0 无法区分，统一当成没有编号；`refreshId` 缺省时发送的是 0。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
+	/** 记下本条命令的耗时。 */
+	const recordCost = (): void => { recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns); };
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
 	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
@@ -120,7 +123,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 			 */
 			if (shared !== null) {
 				sendJson(res, 200, shared);
-				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+				recordCost();
 				return;
 			}
 		}
@@ -202,7 +205,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 		try {
 			respond({ command: cmd, ...(await fn()), error: null });
 		} catch (error) {
-			respond({ command: cmd, error: error instanceof Error ? error.message : String(error) });
+			respond({ command: cmd, error: errorText(error) });
 		}
 	};
 
@@ -217,12 +220,12 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	const domains = [handleWorkspaceCommand, handleStateCommand, handleRepoCommand, handleGraphCommand, handleHistoryCommand, handleMiscCommand];
 	for (const handle of domains) {
 		if (await handle(ctx)) {
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+			recordCost();
 			return;
 		}
 	}
 	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
-	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+	recordCost();
 }
 
 export interface GgRouteContext {
@@ -458,11 +461,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			};
 			if (off) streamOpts.reasoningEffort = 'off';
 
-			res.writeHead(200, {
-				'content-type': 'text/event-stream; charset=utf-8',
-				'cache-control': 'no-store',
-				'connection': 'keep-alive',
-			});
+			openEventStream(res);
 			const sse = (event: string, data: unknown) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
 			if (warning !== '') sse('warning', warning);
 			const dropped = droppedNotice(collected.dropped);
@@ -485,11 +484,13 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			try {
 				const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
 				for await (const chunk of stream) {
-					if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+					const delta = chunk.type === 'text-delta' || chunk.type === 'reasoning-delta'
+						? chunk.text
+						: undefined;
+					if (typeof delta === 'string' && delta.length > 0) {
+						// 首个增量即计时起点：`usage.outputTokens` 包含推理 token，两类增量都算输出。
 						if (firstOutputTime === null) firstOutputTime = Date.now();
-						sse('chunk', chunk.text);
-					} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-						if (firstOutputTime === null) firstOutputTime = Date.now();
+						if (chunk.type === 'text-delta') sse('chunk', delta);
 					} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 					else if (chunk.type === 'finish' && chunk.reason !== undefined) {
 						/*

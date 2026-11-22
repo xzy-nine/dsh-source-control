@@ -1,7 +1,7 @@
 /**
  * GitHub 集成与 SSH 状态：账号、属主、新建仓库、创建 Pull Request。
  */
-import { callApi } from './http.ts';
+import { callApi, stringsOf } from './http.ts';
 import { textOf } from '../shared/text.ts';
 import type { SshStatus } from '../../shared/ssh-status.ts';
 
@@ -38,7 +38,6 @@ export interface GhRepoInfoResult {
 export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
 	const payload = await callApi(cwd, { command: 'ghAccount' });
 	const account = (payload.account ?? {}) as Record<string, unknown>;
-	const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
 	const unavailable = Array.isArray(account.unavailable)
 		? account.unavailable.map((item) => {
 			const entry = item as Record<string, unknown>;
@@ -48,8 +47,8 @@ export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
 	return {
 		loggedIn: account.loggedIn === true,
 		user: typeof account.user === 'string' ? account.user : null,
-		owners: strings(account.owners),
-		scopes: strings(account.scopes),
+		owners: stringsOf(account.owners),
+		scopes: stringsOf(account.scopes),
 		unavailable,
 	};
 }
@@ -84,7 +83,7 @@ export async function ghRepoInfo(cwd: string): Promise<GhRepoInfoResult> {
 	const info = (payload.info ?? {}) as Record<string, unknown>;
 	return {
 		defaultBranch: typeof info.defaultBranch === 'string' ? info.defaultBranch : null,
-		branches: Array.isArray(info.branches) ? info.branches.filter((item): item is string => typeof item === 'string') : [],
+		branches: stringsOf(info.branches),
 	};
 }
 
@@ -105,7 +104,7 @@ export type SshStatusInfo = SshStatus;
 export async function sshStatus(cwd: string, host = 'github.com', refresh = false, sshUrl = ''): Promise<SshStatusInfo> {
 	const payload = await callApi(cwd, { command: 'sshStatus', host, refresh, sshUrl });
 	const status = (payload.status ?? {}) as Record<string, unknown>;
-	const keys = Array.isArray(status.keys) ? status.keys.filter((item): item is string => typeof item === 'string') : [];
+	const keys = stringsOf(status.keys);
 	return {
 		installed: status.installed === true,
 		version: typeof status.version === 'string' ? status.version : null,

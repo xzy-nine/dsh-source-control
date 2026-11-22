@@ -38,10 +38,14 @@ function git(repo, ...args) {
  * 子模块工作树里也只剩一个指向它的 .git 指针文件。此时 git 报
  * `fatal: not a git repository: <路径>/.git/modules/<名>`。
  *
+ * 给出 `withMovedGitlink` 时另加一个**正常**子模块，并把它检出到更早的提交：索引里记的
+ * gitlink 因此与工作区实际检出的提交不同，而这一条改动必须在降级之后仍然读出。
+ *
  * @param prefix - 临时目录前缀。
+ * @param options - `withMovedGitlink` 为真时追加正常子模块并移动它的 gitlink。
  * @returns 父仓库路径。
  */
-function makeBrokenSubmoduleRepo(prefix) {
+function makeBrokenSubmoduleRepo(prefix, options = {}) {
 	const base = mkdtempSync(join(tmpdir(), prefix));
 	temps.push(base);
 	const child = join(base, 'child');
@@ -58,7 +62,21 @@ function makeBrokenSubmoduleRepo(prefix) {
 	git(parent, 'config', 'user.name', 'A');
 	// 本地 pathspec 克隆需要显式放行。
 	git(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', child, 'googletest');
+	/*
+	 * 第二个子模块保持完好：它检出到更早的提交后，索引里的 gitlink 与工作区实际检出的
+	 * 提交不同，git 把它报成一条普通的子模块改动（` M <名>`）。
+	 */
+	if (options.withMovedGitlink === true) {
+		// 第二个提交让子模块有可回退的父提交：检出到它即产生一次真实的 gitlink 移动。
+		writeFileSync(join(child, 'a.txt'), 'two\n');
+		git(child, 'add', '-A');
+		git(child, 'commit', '-qm', 'c2');
+		git(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', child, 'goodlib');
+	}
 	git(parent, 'commit', '-qm', 'addsub');
+	if (options.withMovedGitlink === true) {
+		git(join(parent, 'goodlib'), 'checkout', '-q', 'HEAD~1');
+	}
 
 	// 一条本仓库自己的改动，用来验证降级之后它仍在。先提交一次再改，改动才落在工作区列。
 	writeFileSync(join(parent, 'own.txt'), 'first\n');
@@ -136,10 +154,20 @@ test('损坏的子模块下工作区快照仍能读出本仓库的改动', async
 });
 
 test('降级不会把子模块内部已提交的 gitlink 移动吞掉', async () => {
-	const repo = makeBrokenSubmoduleRepo('gg-submodule-broken-move-');
+	const repo = makeBrokenSubmoduleRepo('gg-submodule-broken-move-', { withMovedGitlink: true });
+	// 先确认前提：那里确实有一条正常的子模块改动，而普通 status 因另一个子模块损坏整体失败。
+	const degradedStatus = git(repo, 'status', '--porcelain', '--ignore-submodules=dirty');
+	assert.ok(degradedStatus.split('\n').includes(' M goodlib'), '降级口径下应报出子模块改动，实际：' + JSON.stringify(degradedStatus));
+	assert.throws(() => git(repo, 'status', '--porcelain'), /not a git repository/);
 	const call = await makeCaller(repo);
-const before = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
+	const before = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
 	assert.equal(before.error ?? null, null);
+	const paths = before.entries.map((entry) => entry.path);
 	// 本仓库自己的改动必须出现在条目里：这是降级之后仍要保证的那部分事实。
-	assert.ok(before.entries.some((entry) => entry.path === 'own.txt'));
+	assert.ok(paths.includes('own.txt'), '本仓库改动要读出来，实际：' + JSON.stringify(paths));
+	/*
+	 * 正常子模块的 gitlink 移动同样必须在：降级只放宽子模块的脏判定（`dirty`），
+	 * 已提交的 gitlink 变化不属于脏内容，因此仍要列出。放宽成 `all` 会把它一并吞掉。
+	 */
+	assert.ok(paths.includes('goodlib'), '正常子模块的 gitlink 移动要读出来，实际：' + JSON.stringify(paths));
 });

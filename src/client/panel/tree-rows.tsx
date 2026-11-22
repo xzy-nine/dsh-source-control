@@ -48,11 +48,21 @@ export function FolderRow({ path, name, depth, open, count, onToggle }: {
 			className: cx(shared.repoChevron, !open && shared.isCollapsed),
 		}, React.createElement(IconChevronDownOutlineRegular, { size: 12 })),
 		React.createElement(open ? IconFolderOpenOutlineRegular : IconFolderCloseRegular, { size: 14 }),
-		React.createElement('span', { className: changesCss.changeName }, name),
+		fileNameNode(name),
 		React.createElement('span', { className: changesCss.count }, String(count)),
 	);
 }
 
+/**
+ * 文件名节点：外层撑开宽度，内层承接省略号截断。
+ *
+ * @param name - 文件名。
+ * @returns 文件名元素。
+ */
+function fileNameNode(name: string): React.ReactElement {
+	return React.createElement('span', { className: changesCss.changeName },
+		React.createElement('span', { className: changesCss.changeText }, name));
+}
 /**
  * 一个可点击打开的文件行。
  *
@@ -76,8 +86,7 @@ export function FileRow({ fileName, title, depth, tail, onOpen }: {
 	},
 		...guidesOf(depth),
 		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: changesCss.changeName },
-			React.createElement('span', { className: changesCss.changeText }, name)),
+		fileNameNode(name),
 		tail !== undefined && React.createElement('span', { className: changesCss.fileTail }, tail),
 	);
 }

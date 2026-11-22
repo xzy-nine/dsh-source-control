@@ -15,7 +15,7 @@ import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot
 import { reportCaught, reportRefreshFailure } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
-import { mergeSnapshot } from './graph-state.ts';
+import { branchFieldsOf, mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
 	branchNamesEqual, commitsListEqual, commitsWithUncommitted, entriesEqual, mergeCommits, mergeEntries,
@@ -24,7 +24,7 @@ import {
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
-import type { BusyEntry, PanelState, Settings } from '../shared/types.ts';
+import type { BusyEntry, Commit, PanelState, Settings } from '../shared/types.ts';
 import type { PanelStateAccess } from './panel-state-access.ts';
 import type { GraphData } from '../api/index.ts';
 import {
@@ -122,6 +122,47 @@ function graphRequest(
 }
 
 /**
+ * 把一轮提交图与工作区快照并入面板状态。
+ *
+ * `keep` 为真时按各项是否变化保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道
+ * 布局与变更树整体重算。`settled` 是这一轮之前的状态（可能已摘掉后台刷新标记）。
+ *
+ * @param previous - 上一份状态。
+ * @param next - 这一轮的数据。
+ * @returns 合并后的状态。
+ */
+function mergedGraphState(
+	previous: PanelState,
+	next: {
+		readonly graph: GraphData;
+		readonly snapshot: WorkingTreeSnapshot;
+		readonly commits: readonly Commit[];
+		readonly keep: boolean;
+		readonly settled: PanelState;
+		readonly detail: PanelState['detail'];
+	},
+): PanelState {
+	const { graph, snapshot, commits, keep, settled } = next;
+	const commitsSame = keep
+		&& settled.head === graph.head && settled.more === graph.moreCommitsAvailable
+		&& commitsListEqual(settled.commits, commits);
+	const entriesSame = keep && entriesEqual(settled.entries, snapshot.entries);
+	const remotesSame = keep && remotesListEqual(settled.remotes, graph.remotes);
+	const foreignSame = keep && branchNamesEqual(settled.foreignBranches, graph.foreignBranches);
+	return {
+		...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
+		commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
+		head: graph.head,
+		...branchFieldsOf(snapshot),
+		more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
+		remotes: remotesSame ? settled.remotes : graph.remotes,
+		foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
+		entries: entriesSame ? settled.entries : mergeEntries(settled.entries, snapshot.entries),
+		detail: next.detail,
+	};
+}
+
+/**
  * 对账刷新与轮询补取要请求的提交窗口。
  *
  * 触底加载取过的提交保留在客户端列表里：按已加载的日志记录数请求，后台刷新就不会把列表收回到
@@ -134,21 +175,21 @@ function graphRequest(
  *
  * @param maxCommits - 已加载的提交数上限。
  * @param nextSkip - 宿主给出的下一页偏移，即已加载的日志记录数。
- * @returns 本轮请求的提交数上限。
+ * @returns 本次请求的提交数上限。
  */
 function reconcileWindow(maxCommits: number, nextSkip: number): number {
 	return Math.max(maxCommits, nextSkip);
 }
 
 /**
- * 记下本轮取回的远程与贮藏。
+ * 记下取回的远程与贮藏。
  *
  * 判据是响应确实带回了仓库信息且读取成功（`infoKnown`），不看内容是否为空：空远程与空贮藏
  * 同样是事实，记下它们才不会让下一次刷新再取一次仓库信息。
  *
  * @param repo - 仓库路径。
- * @param known - 本轮取数前是否已有已知值；已有则无需重记。
- * @param graph - 本轮取回的提交图数据。
+ * @param known - 取数前是否已有已知值；已有则无需重记。
+ * @param graph - 取回的提交图数据。
  * @returns 无。
  */
 function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph: GraphData): void {
@@ -164,11 +205,11 @@ export function useGraphData({
 	/*
 	 * 初始状态直接取该仓库上一次的结果。
 	 *
-	 * 侧栏页签按会话存储，切换会话会让面板整体重新挂载；若从空占位开始，图形区与更改区
-	 * 必然先闪一次占位再重新取数，看起来就是「切换会话要重新加载」。
+	 * 侧栏页签按会话存储，切换会话会让面板整体重新挂载；从空占位开始会先闪一次占位，
+	 * 表现为「切换会话要重新加载」。
 	 *
 	 * 没有渲染态时用调用方给出的分支与上游作为首帧取值：自动筛选据此在第一轮就带上起点，
-	 * 不必先取一遍全部引用再按快照结果重取。
+	 * 无需先取全部引用即可取数。
 	 */
 	const [state, setState] = React.useState<PanelState>(() => {
 		const remembered = workingTreePath === null ? undefined : rememberedPanelState(workingTreePath);
@@ -199,8 +240,8 @@ export function useGraphData({
 	/*
 	 * 取数起点由筛选与当前分支/上游/分叉来源派生。
 	 *
-	 * 分支与上游来自上一轮快照：换分支后这一轮先按旧值取、快照返回后起点变化再重取一次；
-	 * 渲染态里留有上次的取值，因此同一仓库的重复刷新不会触发这次重取。
+	 * 分支与上游取自快照：换分支后先按快照里的值取，快照返回使起点变化时再取一次。
+	 * 渲染态里留有上次的取值，同一仓库的重复刷新因此不触发重取。
 	 */
 	const headName = state.head ?? headHint;
 	const upstreamName = state.upstream ?? upstreamHint;
@@ -280,15 +321,15 @@ export function useGraphData({
 		const generation = generationRef.current + 1;
 		generationRef.current = generation;
 		const startedAt = Date.now();
-		// 本轮编号随请求带给宿主：宿主据此把同轮命令归成一组记耗时，而不是按时间窗口猜。
+		// 刷新编号随请求带给宿主：宿主据此把同一次刷新的几条命令归成一组记耗时，不按时间窗口猜边界。
 		const refreshId = nextRefreshId();
 		controllerRef.current?.abort();
 		const controller = new AbortController();
 		controllerRef.current = controller;
-		// 换仓库后旧的渲染态不再适用；用户主动刷新同样丢弃。
+		// 换仓库与主动全量刷新都丢弃渲染态。
 		const repoChanged = loadedRepoRef.current !== workingTreePath;
 		/*
-		 * 本轮取数起点：换仓库时上一个仓库的分支名在新仓库里可能不存在，不能沿用；按新仓库的
+		 * 取数起点：换仓库时上一个仓库的分支名在新仓库里可能不存在，不能沿用；按新仓库的
 		 * 分支提示重算（提示来自仓库树，切换时已同步更新），拿不到提示时退回全部引用。
 		 */
 		const requestBranches = repoChanged
@@ -299,8 +340,8 @@ export function useGraphData({
 			: branchesRef.current;
 		const requestKey = requestBranches === null ? '*' : JSON.stringify(requestBranches);
 		/*
-		 * 取数起点变化（筛选切换、换分支、分叉来源就绪）：旧窗口与旧渲染态都不再适用。
-		 * 只在已有过一轮取数时算变化，首次进入按初始状态处理；换仓库由 repoChanged 负责。
+		 * 取数起点变化（筛选切换、换分支、分叉来源就绪）：窗口与渲染态都要作废。
+		 * 只在已取过数时算变化，首次进入按初始状态处理；换仓库由 repoChanged 负责。
 		 */
 		const branchesChanged = !repoChanged && loadedBranchesRef.current !== null && loadedBranchesRef.current !== requestKey;
 		loadedBranchesRef.current = requestKey;
@@ -314,7 +355,7 @@ export function useGraphData({
 			dropRenderedGraph(workingTreePath);
 		}
 		setActiveGraphRepo(workingTreePath);
-		// 换仓库后旧 HEAD 不再适用；同仓库沿用旧值，直到本轮快照返回后写入。
+		// 换仓库时清掉缓存的 HEAD；同仓库沿用旧值，直到快照返回后写入。
 		if (repoChanged) loadedHeadRef.current = null;
 		loadedRepoRef.current = workingTreePath;
 		/*
@@ -334,7 +375,7 @@ export function useGraphData({
 			 *
 			 * 条目与提交列表必须清空：保留会让更改区与图形区在取数返回前一直显示上一个仓库的
 			 * 内容，用户会把它当成新仓库的数据。分支、上游与 HEAD 一并清掉：它们是上一个仓库
-			 * 的事实，本轮取数起点已按新仓库的提示单独算过。
+			 * 的事实，取数起点已按新仓库的提示单独算过。
 			 */
 			setState((previous) => ({
 				...previous,
@@ -346,7 +387,7 @@ export function useGraphData({
 			/*
 			 * 换筛选或换分支：提交列表按新的引用起点重取，旧列表对新起点没有意义。
 			 * 只清图形区，更改区与条目不受筛选影响，保留可省一次重绘；分支与上游要保持原值，
-			 * 它们正是本轮起点的输入。
+			 * 它们正是取数起点的输入。
 			 */
 			setState((previous) => ({
 				...previous, phase: 'loading', error: null,
@@ -365,7 +406,7 @@ export function useGraphData({
 			 * ready 会让它误显示「这个仓库还没有提交」。
 			 *
 			 * 只取第一个窗口：完整提交集驻留宿主，客户端按窗口分页取。窗口缓存也在宿主，
-			 * 命中与否由宿主决定，客户端不再自建一份。
+			 * 命中与否由宿主决定，客户端不另存一份。
 			 */
 			/*
 			 * 仓库信息（远程与贮藏）只在某仓库首次取数时随本批取回（`withRepoInfo`），此后把已知值
@@ -402,7 +443,7 @@ export function useGraphData({
 			if (generation !== generationRef.current) return;
 			rememberFromGraph(workingTreePath, known, graph);
 			/*
-			 * 未提交伪提交行由这里补出：宿主不再为它读一次工作区，提交图的返回时刻因此不取决于
+			 * 未提交伪提交行由这里补出：宿主不为它单独读一次工作区，提交图的返回时刻因此不取决于
 			 * `git status`。条目数取同一轮的快照，与该行需要的父提交（HEAD）同源。
 			 *
 			 * 补出的行必须挂在提交列表里真实存在的父提交上：宿主列表与快照可能读自不同的时刻，
@@ -414,34 +455,18 @@ export function useGraphData({
 			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
 			 */
 			const keep = mode === 'reconcile';
-			setState((previous) => {
-				const commitsSame = keep
-					&& previous.head === graph.head && previous.more === graph.moreCommitsAvailable
-					&& commitsListEqual(previous.commits, commits);
-				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
-				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
-				const foreignSame = keep && branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
-				const settled = background
-					? endBackground(endBackground(previous, 'graph'), 'entries')
-					: previous;
-				return {
-					...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
-					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
-					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
-					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
-					remotes: remotesSame ? settled.remotes : graph.remotes,
-					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? settled.entries : mergeEntries(settled.entries, snapshot.entries),
-					detail: mode === 'full' ? null : settled.detail,
-				};
-			});
+			setState((previous) => mergedGraphState(previous, {
+				graph, snapshot, commits, keep,
+				settled: background ? endBackground(endBackground(previous, 'graph'), 'entries') : previous,
+				detail: mode === 'full' ? null : previous.detail,
+			}));
 			logClient('I', 'refresh', `${mode === 'full' ? '主动刷新' : '对账刷新'}完成，仓库 ${workingTreePath}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
+			// 完整刷新两路都走过，两处分区一并收回。
 			reportRefreshFailure(setState, (previous) => (background
 				? endBackground(endBackground(previous, 'graph'), 'entries')
-				: previous), error);
+				: previous), { graph: true, entries: true }, error);
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, branchesKey]);
 
@@ -473,14 +498,16 @@ export function useGraphData({
 		setState((previous) => beginBackground(previous, 'entries'));
 		try {
 			const snapshot = await loadWorkingTreeSnapshot(repo, controller.signal, false, nextRefreshId());
-			// 换仓库后这次结果不再适用；同仓库的并发快照以最后一次为准。
+			// 换仓库后该结果作废；同仓库的并发快照以最后一次为准。
 			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
 			setState((previous) => mergeSnapshot(endBackground(previous, 'entries'), snapshot));
 	
 			logClient('D', 'refresh', `只取工作区快照完成，仓库 ${repo}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
-			if (controller.signal.aborted) return;
-			reportRefreshFailure(setState, (previous) => endBackground(previous, 'entries'), error);
+			// 与成功分支同一判据：换仓库后该失败属于旧请求，不影响当前仓库。
+			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
+			// 这一路只取快照，提交图可能仍在跑，因此只收回条目分区。
+			reportRefreshFailure(setState, (previous) => endBackground(previous, 'entries'), { graph: false, entries: true }, error);
 		}
 	}, [workingTreePath, selectedId]);
 
@@ -494,7 +521,7 @@ export function useGraphData({
 	 * 提交图请求会让图形区停在 loading。
 	 *
 	 * @param repo - 仓库路径。
-	 * @param snapshot - 本轮已读到的工作区快照。
+	 * @param snapshot - 已读到的工作区快照。
 	 * @returns 无。
 	 */
 	const reloadGraphOnly = React.useCallback(async (repo: string, snapshot: WorkingTreeSnapshot) => {
@@ -509,24 +536,11 @@ export function useGraphData({
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
 			loadedHeadRef.current = snapshot.head;
 			const commits = commitsWithUncommitted(graph, snapshot);
-			setState((previous) => {
-				const commitsSame = previous.head === graph.head && previous.more === graph.moreCommitsAvailable
-					&& commitsListEqual(previous.commits, commits);
-				const entriesSame = entriesEqual(previous.entries, snapshot.entries);
-				const remotesSame = remotesListEqual(previous.remotes, graph.remotes);
-				const foreignSame = branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
-				return {
-					...endBackground(endBackground(previous, 'graph'), 'entries'),
-					phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
-					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
-					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
-					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
-					remotes: remotesSame ? previous.remotes : graph.remotes,
-					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
-				};
-			});
+			setState((previous) => mergedGraphState(previous, {
+				graph, snapshot, commits, keep: true,
+				settled: endBackground(endBackground(previous, 'graph'), 'entries'),
+				detail: previous.detail,
+			}));
 			rememberFromGraph(repo, known, graph);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -548,13 +562,13 @@ export function useGraphData({
 	 *
 	 * 偏移分页：下一页的起点是已加载条数。客户端保留从最新提交开始的完整前缀，因此向上滚动不需要
 	 * 再取数 —— 反向取回只在「从头部淘汰」时才需要，而这里不做淘汰。窗口缓存由宿主维护，
-	 * 回看已取过的一段同样不再真正跑 git。
+	 * 回看已取过的一段不重跑 git。
 	 *
 	 * @returns 无。
 	 */
 	const loadMore = React.useCallback(async () => {
 		if (workingTreePath === null) return;
-		// 一次请求在途期间不再发起第二次：触底续取与「转到当前历史」的补齐可能同时要下一页，
+		// 在途期间不发起第二次请求：触底续取与「转到当前历史」的补齐可能同时要下一页，
 		// 两次请求的偏移取自同一份状态，会取回同一页，后回来的那次把 `more` 收成 false、分页就此停摆。
 		if (loadMorePendingRef.current === generationRef.current) return;
 		loadMorePendingRef.current = generationRef.current;

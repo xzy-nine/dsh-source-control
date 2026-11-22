@@ -64,6 +64,17 @@ export function groupText(match: RegExpExecArray, index: number): string | undef
 }
 
 /**
+ * 邮箱载荷是字符串时套用读取函数，否则给空数组。
+ *
+ * @param email - 作者邮箱载荷。
+ * @param read - 读取函数，入参为邮箱文本。
+ * @returns 读取结果；载荷不是字符串时为空数组。
+ */
+function withEmail(email: unknown, read: (text: string) => string[]): string[] {
+	return typeof email === 'string' ? read(email) : [];
+}
+
+/**
  * 构造作者头像的候选地址，按优先次序排列。
  *
  * GitHub 邮箱由 GitHub 直接提供头像；其余邮箱用 Gravatar。GitHub 在前，取不到时由 Gravatar 兜底。
@@ -73,7 +84,17 @@ export function groupText(match: RegExpExecArray, index: number): string | undef
  * @returns 候选地址；无邮箱或邮箱不是 GitHub noreply 时为空数组。
  */
 export function avatarUrls(email: unknown, size = 40): string[] {
-	if (typeof email !== 'string') return [];
+	return withEmail(email, (text) => buildAvatarUrls(text, size));
+}
+
+/**
+ * 按邮箱与边长构造头像候选地址。
+ *
+ * @param email - 作者邮箱。
+ * @param size - 请求的图片像素边长。
+ * @returns 候选地址。
+ */
+function buildAvatarUrls(email: string, size: number): string[] {
 	const trimmed = email.trim();
 	if (trimmed === '') return [];
 	const urls: string[] = [];
@@ -218,6 +239,5 @@ const avatarCache = forKey((key: string): string[] => {
  * @returns 候选地址；无可用候选时为空数组。
  */
 export function avatarUrlsOf(email: unknown, size = 40): string[] {
-	if (typeof email !== 'string') return [];
-	return avatarCache(`${email}|${size}`);
+	return withEmail(email, (text) => avatarCache(`${text}|${size}`));
 }

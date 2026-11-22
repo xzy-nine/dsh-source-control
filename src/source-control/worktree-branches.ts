@@ -7,6 +7,7 @@
  */
 import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
 import { dirname, join, resolve } from 'node:path';
+import { walkUp } from '../shared/path-walk.js';
 
 /** `HEAD` 文件的解析结果。 */
 export interface HeadRef {
@@ -221,8 +222,18 @@ export function parseHeadRef(content: string): HeadRef {
  * @returns HEAD 的解析结果；读不到时为 null。
  */
 export async function readHeadRef(repo: string): Promise<HeadRef | null> {
-	const gitDir = await resolveGitDir(repo);
-	if (gitDir === null) return null;
+	return withGitDir(repo, readHeadFile);
+}
+
+/**
+ * 读一个 git 目录下的 `HEAD` 文件。
+ *
+ * 仓库事实层（`repo-facts.ts`）用它读已知 git 目录的 HEAD，因此导出。
+ *
+ * @param gitDir - git 目录。
+ * @returns 解析结果；文件不存在或格式不可识别时为 null。
+ */
+export async function readHeadFile(gitDir: string): Promise<HeadRef | null> {
 	try {
 		return parseHeadRef(await readTextAt(resolve(gitDir, 'HEAD')));
 	} catch {
@@ -315,16 +326,26 @@ async function isBareGitDir(dir: string): Promise<boolean> {
  * @returns git 目录的绝对路径；向上到文件系统根仍未找到时为 null。
  */
 export async function resolveGitDir(repo: string): Promise<string | null> {
-	let dir = resolve(repo);
-	for (;;) {
-		const found = await gitDirAt(dir);
-		if (found !== null) return found;
-		if (await isBareGitDir(dir)) return dir;
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
+	const found = await walkUp(resolve(repo), async (dir) => {
+		const gitDir = await gitDirAt(dir);
+		if (gitDir !== null) return gitDir;
+		return await isBareGitDir(dir) ? dir : undefined;
+	});
+	return found ?? null;
 }
+
+/**
+ * 用仓库解析出的 git 目录喂给一个读取函数。
+ *
+ * @param repo - 仓库根、工作树根或其子目录。
+ * @param read - 读 git 目录的函数。
+ * @returns 读取结果；定位不到 git 目录时为 null。
+ */
+async function withGitDir<T>(repo: string, read: (gitDir: string) => Promise<T | null>): Promise<T | null> {
+	const gitDir = await resolveGitDir(repo);
+	return gitDir === null ? null : read(gitDir);
+}
+
 
 /**
  * 判定一个目录自身是否为仓库根：主工作树、链接工作树、子模块检出或裸仓库。
@@ -336,8 +357,7 @@ export async function resolveGitDir(repo: string): Promise<string | null> {
  * @returns 该目录自身是仓库根时为 true。
  */
 export async function isRepoRoot(dir: string): Promise<boolean> {
-	if (await gitDirAt(dir) !== null) return true;
-	return isBareGitDir(resolve(dir));
+	return await gitDirAt(dir) !== null || isBareGitDir(resolve(dir));
 }
 
 /**
@@ -368,9 +388,7 @@ export async function gitCommonDirOf(gitDir: string): Promise<string> {
  * @returns 公共目录的绝对路径；路径不存在或格式不可识别时为 null。
  */
 export async function resolveGitCommonDir(repo: string): Promise<string | null> {
-	const gitDir = await resolveGitDir(repo);
-	if (gitDir === null) return null;
-	return gitCommonDirOf(gitDir);
+	return withGitDir(repo, gitCommonDirOf);
 }
 
 /**

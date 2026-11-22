@@ -182,19 +182,36 @@ export interface CommitCacheMaps {
 	readonly translatedFromByHash: ReadonlyMap<string, string>;
 }
 
-/** 一次仓库操作的执行入口：按影响面记忙碌，成功后按需对账。 */
-export type RunOperation = (
+/**
+ * 乐观更新：按已有条目推算操作完成后的条目。
+ *
+ * 给出时面板就地更新条目并省去一次回读；推算失真由随后的对账刷新纠正。
+ */
+export type OptimisticUpdate = (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[];
+
+/**
+ * 一次仓库操作的执行入口的公共形态。
+ *
+ * 两种入口只差操作体：面板侧的操作体拿不到停止键，宿主命令层拿得到并可按阶段上报。
+ * 按影响面记忙碌、乐观更新与后续选项因此只在这里写一次。
+ *
+ * @typeParam Operation - 操作体的签名。
+ */
+type RunSignature<Operation, Options> = (
 	scope: BusyScope,
-	operation: () => Promise<void>,
+	operation: Operation,
 	repo?: string,
-	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: {
-		/** 是否可能改动引用与提交历史；false 表示只改工作区条目。 */
-		readonly historyChanged?: boolean;
-		/** 用户意图描述，供日志记录用户点了什么；省略时按影响面记一条。 */
-		readonly intent?: string;
-	},
+	optimistic?: OptimisticUpdate,
+	options?: Options,
 ) => Promise<void>;
+
+/** 一次仓库操作的执行入口：按影响面记忙碌，成功后按需对账。 */
+export type RunOperation = RunSignature<() => Promise<void>, {
+	/** 是否可能改动引用与提交历史；false 表示只改工作区条目。 */
+	readonly historyChanged?: boolean;
+	/** 用户意图描述，供日志记录用户点了什么；省略时按影响面记一条。 */
+	readonly intent?: string;
+}>;
 
 /** 一个子模块条目的丢弃结局。 */
 export type SubmoduleDiscardStatus = 'moved' | 'unchanged' | 'blocked' | 'uninitialized';
@@ -252,6 +269,8 @@ export interface RefItem {
 export interface RefInfo {
 	readonly type: string | null;
 	readonly name: string | null;
+	/** 远程分支所属的远程名；其它引用类型为 null。 */
+	readonly remote?: string | null;
 }
 
 /** 面板加载阶段。 */
@@ -276,8 +295,7 @@ export type BusyScope = 'read' | 'commit' | 'history' | 'network';
  * `repo` 省略时用当前选中的工作树；`optimistic` 给出时按它的推算就地更新条目；
  * `historyChanged` 缺省为 true，即按可能改动引用与提交历史处理。
  */
-export type PanelRun = (
-	scope: BusyScope,
+export type PanelRun = RunSignature<
 	/**
 	 * 操作体。
 	 *
@@ -286,10 +304,8 @@ export type PanelRun = (
 	 *
 	 * 分多个阶段的长操作在每段开始前调用第二个入参声明当前阶段，界面据此显示执行到哪一步。
 	 */
-	operation: (cancelKey: string, reportPhase: (label: string) => void) => Promise<void>,
-	repo?: string,
-	optimistic?: (entries: readonly WorkingTreeEntry[]) => WorkingTreeEntry[],
-	options?: {
+	(cancelKey: string, reportPhase: (label: string) => void) => Promise<void>,
+	{
 		readonly historyChanged?: boolean;
 		readonly intent?: string;
 		/**
@@ -306,8 +322,8 @@ export type PanelRun = (
 		 * 这里只给用户看的短名。省略时退回 `intent`。
 		 */
 		readonly label?: string;
-	},
-) => Promise<void>;
+	}
+>;
 
 /**
  * 一条进行中的操作：目标仓库路径、影响面与可停止信息。

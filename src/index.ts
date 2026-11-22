@@ -10,6 +10,7 @@
  * 4) 路由注册后按已持久化的工作区根预扫一次仓库树；预扫 fire-and-forget，失败静默。
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { errorText } from './shared/error-text.js';
 import { registerGgRoutes, type GgRouteContext } from './source-control/routes.js';
 import { primeCachedWorkspaces } from './source-control/repo-discovery.js';
 import { openStateStore, pruneWorkspaces, stateDomainFailure } from './source-control/state-store.js';
@@ -54,7 +55,7 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		logInfo('source-control', `源代码管理插件已装载（${name}），日志目录：${logRoot()}`);
 	} catch (error) {
 		// 日志不可用时插件照常工作，只在控制台留一条。
-		logError('source-control', `文本日志初始化失败，本次运行不会记录日志：${error instanceof Error ? error.message : String(error)}`);
+		logError('source-control', `文本日志初始化失败，本次运行不会记录日志：${errorText(error)}`);
 	}
 
 	ctx.inject(['webServer'], (host) => {
@@ -83,7 +84,7 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 			try { pruneWorkspaces(); } catch { /* 清理失败时下次启动重试 */ }
 			return primeCachedWorkspaces();
 		}).catch((error: unknown) => {
-			logInfo('repo', `启动预扫仓库树失败，不影响路由与面板取数：${error instanceof Error ? error.message : String(error)}`);
+			logInfo('repo', `启动预扫仓库树失败，不影响路由与面板取数：${errorText(error)}`);
 		});
 		logInfo('source-control', `已注册 ${String(disposers.length)} 条 web 路由，面板命令可用`);
 
