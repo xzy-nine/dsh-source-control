@@ -5,9 +5,20 @@
  * 差异只在「能否刷新」与「重载前是否作废缓存」，由调用方以回调给出。
  */
 import { AUTO_REFRESH_COOLDOWN_MS } from './change-events.ts';
+import type { BusyEntry } from '../shared/types.ts';
 
 /** 面板正忙时的复核间隔（毫秒）。 */
 const BUSY_RETRY_MS = 1000;
+
+/** 事件驱动刷新的公共门控：两个刷新 hook 共用的入参。 */
+export interface RefreshGateOptions {
+	/** 当前工作树路径；未选中时为 null。 */
+	readonly workingTreePath: string | null;
+	/** 是否启用；关闭时不订阅。 */
+	readonly enabled: boolean;
+	/** 进行中的操作记录；目标仓库忙时挂起刷新。 */
+	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
+}
 
 /** 调度器的入参。 */
 export interface RefreshSchedulerOptions {

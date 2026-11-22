@@ -153,7 +153,8 @@ parallel('客户端跨文件契约', (t) => {
 		for (const action of actions) {
 			assert.ok(Array.isArray(action.refTypes) && action.refTypes.length > 0, `${action.id} 应声明适用的引用类型`);
 			assert.ok(typeof action.title === 'string' && action.title !== '', `${action.id} 应有菜单名称`);
-			assert.match(menu, new RegExp(`${action.id}: \\(ctx, meta\\) =>`), `${action.id} 应有对应的处理函数`);
+			// 判据是注册表里的 id 在某个构建器表里被声明为键。
+			assert.match(menu, new RegExp(`\\n\\t${action.id}: `), `${action.id} 应有对应的处理函数`);
 		}
 		assert.ok(existsSync(join(panelDir, 'commit-menu.ts')), '应导出提交菜单');
 	});

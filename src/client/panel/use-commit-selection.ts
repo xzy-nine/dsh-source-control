@@ -9,17 +9,14 @@ import { compareCommits, loadCommitFiles } from '../api/index.ts';
 import type { ScrollToRowRequest } from '../graph/use-graph-windowing.ts';
 import { headTargetOf, jumpStepOf } from './graph-target.ts';
 import { changeOf } from './changes.ts';
-import { reportError } from './errors.ts';
-import type { Commit, CommitFile, PanelState } from '../shared/types.ts';
+import { reportCaught } from './errors.ts';
+import type { Commit, CommitFile } from '../shared/types.ts';
+import type { PanelStateAccess } from './panel-state-access.ts';
 
 /** 提交选择与详情的依赖面。 */
-export interface CommitSelectionDeps {
+export interface CommitSelectionDeps extends PanelStateAccess {
 	/** 当前选中的工作树路径。 */
 	readonly workingTreePath: string | null;
-	/** 面板状态：提交列表、选中项与详情。 */
-	readonly state: PanelState;
-	/** 面板状态写入器。 */
-	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 打开差异页。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
 	/** 是否在加载仓库后自动滚动到 HEAD。 */
@@ -133,7 +130,7 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 				? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
 				: previous));
 		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		}
 	}, [workingTreePath, state.commits, state.entries, state.entriesTruncated, setState]);
 

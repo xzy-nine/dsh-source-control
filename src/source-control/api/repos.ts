@@ -6,6 +6,7 @@ import { watchRepositories, watchWorkspace } from '../repo-watcher.js';
 import { whenLocalSettled } from '../git-exec.js';
 import { initRepository } from '../git-actions.js';
 import { logInfo } from '../logger.js';
+import { walkRepoNodes } from '../../shared/repo-node-walk.js';
 import type { RepoNode } from '../repo-discovery.js';
 import type { ApiContext } from './context.js';
 
@@ -20,13 +21,7 @@ import type { ApiContext } from './context.js';
  */
 function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
 	const paths: string[] = [];
-	const walk = (list: readonly RepoNode[]): void => {
-		for (const node of list) {
-			if (node.available) paths.push(node.path);
-			walk(node.children);
-		}
-	};
-	walk(nodes);
+	walkRepoNodes(nodes, (node) => { if (node.available) paths.push(node.path); });
 	return paths;
 }
 

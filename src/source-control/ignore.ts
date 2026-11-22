@@ -8,26 +8,9 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { gitOrThrow, runGit } from './working-tree.js';
 import { appendIgnoreRule, hasIgnoreRule, ignoreEntriesOf, ignoreRuleOf, isIgnorableTarget, normalizeIgnoreTarget } from './ignore-rules.js';
+import type { IgnoreWriteResult, LocalExcludeState } from '../shared/ignore-types.js';
 
-/** 写入 `.gitignore` 的结果。 */
-export interface IgnoreWriteResult {
-	/** 规则写入的文件，相对仓库根，使用 `/` 分隔。 */
-	readonly file: string;
-	/** 该文件是否为本次新建。 */
-	readonly created: boolean;
-	/** 写入前该文件是否已在版本控制中：未跟踪时没有可比较的差异。 */
-	readonly tracked: boolean;
-	/** 本次写入的规则；规则已存在时为 null。 */
-	readonly rule: string | null;
-}
-
-/** 本地排除文件的状态。 */
-export interface LocalExcludeState {
-	/** 排除文件的绝对路径。 */
-	readonly path: string;
-	/** 有效条目：已去掉空行与注释。 */
-	readonly entries: readonly string[];
-}
+export type { IgnoreWriteResult, LocalExcludeState } from '../shared/ignore-types.js';
 
 /**
  * 目标路径是否为目录。

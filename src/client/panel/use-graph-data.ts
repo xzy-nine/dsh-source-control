@@ -12,19 +12,20 @@
  */
 import React from 'react';
 import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
-import { reportError, reportRefreshFailure } from './errors.ts';
+import { reportCaught, reportRefreshFailure } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
-	branchNamesEqual, commitsListEqual, entriesEqual, mergeCommits, mergeEntries,
-	remotesListEqual, uncommittedParentOf, withUncommittedCount,
+	branchNamesEqual, commitsListEqual, commitsWithUncommitted, entriesEqual, mergeCommits, mergeEntries,
+	remotesListEqual,
 } from './commit-diff.ts';
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
 import type { BusyEntry, PanelState, Settings } from '../shared/types.ts';
+import type { PanelStateAccess } from './panel-state-access.ts';
 import type { GraphData } from '../api/index.ts';
 import {
 	dropGraphWindows, dropRenderedGraph, getActiveGraphRepo, nextRefreshId, rememberPanelState, rememberRepoInfo,
@@ -64,11 +65,7 @@ export interface UseGraphDataOptions {
 }
 
 /** 提交图数据 hook 的返回值。 */
-export interface UseGraphDataResult {
-	/** 面板状态。 */
-	readonly state: PanelState;
-	/** 面板状态写入器。 */
-	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
+export interface UseGraphDataResult extends PanelStateAccess {
 	/** 重新加载选中仓库的提交图与工作区。 */
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 只重取工作区快照；供不改动引用与提交历史的工作区操作使用。 */
@@ -411,10 +408,7 @@ export function useGraphData({
 			 * 补出的行必须挂在提交列表里真实存在的父提交上：宿主列表与快照可能读自不同的时刻，
 			 * HEAD 已移动时该行会指向一个不在列表里的哈希，泳道图在该处断线。
 			 */
-			const commits = withUncommittedCount(
-				graph.commits, snapshot.entries.length,
-				uncommittedParentOf(graph.commits, snapshot.head),
-			);
+			const commits = commitsWithUncommitted(graph, snapshot);
 			/*
 			 * 对账刷新时数据未变则保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道布局
 			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
@@ -514,10 +508,7 @@ export function useGraphData({
 			});
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
 			loadedHeadRef.current = snapshot.head;
-			const commits = withUncommittedCount(
-				graph.commits, snapshot.entries.length,
-				uncommittedParentOf(graph.commits, snapshot.head),
-			);
+			const commits = commitsWithUncommitted(graph, snapshot);
 			setState((previous) => {
 				const commitsSame = previous.head === graph.head && previous.more === graph.moreCommitsAvailable
 					&& commitsListEqual(previous.commits, commits);
@@ -540,7 +531,7 @@ export function useGraphData({
 		} catch (error) {
 			if (generation !== generationRef.current) return;
 			setState((previous) => endBackground(previous, 'graph'));
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		}
 	}, [maxCommits, settings, branchesKey]);
 
@@ -605,7 +596,7 @@ export function useGraphData({
 				};
 			});
 		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		} finally {
 			// 只释放自己那一次占用：代次已前进时，占用可能已被新列表的请求接管。
 			if (loadMorePendingRef.current === generation) loadMorePendingRef.current = null;

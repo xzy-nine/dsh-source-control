@@ -19,7 +19,17 @@ export interface WorkspaceEmptyState {
 	readonly action: string | null;
 }
 
-/** 空态的属性。 */
+/** 分区读不到仓库数据时要传入的那一组属性。 */
+export interface SectionEmptyFields {
+	/** 空态内容；为 null 时各分区照常渲染自己的正文。 */
+	readonly empty: WorkspaceEmptyState | null;
+	/** 动作进行中：只禁用按钮。 */
+	readonly emptyBusy: boolean;
+	/** 执行空态动作。 */
+	readonly onEmptyAction: () => void;
+}
+
+/** 空态组件的属性。 */
 export interface WorkspaceEmptyProps {
 	readonly empty: WorkspaceEmptyState;
 	/** 动作进行中：只禁用按钮。 */

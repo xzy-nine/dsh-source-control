@@ -13,6 +13,7 @@ import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
+import type { ChangeTreeGroupFields } from './change-tree-group.ts';
 import { guidesOf } from './tree-rows.tsx';
 import { indexGroupOf, worktreeGroupOf } from './conflicts.ts';
 import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
@@ -57,7 +58,7 @@ export function splitPath(path: string): { dir: string; name: string } {
  * @param build - 构建菜单项。
  * @returns 无。
  */
-export function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => ContextMenuItem[]): void {
+export function openTargetMenu(event: React.MouseEvent<HTMLElement>, build: () => ContextMenuItem[]): void {
 	event.preventDefault();
 	const target = event.currentTarget;
 	target.classList.add(MENU_TARGET_CLASS);
@@ -334,17 +335,52 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 
 export const CommitDetail = React.memo(CommitDetailView);
 
+/** 分组外壳的属性：标题、计数、展开态与三个交互入口。 */
+export interface ChangeGroupShellProps {
+	/** 分组标题。 */
+	readonly title: string;
+	/** 计数文案；截断时带 `+`。 */
+	readonly count: string;
+	/** 分组是否展开。 */
+	readonly open: boolean;
+	/** 点击分组标题。 */
+	readonly onToggleGroup: () => void;
+	/** 分组标题的右键菜单。 */
+	readonly onContextMenu?: ((event: React.MouseEvent<HTMLDivElement>) => void) | undefined;
+	/** 展开后的行。 */
+	readonly children?: React.ReactNode;
+}
+
+/**
+ * 一个变更分组的外壳：标题行 + 可展开的行容器。
+ *
+ * @param props - 见 {@link ChangeGroupShellProps}。
+ * @returns 分组元素。
+ */
+export function ChangeGroupShell({ title, count, open, onToggleGroup, onContextMenu, children }: ChangeGroupShellProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: css.changeGroup },
+		React.createElement(
+			'div',
+			{ className: cx(css.change, css.groupRoot), onClick: () => { onToggleGroup(); }, onContextMenu },
+			React.createElement('span', { className: cx(shared.repoChevron, !open && shared.isCollapsed) },
+				React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+			React.createElement('span', { className: css.groupTitle }, title),
+			React.createElement('span', { className: css.count }, count),
+		),
+		open && React.createElement('div', { className: css.changes }, children),
+	);
+}
+
 /** 一个变更分组：暂存的更改 / 更改。 */
-export interface ChangeGroupProps extends ChangeActions {
+export interface ChangeGroupProps extends ChangeActions, ChangeTreeGroupFields {
 	readonly staged: boolean;
 	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
 	readonly truncated: boolean;
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: boolean;
 	readonly workingTreePath: string;
-	readonly collapsed: ReadonlySet<string>;
-	readonly toggleChange: (key: string, path: string) => void;
-	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
 	readonly forceShow?: boolean;
@@ -414,6 +450,21 @@ function ChangeGroupView({
 		}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(tracked.length)} 个已跟踪、${String(untrackedPaths.length)} 个未跟踪）` });
 	}, [run, discardPaths, workingTreePath]);
 	/**
+	 * 文件夹、分组与单条路径共用同一条确认与执行路径。
+	 *
+	 * @param message - 确认框正文。
+	 * @param tracked - 已跟踪的路径。
+	 * @param untrackedPaths - 未跟踪的路径。
+	 * @param confirmLabel - 确认按钮文案。
+	 * @returns 无。
+	 */
+	const confirmDiscard = React.useCallback((message: string, tracked: readonly string[], untrackedPaths: readonly string[], confirmLabel = '丢弃'): void => {
+		void (async () => {
+			const ok = await showConfirmation({ title: '丢弃改动', message, confirmLabel, danger: true });
+			if (ok) await discardBoth(tracked, untrackedPaths);
+		})();
+	}, [discardBoth]);
+	/**
 	 * 丢弃某个文件夹下的全部改动。
 	 *
 	 * @param folderPath - 文件夹路径，相对仓库根。
@@ -421,40 +472,20 @@ function ChangeGroupView({
 	const onDiscardFolder = React.useCallback((folderPath: string): void => {
 		const inside = visible.filter((entry) => entry.path.startsWith(folderPath + '/'));
 		const { tracked, untracked: untrackedPaths } = splitUntracked(inside);
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				message: discardMessage(folderPath + ' 下', inside.length, untrackedPaths.length),
-				confirmLabel: '丢弃', danger: true,
-			});
-			if (!ok) return;
-			await discardBoth(tracked, untrackedPaths);
-		})();
-	}, [visible, discardBoth]);
+		confirmDiscard(discardMessage(folderPath + ' 下', inside.length, untrackedPaths.length), tracked, untrackedPaths);
+	}, [visible, confirmDiscard]);
 	const onDiscard = React.useCallback((paths: readonly string[], untracked: boolean): void => {
 		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				// 未跟踪文件是被真正删除，而不是还原到某个版本，措辞需说清。
-				message: untracked
-					? (paths.length === 1
-						? '确定删除未跟踪文件 ' + paths[0] + '？删除后无法恢复。'
-						: '确定删除这 ' + String(paths.length) + ' 个未跟踪文件？删除后无法恢复。')
-					: (paths.length === 1
-						? '确定丢弃 ' + paths[0] + ' 的改动？未提交的改动会丢失，且无法恢复。'
-						: '确定丢弃这 ' + String(paths.length) + ' 个文件的改动？未提交的改动会丢失，且无法恢复。'),
-				confirmLabel: untracked ? '删除' : '丢弃', danger: true,
-			});
-			if (!ok) return;
-			/** 本次真正丢弃的路径；未能丢弃的条目必须留在列表里。 */
-			const discarded: string[] = [];
-			// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
-			await run('commit', async () => {
-				discarded.push(...(await discardPaths(workingTreePath, paths, untracked)).discarded);
-			}, undefined, (entries) => discardEntries(entries, discarded), { historyChanged: false, intent: `丢弃改动（${String(paths.length)} 个${untracked ? '未跟踪' : '已跟踪'}路径）` });
-		})();
-	}, [run, discardPaths, workingTreePath]);
+		// 未跟踪文件经 `git clean` 删除。
+		const message = untracked
+			? (paths.length === 1
+				? '确定删除未跟踪文件 ' + paths[0] + '？删除后无法恢复。'
+				: '确定删除这 ' + String(paths.length) + ' 个未跟踪文件？删除后无法恢复。')
+			: (paths.length === 1
+				? '确定丢弃 ' + paths[0] + ' 的改动？未提交的改动会丢失，且无法恢复。'
+				: '确定丢弃这 ' + String(paths.length) + ' 个文件的改动？未提交的改动会丢失，且无法恢复。');
+		confirmDiscard(message, untracked ? [] : paths, untracked ? paths : [], untracked ? '删除' : '丢弃');
+	}, [confirmDiscard]);
 	/**
 	 * 丢弃该分组内全部改动。
 	 *
@@ -462,16 +493,8 @@ function ChangeGroupView({
 	 */
 	const onDiscardAll = React.useCallback((): void => {
 		const { tracked, untracked: untrackedPaths } = splitUntracked(visible);
-		void (async () => {
-			const ok = await showConfirmation({
-				title: '丢弃改动',
-				message: discardMessage('', allPaths.length, untrackedPaths.length),
-				confirmLabel: '丢弃', danger: true,
-			});
-			if (!ok) return;
-			await discardBoth(tracked, untrackedPaths);
-		})();
-	}, [visible, allPaths, discardBoth]);
+		confirmDiscard(discardMessage('', allPaths.length, untrackedPaths.length), tracked, untrackedPaths);
+	}, [visible, allPaths, confirmDiscard]);
 	// 点击文件行时把本分组的文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
 	const onOpen = React.useCallback((item: WorkingTreeEntry, isNew: boolean): void => { void openDiff('*', item.path, staged, isNew, undefined, allPaths); }, [openDiff, staged, allPaths]);
 	/** 右键「打开」固定按整文件打开；左键点击仍按是否新增决定差异或整文件。 */
@@ -487,41 +510,25 @@ function ChangeGroupView({
 	const handleHeadContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
 		event.stopPropagation();
 		openTargetMenu(event, () => changeMenuItems({
-			// 分组走集合命令：pathspec 为空数组表示全部，数量按组内条目数给出。
 			target: 'group', deps: menu, path: null, paths: [], count: allPaths.length,
 			entry: null, untracked: false,
 		}));
 	}, [menu, allPaths]);
 	if (visible.length === 0 && !forceShow) return [];
-	return React.createElement(
-		'div',
-		{ className: css.changeGroup },
-		React.createElement(
-			'div',
-			{
-				className: cx(css.change, css.groupRoot),
-				onClick: () => { onToggleGroup(); },
-				onContextMenu: handleHeadContextMenu,
-			},
-			React.createElement('span', {
-				className: cx(shared.repoChevron, !open && shared.isCollapsed),
-			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
-			React.createElement('span', { className: css.groupTitle }, title),
-			// 截断时计数只是下限，加号表明还有未列出的条目。
-			React.createElement('span', { className: css.count }, String(visible.length) + (truncated ? '+' : '')),
-		),
-		open && React.createElement(
-			'div',
-			{ className: css.changes },
-			...rows.map((row) => React.createElement(ChangeNodeRow, {
-				key: row.kind === 'folder' ? 'f:' + row.path : 'e:' + row.entry.path,
-				row, busy,
-				open: row.kind === 'folder' && !collapsed.has(row.path),
-				staged, groupKey, toggleChange,
-				onStage, onUnstage, onDiscard, onOpen, menu,
-			})),
-
-		),
+	return React.createElement(ChangeGroupShell, {
+		title,
+		count: String(visible.length) + (truncated ? '+' : ''),
+		open,
+		onToggleGroup,
+		onContextMenu: handleHeadContextMenu,
+	},
+		...rows.map((row) => React.createElement(ChangeNodeRow, {
+			key: row.kind === 'folder' ? 'f:' + row.path : 'e:' + row.entry.path,
+			row, busy,
+			open: row.kind === 'folder' && !collapsed.has(row.path),
+			staged, groupKey, toggleChange,
+			onStage, onUnstage, onDiscard, onOpen, menu,
+		})),
 	);
 }
 

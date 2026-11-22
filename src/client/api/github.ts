@@ -3,6 +3,7 @@
  */
 import { callApi } from './http.ts';
 import { textOf } from '../shared/text.ts';
+import type { SshStatus } from '../../shared/ssh-status.ts';
 
 /** GitHub 账号信息。 */
 export interface GhAccountInfo {
@@ -87,25 +88,8 @@ export async function ghRepoInfo(cwd: string): Promise<GhRepoInfoResult> {
 	};
 }
 
-/**
- * 本地 SSH 状态。
- */
-export interface SshStatusInfo {
-	/** ssh 客户端是否可用。 */
-	readonly installed: boolean;
-	/** ssh 版本行；不可用时为 null。 */
-	readonly version: string | null;
-	/** `~/.ssh` 下的私钥文件名。 */
-	readonly keys: readonly string[];
-	/** 探测的目标主机。 */
-	readonly host: string;
-	/** 目标主机是否接受本机公钥。 */
-	readonly authenticated: boolean;
-	/** 是否可直接用于 SSH 远程操作。 */
-	readonly ready: boolean;
-	/** 未就绪时的说明：探测输出原文；就绪时为 null。 */
-	readonly message: string | null;
-}
+/** 本地 SSH 状态。 */
+export type SshStatusInfo = SshStatus;
 
 /**
  * 检测本地 SSH 状态：ssh 客户端、私钥与对目标主机的认证。

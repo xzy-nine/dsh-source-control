@@ -11,6 +11,7 @@ import { createEnrichClaims, ENRICH_FAILURE_LIMIT, type EnrichClaims } from './e
 import { runEnrichBatch } from './enrich-run.ts';
 import { attachChildren } from './repo-tree.ts';
 import { normalizePath } from '../shared/path-key.ts';
+import { walkRepoNodes } from '../../shared/repo-node-walk.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 一个工作区的仓库树快照。 */
@@ -500,13 +501,7 @@ export function refreshRepoSync(root: string, repoPath: string): void {
 function idsAtPath(nodes: readonly RepoNode[], path: string): string[] {
 	const target = normalizePath(path);
 	const ids: string[] = [];
-	const walk = (list: readonly RepoNode[]): void => {
-		for (const node of list) {
-			if (normalizePath(node.path) === target) ids.push(node.id);
-			walk(node.children);
-		}
-	};
-	walk(nodes);
+	walkRepoNodes(nodes, (node) => { if (normalizePath(node.path) === target) ids.push(node.id); });
 	return ids;
 }
 

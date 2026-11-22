@@ -6,6 +6,7 @@
  * {@link installOverlay} 注册并常驻挂载。
  */
 import React from 'react';
+import { createListenerSet, subscribeIn } from '../../shared/listener-set.ts';
 
 /** 覆盖层中的一个条目：队列编号与要渲染的元素。 */
 interface OverlayEntry {
@@ -20,7 +21,7 @@ interface OverlayState {
 }
 
 /** 内容变化通知的订阅者；宿主挂载期间登记。 */
-const listeners = new Set<() => void>();
+const listeners = createListenerSet<() => void>();
 
 /** 当前内容；无订阅者时也照常更新，宿主首帧据此读到已入队的内容。 */
 let state: OverlayState = { dialogs: [], toast: null };
@@ -36,7 +37,7 @@ let nextId = 1;
  */
 function publish(next: OverlayState): void {
 	state = next;
-	for (const listener of [...listeners]) listener();
+	for (const listener of listeners.snapshot()) listener();
 }
 
 /**
@@ -46,8 +47,7 @@ function publish(next: OverlayState): void {
  * @returns 取消订阅的函数。
  */
 function subscribe(listener: () => void): () => void {
-	listeners.add(listener);
-	return () => { listeners.delete(listener); };
+	return subscribeIn(listeners, listener);
 }
 
 /**

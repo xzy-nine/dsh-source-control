@@ -5,6 +5,7 @@
  * `MM-DD HH:MM:SS.mmm  PID  TID  LEVEL TAG: message`
  * 每条记录以时间戳开头；含换行的消息按行拆成多条记录，续行沿用同一时间戳与级别。
  */
+import { pad2, pad3 } from '../shared/pad-number.js';
 
 /** logcat 级别字符。 */
 export type LogLevel = 'V' | 'D' | 'I' | 'W' | 'E';
@@ -25,11 +26,6 @@ export interface LogRecord {
 	readonly message: string;
 }
 
-/** 补零到两位。 */
-const pad2 = (value: number): string => String(value).padStart(2, '0');
-
-/** 补零到三位。 */
-const pad3 = (value: number): string => String(value).padStart(3, '0');
 
 /**
  * logcat 时间戳：`MM-DD HH:MM:SS.mmm`。

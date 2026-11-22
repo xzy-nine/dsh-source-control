@@ -16,35 +16,15 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-import { runCollect } from './host-runtime.js';
+import { classifyGhFailure, runGh, type GhResult } from './gh-cli.js';
+import type { FeedbackFailureKind, FeedbackLogFields } from '../shared/feedback-outcome.js';
 import { buildIssueBody, FEEDBACK_REPO, feedbackIssueTitle, type FeedbackFacts, type FeedbackType } from './feedback-text.js';
 import { groupLogComments, type LogComment, type LogSource } from './feedback-comment.js';
 import { currentLogFile, logRoot, recentLogFiles } from './logger.js';
 import { redactSummary, redactText } from './log-redact.js';
 import { OUTBOX_FOLDER } from './log-retention.js';
 
-/** 一次 `gh` 调用的结果。 */
-interface GhRun {
-	readonly code: number;
-	readonly stdout: string;
-	readonly stderr: string;
-}
 
-/**
- * 运行一次 `gh`。
- *
- * @param args - 参数数组。
- * @param cwd - 工作目录。
- * @returns 退出码与输出。
- */
-function runGh(args: readonly string[], cwd: string): Promise<GhRun> {
-	return runCollect({
-		command: 'gh',
-		args,
-		cwd,
-		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
-	});
-}
 
 /** 反馈提交入参。 */
 export interface SubmitFeedbackOptions {
@@ -69,19 +49,13 @@ export interface SubmitFeedbackOptions {
 }
 
 /** 反馈提交结果。 */
-export interface SubmitFeedbackResult {
+export interface SubmitFeedbackResult extends FeedbackLogFields {
 	/** issue 地址；失败时为空串。 */
 	readonly url: string;
 	/** 失败原因；成功时为 null。 */
 	readonly error: string | null;
 	/** 失败分类，供前端决定提示方式。 */
-	readonly kind: 'ok' | 'missing-cli' | 'not-logged-in' | 'missing-scope' | 'forbidden' | 'invalid' | 'unknown';
-	/** 日志目录绝对路径：失败时提示用户手动提交用。 */
-	readonly logDir: string;
-	/** 已追加的日志评论条数；未附带日志时为 0。 */
-	readonly commentCount: number;
-	/** 日志评论提交失败的原因；全部成功或未附带日志时为 null。 */
-	readonly commentError: string | null;
+	readonly kind: FeedbackFailureKind;
 }
 
 /**
@@ -90,23 +64,12 @@ export interface SubmitFeedbackResult {
  * @param result - `gh` 调用结果。
  * @returns 分类与给用户看的说明。
  */
-function classify(result: GhRun): { kind: SubmitFeedbackResult['kind']; message: string } {
-	const text = `${result.stderr}\n${result.stdout}`.trim();
-	if (result.code === -1 && /ENOENT/i.test(result.stderr)) {
-		return { kind: 'missing-cli', message: '未找到 gh CLI，请先安装 GitHub CLI（https://cli.github.com）并登录。' };
-	}
-	const scope = /needs the "([^"]+)" scope/.exec(text)?.[1] ?? null;
-	if (scope !== null) return { kind: 'missing-scope', message: `GitHub 授权缺少 ${scope} 权限，请运行 gh auth refresh -s ${scope} 后重试。` };
-	if (/gh auth login|not logged in|authentication required|bad credentials/i.test(text)) {
-		return { kind: 'not-logged-in', message: 'gh 未登录，请运行 gh auth login 后重试。' };
-	}
-	if (/HTTP 403|Must have admin rights|Resource not accessible/i.test(text)) {
-		return { kind: 'forbidden', message: '当前账号没有在该仓库创建 issue 的权限。' };
-	}
-	if (/HTTP 422|HTTP 404/i.test(text)) {
-		return { kind: 'invalid', message: 'GitHub 拒绝了该请求，请检查标题与描述后重试。' };
-	}
-	return { kind: 'unknown', message: text === '' ? 'gh 执行失败' : text };
+function classify(result: GhResult): { kind: SubmitFeedbackResult['kind']; message: string } {
+	const { kind, message } = classifyGhFailure(result);
+	if (kind === 'missing-scope') return { kind, message };
+	if (kind === 'forbidden') return { kind, message: '当前账号没有在该仓库创建 issue 的权限。' };
+	if (kind === 'not-found') return { kind: 'invalid', message: 'GitHub 拒绝了该请求，请检查标题与描述后重试。' };
+	return { kind: kind === 'invalid' ? 'invalid' : kind, message };
 }
 
 /** 一次读取到的日志：内容、文件名与绝对路径。 */

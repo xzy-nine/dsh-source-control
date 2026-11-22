@@ -94,7 +94,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	/**
 	 * 客户端给出的轮次编号；0 与缺失都按「未给出」处理。
 	 *
-	 * 0 与真实轮次 0 无法区分，因此统一当成没有编号；`refreshId` 缺省时发送的正是 0。
+	 * 0 与真实轮次 0 无法区分，统一当成没有编号；`refreshId` 缺省时发送的是 0。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。

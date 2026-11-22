@@ -24,6 +24,36 @@ import type {
 } from './git-types.js';
 
 /**
+ * 包装一次成功的提交详情读取。
+ *
+ * @param details - 提交详情。
+ * @returns 带 `error: null` 的读取结果。
+ */
+function detailsOk(details: CommitDetails): CommitDetailsData {
+	return { commitDetails: details, error: null };
+}
+
+/**
+ * 包装一次失败的提交详情读取。
+ *
+ * @param error - 捕获到的失败值。
+ * @returns `commitDetails` 为 null、带错误文本的读取结果。
+ */
+function detailsError(error: unknown): CommitDetailsData {
+	return { commitDetails: null, error: errorText(error) };
+}
+
+/**
+ * 把按行输出的命令结果切成去空白后的非空行。
+ *
+ * @param stdout - git 的标准输出。
+ * @returns 非空行。
+ */
+function trimmedLinesOf(stdout: string): string[] {
+	return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+}
+
+/**
  * 一次提交详情（或提交对比）里列出的改动文件上限。
  *
  * 改动数量达到这个量级时，响应载荷与客户端的行列表都随条目数线性增长。超出时按完整深度
@@ -242,9 +272,9 @@ export async function getCommitDetails(repo: string, commitHash: string, _hasPar
 			getDiffNameStatus(repo, fromCommit, commitHash),
 			getDiffNumStat(repo, fromCommit, commitHash),
 		]);
-		return { commitDetails: { ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) }, error: null };
+		return detailsOk({ ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) });
 	} catch (error) {
-		return { commitDetails: null, error: errorText(error) };
+		return detailsError(error);
 	}
 }
 
@@ -277,9 +307,9 @@ export async function getStashDetails(repo: string, commitHash: string, stash: C
 				if (change.type === 'A') fileChanges.push({ ...change, type: 'U' });
 			}
 		}
-		return { commitDetails: { ...base, ...capFileChanges(fileChanges) }, error: null };
+		return detailsOk({ ...base, ...capFileChanges(fileChanges) });
 	} catch (error) {
-		return { commitDetails: null, error: errorText(error) };
+		return detailsError(error);
 	}
 }
 
@@ -298,15 +328,12 @@ export async function getUncommittedDetails(repo: string): Promise<CommitDetails
 			getDiffNumStat(repo, 'HEAD', ''),
 			getStatus(repo),
 		]);
-		return {
-			commitDetails: {
-				hash: UNCOMMITTED, parents: [],
-				author: '', authorEmail: '', authorDate: 0,
-				committer: '', committerEmail: '', committerDate: 0, signature: null,
-				body: '', ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status),
-			},
-			error: null,
-		};
+		return detailsOk({
+			hash: UNCOMMITTED, parents: [],
+			author: '', authorEmail: '', authorDate: 0,
+			committer: '', committerEmail: '', committerDate: 0, signature: null,
+			body: '', ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status),
+		});
 	} catch (error) {
 		return { commitDetails: null, error: errorText(error) };
 	}
@@ -605,8 +632,7 @@ export async function getRefsAndBranches(repo: string, showRemoteBranches: boole
  * @returns 远程名列表。
  */
 export async function getRemoteNames(repo: string): Promise<string[]> {
-	const stdout = await gitOrThrow(['remote'], repo);
-	return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	return trimmedLinesOf(await gitOrThrow(['remote'], repo));
 }
 
 /**
@@ -795,7 +821,7 @@ function escapeRegExp(value: string): string {
 async function reflogSubjects(repo: string, ref: string, pattern: string): Promise<string[]> {
 	const result = await runGit(['reflog', ref, '--format=%gs', `--grep-reflog=${pattern}`], repo);
 	if (result.code !== 0) return [];
-	return result.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	return trimmedLinesOf(result.stdout);
 }
 
 /**
@@ -904,10 +930,12 @@ export async function getBranchBase(repo: string): Promise<BranchBase> {
 	}
 
 	const fromReflog = await reflogCreatedFrom(repo, branch);
+
 	if (fromReflog !== null) {
 		const resolved = await resolveRefName(repo, fromReflog);
 		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
 	}
+
 
 	const fallback = await defaultRemoteBranch(repo);
 	return { branch, base: fallback?.short ?? null, baseRef: fallback?.ref ?? null };

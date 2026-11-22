@@ -4,6 +4,7 @@
  * 目录布局：`<root>/<YYYY-MM-DD>/<YYYYMMDD>-<HHmmss>.log`。
  * 日文件夹名带日期，文件名带启动时刻，因此同一文件夹内按文件名升序即为启动先后。
  */
+import { pad2 } from '../shared/pad-number.js';
 
 /** 单个日文件夹的体积上限（字节）。 */
 export const DAY_FOLDER_LIMIT_BYTES = 15 * 1024 * 1024;
@@ -35,9 +36,6 @@ export interface LogFileEntry {
 	readonly name: string;
 	readonly size: number;
 }
-
-/** 补零到两位。 */
-const pad2 = (value: number): string => String(value).padStart(2, '0');
 
 /**
  * 本地日期键：`YYYY-MM-DD`。

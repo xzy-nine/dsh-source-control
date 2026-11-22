@@ -2,6 +2,8 @@
  * 仓库发现、仓库同步状态与提交图查询。
  */
 import type { Commit, RefItem, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
+import type { StashEntry } from '../../shared/stash.ts';
+import { recordListOf } from '../../shared/record-list.ts';
 import { callApi, commandError } from './http.ts';
 
 /**
@@ -104,11 +106,8 @@ export interface RepoSyncEntry extends RepoSync {
  */
 export async function loadReposSync(cwd: string, repos: readonly string[], signal?: AbortSignal): Promise<RepoSyncEntry[]> {
 	const payload = await callApi(cwd, { command: 'loadReposSync', repos }, signal);
-	const results = Array.isArray(payload.results) ? payload.results : [];
 	const entries: RepoSyncEntry[] = [];
-	for (const item of results) {
-		if (item === null || typeof item !== 'object') continue;
-		const record = item as Record<string, unknown>;
+	for (const record of recordListOf(payload.results)) {
 		// path 缺失的记录无法与入参对齐，丢弃。
 		if (typeof record.path !== 'string') continue;
 		entries.push({ path: record.path, ...readSyncFields(record) });
@@ -193,21 +192,8 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal,
 	};
 }
 
-/** 贮藏条目：字段与宿主 `git-types.ts` 的 `StashEntry` 一致。 */
-export interface GraphStash {
-	/** 贮藏提交哈希。 */
-	readonly hash: string;
-	/** 基提交哈希。 */
-	readonly baseHash: string;
-	/** 未跟踪文件所在的提交；无则为 null。 */
-	readonly untrackedFilesHash: string | null;
-	/** 选择器（如 `refs/stash@{0}`）。 */
-	readonly selector: string;
-	readonly author: string;
-	readonly email: string;
-	readonly date: number;
-	readonly message: string;
-}
+/** 贮藏条目。 */
+export type GraphStash = StashEntry;
 
 /** 提交图读取结果。 */
 export interface GraphData {
@@ -357,11 +343,8 @@ const REF_KIND: Record<'branch' | 'remote' | 'tag', string> = { branch: '分支'
  */
 export async function loadRefs(cwd: string, showRemoteBranches = true, signal?: AbortSignal): Promise<RefItem[]> {
 	const payload = await callApi(cwd, { command: 'loadRefs', showRemoteBranches }, signal);
-	const list = Array.isArray(payload.refs) ? payload.refs : [];
 	const refs: RefItem[] = [];
-	for (const item of list) {
-		if (item === null || typeof item !== 'object') continue;
-		const record = item as Record<string, unknown>;
+	for (const record of recordListOf(payload.refs)) {
 		if (typeof record.id !== 'string' || typeof record.name !== 'string' || typeof record.hash !== 'string') continue;
 		const type = record.type === 'branch' || record.type === 'remote' || record.type === 'tag' ? record.type : null;
 		if (type === null) continue;

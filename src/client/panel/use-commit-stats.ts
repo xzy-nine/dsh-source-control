@@ -9,7 +9,7 @@ import { loadCommitStatsAndMessage, translateText } from '../api/index.ts';
 import { trimOldest } from '../shared/cache.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
 import { interfaceLanguage, translateCommitMessage } from './language.ts';
-import type { CommitStats } from '../shared/types.ts';
+import type { CommitCacheMaps, CommitStats } from '../shared/types.ts';
 
 /** 改动统计缓存的条目上限。 */
 const STATS_CACHE_LIMIT = 1200;
@@ -44,6 +44,24 @@ export interface TranslateItem {
 }
 
 /**
+ * 构造提交信息正文的翻译函数。
+ *
+ * 单条翻译与批量翻译共用同一条调用路径，同受该次请求的取消信号约束。
+ *
+ * @param workingTreePath - 当前工作树路径。
+ * @param locale - 目标语言。
+ * @param controller - 该次翻译请求的取消控制器。
+ * @returns 接收正文、返回译文的函数。
+ */
+function bodyTranslator(
+	workingTreePath: string | null,
+	locale: string,
+	controller: AbortController,
+): (body: string) => Promise<string> {
+	return (body) => translateText(workingTreePath, body, locale, controller.signal);
+}
+
+/**
  * 从一份按哈希索引的缓存中丢弃给定条目。
  *
  * @param previous - 现有缓存。
@@ -69,15 +87,7 @@ function dropHash<T>(previous: Map<string, T>, hash: string): Map<string, T> {
 }
 
 /** 提交改动统计 hook 的返回值。 */
-export interface UseCommitStatsResult {
-	/** 提交哈希 -> 改动统计。 */
-	readonly statsByHash: ReadonlyMap<string, CommitStats>;
-	/** 提交哈希 -> 完整提交信息；未取到时缺省。 */
-	readonly messageByHash: ReadonlyMap<string, string>;
-	/** 提交哈希 -> 译文；未翻译过时缺省。 */
-	readonly translatedByHash: ReadonlyMap<string, string>;
-	/** 提交哈希 -> 译文对应的原文；与当前文本相同才可用该译文。 */
-	readonly translatedFromByHash: ReadonlyMap<string, string>;
+export interface UseCommitStatsResult extends CommitCacheMaps {
 	/** 正在单条翻译的提交哈希；空闲时为 null。 */
 	readonly translatingHash: string | null;
 	/** 图形区标题栏的批量翻译是否已生效：入口据此显示反色图标与取消。 */
@@ -181,6 +191,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		},
 		periodSeconds: cleanupSeconds,
 	});
+
 
 	// 卸载时取消未完成的请求与悬停计时。
 	React.useEffect(() => () => {
@@ -295,10 +306,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		setTranslatingHash(hash);
 		void (async () => {
 			try {
-				const translated = await translateCommitMessage(
-					source,
-					(body) => translateText(workingTreePath, body, locale, controller.signal),
-				);
+				const translated = await translateCommitMessage(source, bodyTranslator(workingTreePath, locale, controller));
 				if (controller.signal.aborted) return;
 				storeTranslation(hash, source, translated);
 			} catch (error) {
@@ -330,10 +338,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 			let done = 0;
 			try {
 				for (const item of targets) {
-					const translated = await translateCommitMessage(
-						item.text,
-						(body) => translateText(workingTreePath, body, locale, controller.signal),
-					);
+					const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
 					// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
 					if (controller.signal.aborted) return;
 					storeTranslation(item.hash, item.text, translated);

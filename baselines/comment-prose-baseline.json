@@ -1,6 +1,6 @@
 {
   "note": "已接受的存量解释性注释；只允许调低。新增命中应改写散文或就地加 prose-ok 标记。",
-  "count": 248,
+  "count": 241,
   "entries": [
     [
       "src/client/api/http.ts",
@@ -11,16 +11,6 @@
       "src/client/api/http.ts",
       "step-narration",
       "* 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数），因此先读响应体再判断"
-    ],
-    [
-      "src/client/api/ignore.ts",
-      "session-scope",
-      "* 本次写入的规则；规则已存在时为 null。"
-    ],
-    [
-      "src/client/api/ignore.ts",
-      "session-scope",
-      "* 该文件是否为本次新建。"
     ],
     [
       "src/client/api/repos.ts",
@@ -265,11 +255,6 @@
     [
       "src/client/panel/changes.ts",
       "session-scope",
-      "* 本次真正丢弃的路径；未能丢弃的条目必须留在列表里。"
-    ],
-    [
-      "src/client/panel/changes.ts",
-      "session-scope",
       "* 本次真正丢弃的路径；由操作体写入，乐观更新据此移除条目。"
     ],
     [
@@ -406,11 +391,6 @@
       "src/client/panel/repo-locations.ts",
       "session-scope",
       "* 把宿主本次返回的仓库位置收进内存缓存。"
-    ],
-    [
-      "src/client/panel/repo-menu.ts",
-      "session-scope",
-      "* 本次是否运行钩子。"
     ],
     [
       "src/client/panel/repo-preload.ts",
@@ -661,11 +641,6 @@
       "src/client/panel/use-remote-sync.ts",
       "change-narration",
       "完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。"
-    ],
-    [
-      "src/client/panel/use-remote-sync.ts",
-      "session-scope",
-      "* 本次是否运行钩子。"
     ],
     [
       "src/client/panel/use-remote-sync.ts",
@@ -1001,16 +976,6 @@
       "src/source-control/hunk-ops.ts",
       "planning-residue",
       "* 补丁经临时文件传入：`git apply` 从标准输入读补丁时，空补丁与参数错误的表现一致，"
-    ],
-    [
-      "src/source-control/ignore.ts",
-      "session-scope",
-      "* 本次写入的规则；规则已存在时为 null。"
-    ],
-    [
-      "src/source-control/ignore.ts",
-      "session-scope",
-      "* 该文件是否为本次新建。"
     ],
     [
       "src/source-control/log-redact.ts",

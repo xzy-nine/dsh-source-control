@@ -2,16 +2,16 @@
  * 本地分支类操作：检出、创建、重命名、合并到、变基、复制引用名、删除。
  */
 import {
-	checkoutBranch, createBranch, deleteBranch, deleteRemoteBranch, mergeIntoBranch, rebase, renameBranch, throwIfError,
+	checkoutBranch, createBranch, deleteBranch, mergeIntoBranch, rebase, renameBranch, throwIfError,
 } from '../../api/index.ts';
 import type { MergeMode } from '../../shared/types.ts';
-import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
+import { showConfirmation } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
-import { fillText, type MenuActionMeta } from '../menu-actions.ts';
+import { fillText } from '../menu-actions.ts';
 import { localNameForRemoteBranch, remoteNameOfBranch } from '../github.ts';
 import {
-	copyRefNameItem, isUnmergedRefusal, localBranchItem, remoteRefOf, shortBranchName, type MenuContext,
+	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, textThenRun, type MenuBuilders,
 } from './shared.ts';
 
 /** 合并方式，按菜单里的排列顺序。 */
@@ -31,7 +31,7 @@ const MERGE_MODE_ACTIONS: Readonly<Record<MergeMode, string>> = {
 	squash: '压缩合并过去',
 };
 
-export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null>> = {
+export const BUILDERS: MenuBuilders = {
 	checkoutBranch: (ctx, meta) => {
 		const { deps } = ctx;
 		if (ctx.ref !== null) {
@@ -65,29 +65,24 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 		};
 	},
 	createBranchFromRef: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
+		const name = refNameOf(ctx);
+		if (name === null) return null;
 		return {
 			title: meta.title,
-			onClick: () => {
-				void (async () => {
-					const newName = await showText({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' });
-					if (newName !== null && newName !== '') void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
-				})();
-			},
+			onClick: textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' }, (newName) => {
+				void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
+			}),
 		};
 	},
 	renameBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
+		const name = refNameOf(ctx);
+		if (name === null) return null;
 		return localBranchItem(ctx, name, {
 			title: meta.title, disabled: name === ctx.deps.head,
-			onClick: () => {
-				void (async () => {
-					const newName = await showText({ title: '重命名分支', label: '新分支名', value: name });
-					if (newName !== null && newName !== '' && newName !== name) void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
-				})();
-			},
+			onClick: textThenRun({ title: '重命名分支', label: '新分支名', value: name }, (newName) => {
+				if (newName === name) return;
+				void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
+			}),
 		});
 	},
 	mergeIntoBranch: (ctx, meta) => {
@@ -196,15 +191,8 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			})();
 		};
 		const removeRemote = (name: string) => (): void => {
-			void (async () => {
-				const remote = remoteNameOfBranch(name);
-				if (remote === '') return;
-				const ok = await showCheckbox({
-					title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
-					checkboxLabel: '我已知晓并继续', danger: true,
-				});
-				if (ok) void deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); });
-			})();
+			const remote = remoteNameOfBranch(name);
+			if (remote !== '') deleteRemoteBranchClick(ctx, name, remote)();
 		};
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;

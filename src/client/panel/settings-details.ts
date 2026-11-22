@@ -5,7 +5,7 @@ import React from 'react';
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showConfirmation } from '../ui/dialog.ts';
 import type { IssueLinkingConfig } from '../shared/types.ts';
-import { ToggleRow } from './settings-rows.ts';
+import { FieldBlock, ToggleRow } from './settings-rows.ts';
 import type { SettingsTab, UserDetails } from './settings-types.ts';
 import css from '../css/settings.module.css';
 import { cx } from '../css/cx.ts';
@@ -26,22 +26,18 @@ export function IssueLinkingForm({ config, onChange }: {
 	return React.createElement(
 		'div',
 		{ className: css.setForm },
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, 'Issue 正则'),
-			React.createElement(Input, {
-				value: regex,
-				placeholder: '如 #(\\d+)',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onChange({ issueRegex: event.target.value, issueUrlTemplate: url }); },
-			}),
-		),
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, 'Issue 链接模板'),
-			React.createElement(Input, {
-				value: url,
-				placeholder: '如 https://github.com/owner/repo/issues/%ID%',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onChange({ issueRegex: regex, issueUrlTemplate: event.target.value }); },
-			}),
-		),
+		React.createElement(FieldBlock, {
+			label: 'Issue 正则',
+			placeholder: '如 #(\\d+)',
+			value: regex,
+			onChange: (next) => { onChange({ issueRegex: next, issueUrlTemplate: url }); },
+		}),
+		React.createElement(FieldBlock, {
+			label: 'Issue 链接模板',
+			placeholder: '如 https://github.com/owner/repo/issues/%ID%',
+			value: url,
+			onChange: (next) => { onChange({ issueRegex: regex, issueUrlTemplate: next }); },
+		}),
 		React.createElement('div', { className: css.setNote }, '该配置仅在前端保存，用于识别提交信息中的 Issue 编号。'),
 	);
 }

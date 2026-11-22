@@ -24,17 +24,4 @@ export interface AiCommitPromptTexts {
 /** 提示词文本，数据源为 ai-commit-prompts.json。 */
 export const AI_COMMIT_PROMPTS: AiCommitPromptTexts = source;
 
-/**
- * 代入提示词模板里的占位符。
- *
- * 用切分拼接而不是 `replace`：diff 里可能出现 `$&` 这类会被 `replace` 当作替换模式的序列。
- *
- * @param template - 含 `{name}` 占位符的模板。
- * @param values - 占位符取值。
- * @returns 代入后的文本。
- */
-export function fillPrompt(template: string, values: Record<string, string>): string {
-	let text = template;
-	for (const [name, value] of Object.entries(values)) text = text.split(`{${name}}`).join(value);
-	return text;
-}
+export { fillTemplate as fillPrompt } from '../shared/fill-template.js';

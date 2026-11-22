@@ -2,12 +2,13 @@
  * 远程仓库配置区与 SSH 状态说明。
  */
 import React from 'react';
-import { Input, SegmentedControl, Button, IconEditOutlineRegular, IconTrashOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
+import { SegmentedControl, Button, IconEditOutlineRegular, IconTrashOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showConfirmation, showMessage } from '../ui/dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import type { RemoteProtocolSlot } from '../git/remote-url.ts';
 import type { SshStatusInfo } from '../api/index.ts';
 import type { Remote } from '../shared/types.ts';
+import { FieldBlock } from './settings-rows.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
 import css from '../css/settings.module.css';
 
@@ -150,18 +151,13 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 	const form = React.createElement(
 		'div',
 		{ className: css.setForm },
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, '名称'),
-			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setName(e.target.value); } }),
-		),
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, 'URL'),
-			React.createElement(Input, {
-				value: url,
-				placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
-				onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setUrl(e.target.value); },
-			}),
-		),
+		React.createElement(FieldBlock, { label: '名称', placeholder: 'origin', value: name, onChange: setName }),
+		React.createElement(FieldBlock, {
+			label: 'URL',
+			placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
+			value: url,
+			onChange: setUrl,
+		}),
 		React.createElement('div', { className: css.setRow },
 			React.createElement('span', { className: css.setRowText }, '协议'),
 			React.createElement(SegmentedControl, {
@@ -171,10 +167,12 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 				options: REMOTE_PROTOCOLS,
 			}),
 		),
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, '推送 URL（可选）'),
-			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setPushUrl(e.target.value); } }),
-		),
+		React.createElement(FieldBlock, {
+			label: '推送 URL（可选）',
+			placeholder: '与抓取 URL 相同时留空',
+			value: pushUrl,
+			onChange: setPushUrl,
+		}),
 		React.createElement('div', { className: css.setFormActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
 			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),

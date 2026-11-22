@@ -177,10 +177,10 @@ function autoRefStarts(context: AutoFilterContext): string[] {
 	 */
 	if (upstream !== null && upstream !== '') starts.push(upstream);
 	/*
-	 * 分叉来源与上游或当前分支是同一个引用时不重复加入。
+	 * 分叉来源与上游或当前分支是同一个引用时跳过。
 	 *
 	 * 判重必须用完整引用：短名 `origin/main` 可能同时是本地分支名与远程跟踪引用，
-	 * 按短名比较会把另一个引用的来源误判成重复而跳过。
+	 * 按短名比较会把另一个引用的来源判成重复。
 	 */
 	const baseStart = context.baseRef ?? context.base;
 	const upstreamStart = upstream !== null && upstream !== '' ? upstream : null;
@@ -376,10 +376,7 @@ export function computeSyncMarkers(
 ): { ahead: Set<string>; behind: Set<string>; baseHash: string | null; localTip: string | null; remoteTip: string | null } {
 	const none = { ahead: new Set<string>(), behind: new Set<string>(), baseHash: null, localTip: null, remoteTip: null };
 	if (head === null || upstream === null) return none;
-	const commitByHash = new Map<string, Commit>();
-	for (const commit of commits) {
-		if (commit.hash !== '*') commitByHash.set(commit.hash, commit);
-	}
+	const commitByHash = indexByHash(commits);
 	// 找本地 HEAD 和远程跟踪分支的提交哈希
 	let localHash: string | null = null;
 	let remoteHash: string | null = null;
@@ -392,20 +389,8 @@ export function computeSyncMarkers(
 	}
 	if (localHash === null || remoteHash === null) return none;
 	// 收集各自祖先
-	const ancestorsOf = (rootHash: string): Set<string> => {
-		const seen = new Set<string>();
-		const queue = [rootHash];
-		while (queue.length > 0) {
-			const hash = queue.shift() as string;
-			if (seen.has(hash)) continue;
-			seen.add(hash);
-			const commit = commitByHash.get(hash);
-			if (commit !== undefined) for (const p of commit.parents ?? []) queue.push(p);
-		}
-		return seen;
-	};
-	const localAncestors = ancestorsOf(localHash);
-	const remoteAncestors = ancestorsOf(remoteHash);
+	const localAncestors = reachableFrom([localHash], commitByHash);
+	const remoteAncestors = reachableFrom([remoteHash], commitByHash);
 	const ahead = new Set<string>();
 	const behind = new Set<string>();
 	for (const hash of localAncestors) if (!remoteAncestors.has(hash)) ahead.add(hash);

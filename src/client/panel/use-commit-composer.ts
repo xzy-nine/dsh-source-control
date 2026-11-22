@@ -125,7 +125,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	 * 本次提交与推送是否运行 git 钩子。
 	 *
 	 * 提交钩子或推送钩子存在时默认勾选，取消勾选即以 `--no-verify` 跳过。切换仓库、提交与推送
-	 * 完成后都回到默认勾选，不持久化。
+	 * 完成后回到默认勾选；不持久化。
 	 */
 	const [runHooks, setRunHooks] = React.useState(true);
 	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */

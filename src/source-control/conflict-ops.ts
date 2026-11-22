@@ -11,6 +11,7 @@ import nodePath from 'node:path';
 import { gitOrThrow } from './git-exec.js';
 import { parseIndexEntries } from './git-parse.js';
 import { conflictKindOfPair, type ConflictKind } from '../shared/conflict-kind.js';
+import { errorText } from '../shared/error-text.js';
 
 /** 索引里某个路径的三个阶段是否存在。 */
 export interface ConflictStages {
@@ -179,6 +180,22 @@ export async function worktreeText(repo: string, path: string): Promise<string |
 }
 
 /**
+ * 跑一条解决动作的 git 命令，把失败折成可读文本。
+ *
+ * @param repo - 仓库路径。
+ * @param args - 参数数组。
+ * @returns 失败原因；成功为 null。
+ */
+async function attempt(repo: string, args: readonly string[]): Promise<string | null> {
+	try {
+		await gitOrThrow(args, repo);
+		return null;
+	} catch (error) {
+		return errorText(error);
+	}
+}
+
+/**
  * 判断一个路径当前是否仍是未合并条目。
  *
  * @param repo - 仓库路径。
@@ -202,21 +219,13 @@ async function stillUnmerged(repo: string, path: string): Promise<boolean> {
  * @returns 失败原因；成功为 null。
  */
 async function checkoutStage(repo: string, path: string, stage: 2 | 3): Promise<string | null> {
-	try {
-		await gitOrThrow(['checkout-index', '-f', '-u', `--stage=${String(stage)}`, '--', path], repo);
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
-	}
+	const checkoutError = await attempt(repo, ['checkout-index', '-f', '-u', `--stage=${String(stage)}`, '--', path]);
+	if (checkoutError !== null) return checkoutError;
 	/*
 	 * `checkout-index` 只把该阶段的内容写进工作区，条目仍是未合并状态；要让冲突真正结束
 	 * 还得把它写进索引，即再 `add` 一次。
 	 */
-	try {
-		await gitOrThrow(['add', '-A', '--', path], repo);
-		return null;
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
-	}
+	return attempt(repo, ['add', '-A', '--', path]);
 }
 
 /**
@@ -227,12 +236,7 @@ async function checkoutStage(repo: string, path: string, stage: 2 | 3): Promise<
  * @returns 失败原因；成功为 null。
  */
 async function removePath(repo: string, path: string): Promise<string | null> {
-	try {
-		await gitOrThrow(['rm', '-f', '--', path], repo);
-		return null;
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
-	}
+	return attempt(repo, ['rm', '-f', '--', path]);
 }
 
 /**
@@ -246,14 +250,9 @@ async function removePath(repo: string, path: string): Promise<string | null> {
  * @returns 失败原因；成功为 null。
  */
 async function markResolved(repo: string, path: string): Promise<string | null> {
-	try {
-		await gitOrThrow(['add', '-A', '--', path], repo);
-		return null;
-	} catch (addError) {
-		const removeError = await removePath(repo, path);
-		if (removeError === null) return null;
-		return addError instanceof Error ? addError.message : String(addError);
-	}
+	const addError = await attempt(repo, ['add', '-A', '--', path]);
+	if (addError === null) return null;
+	return (await removePath(repo, path)) === null ? null : addError;
 }
 
 /**
@@ -267,12 +266,7 @@ async function markResolved(repo: string, path: string): Promise<string | null> 
  * @returns 失败原因；成功为 null。
  */
 async function restoreMarkers(repo: string, path: string): Promise<string | null> {
-	try {
-		await gitOrThrow(['checkout', '-m', '--', path], repo);
-		return null;
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
-	}
+	return attempt(repo, ['checkout', '-m', '--', path]);
 }
 
 /**

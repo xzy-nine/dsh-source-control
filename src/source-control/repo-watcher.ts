@@ -15,12 +15,13 @@
  * 事件到达后按当前形态补挂缺失的目录、摘掉已消失的目录，已有句柄保持不动：整体重建会让
  * 重建窗口内的事件丢失。
  */
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import { shouldPruneDirectory } from './repo-node.js';
+import { basename, dirname, join, resolve } from 'node:path';
+import { nodeId, shouldPruneDirectory } from './repo-node.js';
 import { listDirAt, probePathAt, readTextAt, watchDirAt, type DirChangeListener } from './host-runtime.js';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
 import { logDebug, logInfo, logWarn } from './logger.js';
+import { createListenerSet, subscribeIn } from '../shared/listener-set.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
 const COALESCE_MS = 250;
@@ -48,19 +49,8 @@ export interface WatchTarget {
 	readonly names: readonly string[];
 }
 
-/**
- * 把路径规范化为与仓库节点标识一致的比较键。
- *
- * @param path - 任意路径。
- * @returns 使用 `/` 分隔的绝对路径；Windows 上统一小写。
- */
-function pathKey(path: string): string {
-	const normalized = resolve(path).split(sep).join('/');
-	return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
 /** 结构变化订阅者。 */
-const listeners = new Set<(repo: string) => void>();
+const listeners = createListenerSet<(repo: string) => void>();
 
 /** 一个已挂的目录监视：关闭函数。 */
 type WatchCloser = () => Promise<void>;
@@ -124,8 +114,7 @@ const workspaceSignals = new Map<string, AbortController>();
  * @returns 取消订阅。
  */
 export function onRepositoryTreeChange(listener: (repo: string) => void): () => void {
-	listeners.add(listener);
-	return () => { listeners.delete(listener); };
+	return subscribeIn(listeners, listener);
 }
 
 /**
@@ -381,18 +370,40 @@ function arm(repo: string): void {
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return;
 		// 比较键按规范化的公共目录生成，真实路径另存映射：区分大小写的文件系统上，键值路径可能不存在。
-		const key = pathKey(commonDir);
+		const key = nodeId(commonDir);
 		/*
 		 * 只有磁盘上确实存在 git 目录的路径才登记为已知仓库：目录已删除的路径留在集合里，
 		 * 会让此后每一条名字缺失的事件都判定为仓库集合变化。
 		 */
-		knownRepos.add(pathKey(repo));
+		knownRepos.add(nodeId(repo));
 		if (handles.has(key)) return;
 		handles.set(key, new Map());
 		repoOfCommon.set(key, repo);
 		commonDirOf.set(key, commonDir);
 		sync(key);
 	})();
+}
+
+/**
+ * 登记一个按 key 合并的定时器：同一 key 的旧定时器先撤掉。
+ *
+ * 定时器不阻止宿主退出；到点时先从表里删除自身。
+ *
+ * @param table - key 到定时器的映射。
+ * @param key - 合并键。
+ * @param delayMs - 合并窗口毫秒数。
+ * @param run - 到点后的动作。
+ * @returns 无。
+ */
+function scheduleTimer(table: Map<string, ReturnType<typeof setTimeout>>, key: string, delayMs: number, run: () => void): void {
+	const existing = table.get(key);
+	if (existing !== undefined) clearTimeout(existing);
+	const timer = setTimeout(() => {
+		table.delete(key);
+		run();
+	}, delayMs);
+	if (typeof timer.unref === 'function') timer.unref();
+	table.set(key, timer);
 }
 
 /**
@@ -410,13 +421,7 @@ function schedule(key: string): void {
 		if (repo === undefined) return;
 		// 先补挂再通知：接收方重新枚举期间产生的事件也要能落到句柄上。
 		sync(key);
-		for (const listener of [...listeners]) {
-			try {
-				listener(repo);
-			} catch {
-				/* 单个订阅者异常不影响其它订阅者 */
-			}
-		}
+		notify(repo);
 	}, COALESCE_MS);
 	// 监视不应阻止宿主退出。
 	if (typeof timer.unref === 'function') timer.unref();
@@ -469,7 +474,7 @@ export async function isRepositorySetChange(
 	repos: Iterable<string> = knownRepos,
 	scope: string | null = null,
 ): Promise<boolean> {
-	const known = new Set([...repos].map((repo) => pathKey(repo)));
+	const known = new Set([...repos].map((repo) => nodeId(repo)));
 	if (target === null) {
 		/*
 		 * 名字缺失：事件只说明「该目录下可能已变」，出现与消失都要查。
@@ -495,10 +500,10 @@ export async function isRepositorySetChange(
 	const gitIndex = parts.indexOf('.git');
 	if (gitIndex !== -1) {
 		const owner = parts.slice(0, gitIndex).join('/');
-		return owner === '' || !known.has(pathKey(owner));
+		return owner === '' || !known.has(nodeId(owner));
 	}
 	if (kind !== 'rename') return false;
-	const id = pathKey(target);
+	const id = nodeId(target);
 	for (const repo of known) {
 		if (repo === id || repo.startsWith(`${id}/`)) return true;
 	}
@@ -517,7 +522,7 @@ export async function isRepositorySetChange(
  * @returns 仓库集合已变时为 true。
  */
 async function repositorySetChangedUnder(scope: string): Promise<boolean> {
-	const key = pathKey(scope);
+	const key = nodeId(scope);
 	const names: string[] = [];
 	if (await gitDirAt(scope) !== null) names.push('.');
 	try {
@@ -543,7 +548,7 @@ async function repositorySetChangedUnder(scope: string): Promise<boolean> {
 			if (child.type !== 'directory') continue;
 			if (shouldPruneDirectory(child.name)) continue;
 			const path = join(dir, child.name);
-			if (await gitDirAt(path) !== null) names.push(pathKey(path));
+			if (await gitDirAt(path) !== null) names.push(nodeId(path));
 			else if (depth > 1) await collect(path, depth - 1);
 		}
 	};
@@ -602,14 +607,7 @@ function scheduleWorkspace(watch: WorkspaceWatch): void {
  * @returns 无。
  */
 function scheduleChildSync(key: string): void {
-	const existing = childSyncTimers.get(key);
-	if (existing !== undefined) clearTimeout(existing);
-	const timer = setTimeout(() => {
-		childSyncTimers.delete(key);
-		void syncWorkspaceChildren(key);
-	}, WORKSPACE_COALESCE_MS);
-	if (typeof timer.unref === 'function') timer.unref();
-	childSyncTimers.set(key, timer);
+	scheduleTimer(childSyncTimers, key, WORKSPACE_COALESCE_MS, () => { void syncWorkspaceChildren(key); });
 }
 
 /**
@@ -619,7 +617,7 @@ function scheduleChildSync(key: string): void {
  * @returns 无。
  */
 function notify(repo: string): void {
-	for (const listener of [...listeners]) {
+	for (const listener of listeners.snapshot()) {
 		try {
 			listener(repo);
 		} catch {
@@ -643,7 +641,7 @@ function notify(repo: string): void {
  */
 export function watchWorkspace(root: string): void {
 	if (root === '') return;
-	const key = pathKey(root);
+	const key = nodeId(root);
 	if (workspaces.has(key)) return;
 	// 先占位：挂载是异步的，同步段里重复调用不能挂两套句柄。
 	workspaces.set(key, { root, handle: null, children: new Map(), timer: null });
@@ -695,7 +693,7 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 		if (entry.type !== 'directory') continue;
 		if (shouldPruneDirectory(entry.name)) continue;
 		const dir = join(watchState.root, entry.name);
-		wanted.set(pathKey(dir), dir);
+		wanted.set(nodeId(dir), dir);
 	}
 	for (const [childKey, close] of [...watchState.children]) {
 		if (wanted.has(childKey)) continue;
@@ -808,7 +806,7 @@ function closeWorkspace(key: string): void {
 		void close().catch(() => { /* 句柄已关闭 */ });
 	}
 	watchState.children.clear();
-	lastWorkspaceRepos.delete(pathKey(watchState.root));
+	lastWorkspaceRepos.delete(nodeId(watchState.root));
 	const childTimer = childSyncTimers.get(key);
 	if (childTimer !== undefined) clearTimeout(childTimer);
 	childSyncTimers.delete(key);

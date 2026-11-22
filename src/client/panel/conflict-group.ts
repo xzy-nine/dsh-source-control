@@ -6,10 +6,10 @@
  * 「Merge Changes」同一位置；没有冲突时不渲染。
  */
 import React from 'react';
-import { IconChevronDownOutlineRegular, IconCheckOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
-import { showContextMenu } from '../ui/context-menu.ts';
+import { IconCheckOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
-import { ChangeFileShell, ChangeFolderRow } from './changes.ts';
+import type { ChangeTreeGroupFields } from './change-tree-group.ts';
+import { ChangeFileShell, ChangeFolderRow, ChangeGroupShell, openTargetMenu } from './changes.ts';
 import { conflictActionsOf, conflictCodeOf, conflictKindOf } from './conflicts.ts';
 import { CONFLICT_KIND_TEXT } from '../../shared/conflict-kind.ts';
 import { changeMenuItems } from './change-menu.ts';
@@ -17,17 +17,12 @@ import { splitPath } from './changes.ts';
 import type { ChangeMenuDeps } from './change-menu.ts';
 import type { ChangeActions, ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
-import shared from '../css/shared.module.css';
-import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 import { cx } from '../css/cx.ts';
 
 /** 合并冲突分组的属性。 */
-export interface ConflictGroupProps extends ChangeActions {
+export interface ConflictGroupProps extends ChangeActions, ChangeTreeGroupFields {
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: boolean;
-	readonly collapsed: ReadonlySet<string>;
-	readonly toggleChange: (key: string, path: string) => void;
-	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
 	/** 各冲突路径的阶段；未查到或已解决的路径缺省。 */
@@ -85,33 +80,18 @@ function ConflictGroupView({
 	const rows = React.useMemo<ChangeRow[]>(() => changeRowsOf(conflicts, collapsed), [conflicts, collapsed]);
 	if (conflicts.length === 0) return [];
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>, entry: WorkingTreeEntry): void => {
-		event.preventDefault();
 		event.stopPropagation();
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		showContextMenu({
-			x: event.clientX, y: event.clientY,
-			items: changeMenuItems({
-				target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1, entry, untracked: false,
-			}),
-			onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		});
+		openTargetMenu(event, () => changeMenuItems({
+			target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1, entry, untracked: false,
+		}));
 	};
-	return React.createElement(
-		'div',
-		{ className: css.changeGroup },
-		React.createElement(
-			'div',
-			{ className: cx(css.change, css.groupRoot), onClick: () => { onToggleGroup(); } },
-			React.createElement('span', { className: cx(shared.repoChevron, !open && shared.isCollapsed) },
-				React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
-			React.createElement('span', { className: css.groupTitle }, '合并冲突'),
-			React.createElement('span', { className: css.count }, String(conflicts.length)),
-		),
-		open && React.createElement(
-			'div',
-			{ className: css.changes },
-			...rows.map((row) => {
+	return React.createElement(ChangeGroupShell, {
+		title: '合并冲突',
+		count: String(conflicts.length),
+		open,
+		onToggleGroup,
+	},
+		...rows.map((row) => {
 				if (row.kind === 'folder') {
 					return React.createElement(ChangeFolderRow, {
 						key: 'f:' + row.path, row, open: row.open,
@@ -133,8 +113,7 @@ function ConflictGroupView({
 					...conflictButtons(entry, stagesByPath.get(entry.path) ?? null, busy, onResolve),
 					React.createElement('span', { className: cx(css.rowTail, css.status, css.conflictStatus), 'data-type': code }, code),
 				);
-			}),
-		),
+		}),
 	);
 }
 

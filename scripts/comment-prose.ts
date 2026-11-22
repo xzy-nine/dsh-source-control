@@ -62,11 +62,10 @@ const EXEMPTION = /prose-ok\s*[:：]\s*(.*)$/
  * 每条规则对应一种泄漏或赘余类型。词形取宽：漏过一处解释性注释比误伤一处合法
  * 注释代价更大，误伤由基线或 `prose-ok` 标记逐条消化，漏过则无人发现。
  *
- * 词形必须只有解释性读法。指代输入值与普通位置的词（`原有顺序`、`之前`、`换成`）
- * 与当前行为描述同形，收进规则会让基线累积大量误伤，耗尽「只允许调低」的预算。
+ * 词形取只有解释性读法的形式。指代输入值与普通位置的词（`原有顺序`、`之前`、`换成`）
+ * 不收入规则。
  *
- * 标准 JSDoc 取值标签（见 {@link JSDOC_VALUE_TAG}）不做散文判定：那是签名文档，
- * 标签里的「本次」「本轮」指代调用点而不是编写会话。
+ * 标准 JSDoc 取值标签所在行（见 {@link JSDOC_VALUE_TAG}）不做散文判定。
  */
 export const PROSE_RULES: readonly ProseRule[] = [
 	{
@@ -115,8 +114,8 @@ export const PROSE_RULES: readonly ProseRule[] = [
  * 标准 JSDoc 取值标签所在的行：`@param`、`@returns`、`@return`、`@yields`、`@yield`、
  * `@throws`、`@exception`。
  *
- * 这些标签的参数名与说明属于公开签名文档，`本次`、`本轮` 在其中指代调用点，不是
- * 编写会话的范围限定，因此整行不做散文判定。其余标签与标签外的注释照常扫描。
+ * 这些标签的参数名与说明属于公开签名文档，`本次`、`本轮` 在其中指代调用点。其余标签
+ * 与标签外的注释照常扫描。
  */
 const JSDOC_VALUE_TAG = /^\s*\*?\s*@(?:param|arg|argument|returns?|yields?|throws?|exception)(?:\s|\{|$)/i
 
