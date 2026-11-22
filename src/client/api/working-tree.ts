@@ -2,7 +2,7 @@
  * 工作区变更、暂存提交、工作树移除、贮藏与清理操作。
  */
 import type { DiscardReport, SubmoduleDiscardReport, SubmoduleDiscardStatus, WorkingTreeEntry } from '../shared/types.ts';
-import { callApi, callApiRaw, commandError } from './http.ts';
+import { callApi, callApiRaw, commandError, stringsOf } from './http.ts';
 import { recordListOf } from '../../shared/record-list.ts';
 
 /**
@@ -50,9 +50,7 @@ const SUBMODULE_STATUSES: ReadonlySet<string> = new Set(['moved', 'unchanged', '
  * @returns 丢弃结局。
  */
 function readDiscardReport(payload: Record<string, unknown>, paths: readonly string[]): DiscardReport {
-	const discarded = Array.isArray(payload.discarded)
-		? (payload.discarded as unknown[]).filter((path): path is string => typeof path === 'string')
-		: [...paths];
+	const discarded = Array.isArray(payload.discarded) ? stringsOf(payload.discarded) : [...paths];
 	const submodules: SubmoduleDiscardReport[] = [];
 	for (const record of recordListOf(payload.submodules)) {
 		if (typeof record.path !== 'string') continue;
@@ -66,9 +64,7 @@ function readDiscardReport(payload: Record<string, unknown>, paths: readonly str
 			dirty: record.dirty === true,
 		});
 	}
-	const skippedRepositories = Array.isArray(payload.skippedRepositories)
-		? (payload.skippedRepositories as unknown[]).filter((path): path is string => typeof path === 'string')
-		: [];
+	const skippedRepositories = stringsOf(payload.skippedRepositories);
 	return { discarded, submodules, skippedRepositories };
 }
 

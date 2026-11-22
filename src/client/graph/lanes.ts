@@ -374,6 +374,32 @@ export interface NodeGeometry {
 	readonly radius: number;
 }
 
+/** 一行的高度中线。 */
+const ROW_HALF = ROW_HEIGHT / 2;
+/**
+ * 一段半径 LANE_WIDTH 的四分之一圆。
+ *
+ * @param sweep - SVG 的 sweep 标记：1 顺时针，0 逆时针。
+ * @param x - 弧终点横坐标；省略时弧终点由下一段命令给出。
+ * @param y - 弧终点纵坐标。
+ * @returns 弧命令片段。
+ */
+function quarterArc(sweep: number, x?: number, y?: number): string {
+	const end = x === undefined ? '' : ` ${x} ${y ?? 0}`;
+	return `A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep}${end}`;
+}
+/**
+ * 圆弧上某角度的点。
+ *
+ * @param centre - 圆弧圆心。
+ * @param radius - 圆弧半径。
+ * @param degrees - 角度（度，屏幕坐标）。
+ * @returns 该角度上的点。
+ */
+function pointOnArc(centre: { x: number; y: number }, radius: number, degrees: number): { x: number; y: number } {
+	const radians = (degrees * Math.PI) / 180;
+	return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
+}
 /**
  * 圆弧上到节点外沿的交点。
  *
@@ -393,14 +419,10 @@ function arcEdgePoint(
 	endAngle: number, direction: 1 | -1,
 ): { x: number; y: number } {
 	const radius = LANE_WIDTH;
-	if (nodeRadius <= 0) {
-		const radians = (endAngle * Math.PI) / 180;
-		return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
-	}
+	if (nodeRadius <= 0) return pointOnArc(centre, radius, endAngle);
 	// 弦长 nodeRadius 对应圆心角 θ：nodeRadius = 2R sin(θ/2)。
 	const step = (2 * Math.asin(Math.min(1, nodeRadius / (2 * radius))) * 180) / Math.PI;
-	const radians = ((endAngle + direction * step) * Math.PI) / 180;
-	return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
+	return pointOnArc(centre, radius, endAngle + direction * step);
 }
 
 /**
@@ -416,12 +438,12 @@ function arcEdgePoint(
  * @returns SVG 路径描述。
  */
 function mergeInPath(x1: number, x2: number, radius: number): string {
-	const half = ROW_HEIGHT / 2;
+	const half = ROW_HALF;
 	const leftwards = x2 < x1;
 	const sweep = leftwards ? 1 : 0;
 	const arcX = leftwards ? x1 - LANE_WIDTH : x1 + LANE_WIDTH;
 	// 起点越界 ROW_OVERLAP：与上一行画到行底的线叠上，消除行边界接缝。
-	const lead = `M ${x1} ${-ROW_OVERLAP} V 0 A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep}`;
+	const lead = `M ${x1} ${-ROW_OVERLAP} V 0 ${quarterArc(sweep)}`;
 	if (arcX === x2) {
 		// 节点圆心即圆弧终点：自 90° 端点沿弧回退到节点外沿。
 		const exit = arcEdgePoint({ x: arcX, y: 0 }, { x: x2, y: half }, radius, 90, leftwards ? -1 : 1);
@@ -444,18 +466,17 @@ function mergeInPath(x1: number, x2: number, radius: number): string {
  * @returns SVG 路径描述。
  */
 function forkOutPath(x1: number, x2: number, radius: number): string {
-	const half = ROW_HEIGHT / 2;
+	// 终点越界 ROW_OVERLAP：与下一行自行顶起画的线叠上，消除行边界接缝。
+	const tail = `V ${ROW_HEIGHT + ROW_OVERLAP}`;
 	const sign = x2 > x1 ? 1 : -1;
 	const sweep = sign > 0 ? 1 : 0;
 	const arcStart = x2 - LANE_WIDTH * sign;
-	// 终点越界 ROW_OVERLAP：与下一行自行顶起画的线叠上，消除行边界接缝。
-	const tail = `V ${ROW_HEIGHT + ROW_OVERLAP}`;
-	if (arcStart === x1) {
+	const start = arcStart === x1
 		// 节点圆心即圆弧起点：自 270° 端点沿弧前进到节点外沿。
-		const exit = arcEdgePoint({ x: arcStart, y: ROW_HEIGHT }, { x: x1, y: half }, radius, 270, sign > 0 ? 1 : -1);
-		return `M ${exit.x} ${exit.y} A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep} ${x2} ${ROW_HEIGHT} ${tail}`;
-	}
-	return `M ${x1 + radius * sign} ${half} H ${arcStart} A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep} ${x2} ${ROW_HEIGHT} ${tail}`;
+		? arcEdgePoint({ x: arcStart, y: ROW_HEIGHT }, { x: x1, y: ROW_HALF }, radius, 270, sign > 0 ? 1 : -1)
+		: { x: x1 + radius * sign, y: ROW_HALF };
+	const lead = arcStart === x1 ? `M ${start.x} ${start.y}` : `M ${start.x} ${start.y} H ${arcStart}`;
+	return `${lead} ${quarterArc(sweep, x2, ROW_HEIGHT)} ${tail}`;
 }
 
 /**
@@ -467,7 +488,7 @@ function forkOutPath(x1: number, x2: number, radius: number): string {
  * @returns SVG 路径描述。
  */
 function shiftPath(x1: number, x2: number): string {
-	const half = ROW_HEIGHT / 2;
+	const half = ROW_HALF;
 	const radius = S_CURVE_RADIUS;
 	const bend = half - radius;
 	if (x2 < x1) {
@@ -495,7 +516,7 @@ function shiftPath(x1: number, x2: number): string {
 export function segmentGeometry(segment: LaneSegment, node: NodeGeometry | null = null): SegmentGeometry | null {
 	const x1 = laneCentre(segment.lane);
 	const x2 = laneCentre(segment.toLane);
-	const half = ROW_HEIGHT / 2;
+	const half = ROW_HALF;
 	const y1 = segment.fromTop ? 0 : half;
 	const y2 = segment.toBottom ? ROW_HEIGHT : half;
 	if (y1 === y2) return null;

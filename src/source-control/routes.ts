@@ -98,6 +98,8 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	 * 0 与真实轮次 0 无法区分，统一当成没有编号；`refreshId` 缺省时发送的是 0。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
+	/** 记下本条命令的耗时。 */
+	const recordCost = (): void => { recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns); };
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
 	if (!repo && !REPO_FREE_COMMANDS.has(command)) {
 		sendBadRequest(res, '缺少 repo');
@@ -121,7 +123,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 			 */
 			if (shared !== null) {
 				sendJson(res, 200, shared);
-				recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+				recordCost();
 				return;
 			}
 		}
@@ -218,12 +220,12 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	const domains = [handleWorkspaceCommand, handleStateCommand, handleRepoCommand, handleGraphCommand, handleHistoryCommand, handleMiscCommand];
 	for (const handle of domains) {
 		if (await handle(ctx)) {
-			recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+			recordCost();
 			return;
 		}
 	}
 	sendBadRequest(res, '未知命令: ' + String(msg.command), 'unknown-command');
-	recordCommandCost(command, Date.now() - started, repo, refreshIdParam, scope.spawns);
+	recordCost();
 }
 
 export interface GgRouteContext {
@@ -482,11 +484,13 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 			try {
 				const stream = llm.stream(streamOpts) as AsyncIterable<{ type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; status?: number; message?: string } }; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }>;
 				for await (const chunk of stream) {
-					if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
+					const delta = chunk.type === 'text-delta' || chunk.type === 'reasoning-delta'
+						? chunk.text
+						: undefined;
+					if (typeof delta === 'string' && delta.length > 0) {
+						// 首个增量即计时起点：`usage.outputTokens` 包含推理 token，两类增量都算输出。
 						if (firstOutputTime === null) firstOutputTime = Date.now();
-						sse('chunk', chunk.text);
-					} else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) {
-						if (firstOutputTime === null) firstOutputTime = Date.now();
+						if (chunk.type === 'text-delta') sse('chunk', delta);
 					} else if (chunk.type === 'usage' && chunk.usage !== undefined) usage = chunk.usage;
 					else if (chunk.type === 'finish' && chunk.reason !== undefined) {
 						/*

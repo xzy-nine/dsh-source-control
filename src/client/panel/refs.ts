@@ -378,10 +378,11 @@ export function computeSyncMarkers(
 	if (head === null || upstream === null) return none;
 	const commitByHash = indexByHash(commits);
 	// 找本地 HEAD 和远程跟踪分支的提交哈希
+	// 未提交伪提交（哈希为 *）不参与同步标记：它既不是本地尖端也不是上游尖端。
+	const real = commits.filter((commit) => commit.hash !== '*');
 	let localHash: string | null = null;
 	let remoteHash: string | null = null;
-	for (const commit of commits) {
-		if (commit.hash === '*') continue;
+	for (const commit of real) {
 		if (localHash === null && (commit.heads ?? []).includes(head)) localHash = commit.hash;
 		for (const remote of commit.remotes ?? []) {
 			if (remote.name === upstream) remoteHash = commit.hash;
@@ -397,8 +398,7 @@ export function computeSyncMarkers(
 	for (const hash of remoteAncestors) if (!localAncestors.has(hash)) behind.add(hash);
 	// 合并基是两侧共同祖先里最新的那个：列表按新到旧排列，首个落在交集内的即为它。
 	let baseHash: string | null = null;
-	for (const commit of commits) {
-		if (commit.hash === '*') continue;
+	for (const commit of real) {
 		if (localAncestors.has(commit.hash) && remoteAncestors.has(commit.hash)) { baseHash = commit.hash; break; }
 	}
 	// 指示节点只在实际领先/落后时出现：本地领先标 HEAD，云端领先标上游尖端。

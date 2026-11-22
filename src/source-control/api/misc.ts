@@ -23,6 +23,7 @@ import { submitFeedback } from '../feedback.js';
 import { currentLogFile, log, logDebug, logError, logInfo, logRoot, recentLogFiles } from '../logger.js';
 import { sshStatus } from '../ssh-status.js';
 import type { LogLevel } from '../logger.js';
+import { errorText } from '../../shared/error-text.js';
 import type { ApiContext } from './context.js';
 
 
@@ -182,6 +183,29 @@ function requiredFilePathOf(str: (name: string) => string, sendBadRequest: (mess
  */
 function configLocationOf(str: (name: string) => string): 'local' | 'global' {
 	return str('location') as 'local' | 'global';
+}
+
+/** 一次用户身份配置写入。 */
+type UserDetailWrite = () => Promise<unknown>;
+
+/**
+ * 依次执行用户身份的配置写入。
+ *
+ * 逐条独立失败：一条写不进去不影响其余项，失败的文本按条收集回投。
+ *
+ * @param writes - 写入动作。
+ * @returns 各条失败的文本。
+ */
+async function userDetailWrites(writes: readonly UserDetailWrite[]): Promise<string[]> {
+	const errors: string[] = [];
+	for (const write of writes) {
+		try {
+			await write();
+		} catch (e) {
+			errors.push(errorText(e));
+		}
+	}
+	return errors;
 }
 
 /**
@@ -491,22 +515,21 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 		}
 		case 'deleteUserDetails': {
 			const location = configLocationOf(str);
-			const errors: string[] = [];
-			if (bool('name')) { try { await unsetConfigValue(repo, 'user.name', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('email')) { try { await unsetConfigValue(repo, 'user.email', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			respond({ command: 'deleteUserDetails', errors });
+			const writes: UserDetailWrite[] = [];
+			if (bool('name')) writes.push(() => unsetConfigValue(repo, 'user.name', location));
+			if (bool('email')) writes.push(() => unsetConfigValue(repo, 'user.email', location));
+			respond({ command: 'deleteUserDetails', errors: await userDetailWrites(writes) });
 			break;
 		}
 		case 'editUserDetails': {
 			const location = configLocationOf(str);
-			const errors: string[] = [];
-			const name = str('name');
-			const email = str('email');
-			try { await setConfigValue(repo, 'user.name', name, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			try { await setConfigValue(repo, 'user.email', email, location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); }
-			if (bool('deleteLocalName')) { try { await unsetConfigValue(repo, 'user.name', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			if (bool('deleteLocalEmail')) { try { await unsetConfigValue(repo, 'user.email', 'local'); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
-			respond({ command: 'editUserDetails', errors });
+			const writes: UserDetailWrite[] = [
+				() => setConfigValue(repo, 'user.name', str('name'), location),
+				() => setConfigValue(repo, 'user.email', str('email'), location),
+			];
+			if (bool('deleteLocalName')) writes.push(() => unsetConfigValue(repo, 'user.name', 'local'));
+			if (bool('deleteLocalEmail')) writes.push(() => unsetConfigValue(repo, 'user.email', 'local'));
+			respond({ command: 'editUserDetails', errors: await userDetailWrites(writes) });
 			break;
 		}
 		/*

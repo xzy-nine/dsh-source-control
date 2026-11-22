@@ -304,6 +304,18 @@ export function textThenRun(options: TextOptions, act: (value: string) => void):
 }
 
 /**
+ * 一项只带标题与点击动作的菜单项。
+ *
+ * 引用菜单的标题来自菜单声明，动作由发起函数（输入框、确认框之类的二次交互）给出。
+ *
+ * @param title - 菜单项文案。
+ * @param onClick - 点击处理函数。
+ * @returns 菜单项。
+ */
+export function titledItem(title: string, onClick: () => void): ContextMenuItem {
+	return { title, onClick };
+}
+/**
  * 把一个需要引用名的构建器包成菜单构建器。
  *
  * 引用菜单的目标来自被点击的引用标记；提交行右键时没有引用。

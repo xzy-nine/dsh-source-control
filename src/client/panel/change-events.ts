@@ -194,32 +194,38 @@ interface Pending {
  * @returns 报错时为 true。
  */
 function resultIsError(data: Record<string, unknown>): boolean {
-	const message = data.message;
-	if (message !== null && typeof message === 'object') {
-		const candidate = message as { isError?: unknown; content?: unknown };
-		if (candidate.isError === true) return true;
-		if (Array.isArray(candidate.content)) {
-			for (const block of candidate.content) {
-				if (block !== null && typeof block === 'object' && (block as { isError?: unknown }).isError === true) return true;
-			}
+	const message = objectField(data, 'message');
+	if (message === null) return data.isError === true;
+	if (message.isError === true) return true;
+	if (Array.isArray(message.content)) {
+		for (const block of message.content) {
+			if (block !== null && typeof block === 'object' && (block as { isError?: unknown }).isError === true) return true;
 		}
 	}
 	return data.isError === true;
 }
 
+/**
+ * 取载荷里的对象字段。
+ *
+ * @param data - 载荷。
+ * @param key - 字段名。
+ * @returns 该字段为对象时返回它，否则为 null。
+ */
+function objectField(data: Record<string, unknown>, key: string): Record<string, unknown> | null {
+	const value = data[key];
+	return value !== null && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
 /** 取工具结果消息里的调用 id。 */
 function resultCallId(data: Record<string, unknown>): string | null {
-	const message = data.message;
-	if (message !== null && typeof message === 'object') {
-		const source = (message as { source?: unknown }).source;
-		if (source !== null && typeof source === 'object') {
-			const callId = (source as { callId?: unknown }).callId;
-			if (typeof callId === 'string' && callId !== '') return callId;
-		}
-		const direct = (message as { toolCallId?: unknown }).toolCallId;
-		if (typeof direct === 'string' && direct !== '') return direct;
-	}
-	return null;
+	const message = objectField(data, 'message');
+	if (message === null) return null;
+	const source = objectField(message, 'source');
+	const callId = source === null ? undefined : source.callId;
+	if (typeof callId === 'string' && callId !== '') return callId;
+	const direct = message.toolCallId;
+	return typeof direct === 'string' && direct !== '' ? direct : null;
 }
 
 /**

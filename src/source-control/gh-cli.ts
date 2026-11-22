@@ -6,10 +6,8 @@
  */
 import { describeMaskedArgs } from './git-exec.js';
 import { runCollect } from './host-runtime.js';
+import { failureLogTail } from './log-format.js';
 import { logDebug, logWarn } from './logger.js';
-
-/** 一次失败写进日志的 stderr 字符上限。 */
-const MAX_GH_LOG_CHARS = 2000;
 
 /** 一次 `gh` 调用的结果。 */
 export interface GhResult {
@@ -64,9 +62,7 @@ export async function runGh(args: readonly string[], cwd: string): Promise<GhRes
 		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
 	});
 	if (result.code !== 0) {
-		// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
-		const detail = result.stderr.trim().slice(0, MAX_GH_LOG_CHARS);
-		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}${detail === '' ? '' : `\n${detail}`}`);
+		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}${failureLogTail(result.stderr)}`);
 	}
 	return result;
 }
@@ -170,6 +166,19 @@ function ghError(result: GhResult, action: 'generic' | 'create-repo' = 'generic'
 	return failure.message;
 }
 
+/**
+ * 运行一次 gh，失败时按动作语义抛出可读错误。
+ *
+ * @param args - 参数数组，按原样传给 gh。
+ * @param repo - 本地仓库路径。
+ * @param action - 本次动作的语义。
+ * @returns 成功时的调用结果。
+ */
+async function ghOrThrow(args: readonly string[], repo: string, action: 'generic' | 'create-repo' = 'generic'): Promise<GhResult> {
+	const result = await runGh(args, repo);
+	if (result.code !== 0) throw new Error(ghError(result, action));
+	return result;
+}
 /** 账号信息的缓存；每次 gh 调用约 1 秒，同一进程内不重复请求。 */
 let accountCache: { at: number; value: GhAccount } | null = null;
 
@@ -302,8 +311,7 @@ export async function ghCreateRepo(repo: string, options: GhCreateRepoOptions): 
 	];
 	if (options.description !== '') args.push('--description', options.description);
 	if (options.protocol === 'ssh') args.push('--protocol', 'ssh');
-	const result = await runGh(args, repo);
-	if (result.code !== 0) throw new Error(ghError(result, 'create-repo'));
+	const result = await ghOrThrow(args, repo, 'create-repo');
 	// `gh repo create` 输出的是仓库地址；取不到时按属主、仓库名与协议拼出。
 	const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
 	const acceptable = options.protocol === 'ssh' ? url.startsWith('git@') || url.startsWith('ssh://') : url.startsWith('http');
@@ -343,8 +351,7 @@ export async function ghCreatePullRequest(repo: string, options: GhCreatePullReq
 		'--body', options.body,
 	];
 	if (options.draft) args.push('--draft');
-	const result = await runGh(args, repo);
-	if (result.code !== 0) throw new Error(ghError(result));
+	const result = await ghOrThrow(args, repo);
 	return result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
 }
 

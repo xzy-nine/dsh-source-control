@@ -602,11 +602,20 @@ function start(entry: WorkspaceEntry): void {
  * @param options - 见 {@link PreloadOptions}。
  * @returns 无。
  */
+/**
+ * 取一个工作区已有的预加载状态。
+ *
+ * @param root - 工作区根路径。
+ * @returns 预加载状态；该工作区尚未登记时为 null。
+ */
+function existingEntryOf(root: string): WorkspaceEntry | null {
+	return entries.get(rootKey(root)) ?? null;
+}
 export function preloadWorkspace(root: string, options: PreloadOptions = {}): void {
 	if (root === '') return;
 	const key = rootKey(root);
-	let entry = entries.get(key);
-	if (entry === undefined) {
+	let entry = existingEntryOf(root);
+	if (entry === null) {
 		entry = createEntry(root);
 		entries.set(key, entry);
 	}
@@ -627,9 +636,8 @@ export function preloadWorkspace(root: string, options: PreloadOptions = {}): vo
  * @returns 无。
  */
 export function dropWorkspace(root: string): void {
-	const key = rootKey(root);
-	const entry = entries.get(key);
-	if (entry === undefined) return;
+	const entry = existingEntryOf(root);
+	if (entry === null) return;
 	clearPendingRefresh(entry);
 	entry.generation += 1;
 	entry.controller?.abort();
@@ -675,9 +683,8 @@ function clearPendingRefresh(entry: WorkspaceEntry): void {
  */
 export function refreshWorkspace(root: string): void {
 	if (root === '') return;
-	const key = rootKey(root);
-	const entry = entries.get(key);
-	if (entry === undefined) {
+	const entry = existingEntryOf(root);
+	if (entry === null) {
 		preloadWorkspace(root);
 		return;
 	}

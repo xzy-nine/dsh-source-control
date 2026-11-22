@@ -9,7 +9,7 @@
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { gitOrThrow, runGitAttempt } from './git-exec.js';
-import { parseIndexEntries } from './git-parse.js';
+import { parseIndexEntries, type IndexEntry } from './git-parse.js';
 import { conflictKindOfPair, type ConflictKind } from '../shared/conflict-kind.js';
 
 /** 索引里某个路径的三个阶段是否存在。 */
@@ -46,9 +46,19 @@ export const CONFLICT_ACTIONS: ReadonlySet<string> = new Set([
  * @returns 三个阶段是否存在；不是未合并条目时三者全为 false。
  */
 export async function conflictStagesOf(repo: string, path: string): Promise<ConflictStages> {
-	const stdout = await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo);
-	const stages = new Set(parseIndexEntries(stdout).map((entry) => entry.stage));
+	const stages = new Set((await unmergedEntriesOf(repo, path)).map((entry) => entry.stage));
 	return { base: stages.has(1), ours: stages.has(2), theirs: stages.has(3) };
+}
+
+/**
+ * 读一个路径在索引里的未合并条目。
+ *
+ * @param repo - 仓库路径。
+ * @param path - 文件路径，相对仓库根。
+ * @returns 未合并条目；该路径没有冲突时为空数组。
+ */
+async function unmergedEntriesOf(repo: string, path: string): Promise<IndexEntry[]> {
+	return parseIndexEntries(await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo));
 }
 
 /** 差异的一侧：取哪个引用、或直接取工作区文件。 */
@@ -188,8 +198,7 @@ export async function worktreeText(repo: string, path: string): Promise<string |
  * @returns 索引里仍有非 0 阶段时为 true。
  */
 async function stillUnmerged(repo: string, path: string): Promise<boolean> {
-	const stdout = await gitOrThrow(['ls-files', '-u', '-z', '--', path], repo);
-	return parseIndexEntries(stdout).length > 0;
+	return (await unmergedEntriesOf(repo, path)).length > 0;
 }
 
 /**

@@ -167,6 +167,34 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		onTranslateErrorRef.current(errorText(error));
 	};
 
+	/**
+	 * 跑一次翻译请求，并统一收尾。
+	 *
+	 * 失败按同一口径上报；收尾清掉在途登记，未取消时复位进行中状态。取消是调用方的意图，
+	 * 既不报错也不复位。
+	 *
+	 * @param controller - 本次请求的控制器。
+	 * @param ref - 在途控制器的登记位。
+	 * @param reset - 复位进行中状态。
+	 * @param body - 请求体。
+	 * @returns 无。
+	 */
+	const runTranslation = async (
+		controller: AbortController,
+		ref: { current: AbortController | null },
+		reset: () => void,
+		body: () => Promise<void>,
+	): Promise<void> => {
+		try {
+			await body();
+		} catch (error) {
+			reportTranslateFailure(controller, error);
+		} finally {
+			if (ref.current === controller) ref.current = null;
+			if (!controller.signal.aborted) reset();
+		}
+	};
+
 	// 换仓库后旧的统计、信息与译文都不再适用。
 	React.useEffect(() => {
 		setStatsByHash(new Map());
@@ -306,18 +334,11 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		const controller = new AbortController();
 		singleAbortRef.current = controller;
 		setTranslatingHash(hash);
-		void (async () => {
-			try {
-				const translated = await translateCommitMessage(source, bodyTranslator(workingTreePath, locale, controller));
-				if (controller.signal.aborted) return;
-				storeTranslation(hash, source, translated);
-			} catch (error) {
-				reportTranslateFailure(controller, error);
-			} finally {
-				if (singleAbortRef.current === controller) singleAbortRef.current = null;
-				if (!controller.signal.aborted) setTranslatingHash(null);
-			}
-		})();
+		void runTranslation(controller, singleAbortRef, () => { setTranslatingHash(null); }, async () => {
+			const translated = await translateCommitMessage(source, bodyTranslator(workingTreePath, locale, controller));
+			if (controller.signal.aborted) return;
+			storeTranslation(hash, source, translated);
+		});
 	}, [workingTreePath, translateReady, translatingHash, storeTranslation]);
 
 	/**
@@ -336,25 +357,18 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		graphBatchRef.current = targets.map((item) => item.hash);
 		const locale = interfaceLanguage();
 		setGraphTranslating({ done: 0, total: targets.length });
-		void (async () => {
+		void runTranslation(controller, graphAbortRef, () => { setGraphTranslating(null); }, async () => {
 			let done = 0;
-			try {
-				for (const item of targets) {
-					const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
-					// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
-					if (controller.signal.aborted) return;
-					storeTranslation(item.hash, item.text, translated);
-					done++;
-					setGraphTranslating({ done, total: targets.length });
-				}
-				setGraphTranslated(true);
-			} catch (error) {
-				reportTranslateFailure(controller, error);
-			} finally {
-				if (graphAbortRef.current === controller) graphAbortRef.current = null;
-				if (!controller.signal.aborted) setGraphTranslating(null);
+			for (const item of targets) {
+				const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
+				// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
+				if (controller.signal.aborted) return;
+				storeTranslation(item.hash, item.text, translated);
+				done++;
+				setGraphTranslating({ done, total: targets.length });
 			}
-		})();
+			setGraphTranslated(true);
+		});
 	}, [workingTreePath, translateReady, graphTranslating, storeTranslation]);
 
 	/**

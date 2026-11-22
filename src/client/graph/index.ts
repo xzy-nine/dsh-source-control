@@ -505,6 +505,11 @@ function DetailGutterView({ row }) {
 
 const DetailGutter = React.memo(DetailGutterView);
 
+/** 未给出格式化函数时的兜底：按本地时区显示。 */
+function defaultTimeFormat(seconds: number): string {
+	return new Date(seconds * 1000).toLocaleString();
+}
+
 /**
  * 提交图主体。
  *
@@ -537,8 +542,8 @@ function CommitGraphView({
 		[commits, head, upstream, baseTip, localTip, remoteTip],
 	);
 	const rows = layout.rows;
-	const dateFmt = formatDate ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
-	const detailFmt = formatDetail ?? ((seconds) => new Date(seconds * 1000).toLocaleString());
+	const dateFmt = formatDate ?? defaultTimeFormat;
+	const detailFmt = formatDetail ?? defaultTimeFormat;
 
 	/*
 	 * 提交按哈希索引与选中行下标都记忆化：两者都是 O(提交数)，而滚动会逐帧重渲染，

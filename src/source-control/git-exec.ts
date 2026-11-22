@@ -8,10 +8,8 @@ import { cancellableKeys, runCollect, terminateAllChildren, terminateCancellable
 import { countSpawnInScope } from './api/refresh-scope.js';
 import { isBrokenSubmoduleFailure, withIgnoredSubmoduleDirt } from './submodule-failure.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
+import { failureLogTail } from './log-format.js';
 import { errorText } from '../shared/error-text.js';
-
-/** 一次失败写进日志的 stderr 字符上限。 */
-const MAX_GIT_LOG_CHARS = 2000;
 
 /** 一次 git 调用的结果。 */
 export interface GitResult {
@@ -664,9 +662,7 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 		if (result.code !== 0 && readOnly && isProbeCommand(args)) {
 			logDebug('git', `只读查询无结果（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else if (result.code !== 0) {
-			// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
-			const detail = result.stderr.trim().slice(0, MAX_GIT_LOG_CHARS);
-			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${detail === '' ? '' : `\n${detail}`}`);
+			logWarn('git', `git 命令失败（退出码 ${String(result.code)}）：git ${describeGitArgs(args)}，仓库 ${repo}${failureLogTail(result.stderr)}`);
 		} else if (readOnly) {
 			logTrace('git', `执行只读 git 命令：git ${describeGitArgs(args)}，仓库 ${repo}`);
 		} else {

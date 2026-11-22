@@ -299,6 +299,38 @@ function parseParents(field: string): string[] {
 	return field === '' ? [] : field.split(' ');
 }
 
+/** 一条提交记录共同的头部字段。 */
+interface CommitIdentity {
+	/** 提交哈希。 */
+	readonly hash: string;
+	/** 父提交哈希。 */
+	readonly parents: string[];
+	/** 作者名。 */
+	readonly author: string;
+	/** 作者邮箱。 */
+	readonly email: string;
+	/** 作者时间，Unix 秒。 */
+	readonly date: number;
+}
+
+/**
+ * 解析提交记录的头部字段。
+ *
+ * 哈希、父提交、作者、邮箱与作者时间是提交日志、提交详情与贮藏列表共用的开头五项。
+ *
+ * @param fields - 一条提交记录的字段。
+ * @returns 头部字段。
+ */
+function parseCommitIdentity(fields: readonly string[]): CommitIdentity {
+	return {
+		hash: fields[0],
+		parents: parseParents(fields[1]),
+		author: fields[2],
+		email: fields[3],
+		date: Number.parseInt(fields[4], 10),
+	};
+}
+
 /**
  * 解析 `git log -z --format=<LOG_FORMAT>` 的输出。
  *
@@ -307,11 +339,7 @@ function parseParents(field: string): string[] {
  */
 export function parseLog(stdout: string): LogRecord[] {
 	return splitRecords(stdout, LOG_FIELD_COUNT).map((fields) => ({
-		hash: fields[0],
-		parents: parseParents(fields[1]),
-		author: fields[2],
-		email: fields[3],
-		date: Number.parseInt(fields[4], 10),
+		...parseCommitIdentity(fields),
 		message: fields[5],
 		decorations: parseDecorations(fields[6]),
 	}));
@@ -410,7 +438,7 @@ export function refsFromDecorations(
 export function parseStashReflog(stdout: string): StashEntry[] {
 	const stashes: StashEntry[] = [];
 	for (const fields of splitRecords(stdout, STASH_FIELD_COUNT)) {
-		const parents = fields[1] === '' ? [] : fields[1].split(' ');
+		const parents = parseParents(fields[1]);
 		if (parents.length === 0) continue;
 		stashes.push({
 			hash: fields[0],
@@ -454,15 +482,76 @@ function tagOf(refname: string, objectname: string, peeled: string): RefTag {
  * @param hideRemotes - 要隐藏的远程名。
  * @returns 三组空引用与隐藏前缀。
  */
-function emptyRefBuckets(hideRemotes: readonly string[]): {
-	heads: RefEntry[]; tags: RefTag[]; remotes: RefEntry[]; hidePrefixes: string[];
-} {
+function emptyRefBuckets(hideRemotes: readonly string[]): RefBuckets {
 	return {
 		heads: [],
 		tags: [],
 		remotes: [],
 		hidePrefixes: hideRemotes.map((remote) => `refs/remotes/${remote}/`),
 	};
+}
+
+/** 一次引用枚举要填充的引用集合，以及远程引用的隐藏前缀。 */
+interface RefBuckets {
+	/** 本地分支。 */
+	readonly heads: RefEntry[];
+	/** 标签。 */
+	readonly tags: RefTag[];
+	/** 远程分支。 */
+	readonly remotes: RefEntry[];
+	/** 被隐藏远程的引用前缀。 */
+	readonly hidePrefixes: readonly string[];
+}
+
+/** 一条引用记录归入的类别。 */
+type RefClass = 'head' | 'tag' | 'remote' | 'skipped' | 'other';
+
+/**
+ * 按引用全名判定引用类别。
+ *
+ * @param refname - 引用的全名。
+ * @returns 类别；不属于 heads、tags、remotes 三个命名空间时为 'other'。
+ */
+function refClassOf(refname: string): RefClass {
+	if (refname.startsWith('refs/heads/')) return 'head';
+	if (refname.startsWith('refs/tags/')) return 'tag';
+	if (refname.startsWith('refs/remotes/')) return 'remote';
+	return 'other';
+}
+
+/**
+ * 把一条引用记录放进对应的引用集合。
+ *
+ * 远程 HEAD 是指向分支的符号引用，不是可操作的分支：是否接受由调用方按名字后缀或
+ * `%(symref)` 判定。
+ *
+ * @param buckets - 引用集合与远程隐藏前缀。
+ * @param refname - 引用的全名。
+ * @param objectname - `%(objectname)`。
+ * @param peeled - `%(*objectname)`；空串表示轻量标签。
+ * @param acceptRemote - 该远程引用是否可操作。
+ * @returns 记录归入的类别；远程引用被跳过时为 'skipped'。
+ */
+function addRefRecord(
+	buckets: RefBuckets,
+	refname: string,
+	objectname: string,
+	peeled: string,
+	acceptRemote: boolean,
+): RefClass {
+	const kind = refClassOf(refname);
+	if (kind === 'head') {
+		buckets.heads.push({ hash: objectname, name: refname.slice('refs/heads/'.length) });
+		return kind;
+	}
+	if (kind === 'tag') {
+		buckets.tags.push(tagOf(refname, objectname, peeled));
+		return kind;
+	}
+	if (kind !== 'remote') return kind;
+	if (!acceptRemote || isHiddenRemote(refname, buckets.hidePrefixes)) return 'skipped';
+	buckets.remotes.push({ hash: objectname, name: refname.slice('refs/remotes/'.length) });
+	return kind;
 }
 
 /**
@@ -477,25 +566,14 @@ function emptyRefBuckets(hideRemotes: readonly string[]): {
  * @returns 引用集合。
  */
 export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], showRemoteHeads = false): RefData {
-	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
+	const buckets = emptyRefBuckets(hideRemotes);
 
 	for (const fields of nonEmptyFieldRows(stdout, REF_FIELD_COUNT)) {
 		const refname = fields[0];
-		const objectname = fields[1];
-		const peeled = fields[2];
-		if (refname.startsWith('refs/heads/')) {
-			heads.push({ hash: objectname, name: refname.slice('refs/heads/'.length) });
-		} else if (refname.startsWith('refs/tags/')) {
-			tags.push(tagOf(refname, objectname, peeled));
-		} else if (refname.startsWith('refs/remotes/')) {
-			const short = refname.slice('refs/remotes/'.length);
-			// 远程 HEAD 是指向分支的符号引用，不是可操作的分支。
-			if (!showRemoteHeads && short.endsWith('/HEAD')) continue;
-			if (isHiddenRemote(refname, hidePrefixes)) continue;
-			remotes.push({ hash: objectname, name: short });
-		}
+		// 远程 HEAD 是指向分支的符号引用，不是可操作的分支。
+		addRefRecord(buckets, refname, fields[1], fields[2], showRemoteHeads || !refname.endsWith('/HEAD'));
 	}
-	return { head: null, heads, tags, remotes };
+	return { head: null, heads: buckets.heads, tags: buckets.tags, remotes: buckets.remotes };
 }
 
 /**
@@ -522,43 +600,29 @@ function isHiddenRemote(refname: string, hidePrefixes: readonly string[]): boole
 }
 
 export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
-	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
+	const buckets = emptyRefBuckets(hideRemotes);
 	const branches: string[] = [];
 	let branch: string | null = null;
 
 	for (const fields of nonEmptyFieldRows(stdout, REF_BRANCH_FIELD_COUNT)) {
-		const isHead = fields[0].trim() === '*';
 		const refname = fields[1];
 		const short = fields[2];
-		const objectname = fields[3];
-		const peeled = fields[4];
-		const symref = fields[6];
-
-		if (refname.startsWith('refs/heads/')) {
+		// 远程 HEAD 的 `%(symref)` 非空，不是可操作的分支。
+		const kind = addRefRecord(buckets, refname, fields[3], fields[4], fields[6] === '');
+		if (kind === 'head') {
 			const name = refname.slice('refs/heads/'.length);
-			heads.push({ hash: objectname, name });
-			if (isHead) {
+			if (fields[0].trim() === '*') {
 				branch = name;
 				branches.unshift(name);
 			} else {
 				branches.push(name);
 			}
-			continue;
+		} else if (kind === 'remote' && showRemoteBranch(short)) {
+			branches.push(short);
 		}
-		if (refname.startsWith('refs/tags/')) {
-			tags.push(tagOf(refname, objectname, peeled));
-			continue;
-		}
-		if (!refname.startsWith('refs/remotes/')) continue;
-		/* 远程 HEAD 是指向分支的符号引用，不是可操作的分支。 */
-		if (symref !== '') continue;
-		if (isHiddenRemote(refname, hidePrefixes)) continue;
-		const name = refname.slice('refs/remotes/'.length);
-		remotes.push({ hash: objectname, name });
-		if (showRemoteBranch(short)) branches.push(short);
 	}
 
-	return { refs: { head: null, heads, tags, remotes }, branches, branch };
+	return { refs: { head: null, heads: buckets.heads, tags: buckets.tags, remotes: buckets.remotes }, branches, branch };
 }
 
 /**
@@ -620,6 +684,21 @@ export interface DiffParseOptions {
 }
 
 /**
+ * 逐条读 `-z` 差异输出：字段数组由回调按条消费。
+ *
+ * @param parts - {@link diffFieldsOf} 给出的字段数组。
+ * @param read - 读下标处的记录并返回它占用的字段数；返回 0 结束遍历。
+ * @returns 无。
+ */
+function walkDiffFields(parts: readonly string[], read: (at: number) => number): void {
+	for (let at = 0; at < parts.length;) {
+		const step = read(at);
+		if (step === 0) return;
+		at += step;
+	}
+}
+
+/**
  * 解析 `git diff --name-status -z` 的输出。
  *
  * 记录首字段是状态字符：新增/修改/删除各带一个路径，重命名/复制各带新旧两个路径。
@@ -631,25 +710,24 @@ export interface DiffParseOptions {
 export function parseNameStatus(stdout: string, options: DiffParseOptions = {}): DiffNameStatusRecord[] {
 	const parts = diffFieldsOf(stdout, options);
 	const records: DiffNameStatusRecord[] = [];
-	let i = 0;
-	while (i < parts.length) {
-		const status = parts[i];
-		if (status === '') break;
+	walkDiffFields(parts, (at) => {
+		const status = parts[at];
+		if (status === '') return 0;
 		// 复制（C）在改动列表里按重命名处理，因此这里按字符判断而不收窄成 FileStatus。
 		const code = status.slice(0, 1);
 		if (code === 'R' || code === 'C') {
-			if (i + 2 >= parts.length) break;
-			records.push({ type: 'R', oldFilePath: parts[i + 1], newFilePath: parts[i + 2] });
-			i += 3;
-		} else if (code === 'A' || code === 'M' || code === 'D') {
-			if (i + 1 >= parts.length) break;
-			records.push({ type: code, oldFilePath: parts[i + 1], newFilePath: parts[i + 1] });
-			i += 2;
-		} else {
-			// 过滤集之外的记录（类型变更等）不参与改动列表。
-			i += 1;
+			if (at + 2 >= parts.length) return 0;
+			records.push({ type: 'R', oldFilePath: parts[at + 1], newFilePath: parts[at + 2] });
+			return 3;
 		}
-	}
+		if (code === 'A' || code === 'M' || code === 'D') {
+			if (at + 1 >= parts.length) return 0;
+			records.push({ type: code, oldFilePath: parts[at + 1], newFilePath: parts[at + 1] });
+			return 2;
+		}
+		// 过滤集之外的记录（类型变更等）不参与改动列表。
+		return 1;
+	});
 	return records;
 }
 
@@ -666,21 +744,19 @@ export function parseNameStatus(stdout: string, options: DiffParseOptions = {}):
 export function parseNumStat(stdout: string, options: DiffParseOptions = {}): DiffNumStatRecord[] {
 	const parts = diffFieldsOf(stdout, options);
 	const records: DiffNumStatRecord[] = [];
-	let i = 0;
-	while (i < parts.length) {
-		const fields = parts[i].split('\t');
-		if (fields.length !== 3) break;
+	walkDiffFields(parts, (at) => {
+		const fields = parts[at].split('\t');
+		if (fields.length !== 3) return 0;
 		const additions = parseCount(fields[0]);
 		const deletions = parseCount(fields[1]);
 		if (fields[2] !== '') {
 			records.push({ filePath: fields[2], additions, deletions });
-			i += 1;
-		} else {
-			if (i + 2 >= parts.length) break;
-			records.push({ filePath: parts[i + 2], additions, deletions });
-			i += 3;
+			return 1;
 		}
-	}
+		if (at + 2 >= parts.length) return 0;
+		records.push({ filePath: parts[at + 2], additions, deletions });
+		return 3;
+	});
 	return records;
 }
 
@@ -763,12 +839,13 @@ export function parseCommitDetails(stdout: string): {
 	// 正文是最后一个字段，本身可能含 NUL 以外的任意字符与换行。
 	const body = removeTrailingBlankLines(fields.slice(DETAILS_FIELD_COUNT - 1).join(FIELD).split(/\r\n|\r|\n/)).join('\n');
 	const status = parseSignatureStatus(fields[8]);
+	const identity = parseCommitIdentity(fields);
 	return {
-		hash: fields[0],
-		parents: parseParents(fields[1]),
-		author: fields[2],
-		authorEmail: fields[3],
-		authorDate: Number.parseInt(fields[4], 10),
+		hash: identity.hash,
+		parents: identity.parents,
+		author: identity.author,
+		authorEmail: identity.email,
+		authorDate: identity.date,
 		committer: fields[5],
 		committerEmail: fields[6],
 		committerDate: Number.parseInt(fields[7], 10),

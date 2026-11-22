@@ -11,7 +11,7 @@ import { checkoutFailureText } from '../git-messages.ts';
 import { fillText } from '../menu-actions.ts';
 import { localNameForRemoteBranch, remoteNameOfBranch } from '../github.ts';
 import {
-	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, runHistory, textThenRun, withRefName, type MenuBuilders,
+	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, runHistory, textThenRun, titledItem, withRefName, type MenuBuilders,
 } from './shared.ts';
 
 /** 合并方式，按菜单里的排列顺序。 */
@@ -64,11 +64,9 @@ export const BUILDERS: MenuBuilders = {
 			],
 		};
 	},
-	createBranchFromRef: withRefName((ctx, meta, name) => ({
-		title: meta.title,
-		onClick: textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' },
-			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, `refs/heads/${name}`, true))(); }),
-	})),
+	createBranchFromRef: withRefName((ctx, meta, name) => titledItem(meta.title,
+		textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' },
+			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, `refs/heads/${name}`, true))(); }))),
 	renameBranch: (ctx, meta) => {
 		const name = refNameOf(ctx);
 		if (name === null) return null;

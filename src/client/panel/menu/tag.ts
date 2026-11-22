@@ -4,18 +4,16 @@
 import { checkoutCommit, createBranch, deleteTag } from '../../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import { checkoutFailureText } from '../git-messages.ts';
-import { dangerConfirmItem, runHistory, tagItem, tagTargets, textThenRun, type MenuBuilders } from './shared.ts';
+import { dangerConfirmItem, runHistory, tagItem, tagTargets, textThenRun, titledItem, type MenuBuilders } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
 	checkoutTag: (ctx, meta) => tagItem(tagTargets(ctx), '检出标签', () => ({
 		title: meta.title,
 		onClick: runHistory(ctx, () => checkoutCommit(ctx.repo, ctx.commit.hash), checkoutFailureText),
 	})),
-	createBranchFromTag: (ctx, meta) => tagItem(tagTargets(ctx), '从标签创建分支…', () => ({
-		title: meta.title,
-		onClick: textThenRun({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' },
-			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, ctx.commit.hash, true))(); }),
-	})),
+	createBranchFromTag: (ctx, meta) => tagItem(tagTargets(ctx), '从标签创建分支…', () => titledItem(meta.title,
+		textThenRun({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' },
+			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, ctx.commit.hash, true))(); }))),
 	copyTagName: (ctx, meta) => tagItem(tagTargets(ctx), '复制标签名', (tagName) => ({
 		title: meta.title,
 		onClick: () => { void writeClipboard(tagName); },

@@ -59,8 +59,30 @@ function sideNote(scope: GitDiffScope, side: CommentRange['side']): string {
  * @param range - 被评论的行。
  * @returns 一行定位文本。
  */
+/**
+ * 行号区间的写法：单行给一个数，多行给闭区间。
+ *
+ * @param startLine - 起始行号。
+ * @param endLine - 结束行号。
+ * @returns 行号区间文本。
+ */
+function linesOfRange(startLine: number, endLine: number): string {
+	return startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
+}
+
+/**
+ * 定位文本后接用户正文。
+ *
+ * @param header - 定位文本。
+ * @param body - 用户写的评论正文；空白时不追加。
+ * @returns 定位文本与正文。
+ */
+function withNote(header: string, body: string): string {
+	const note = body.trim();
+	return note === '' ? header : `${header}\n${note}`;
+}
 export function commentReference(path: string, scope: GitDiffScope, range: CommentRange): string {
-	const lines = range.startLine === range.endLine ? `${range.startLine}` : `${range.startLine}-${range.endLine}`;
+	const lines = linesOfRange(range.startLine, range.endLine);
 	const where = range.side === 'R' ? '' : ` 旧侧${sideNote(scope, range.side)}`;
 	return `${scopeLabel(scope)} ${path} 第 ${lines} 行${where}`;
 }
@@ -78,9 +100,7 @@ export function commentReference(path: string, scope: GitDiffScope, range: Comme
  * @returns 可插入对话输入框的文本。
  */
 export function formatCommentQuote(path: string, scope: GitDiffScope, range: CommentRange, body: string): string {
-	const header = commentReference(path, scope, range);
-	const note = body.trim();
-	return note === '' ? header : `${header}\n${note}`;
+	return withNote(commentReference(path, scope, range), body);
 }
 
 /**
@@ -97,9 +117,6 @@ export function formatCommentQuote(path: string, scope: GitDiffScope, range: Com
  * @returns 可插入对话输入框的文本。
  */
 export function formatMergeComment(path: string, side: 'ours' | 'theirs', startLine: number, endLine: number, body: string): string {
-	const lines = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
 	const label = side === 'ours' ? '当前更改' : '传入的更改';
-	const header = `合并冲突 ${path} ${label}第 ${lines} 行（行号为该侧内容自身的行号）`;
-	const note = body.trim();
-	return note === '' ? header : `${header}\n${note}`;
+	return withNote(`合并冲突 ${path} ${label}第 ${linesOfRange(startLine, endLine)} 行（行号为该侧内容自身的行号）`, body);
 }
