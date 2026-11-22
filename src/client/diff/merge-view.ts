@@ -11,6 +11,7 @@
  * 直接写评论，评论按「哪一份内容第几行」插进对话输入框。
  */
 import React from 'react';
+import { walkRanges } from '../../shared/merge-ranges.js';
 import type { MergeAnalysis, MergeChoice, MergeRange } from '../../shared/merge-ranges.js';
 import { gutterPressed, markRange, ROW_SELECTOR, rowAt, rowIndexAt, type LineRange } from './line-range.ts';
 import css from '../css/merge-view.module.css';
@@ -66,17 +67,7 @@ type ViewRow =
  */
 export function rowsOfAnalysis(analysis: MergeAnalysis): ViewRow[] {
 	const rows: ViewRow[] = [];
-	let at = 0;
-	for (const range of analysis.ranges) {
-		if (range.baseStart > at) {
-			rows.push({ kind: 'common', lines: analysis.baseLines.slice(at, range.baseStart) });
-		}
-		rows.push({ kind: 'range', range });
-		at = range.baseStart + range.baseLength;
-	}
-	if (at < analysis.baseLines.length) {
-		rows.push({ kind: 'common', lines: analysis.baseLines.slice(at) });
-	}
+	walkRanges(analysis, (lines) => { rows.push({ kind: 'common', lines }); }, (range) => { rows.push({ kind: 'range', range }); });
 	return rows;
 }
 

@@ -18,6 +18,7 @@
  * 本模块是客户端唯一的存储出口，其它模块不直接访问 sessionStorage。
  */
 import { normalizePath } from '../shared/path-key.ts';
+import { storageKeys } from '../shared/storage-keys.ts';
 import {
 	EMPTY_SNAPSHOT, readState, writeLayout, writeRefFilters, writeWorkspace, writeSettings,
 	type PanelLayoutSnapshot, type StateSnapshot,
@@ -243,25 +244,11 @@ function isDraftKey(key: string): boolean {
 /**
  * 枚举一个 store 里的全部键。
  *
- * 优先用 `key(index)` 按下标遍历；store 未提供该方法时退回 `Object.keys`。
- *
  * @param store - localStorage 或 sessionStorage。
  * @returns 键列表。
  */
 function storeKeys(store: Storage): string[] {
-	const keys: string[] = [];
-	try {
-		if (typeof store.key === 'function') {
-			for (let at = 0; at < store.length; at += 1) {
-				const key = store.key(at);
-				if (key !== null) keys.push(key);
-			}
-			return keys;
-		}
-		return Object.keys(store);
-	} catch {
-		return [];
-	}
+	return storageKeys(store);
 }
 
 /**

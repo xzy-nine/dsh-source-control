@@ -8,6 +8,7 @@ import React from 'react';
 import { DEFAULT_DIFF_VIEW, diffViewOf, withDiffView, type DiffViewChoice } from './diff-view.ts';
 import { getSettings, primeStorage, setSettings, storageReady } from '../panel/storage.ts';
 import { loadSettings } from '../panel/settings-model.ts';
+import { useMountedRead } from '../panel/use-mounted-read.ts';
 
 /** 视图选择状态：当前选择与改写一项的方法。 */
 export interface DiffViewState {
@@ -30,17 +31,12 @@ export interface DiffViewState {
  */
 export function useDiffView(cwd: string | null): DiffViewState {
 	const [choice, setChoice] = React.useState<DiffViewChoice>(() => diffViewOf(storageReady() ? loadSettings() : null));
-	React.useEffect(() => {
-		if (cwd === null) return undefined;
-		const cancelled = { current: false };
-		void (async () => {
-			await primeStorage(cwd);
-			if (cancelled.current) return;
-			// 预取完成后按真实设置回填：初值是在缓存为空时取的，不会自动重算。
-			setChoice(diffViewOf(loadSettings()));
-		})();
-		return () => { cancelled.current = true; };
-	}, [cwd]);
+	React.useEffect(() => (cwd === null ? undefined : useMountedRead(
+		() => primeStorage(cwd),
+		// 预取完成后按真实设置回填：初值是在缓存为空时取的，不会自动重算。
+		() => { setChoice(diffViewOf(loadSettings())); },
+		() => { /* 预取失败时保留初值 */ },
+	)), [cwd]);
 	const patch = React.useCallback((next: Partial<DiffViewChoice>) => {
 		setChoice((previous) => {
 			const merged = { ...previous, ...next };

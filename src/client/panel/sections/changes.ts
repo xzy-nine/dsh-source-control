@@ -263,12 +263,7 @@ const CommitBox = React.memo(CommitBoxView);
  * @returns 分区元素。
  */
 export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
-	const {
-		entries, entriesTruncated, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
-		collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-		stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
-		empty, emptyBusy, onEmptyAction,
-	} = props;
+	const { entries, busy, phase, refreshing, lastRefresh, onRefresh, empty, emptyBusy, onEmptyAction } = props;
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.workspace) },
@@ -312,12 +307,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 					 */
 					phase === 'loading' && entries.length === 0
 						&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
-					React.createElement(ChangeLists, {
-						entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-						stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
-						resolveConflict: props.resolveConflict, conflictStages: props.conflictStages, onOpenConflict: props.onOpenConflict,
-						onResolveConflict: props.onResolveConflict,
-					}),
+					React.createElement(ChangeLists, props),
 				),
 			),
 		),
