@@ -16,6 +16,17 @@ export function reportError(setState: Dispatch<SetStateAction<PanelState>>, erro
 }
 
 /**
+ * 把捕获到的失败值写进面板。
+ *
+ * @param setState - 状态更新。
+ * @param error - 捕获到的失败值。
+ * @returns 无。
+ */
+export function reportCaught(setState: Dispatch<SetStateAction<PanelState>>, error: unknown): void {
+	reportError(setState, error instanceof Error ? error.message : String(error));
+}
+
+/**
  * 把一次取数失败写进面板：相位收回到已结束，错误照常上报。
  *
  * 取数失败后停在 loading 会让更改区与图形区一直显示占位，而占位没有重试入口；两路刷新
@@ -32,5 +43,5 @@ export function reportRefreshFailure(
 	error: unknown,
 ): void {
 	setState((previous) => ({ ...settle(previous), phase: 'ready', entriesPhase: 'ready' }));
-	reportError(setState, error instanceof Error ? error.message : String(error));
+	reportCaught(setState, error);
 }

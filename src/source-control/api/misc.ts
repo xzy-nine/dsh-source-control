@@ -177,6 +177,16 @@ function requiredFilePathOf(str: (name: string) => string, sendBadRequest: (mess
 }
 
 /**
+ * 取配置写入位置参数。
+ *
+ * @param str - 上下文给出的字符串参数读取器。
+ * @returns 位置；未给出时按当前仓库处理。
+ */
+function configLocationOf(str: (name: string) => string): 'local' | 'global' {
+	return str('location') as 'local' | 'global';
+}
+
+/**
  * 处理其余命令。
  *
  * @param ctx - 命令上下文。
@@ -486,7 +496,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'deleteUserDetails': {
-			const location = str('location') as 'local' | 'global';
+			const location = configLocationOf(str);
 			const errors: string[] = [];
 			if (bool('name')) { try { await unsetConfigValue(repo, 'user.name', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
 			if (bool('email')) { try { await unsetConfigValue(repo, 'user.email', location); } catch (e) { errors.push(String(e instanceof Error ? e.message : e)); } }
@@ -494,7 +504,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'editUserDetails': {
-			const location = str('location') as 'local' | 'global';
+			const location = configLocationOf(str);
 			const errors: string[] = [];
 			const name = str('name');
 			const email = str('email');

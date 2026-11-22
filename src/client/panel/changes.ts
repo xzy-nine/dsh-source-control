@@ -13,6 +13,7 @@ import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuDeps } from './change-menu.ts';
 import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
+import type { ChangeTreeGroupFields } from './change-tree-group.ts';
 import { guidesOf } from './tree-rows.tsx';
 import { indexGroupOf, worktreeGroupOf } from './conflicts.ts';
 import type { ChangeActions, CommitFile, WorkingTreeEntry } from '../shared/types.ts';
@@ -334,17 +335,52 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 
 export const CommitDetail = React.memo(CommitDetailView);
 
+/** 分组外壳的属性：标题、计数、展开态与三个交互入口。 */
+export interface ChangeGroupShellProps {
+	/** 分组标题。 */
+	readonly title: string;
+	/** 计数文案；截断时带 `+`。 */
+	readonly count: string;
+	/** 分组是否展开。 */
+	readonly open: boolean;
+	/** 点击分组标题。 */
+	readonly onToggleGroup: () => void;
+	/** 分组标题的右键菜单。 */
+	readonly onContextMenu?: ((event: React.MouseEvent<HTMLDivElement>) => void) | undefined;
+	/** 展开后的行。 */
+	readonly children?: React.ReactNode;
+}
+
+/**
+ * 一个变更分组的外壳：标题行 + 可展开的行容器。
+ *
+ * @param props - 见 {@link ChangeGroupShellProps}。
+ * @returns 分组元素。
+ */
+export function ChangeGroupShell({ title, count, open, onToggleGroup, onContextMenu, children }: ChangeGroupShellProps): React.ReactElement {
+	return React.createElement(
+		'div',
+		{ className: css.changeGroup },
+		React.createElement(
+			'div',
+			{ className: cx(css.change, css.groupRoot), onClick: () => { onToggleGroup(); }, onContextMenu },
+			React.createElement('span', { className: cx(shared.repoChevron, !open && shared.isCollapsed) },
+				React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+			React.createElement('span', { className: css.groupTitle }, title),
+			React.createElement('span', { className: css.count }, count),
+		),
+		open && React.createElement('div', { className: css.changes }, children),
+	);
+}
+
 /** 一个变更分组：暂存的更改 / 更改。 */
-export interface ChangeGroupProps extends ChangeActions {
+export interface ChangeGroupProps extends ChangeActions, ChangeTreeGroupFields {
 	readonly staged: boolean;
 	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
 	readonly truncated: boolean;
 	readonly entries: readonly WorkingTreeEntry[];
 	readonly busy: boolean;
 	readonly workingTreePath: string;
-	readonly collapsed: ReadonlySet<string>;
-	readonly toggleChange: (key: string, path: string) => void;
-	readonly groupKey: string;
 	readonly open: boolean;
 	readonly onToggleGroup: () => void;
 	readonly forceShow?: boolean;
@@ -474,41 +510,25 @@ function ChangeGroupView({
 	const handleHeadContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>): void => {
 		event.stopPropagation();
 		openTargetMenu(event, () => changeMenuItems({
-			// 分组走集合命令：pathspec 为空数组表示全部，数量按组内条目数给出。
 			target: 'group', deps: menu, path: null, paths: [], count: allPaths.length,
 			entry: null, untracked: false,
 		}));
 	}, [menu, allPaths]);
 	if (visible.length === 0 && !forceShow) return [];
-	return React.createElement(
-		'div',
-		{ className: css.changeGroup },
-		React.createElement(
-			'div',
-			{
-				className: cx(css.change, css.groupRoot),
-				onClick: () => { onToggleGroup(); },
-				onContextMenu: handleHeadContextMenu,
-			},
-			React.createElement('span', {
-				className: cx(shared.repoChevron, !open && shared.isCollapsed),
-			}, React.createElement(IconChevronDownOutlineRegular, { size: 14 })),
-			React.createElement('span', { className: css.groupTitle }, title),
-			// 截断时计数只是下限，加号表明还有未列出的条目。
-			React.createElement('span', { className: css.count }, String(visible.length) + (truncated ? '+' : '')),
-		),
-		open && React.createElement(
-			'div',
-			{ className: css.changes },
-			...rows.map((row) => React.createElement(ChangeNodeRow, {
-				key: row.kind === 'folder' ? 'f:' + row.path : 'e:' + row.entry.path,
-				row, busy,
-				open: row.kind === 'folder' && !collapsed.has(row.path),
-				staged, groupKey, toggleChange,
-				onStage, onUnstage, onDiscard, onOpen, menu,
-			})),
-
-		),
+	return React.createElement(ChangeGroupShell, {
+		title,
+		count: String(visible.length) + (truncated ? '+' : ''),
+		open,
+		onToggleGroup,
+		onContextMenu: handleHeadContextMenu,
+	},
+		...rows.map((row) => React.createElement(ChangeNodeRow, {
+			key: row.kind === 'folder' ? 'f:' + row.path : 'e:' + row.entry.path,
+			row, busy,
+			open: row.kind === 'folder' && !collapsed.has(row.path),
+			staged, groupKey, toggleChange,
+			onStage, onUnstage, onDiscard, onOpen, menu,
+		})),
 	);
 }
 

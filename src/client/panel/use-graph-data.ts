@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
-import { reportError, reportRefreshFailure } from './errors.ts';
+import { reportCaught, reportRefreshFailure } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
@@ -25,6 +25,7 @@ import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
 import type { BusyEntry, PanelState, Settings } from '../shared/types.ts';
+import type { PanelStateAccess } from './panel-state-access.ts';
 import type { GraphData } from '../api/index.ts';
 import {
 	dropGraphWindows, dropRenderedGraph, getActiveGraphRepo, nextRefreshId, rememberPanelState, rememberRepoInfo,
@@ -64,11 +65,7 @@ export interface UseGraphDataOptions {
 }
 
 /** 提交图数据 hook 的返回值。 */
-export interface UseGraphDataResult {
-	/** 面板状态。 */
-	readonly state: PanelState;
-	/** 面板状态写入器。 */
-	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
+export interface UseGraphDataResult extends PanelStateAccess {
 	/** 重新加载选中仓库的提交图与工作区。 */
 	readonly refresh: (mode?: 'full' | 'reconcile') => Promise<void>;
 	/** 只重取工作区快照；供不改动引用与提交历史的工作区操作使用。 */
@@ -534,7 +531,7 @@ export function useGraphData({
 		} catch (error) {
 			if (generation !== generationRef.current) return;
 			setState((previous) => endBackground(previous, 'graph'));
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		}
 	}, [maxCommits, settings, branchesKey]);
 
@@ -599,7 +596,7 @@ export function useGraphData({
 				};
 			});
 		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		} finally {
 			// 只释放自己那一次占用：代次已前进时，占用可能已被新列表的请求接管。
 			if (loadMorePendingRef.current === generation) loadMorePendingRef.current = null;

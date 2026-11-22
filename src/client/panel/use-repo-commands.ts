@@ -12,7 +12,7 @@ import {
 import type { IgnoreWriteResult, LocalExcludeState } from '../api/index.ts';
 import { showForm, showSelect, showText } from '../ui/dialog.ts';
 import { cloneTerminalCommand } from '../git/clone-command.ts';
-import { reportError } from './errors.ts';
+import { reportCaught, reportError } from './errors.ts';
 import { saveSettings } from './settings.ts';
 import { hasGitHubRemote } from './github.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
@@ -145,18 +145,21 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 		if (!settingsOpen || workingTreePath === null) return;
 		void (async () => {
 			try {
-				const cfg = await loadConfig(workingTreePath, remotes.map((remote) => remote.name));
-				const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
-				setUserDetails({ userName: user?.name, userEmail: user?.email });
+				await readUserDetails(workingTreePath);
 			} catch { /* 加载失败时保留空表单 */ }
 		})();
 	}, [settingsOpen, workingTreePath, remotes]);
 
-	const reloadUserDetails = React.useCallback(async (): Promise<void> => {
-		const cfg = await loadConfig(workingTreePath as string, remotes.map((remote) => remote.name));
+	/** 读取用户身份。 */
+	const readUserDetails = React.useCallback(async (path: string): Promise<void> => {
+		const cfg = await loadConfig(path, remotes.map((remote) => remote.name));
 		const user = (cfg.config as { user?: { name?: unknown; email?: unknown } } | undefined)?.user;
 		setUserDetails({ userName: user?.name, userEmail: user?.email });
-	}, [workingTreePath, remotes]);
+	}, [remotes]);
+
+	const reloadUserDetails = React.useCallback(async (): Promise<void> => {
+		if (workingTreePath !== null) await readUserDetails(workingTreePath);
+	}, [workingTreePath, readUserDetails]);
 
 	/**
 	 * 执行一次用户身份写入并刷新表单。
@@ -366,7 +369,7 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 			a.click();
 			URL.revokeObjectURL(url);
 		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		}
 	}, [workingTreePath, setState]);
 

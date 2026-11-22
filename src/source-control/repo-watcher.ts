@@ -15,8 +15,8 @@
  * 事件到达后按当前形态补挂缺失的目录、摘掉已消失的目录，已有句柄保持不动：整体重建会让
  * 重建窗口内的事件丢失。
  */
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import { shouldPruneDirectory } from './repo-node.js';
+import { basename, dirname, join, resolve } from 'node:path';
+import { nodeId, shouldPruneDirectory } from './repo-node.js';
 import { listDirAt, probePathAt, readTextAt, watchDirAt, type DirChangeListener } from './host-runtime.js';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
@@ -47,17 +47,6 @@ export interface WatchTarget {
 	readonly directory: string;
 	/** 触发结构变化的名字；空数组表示该目录下任意变化都触发。 */
 	readonly names: readonly string[];
-}
-
-/**
- * 把路径规范化为与仓库节点标识一致的比较键。
- *
- * @param path - 任意路径。
- * @returns 使用 `/` 分隔的绝对路径；Windows 上统一小写。
- */
-function pathKey(path: string): string {
-	const normalized = resolve(path).split(sep).join('/');
-	return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /** 结构变化订阅者。 */
@@ -381,12 +370,12 @@ function arm(repo: string): void {
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return;
 		// 比较键按规范化的公共目录生成，真实路径另存映射：区分大小写的文件系统上，键值路径可能不存在。
-		const key = pathKey(commonDir);
+		const key = nodeId(commonDir);
 		/*
 		 * 只有磁盘上确实存在 git 目录的路径才登记为已知仓库：目录已删除的路径留在集合里，
 		 * 会让此后每一条名字缺失的事件都判定为仓库集合变化。
 		 */
-		knownRepos.add(pathKey(repo));
+		knownRepos.add(nodeId(repo));
 		if (handles.has(key)) return;
 		handles.set(key, new Map());
 		repoOfCommon.set(key, repo);
@@ -485,7 +474,7 @@ export async function isRepositorySetChange(
 	repos: Iterable<string> = knownRepos,
 	scope: string | null = null,
 ): Promise<boolean> {
-	const known = new Set([...repos].map((repo) => pathKey(repo)));
+	const known = new Set([...repos].map((repo) => nodeId(repo)));
 	if (target === null) {
 		/*
 		 * 名字缺失：事件只说明「该目录下可能已变」，出现与消失都要查。
@@ -511,10 +500,10 @@ export async function isRepositorySetChange(
 	const gitIndex = parts.indexOf('.git');
 	if (gitIndex !== -1) {
 		const owner = parts.slice(0, gitIndex).join('/');
-		return owner === '' || !known.has(pathKey(owner));
+		return owner === '' || !known.has(nodeId(owner));
 	}
 	if (kind !== 'rename') return false;
-	const id = pathKey(target);
+	const id = nodeId(target);
 	for (const repo of known) {
 		if (repo === id || repo.startsWith(`${id}/`)) return true;
 	}
@@ -533,7 +522,7 @@ export async function isRepositorySetChange(
  * @returns 仓库集合已变时为 true。
  */
 async function repositorySetChangedUnder(scope: string): Promise<boolean> {
-	const key = pathKey(scope);
+	const key = nodeId(scope);
 	const names: string[] = [];
 	if (await gitDirAt(scope) !== null) names.push('.');
 	try {
@@ -559,7 +548,7 @@ async function repositorySetChangedUnder(scope: string): Promise<boolean> {
 			if (child.type !== 'directory') continue;
 			if (shouldPruneDirectory(child.name)) continue;
 			const path = join(dir, child.name);
-			if (await gitDirAt(path) !== null) names.push(pathKey(path));
+			if (await gitDirAt(path) !== null) names.push(nodeId(path));
 			else if (depth > 1) await collect(path, depth - 1);
 		}
 	};
@@ -652,7 +641,7 @@ function notify(repo: string): void {
  */
 export function watchWorkspace(root: string): void {
 	if (root === '') return;
-	const key = pathKey(root);
+	const key = nodeId(root);
 	if (workspaces.has(key)) return;
 	// 先占位：挂载是异步的，同步段里重复调用不能挂两套句柄。
 	workspaces.set(key, { root, handle: null, children: new Map(), timer: null });
@@ -704,7 +693,7 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 		if (entry.type !== 'directory') continue;
 		if (shouldPruneDirectory(entry.name)) continue;
 		const dir = join(watchState.root, entry.name);
-		wanted.set(pathKey(dir), dir);
+		wanted.set(nodeId(dir), dir);
 	}
 	for (const [childKey, close] of [...watchState.children]) {
 		if (wanted.has(childKey)) continue;
@@ -817,7 +806,7 @@ function closeWorkspace(key: string): void {
 		void close().catch(() => { /* 句柄已关闭 */ });
 	}
 	watchState.children.clear();
-	lastWorkspaceRepos.delete(pathKey(watchState.root));
+	lastWorkspaceRepos.delete(nodeId(watchState.root));
 	const childTimer = childSyncTimers.get(key);
 	if (childTimer !== undefined) clearTimeout(childTimer);
 	childSyncTimers.delete(key);

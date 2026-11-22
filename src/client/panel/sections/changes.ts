@@ -17,16 +17,10 @@ import { ConflictGroup } from '../conflict-group.ts';
 import { indexGroupOf } from '../conflicts.ts';
 import { absolutePathOf } from '../change-tree.ts';
 import type { ChangeMenuDeps } from '../change-menu.ts';
-import { WorkspaceEmpty } from './empty-state.ts';
-import type { SectionEmptyFields } from './empty-state.ts';
-import { refreshButton } from './refresh-button.ts';
-import { SectionHead } from './section-head.ts';
-import css from '../../css/sections.module.css';
-import shared from '../../css/shared.module.css';
-import { cx } from '../../css/cx.ts';
+import { WorkspaceEmpty, refreshButton, SectionHead, css, shared, cx, type SectionEmptyFields } from './section-kit.ts';
 
 
-export interface ChangesSectionProps extends ChangeActions {
+export interface ChangesSectionProps extends ChangeActions, SectionEmptyFields {
 	readonly entries: readonly WorkingTreeEntry[];
 	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
 	readonly entriesTruncated: boolean;
@@ -102,11 +96,6 @@ export interface ChangesSectionProps extends ChangeActions {
 	 *
 	 * 非空时提交框与变更列表都不渲染：此时提交、暂存与丢弃都无处落地。
 	 */
-	readonly empty: SectionEmptyFields['empty'];
-	/** 空态动作进行中：只禁用该按钮。 */
-	readonly emptyBusy: boolean;
-	/** 执行空态动作。 */
-	readonly onEmptyAction: () => void;
 }
 
 /** 提交框的属性：更改分区属性中与提交信息、AI 与主按钮有关的部分。 */

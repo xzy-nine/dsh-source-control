@@ -1,6 +1,6 @@
 {
   "note": "已接受的存量解释性注释；只允许调低。新增命中应改写散文或就地加 prose-ok 标记。",
-  "count": 243,
+  "count": 241,
   "entries": [
     [
       "src/client/api/http.ts",
@@ -393,11 +393,6 @@
       "* 把宿主本次返回的仓库位置收进内存缓存。"
     ],
     [
-      "src/client/panel/repo-menu.ts",
-      "session-scope",
-      "* 本次是否运行钩子。"
-    ],
-    [
       "src/client/panel/repo-preload.ts",
       "change-narration",
       "* 「命中缓存」反而更慢。改为按 {@link FULL_SCAN_INTERVAL_MS} 节流，另外在快路径"
@@ -646,11 +641,6 @@
       "src/client/panel/use-remote-sync.ts",
       "change-narration",
       "完整引用由宿主给出（git 的 %(upstream) / branch.upstream），直接用它，不再按短名拼。"
-    ],
-    [
-      "src/client/panel/use-remote-sync.ts",
-      "session-scope",
-      "* 本次是否运行钩子。"
     ],
     [
       "src/client/panel/use-remote-sync.ts",

@@ -17,16 +17,10 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 	? '⌘'
 	: 'Ctrl';
 
-import { WorkspaceEmpty } from './empty-state.ts';
-import type { SectionEmptyFields } from './empty-state.ts';
-import { refreshButton } from './refresh-button.ts';
-import { SectionHead } from './section-head.ts';
-import css from '../../css/sections.module.css';
-import shared from '../../css/shared.module.css';
-import { cx } from '../../css/cx.ts';
+import { WorkspaceEmpty, refreshButton, SectionHead, css, shared, cx, type SectionEmptyFields } from './section-kit.ts';
 
 
-export interface GraphSectionProps extends CommitCacheMaps {
+export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields {
 	readonly open: boolean;
 	readonly height: number;
 	readonly busy: BusyFlags;
@@ -98,11 +92,6 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	 *
 	 * 与更改区取同一份判据：两处同时显示空态，不会一处空态、另一处停在取数占位。
 	 */
-	readonly empty: SectionEmptyFields['empty'];
-	/** 空态动作进行中：只禁用该按钮。 */
-	readonly emptyBusy: boolean;
-	/** 执行空态动作。 */
-	readonly onEmptyAction: () => void;
 }
 
 /**

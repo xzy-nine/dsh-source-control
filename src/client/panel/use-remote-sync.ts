@@ -17,12 +17,13 @@ import { upstreamPartsFromRef, upstreamPartsFromShortName } from '../../shared/u
 import { remoteHostOf, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
+import type { HookSelection } from './hook-selection.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
 import type { BusyFlags, RepoSync, Settings } from '../shared/types.ts';
 import type { PanelActionDeps } from './action-deps.ts';
 
 /** 远程动作的依赖面。 */
-export interface RemoteSyncDeps {
+export interface RemoteSyncDeps extends HookSelection {
 	/** 当前选中的工作树路径。 */
 	readonly workingTreePath: string | null;
 	/** 所属仓库节点名称；发布时预填仓库名。 */
@@ -36,12 +37,6 @@ export interface RemoteSyncDeps {
 	readonly settings: Settings;
 	/** 忙碌分级。 */
 	readonly busyFlags: BusyFlags;
-	/** 推送钩子是否激活。 */
-	readonly pushHookActive: boolean;
-	/** 本次是否运行钩子。 */
-	readonly runHooks: boolean;
-	/** 操作结束复位钩子勾选。 */
-	readonly setRunHooks: (next: boolean) => void;
 	/** 面板动作依赖：run、withProgress 与 announce。 */
 	readonly actions: PanelActionDeps;
 }

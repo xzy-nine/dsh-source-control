@@ -9,26 +9,21 @@ import type { ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox } from '../ui/dialog.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
-import { reportError } from './errors.ts';
+import { reportCaught } from './errors.ts';
 import { openTargetMenu } from './changes.ts';
 import { dropGraphWindows } from './graph-window-cache.ts';
+import type { HookSelection } from './hook-selection.ts';
 import type { Commit, RepoNode, PanelRun, Settings } from '../shared/types.ts';
 import type { PanelState } from '../shared/types.ts';
 
 /** 仓库行菜单的依赖面。 */
-export interface RepoMenuDeps {
+export interface RepoMenuDeps extends HookSelection {
 	/** 当前选中的工作树路径。 */
 	readonly workingTreePath: string | null;
 	/** 面板状态：忙记录与提交列表。 */
 	readonly state: PanelState;
 	/** 当前设置。 */
 	readonly settings: Settings;
-	/** 推送钩子是否激活。 */
-	readonly pushHookActive: boolean;
-	/** 本次是否运行钩子。 */
-	readonly runHooks: boolean;
-	/** 操作结束复位钩子勾选。 */
-	readonly setRunHooks: (next: boolean) => void;
 	/** 面板状态写入器。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 选中一个仓库并重置面板状态。 */
@@ -114,7 +109,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 					try {
 						await initSubmodule(node.path, node.path);
 					} catch (error) {
-						reportError(setState, error instanceof Error ? error.message : String(error));
+						reportCaught(setState, error);
 						return;
 					} finally {
 						setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, node.path, 'network') }));
@@ -143,7 +138,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 					try {
 						await removeWorktree(node.path, node.path, true);
 					} catch (error) {
-						reportError(setState, error instanceof Error ? error.message : String(error));
+						reportCaught(setState, error);
 						return;
 					}
 					dropGraphWindows(node.path);
