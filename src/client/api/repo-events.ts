@@ -103,9 +103,19 @@ export function parseRepositoryEventFrame(frame: string): { readonly kind: 'writ
  * @param frame - 一个完整的帧（已按空行切分）。
  * @returns 写事件；不是可用的写事件时为 null。
  */
-export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+/**
+ * 取一条仓库事件帧的仓库路径。
+ *
+ * @param frame - 一个完整的帧（已按空行切分）。
+ * @param kind - 要识别的事件种类。
+ * @returns 匹配的帧；种类不符时为 null。
+ */
+function repoFrameOf(frame: string, kind: 'write' | 'tree'): { repo: string } | null {
 	const parsed = parseRepositoryEventFrame(frame);
-	return parsed !== null && parsed.kind === 'write' ? { repo: parsed.repo } : null;
+	return parsed !== null && parsed.kind === kind ? { repo: parsed.repo } : null;
+}
+export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+	return repoFrameOf(frame, 'write');
 }
 
 /**
@@ -117,8 +127,7 @@ export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent |
  * @returns 结构事件；不是可用的结构事件时为 null。
  */
 export function parseRepositoryTreeFrame(frame: string): RepositoryTreeEvent | null {
-	const parsed = parseRepositoryEventFrame(frame);
-	return parsed !== null && parsed.kind === 'tree' ? { repo: parsed.repo } : null;
+	return repoFrameOf(frame, 'tree');
 }
 
 /**

@@ -137,13 +137,9 @@ const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMen
 			onClick: () => { if (ctx.target === 'group') ctx.deps.onUnstageAll(); else ctx.deps.onUnstage(ctx.paths); },
 		}
 		: null),
-	// 忽略规则只对未暂存的路径提出：已暂存的内容已经在版本控制里。
-	addToGitignore: (ctx, meta) => (ctx.deps.staged || ctx.path === null
-		? null
-		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => { ctx.deps.onAddToGitignore(ctx.path as string); } }),
-	addToLocalExclude: (ctx, meta) => (ctx.deps.staged || ctx.path === null
-		? null
-		: { title: meta.title, disabled: ctx.deps.busy, onClick: () => { ctx.deps.onAddToLocalExclude(ctx.path as string); } }),
+	// 忽略规则只对未暂存的路径提出。
+	addToGitignore: (ctx, meta) => pathIgnoreItem(ctx, meta, (path) => { ctx.deps.onAddToGitignore(path); }),
+	addToLocalExclude: (ctx, meta) => pathIgnoreItem(ctx, meta, (path) => { ctx.deps.onAddToLocalExclude(path); }),
 	copyPath: (ctx, meta) => (ctx.path === null
 		? null
 		: { title: meta.title, onClick: () => { ctx.deps.onCopyPath(ctx.path as string); } }),
@@ -157,6 +153,25 @@ const BUILDERS: Readonly<Record<string, (ctx: ChangeMenuContext, meta: ChangeMen
 	restoreConflictMarkers: (ctx, meta) => conflictItem(ctx, 'restoreMarkers', meta.title),
 };
 
+/**
+ * 针对单个路径的忽略规则菜单项。
+ *
+ * 已暂存的内容已经在版本控制里，路径缺失时也无处落地，两种情形都不出该项。
+ *
+ * @param ctx - 菜单上下文。
+ * @param meta - 菜单动作声明。
+ * @param act - 收到路径后的动作。
+ * @returns 菜单项；不可用时为 null。
+ */
+function pathIgnoreItem(
+	ctx: ChangeMenuContext,
+	meta: ChangeMenuActionMeta,
+	act: (path: string) => void,
+): ContextMenuItem | null {
+	const { staged, busy } = ctx.deps;
+	const path = ctx.path;
+	return staged || path === null ? null : { title: meta.title, disabled: busy, onClick: () => { act(path); } };
+}
 /** 注册表：元数据取自 JSON，处理函数按 id 绑定。 */
 const ACTIONS = CHANGE_MENU_ACTIONS.map((meta) => ({ ...meta, build: (ctx: ChangeMenuContext) => BUILDERS[meta.id](ctx, meta) }));
 

@@ -4,7 +4,7 @@
 import { checkoutBranch, fetchIntoLocalBranch, merge } from '../../api/index.ts';
 import { checkoutFailureText } from '../git-messages.ts';
 import {
-	branchFromRemoteItem, confirmThenRun, copyRefNameItem, dangerConfirmItem, deleteRemoteBranchClick, remoteRefOf, runHistory, shortBranchName, withRefName, type MenuBuilders,
+	branchFromRemoteItem, confirmThenRun, copyRefNameItem, dangerConfirmItem, deleteRemoteBranchClick, remoteRefOf, runHistory, shortBranchName, titledItem, withRefName, type MenuBuilders,
 } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
@@ -14,13 +14,11 @@ export const BUILDERS: MenuBuilders = {
 	fetchIntoLocalBranch: (ctx, meta) => branchFromRemoteItem(ctx, meta, '创建本地分支', (ref, localName) => {
 		runHistory(ctx, () => fetchIntoLocalBranch(ctx.repo, ref.remote ?? '', shortBranchName(ref.name), localName, false))();
 	}),
-	mergeRemoteIntoCurrent: withRefName((ctx, meta, name) => ({
-		title: meta.title,
-		onClick: confirmThenRun(
+	mergeRemoteIntoCurrent: withRefName((ctx, meta, name) => titledItem(meta.title,
+		confirmThenRun(
 			{ title: '合并', message: `把 ${name} 合并进当前分支？`, confirmLabel: '合并', danger: true },
 			runHistory(ctx, () => merge(ctx.repo, remoteRefOf(name)), checkoutFailureText),
-		),
-	})),
+		))),
 	deleteRemoteBranch: (ctx, meta) => {
 		const ref = ctx.ref;
 		if (ref === null) return null;

@@ -73,6 +73,15 @@ export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
 }
 
 /**
+ * 条目是否为未跟踪：索引与工作区两列都是 `?`。
+ *
+ * @param entry - 工作区条目。
+ * @returns 未跟踪时为 true。
+ */
+export function isUntrackedEntry(entry: WorkingTreeEntry): boolean {
+	return entry.index === '?' && entry.worktree === '?';
+}
+/**
  * 暂存路径：把工作区的内容与状态并入索引。
  *
  * - 未跟踪（`??`）变成新增（`A `）。

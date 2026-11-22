@@ -19,6 +19,18 @@ export interface DiscoveryResult {
 	readonly truncated: boolean;
 }
 
+/**
+ * 取发现选项里的两个上限，缺省时用默认值。
+ *
+ * @param options - 发现选项。
+ * @returns 最大递归层数与最多访问目录数。
+ */
+export function discoveryLimitsOf(options: DiscoveryOptions): { maxDepth: number; maxDirectories: number } {
+	return {
+		maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
+		maxDirectories: options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES,
+	};
+}
 /** 发现选项。 */
 export interface DiscoveryOptions {
 	/** 仓库发现的最大递归层数；工作区根为第 0 层。 */
@@ -84,12 +96,24 @@ export function dedupeCandidates(
 	const candidates: string[] = [];
 	for (const candidate of paths) {
 		const dir = resolve(candidate);
-		const id = nodeId(dir);
-		if (visited.has(id) || submoduleIds.has(id)) continue;
-		visited.add(id);
+		if (!claimId(visited, submoduleIds, nodeId(dir))) continue;
 		candidates.push(dir);
 	}
 	return candidates;
+}
+
+/**
+ * 占用一个目录标识；已访问或已是子模块的标识不重复占用。
+ *
+ * @param visited - 已访问目录标识，就地更新。
+ * @param submoduleIds - 子模块路径标识。
+ * @param id - 待占用的标识。
+ * @returns 首次占用时为 true；已被占用时为 false。
+ */
+export function claimId(visited: Set<string>, submoduleIds: ReadonlySet<string>, id: string): boolean {
+	if (visited.has(id) || submoduleIds.has(id)) return false;
+	visited.add(id);
+	return true;
 }
 
 /**

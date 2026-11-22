@@ -9,7 +9,7 @@ import { logDebug } from './logger.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { foreignWorktreeBranches, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 import {
-	DEFAULT_MAX_DEPTH, DEFAULT_MAX_DIRECTORIES, dedupeCandidates, gitEntryOf, hasGitEntry, nodeId, subdirectories,
+	claimId, dedupeCandidates, discoveryLimitsOf, gitEntryOf, hasGitEntry, nodeId, subdirectories,
 } from './repo-node.js';
 import type { DiscoveryOptions, DiscoveryResult, RepoNode } from './repo-node.js';
 import { linkedWorktreePresence, repoNodeOf } from './repo-enrich.js';
@@ -131,8 +131,7 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 	if (options.knownRepos !== undefined && options.knownRepos.length > 0) {
 		return discoverKnownRepositories(root, options.knownRepos, options.shallow === true);
 	}
-	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
-	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
+	const { maxDepth, maxDirectories } = discoveryLimitsOf(options);
 	const { nodes, submoduleIds, visited } = newDiscoveryTally();
 	let visitedCount = 0;
 	let truncated = false;
@@ -146,10 +145,7 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 				break;
 			}
 			visitedCount++;
-			const id = nodeId(current.dir);
-			if (visited.has(id) || submoduleIds.has(id)) continue;
-			visited.add(id);
-			pending.push(current);
+			if (claimId(visited, submoduleIds, nodeId(current.dir))) pending.push(current);
 		}
 		const entries = await Promise.all(pending.map((current) => gitEntryOf(current.dir)));
 		const repoIndexes: number[] = [];
@@ -174,17 +170,6 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 }
 
 /**
- * 按已知路径取仓库节点，不扫描目录。
- *
- * 每个路径核一次 `.git` 是否存在：仍是仓库就构造节点（含工作树与子模块），否则跳过。
- * 已不是仓库的路径被忽略；整个列表都失效时退回完整扫描，避免仓库树空掉。
- *
- * @param root - 工作区根目录。
- * @param known - 已知的顶层仓库路径。
- * @param shallow - 只产出顶层节点时为 true。
- * @returns 仓库扁平列表与是否被截断（快路径不截断）。
- */
-/**
  * 一次仓库发现的三份累加状态。
  *
  * 两条发现路径（逐层扫描与按已知路径核对）都要维护同一组：已产出的节点、子模块路径集合
@@ -196,6 +181,17 @@ function newDiscoveryTally(): { nodes: RepoNode[]; submoduleIds: Set<string>; vi
 	return { nodes: [], submoduleIds: new Set<string>(), visited: new Set<string>() };
 }
 
+/**
+ * 按已知路径取仓库节点，不扫描目录。
+ *
+ * 每个路径核一次 `.git` 是否存在：仍是仓库就构造节点（含工作树与子模块），否则跳过。
+ * 已不是仓库的路径被忽略；整个列表都失效时退回完整扫描，避免仓库树空掉。
+ *
+ * @param root - 工作区根目录。
+ * @param known - 已知的顶层仓库路径。
+ * @param shallow - 只产出顶层节点时为 true。
+ * @returns 仓库扁平列表与是否被截断（快路径不截断）。
+ */
 async function discoverKnownRepositories(
 	root: string,
 	known: readonly string[],
@@ -210,9 +206,7 @@ async function discoverKnownRepositories(
 	const built = await Promise.all(repoDirs.map((dir) => repoNodeOf(dir, 0, submoduleIds, shallow)));
 	for (const node of built) nodes.push(node);
 	if (nodes.length === 0) {
-		return discoverRepositories(root, {
-			maxDepth: DEFAULT_MAX_DEPTH, maxDirectories: DEFAULT_MAX_DIRECTORIES, shallow,
-		});
+		return discoverRepositories(root, { ...discoveryLimitsOf({}), shallow });
 	}
 	await finishDiscovery(root, nodes, visited, submoduleIds);
 	return { nodes, truncated: false };

@@ -48,6 +48,17 @@ function truncatedOf(details: unknown): boolean {
 }
 
 /**
+ * 取一次 commitDetails 的载荷。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+ * @param signal - 取消信号。
+ * @returns 载荷。
+ */
+async function commitDetailsPayload(cwd: string, hash: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+	return await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+}
+/**
  * 读取某个提交的改动文件。
  *
  * @param cwd - 会话工作区路径。
@@ -56,7 +67,7 @@ function truncatedOf(details: unknown): boolean {
  * @returns 改动文件列表与截断标记。
  */
 export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFilesPayload> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+	const payload = await commitDetailsPayload(cwd, hash, signal);
 	return { files: fileEntriesOf(payload.commitDetails), truncated: truncatedOf(payload.commitDetails) };
 }
 
@@ -84,7 +95,7 @@ export interface CommitStatsAndMessage {
  * @returns 改动文件与完整提交信息。
  */
 export async function loadCommitStatsAndMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitStatsAndMessage> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+	const payload = await commitDetailsPayload(cwd, hash, signal);
 	const body = (payload.commitDetails as { body?: unknown } | null | undefined)?.body;
 	return {
 		files: fileEntriesOf(payload.commitDetails),

@@ -41,6 +41,22 @@ export function formatLogTimestamp(time: Date): string {
 /** 进程号与线程号的列宽。 */
 const THREAD_COLUMN = 5;
 
+/** 一次子进程失败写进日志的 stderr 字符上限。 */
+export const MAX_FAILURE_LOG_CHARS = 2000;
+
+/**
+ * 失败明细接在日志正文之后的片段。
+ *
+ * stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
+ *
+ * @param stderr - 子进程的标准错误。
+ * @returns 以换行开头的明细；stderr 为空时为空串。
+ */
+export function failureLogTail(stderr: string): string {
+	const detail = stderr.trim().slice(0, MAX_FAILURE_LOG_CHARS);
+	return detail === '' ? '' : `\n${detail}`;
+}
+
 /**
  * 拼一条 logcat 记录（不含换行符）。
  *

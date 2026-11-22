@@ -36,6 +36,16 @@ export function stringsOf(value: unknown): string[] {
 }
 
 /**
+ * 取命令返回的逐块差异数组。
+ *
+ * @param payload - 宿主响应。
+ * @returns 逐块差异；字段缺失或类型不符时为空数组。
+ */
+export function hunksOf(payload: Record<string, unknown>): unknown[] {
+	return Array.isArray(payload.hunks) ? payload.hunks : [];
+}
+
+/**
  * 向一个宿主路由发一次 JSON POST。
  *
  * @param path - 路由。

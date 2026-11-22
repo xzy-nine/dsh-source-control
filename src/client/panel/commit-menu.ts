@@ -236,29 +236,52 @@ function showMenuAt(
 	});
 }
 
+/**
+ * 在事件目标处弹出菜单，并在包含关系到达后整份替换。
+ *
+ * git 查询要跑几个子进程，等它会让右键明显迟滞；先弹已算好的部分，补齐结果替换菜单项，
+ * 刷新时保留已打开的位置与焦点。
+ *
+ * @param event - 触发事件；位置与目标只在派发期间有效，因此同步取出。
+ * @param initial - 已算好的菜单项。
+ * @param withContaining - 包含关系到达后的菜单项；返回 null 时保留当前菜单。
+ * @param commit - 被右键的提交。
+ * @param deps - 菜单依赖面。
+ * @returns 无。
+ */
+function showMenuWithContaining(
+	event: React.MouseEvent<HTMLElement>,
+	initial: readonly ContextMenuItem[],
+	withContaining: (containing: Containing) => ContextMenuItem[],
+	commit: Commit,
+	deps: GraphMenuDeps,
+): void {
+	const target = event.currentTarget;
+	const { clientX, clientY } = event;
+	target.classList.add(MENU_TARGET_CLASS);
+	showMenuAt({ clientX, clientY }, target, () => [...initial],
+		containingOf(deps, commit).then((containing) => withContaining(containing)));
+}
+/** 两个菜单入口共用的入参：被点击的提交、触发事件与当前可达提交集合。 */
+interface MenuOpenTarget {
+	readonly commit: Commit;
+	readonly event: React.MouseEvent<HTMLElement>;
+	readonly currentHashes: ReadonlySet<string>;
+}
 /** 菜单分隔线；同一份字面量在多处分组之间使用。 */
 const DIVIDER: ContextMenuItem = { type: 'divider' };
 
 export function openCommitMenu(
 	deps: GraphMenuDeps,
-	{ commit, event, currentHashes }: { commit: Commit; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
+	{ commit, event, currentHashes }: MenuOpenTarget,
 ): void {
-	// 同步取事件字段：currentTarget 与坐标只在派发期间有效。
-	const target = event.currentTarget;
-	const { clientX, clientY } = event;
 	const ctx = makeContext(deps, commit, null, currentHashes);
-	target.classList.add(MENU_TARGET_CLASS);
-	/*
-	 * 先弹已算好的部分，包含关系随后补齐：git 查询要跑几个子进程，等它会让右键明显迟滞。
-	 * 补齐结果整份替换菜单项，刷新时保留已打开的位置与焦点。
-	 */
-	showMenuAt(
-		{ clientX, clientY },
-		target,
-		() => buildCommitItems(ctx),
-		containingOf(deps, commit).then(
-			(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
-		),
+	showMenuWithContaining(
+		event,
+		buildCommitItems(ctx),
+		(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
+		commit,
+		deps,
 	);
 }
 
@@ -274,25 +297,17 @@ export function openCommitMenu(
  */
 export function openRefMenu(
 	deps: GraphMenuDeps,
-	{ commit, refInfo, event, currentHashes }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
+	{ commit, refInfo, event, currentHashes }: MenuOpenTarget & { readonly refInfo: RefMenuTarget },
 ): void {
-	const target = event.currentTarget;
-	const { clientX, clientY } = event;
 	const itemsOf = (containing?: Containing): ContextMenuItem[] => {
 		const ctx = makeContext(deps, commit, refInfo, currentHashes, containing);
 		return collectActions(ctx, (action) => action.refTypes.includes(refInfo.type));
 	};
 	const items = itemsOf();
 	if (items.length === 0) return;
-	target.classList.add(MENU_TARGET_CLASS);
 	// 与提交菜单同一策略：先弹已算好的部分，包含关系到达后整份替换。
-	showMenuAt(
-		{ clientX, clientY },
-		target,
-		() => items,
-		containingOf(deps, commit).then((containing) => {
-			const next = itemsOf(containing);
-			return next.length === 0 ? null : next;
-		}),
-	);
+	showMenuWithContaining(event, items, (containing) => {
+		const next = itemsOf(containing);
+		return next.length === 0 ? [] : next;
+	}, commit, deps);
 }

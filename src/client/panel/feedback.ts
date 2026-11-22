@@ -20,6 +20,7 @@ import type { ExternalOpenHandlers } from './settings.ts';
 import { cutoffDayKey } from '../../shared/day-key.ts';
 import { toggleIn } from '../shared/set-ops.ts';
 import { FileRow, FolderRow } from './tree-rows.tsx';
+import { useMountedRead } from './use-mounted-read.ts';
 import css from '../css/settings.module.css';
 import changesCss from '../css/changes.module.css';
 
@@ -80,6 +81,48 @@ const FAILURE_HINT: Readonly<Record<string, string>> = {
  * @param props - 见 {@link FeedbackTabProps}。
  * @returns 页签元素。
  */
+/**
+ * 带标题的一格反馈表单。
+ *
+ * @param label - 字段标题。
+ * @param control - 输入控件。
+ * @returns 字段元素。
+ */
+function feedbackField(label: string, control: React.ReactElement): React.ReactElement {
+	return React.createElement('label', { className: css.fbField }, fbLabelNode(label), control);
+}
+
+/**
+ * 带标题的多节点反馈区块。控件本身可以点（如按钮、目录树）时用它而不是 {@link feedbackField}：
+ * 外层是 `div`，不会把点击吞成标签的关联点击。
+ *
+ * @param label - 区块标题；空串时不渲染标题，控件自带文案时用它。
+ * @param children - 区块内容。
+ * @returns 区块元素。
+ */
+function feedbackBlock(label: string, ...children: React.ReactNode[]): React.ReactElement {
+	return React.createElement('div', { className: css.fbField }, label === '' ? null : fbLabelNode(label), ...children);
+}
+
+/**
+ * 字段标题节点。
+ *
+ * @param label - 字段标题。
+ * @returns 标题元素。
+ */
+function fbLabelNode(label: string): React.ReactElement {
+	return React.createElement('span', { className: css.fbLabel }, label);
+}
+
+/**
+ * 一段反馈表单的说明文字。
+ *
+ * @param text - 说明正文。
+ * @returns 说明元素。
+ */
+function feedbackNote(text: string): React.ReactElement {
+	return React.createElement('div', { className: css.fbNote }, text);
+}
 export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal, onOpenFile, onRevealPath }: FeedbackTabProps): React.ReactElement {
 	const [type, setType] = React.useState<FeedbackType>('bug');
 	const [title, setTitle] = React.useState('');
@@ -96,13 +139,7 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 	const [openLogs, setOpenLogs] = React.useState<ReadonlySet<string>>(() => new Set());
 
 	// 日志位置与所选仓库无关：不依赖 cwd，挂载即取一次。
-	React.useEffect(() => {
-		let cancelled = false;
-		loadFeedbackInfo(cwd)
-			.then((data) => { if (!cancelled) setInfo(data); })
-			.catch(() => { if (!cancelled) setInfo(null); });
-		return () => { cancelled = true; };
-	}, []);
+	React.useEffect(() => useMountedRead(() => loadFeedbackInfo(cwd), setInfo, () => { setInfo(null); }), []);
 
 	// 按所选天数筛出的日志文件；天数是最近 N 天（含今天）。
 	const shownFiles = React.useMemo(() => {
@@ -212,56 +249,35 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 				options: TYPE_OPTIONS,
 			}),
 		),
-		React.createElement('label', { className: css.fbField },
-			React.createElement('span', { className: css.fbLabel }, '标题'),
-			React.createElement(Input, {
-				value: title, placeholder: '一句话说明问题或建议',
-				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setTitle(event.target.value); },
-			}),
+		feedbackField('标题', React.createElement(Input, {
+			value: title, placeholder: '一句话说明问题或建议',
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setTitle(event.target.value); },
+		})),
+		feedbackField('描述', React.createElement('textarea', {
+			className: css.fbTextarea, value: description, rows: 5,
+			placeholder: '期望的行为、实际的行为、复现步骤',
+			onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setDescription(event.currentTarget.value); },
+		})),
+		feedbackBlock('', React.createElement(Checkbox, {
+			checked: attachLogs, label: '附带日志文件',
+			onChange: setAttachLogs,
+		}), feedbackNote('日志以 logcat threadtime 格式记录，每次启动一个文件，单份写满 60000 字符时另起一份。提交的是脱敏后的文本副本，磁盘上的原始日志不变。')),
+		attachLogs && feedbackBlock('日志范围', React.createElement(SegmentedControl, {
+			id: 'ggg-fb-log-days', label: '日志范围', value: String(logDays),
+			onChange: (next: string) => { setLogDays(Number(next)); },
+			options: LOG_DAY_OPTIONS,
+		}), feedbackNote(`将提交最近 ${String(logDays)} 天内的 ${String(shownFiles.length)} 份日志。`)),
+		attachLogs && feedbackBlock('', React.createElement(Checkbox, {
+			checked: disableRedaction, label: '停用脱敏（提交原始内容）',
+			onChange: setDisableRedaction,
+		}), feedbackNote('默认屏蔽 URL 中的账号口令、令牌串与系统用户名，替换为 <url-credential>、<token>、<user>。本地路径不处理。'),
+			!disableRedaction && feedbackField('豁免字符串（每行一条，原样保留）', React.createElement('textarea', {
+				className: css.fbTextarea, value: exemptions, rows: 2,
+				placeholder: '确需保留的关键信息，逐行填写',
+				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setExemptions(event.currentTarget.value); },
+			})),
 		),
-		React.createElement('label', { className: css.fbField },
-			React.createElement('span', { className: css.fbLabel }, '描述'),
-			React.createElement('textarea', {
-				className: css.fbTextarea, value: description, rows: 5,
-				placeholder: '期望的行为、实际的行为、复现步骤',
-				onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setDescription(event.currentTarget.value); },
-			}),
-		),
-		React.createElement('div', { className: css.fbField },
-			React.createElement(Checkbox, {
-				checked: attachLogs, label: '附带日志文件',
-				onChange: setAttachLogs,
-			}),
-			React.createElement('div', { className: css.fbNote },
-				'日志以 logcat threadtime 格式记录，每次启动一个文件，单份写满 60000 字符时另起一份。提交的是脱敏后的文本副本，磁盘上的原始日志不变。'),
-		),
-		attachLogs && React.createElement('div', { className: css.fbField },
-			React.createElement(SegmentedControl, {
-				id: 'ggg-fb-log-days', label: '日志范围', value: String(logDays),
-				onChange: (next: string) => { setLogDays(Number(next)); },
-				options: LOG_DAY_OPTIONS,
-			}),
-			React.createElement('div', { className: css.fbNote },
-				`将提交最近 ${String(logDays)} 天内的 ${String(shownFiles.length)} 份日志。`),
-		),
-		attachLogs && React.createElement('div', { className: css.fbField },
-			React.createElement(Checkbox, {
-				checked: disableRedaction, label: '停用脱敏（提交原始内容）',
-				onChange: setDisableRedaction,
-			}),
-			React.createElement('div', { className: css.fbNote },
-				'默认屏蔽 URL 中的账号口令、令牌串与系统用户名，替换为 <url-credential>、<token>、<user>。本地路径不处理。'),
-			!disableRedaction && React.createElement('label', { className: css.fbField },
-				React.createElement('span', { className: css.fbLabel }, '豁免字符串（每行一条，原样保留）'),
-				React.createElement('textarea', {
-					className: css.fbTextarea, value: exemptions, rows: 2,
-					placeholder: '确需保留的关键信息，逐行填写',
-					onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => { setExemptions(event.currentTarget.value); },
-				}),
-			),
-		),
-		React.createElement('div', { className: css.fbField },
-			React.createElement('span', { className: css.fbLabel }, '日志位置'),
+		feedbackBlock('日志位置',
 			React.createElement('button', {
 				type: 'button', className: css.fbPathLink,
 				disabled: info === null || info === undefined || info.logDir === '' || onRevealPath === undefined,
@@ -284,8 +300,8 @@ export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal,
 					});
 				}),
 			),
-			info !== null && info !== undefined && info.files.length === 0 && React.createElement('div', { className: css.fbNote }, '该目录下还没有日志文件'),
-			info !== null && info !== undefined && info.files.length > 0 && shownFiles.length === 0 && React.createElement('div', { className: css.fbNote }, `最近 ${String(logDays)} 天内没有日志文件`),
+			info !== null && info !== undefined && info.files.length === 0 && feedbackNote('该目录下还没有日志文件'),
+			info !== null && info !== undefined && info.files.length > 0 && shownFiles.length === 0 && feedbackNote(`最近 ${String(logDays)} 天内没有日志文件`),
 		),
 		React.createElement('div', { className: css.fbActions },
 			React.createElement(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: submit },

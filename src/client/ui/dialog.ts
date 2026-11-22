@@ -659,6 +659,25 @@ function enterConfirms(onEnter: () => void, shiftInsertsNewline = false): (event
 }
 
 /**
+ * 一行单独的复选框：自带文案，所在行同时是点击区。
+ *
+ * @param key - React 的兄弟节点键。
+ * @param checked - 当前勾选状态。
+ * @param label - 复选框文案。
+ * @param onChange - 变更回调。
+ * @returns 行元素。
+ */
+function checkboxRow(
+	key: string,
+	checked: boolean,
+	label: string,
+	onChange: (next: boolean) => void,
+): React.ReactElement {
+	/* Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。 */
+	return React.createElement('div', { key, className: cx(css.field, css.fieldInline) },
+		React.createElement(Checkbox, { checked, onChange, label }));
+}
+/**
  * 构造单个表单字段。
  *
  * @param field - 字段定义。
@@ -696,16 +715,7 @@ function buildField(
 		}));
 	}
 	if (field.type === 'checkbox') {
-		// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
-		return React.createElement(
-			'div',
-			{ key: field.name, className: cx(css.field, css.fieldInline) },
-			React.createElement(Checkbox, {
-				checked: current === true,
-				onChange: (next: boolean) => { setField(field.name, next); },
-				label: field.label ?? '',
-			}),
-		);
+		return checkboxRow(field.name, current === true, field.label ?? '', (next) => { setField(field.name, next); });
 	}
 	if (field.type === 'select') {
 		return labeledField(field, React.createElement(SegmentedControl, {
@@ -731,23 +741,10 @@ function buildField(
 	return labeledField(field, React.createElement(
 		React.Fragment,
 		null,
-		...field.options.map((option) => {
-			const checked = selected.includes(option.value);
-			// Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。
-			return React.createElement(
-				'div',
-				{ key: option.value, className: cx(css.field, css.fieldInline) },
-				React.createElement(Checkbox, {
-					checked,
-					onChange: (next: boolean) => {
-						const values2 = next
-							? [...selected, option.value]
-							: selected.filter((item) => item !== option.value);
-						setField(field.name, values2);
-					},
-					label: option.label,
-				}),
-			);
-		}),
+		...field.options.map((option) => checkboxRow(option.value, selected.includes(option.value), option.label, (next) => {
+			setField(field.name, next
+				? [...selected, option.value]
+				: selected.filter((item) => item !== option.value));
+		})),
 	));
 }

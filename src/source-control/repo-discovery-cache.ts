@@ -1,9 +1,8 @@
 /**
  * 仓库发现结果缓存：60 秒 TTL、容量 16、按工作区根与写命令作废。
  */
-import { nodeId } from './repo-node.js';
+import { discoveryLimitsOf, nodeId } from './repo-node.js';
 import type { DiscoveryOptions, DiscoveryResult } from './repo-node.js';
-import { DEFAULT_MAX_DEPTH, DEFAULT_MAX_DIRECTORIES } from './repo-node.js';
 import { onRepositoryWrite } from './working-tree.js';
 
 /** 发现结果缓存的存活毫秒数。 */
@@ -29,8 +28,7 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
  * @returns 缓存键。
  */
 export function discoveryCacheKey(root: string, options: DiscoveryOptions): string {
-	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
-	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
+	const { maxDepth, maxDirectories } = discoveryLimitsOf(options);
 	const known = options.knownRepos === undefined ? '' : options.knownRepos.join('\0');
 	const shallow = options.shallow === true ? '1' : '0';
 	return `${root}\0${maxDepth}\0${maxDirectories}\0${shallow}\0${known}`;

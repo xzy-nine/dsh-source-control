@@ -11,7 +11,7 @@ import {
 import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
 import { showConfirmation } from '../ui/dialog.ts';
 import { changeMenuItems, type ChangeMenuContext, type ChangeMenuDeps } from './change-menu.ts';
-import { discardEntries, stageEntries, unstageEntries } from './optimistic.ts';
+import { discardEntries, isUntrackedEntry, stageEntries, unstageEntries } from './optimistic.ts';
 import { absolutePathOf, changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { ChangeTreeGroupFields } from './change-tree-group.ts';
 import { guidesOf } from './tree-rows.tsx';
@@ -181,7 +181,7 @@ export interface ChangeNodeRowProps {
  * @returns 没有可比差异、只能按整文件打开时为 true。
  */
 export function isUntrackedFile(entry: WorkingTreeEntry): boolean {
-	return entry.index === '?' && entry.worktree === '?';
+	return isUntrackedEntry(entry);
 }
 
 /** 变更树里的文件夹行。 */
@@ -253,12 +253,54 @@ export function ChangeFileShell({ name, depth, title, children, onClick, onConte
 	return React.createElement(
 		'div',
 		{ className: cx(css.change, css.changeOpenable), title, onClick, onContextMenu },
-		...guidesOf(depth),
-		React.createElement(FileTypeIcon, { path: name, size: 14 }),
-		React.createElement('span', { className: css.changeName },
-			React.createElement('span', { className: css.changeText }, name)),
+		...fileRowLead(depth, name),
+		fileNameNode(name),
 		children,
 	);
+}
+
+/**
+ * 文件行尾的悬停按钮。
+ *
+ * 点按钮不该同时选中该行，因此点击事件在此拦下。
+ *
+ * @param title - 按钮文案，同时作为悬停提示。
+ * @param busy - 进行中：按钮禁用。
+ * @param icon - 按钮图标。
+ * @param action - 点击动作。
+ * @returns 按钮元素。
+ */
+function changeButtonNode(
+	title: string,
+	busy: boolean,
+	icon: React.ComponentType<{ size?: number }>,
+	action: () => void,
+): React.ReactElement {
+	const click = (event: React.MouseEvent<HTMLButtonElement>): void => { event.stopPropagation(); action(); };
+	return React.createElement('button', { type: 'button', className: css.changeBtn, title, disabled: busy, onClick: click },
+		React.createElement(icon, { size: 14 }));
+}
+
+/**
+ * 文件行的缩进导引与类型图标。
+ *
+ * @param depth - 目录深度。
+ * @param name - 文件名，决定图标。
+ * @returns 该行的前置节点。
+ */
+function fileRowLead(depth: number, name: string): React.ReactNode[] {
+	return [...guidesOf(depth), React.createElement(FileTypeIcon, { path: name, size: 14 })];
+}
+
+/**
+ * 文件名节点：外层撑开宽度，内层承接省略号截断。
+ *
+ * @param name - 文件名。
+ * @returns 文件名元素。
+ */
+function fileNameNode(name: string): React.ReactElement {
+	return React.createElement('span', { className: css.changeName },
+		React.createElement('span', { className: css.changeText }, name));
 }
 
 /** 文件夹行或文件行（变更树内）。 */
@@ -297,21 +339,12 @@ function ChangeNodeRowView({
 		},
 		// 悬停按钮排在状态字符之前：不悬停时状态字符落在最右列，与文件夹数量同列。
 		fileStaged
-			? React.createElement('button', {
-				type: 'button', className: css.changeBtn, title: '取消暂存', disabled: busy,
-				onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onUnstage([entry.path]); },
-			}, React.createElement(IconCloseOutlineRegular, { size: 14 }))
+			? changeButtonNode('取消暂存', busy, IconCloseOutlineRegular, () => { onUnstage([entry.path]); })
 			: React.createElement(
 				React.Fragment,
 				null,
-				React.createElement('button', {
-					type: 'button', className: css.changeBtn, title: '丢弃改动', disabled: busy,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onDiscard([entry.path], untracked); },
-				}, React.createElement(IconTrashOutlineRegular, { size: 14 })),
-				React.createElement('button', {
-					type: 'button', className: css.changeBtn, title: '暂存改动', disabled: busy,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onStage([entry.path]); },
-				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				changeButtonNode('丢弃改动', busy, IconTrashOutlineRegular, () => { onDiscard([entry.path], untracked); }),
+				changeButtonNode('暂存改动', busy, IconPlusOutlineRegular, () => { onStage([entry.path]); }),
 			),
 		React.createElement('span', { className: cx(css.rowTail, css.status), 'data-type': type }, type),
 	);
@@ -363,11 +396,9 @@ function CommitDetailView({ files, busy, loading, truncated, collapsed, onToggle
 					key: `e:${entry.path}`, className: cx(css.change, css.changeOpenable), title: entry.path,
 					onClick: () => { if (!busy) onOpen(entry.path, isNew); },
 				},
-				...guidesOf(row.depth),
-				React.createElement(FileTypeIcon, { path: name, size: 14 }),
+				...fileRowLead(row.depth, name),
 				React.createElement('span', { className: css.status, 'data-type': entry.type }, entry.type),
-				React.createElement('span', { className: css.changeName },
-					React.createElement('span', { className: css.changeText }, name)),
+				fileNameNode(name),
 				stat && React.createElement(
 					'span',
 					{ className: css.detailStat },

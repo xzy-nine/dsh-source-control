@@ -211,6 +211,37 @@ function closeQuietly(close: WatchCloser): void {
 }
 
 /**
+ * 目录项里的子目录名，保持入参顺序。
+ *
+ * @param entries - 目录项列表。
+ * @returns 子目录名。
+ */
+function subdirectoryNames(entries: readonly { readonly name: string; readonly type: string }[]): string[] {
+	return entries.filter((entry) => entry.type === 'directory').map((entry) => entry.name);
+}
+
+/**
+ * 构造一个目录变化监听器。
+ *
+ * 句柄报错时交给出错回调，其余变化交给变更回调。
+ *
+ * @param dir - 被监视的目录，交给出错回调用于定位。
+ * @param onChange - 目录内容变化的回调。
+ * @param onError - 句柄报错的回调。
+ * @returns 监听器。
+ */
+function dirChangeListener(
+	dir: string,
+	onChange: (filename: string | null | undefined, kind: string | null | undefined) => void,
+	onError: (error: Error, dir: string) => void,
+): DirChangeListener {
+	return (error, filename, kind) => {
+		if (error !== undefined) { onError(error, dir); return; }
+		onChange(filename, kind);
+	};
+}
+
+/**
  * 关闭一个公共目录的全部监视句柄。
  *
  * @param key - 规范化后的公共目录。
@@ -534,9 +565,8 @@ async function holdsRepository(dir: string, depth: number): Promise<boolean> {
 	} catch {
 		return false;
 	}
-	for (const entry of entries) {
-		if (entry.type !== 'directory') continue;
-		if (await holdsRepository(join(dir, entry.name), depth - 1)) return true;
+	for (const name of subdirectoryNames(entries)) {
+		if (await holdsRepository(join(dir, name), depth - 1)) return true;
 	}
 	return false;
 }
@@ -648,10 +678,9 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 		return;
 	}
 	const wanted = new Map<string, string>();
-	for (const entry of entries) {
-		if (entry.type !== 'directory') continue;
-		if (shouldPruneDirectory(entry.name)) continue;
-		const dir = join(watchState.root, entry.name);
+	for (const name of subdirectoryNames(entries)) {
+		if (shouldPruneDirectory(name)) continue;
+		const dir = join(watchState.root, name);
 		wanted.set(nodeId(dir), dir);
 	}
 	for (const [childKey, close] of [...watchState.children]) {
@@ -668,8 +697,8 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 			return Promise.resolve();
 		});
 		void workspaceChildWatch(key, dir, signal).then((close) => {
-			const current = workspaces.get(key);
-			if (current === undefined || !current.children.has(childKey)) { closeQuietly(close); return; }
+			const current = workspaces.get(key) ?? null;
+			if (current === null || !current.children.has(childKey)) { closeQuietly(close); return; }
 			placeholder.close = close;
 			current.children.set(childKey, close);
 			// 子目录同样先记基线，否则它内部的第一次变化会被当成「没有基线」。
@@ -715,14 +744,11 @@ function noteDirectoryChange(key: string, scope: string, filename: string | null
  * @returns 关闭函数。
  */
 function workspaceChildWatch(key: string, dir: string, signal: AbortSignal): Promise<WatchCloser> {
-	const onChange: DirChangeListener = (error, filename, kind) => {
-		if (error !== undefined) {
-			logDebug('watcher', `子目录监视句柄报错：${dir}：${error.message}`);
-			return;
-		}
-		noteDirectoryChange(key, dir, filename, kind);
-	};
-	return watchDirAt(dir, onChange, signal);
+	return watchDirAt(dir, dirChangeListener(
+		dir,
+		(filename, kind) => { noteDirectoryChange(key, dir, filename, kind); },
+		(error) => { logDebug('watcher', `子目录监视句柄报错：${dir}：${error.message}`); },
+	), signal);
 }
 
 /**
@@ -734,17 +760,18 @@ function workspaceChildWatch(key: string, dir: string, signal: AbortSignal): Pro
  * @returns 关闭函数。
  */
 function workspaceWatch(key: string, root: string, signal: AbortSignal): Promise<WatchCloser> {
-	const onChange: DirChangeListener = (error, filename, kind) => {
-		if (error !== undefined) {
+	return watchDirAt(root, dirChangeListener(
+		root,
+		(filename, kind) => {
+			// 子目录的出现与消失不改变仓库集合，但必须据此补挂或摘掉句柄。
+			scheduleChildSync(key);
+			noteDirectoryChange(key, root, filename, kind);
+		},
+		(error) => {
 			logWarn('watcher', `工作区监视句柄报错，已停止监视：${root}：${error.message}`);
 			closeWorkspace(key);
-			return;
-		}
-		// 子目录的出现与消失不改变仓库集合，但必须据此补挂或摘掉句柄。
-		scheduleChildSync(key);
-		noteDirectoryChange(key, root, filename, kind);
-	};
-	return watchDirAt(root, onChange, signal);
+		},
+	), signal);
 }
 
 /**

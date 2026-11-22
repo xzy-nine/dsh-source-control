@@ -2,10 +2,10 @@
  * Issue 链接配置表单与用户身份表单。
  */
 import React from 'react';
-import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showConfirmation } from '../ui/dialog.ts';
 import type { IssueLinkingConfig } from '../shared/types.ts';
-import { FieldBlock, ToggleRow } from './settings-rows.ts';
+import { FieldBlock, formShell, ToggleRow } from './settings-rows.ts';
 import type { SettingsTab, UserDetails } from './settings-types.ts';
 import css from '../css/settings.module.css';
 import { cx } from '../css/cx.ts';
@@ -23,9 +23,7 @@ export function IssueLinkingForm({ config, onChange }: {
 }): React.ReactElement {
 	const regex = config?.issueRegex ?? '';
 	const url = config?.issueUrlTemplate ?? '';
-	return React.createElement(
-		'div',
-		{ className: css.setForm },
+	return formShell(
 		React.createElement(FieldBlock, {
 			label: 'Issue 正则',
 			placeholder: '如 #(\\d+)',
@@ -134,22 +132,12 @@ export function UserDetailsForm({ userDetails, onEdit, onDelete, scope }: {
 				? React.createElement('div', { className: css.setNote }, '未配置全局身份，请在「全局设置」中配置。')
 				: null)
 			: [
-				React.createElement('label', { className: css.setRowBlock, key: 'name' },
-					React.createElement('span', { className: css.setRowText }, '用户名'),
-					React.createElement(Input, {
-						value: name,
-						placeholder: 'git user.name',
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setName(event.target.value); },
-					}),
-				),
-				React.createElement('label', { className: css.setRowBlock, key: 'email' },
-					React.createElement('span', { className: css.setRowText }, '邮箱'),
-					React.createElement(Input, {
-						value: email,
-						placeholder: 'git user.email',
-						onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setEmail(event.target.value); },
-					}),
-				),
+				React.createElement(FieldBlock, {
+					key: 'name', label: '用户名', placeholder: 'git user.name', value: name, onChange: setName,
+				}),
+				React.createElement(FieldBlock, {
+					key: 'email', label: '邮箱', placeholder: 'git user.email', value: email, onChange: setEmail,
+				}),
 				React.createElement('div', { className: cx(css.setRow, css.setRowInline), key: 'actions' },
 					React.createElement(Button, { variant: 'primary', size: 'sm', onClick: save }, '保存'),
 					React.createElement(Button, { variant: 'outline', size: 'sm', onClick: remove }, '删除'),

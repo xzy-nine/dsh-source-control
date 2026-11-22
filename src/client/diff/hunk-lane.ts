@@ -60,6 +60,17 @@ function changedSpan(hunk: FileHunk): { readonly side: 'old' | 'new'; readonly f
 }
 
 /**
+ * 按下标取补丁块。
+ *
+ * @param hunks - 各补丁块。
+ * @param index - 块下标。
+ * @returns 该块；不存在时为 null。
+ */
+function hunkOf(hunks: readonly FileHunk[], index: number): FileHunk | null {
+	return hunks.find((item) => item.index === index) ?? null;
+}
+
+/**
  * 找出某一块的改动区间覆盖哪些行。
  *
  * 块的改动区间由块头两侧行号确定：新侧有内容时覆盖新侧行号，纯删除的块覆盖旧侧行号。
@@ -132,8 +143,8 @@ export function markHunkRows(host: Element | null, hunks: readonly FileHunk[], i
 	if (host === null) return;
 	clearHoverMark(host);
 	if (index === null) return;
-	const hunk = hunks.find((item) => item.index === index);
-	if (hunk === undefined) return;
+	const hunk = hunkOf(hunks, index);
+	if (hunk === null) return;
 	for (const row of changedRows(indexRows(host), hunk)) row.setAttribute('data-sc-hunk-hover', '');
 }
 
@@ -147,8 +158,8 @@ export function markHunkRows(host: Element | null, hunks: readonly FileHunk[], i
  */
 export function scrollToHunk(host: Element | null, hunks: readonly FileHunk[], index: number): boolean {
 	if (host === null) return false;
-	const hunk = hunks.find((item) => item.index === index);
-	if (hunk === undefined) return false;
+	const hunk = hunkOf(hunks, index);
+	if (hunk === null) return false;
 	const picked = changedRows(indexRows(host), hunk);
 	if (picked.length === 0) return false;
 	const first = picked[0];
