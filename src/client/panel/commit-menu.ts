@@ -202,6 +202,31 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
  * @param args - 目标提交、当前分支可达的提交集合与触发事件。
  * @returns 无。
  */
+/**
+ * 在指针位置弹出一次菜单，关闭时撤下目标行的高亮类。
+ *
+ * 提交菜单与引用菜单共用这一处：先弹已算好的条目，`pendingItems` 到达后整份替换。
+ *
+ * @param at - 视口坐标。
+ * @param target - 被右键的行元素。
+ * @param items - 立即弹出的条目。
+ * @param pendingItems - 补齐后替换用的条目；给 null 表示不替换。
+ * @returns 无。
+ */
+function showMenuAt(
+	at: { readonly clientX: number; readonly clientY: number },
+	target: Element,
+	items: () => ContextMenuItem[],
+	pendingItems: Promise<ContextMenuItem[] | null>,
+): void {
+	showContextMenu({
+		x: at.clientX, y: at.clientY,
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
+		items: items(),
+		pendingItems,
+	});
+}
+
 export function openCommitMenu(
 	deps: GraphMenuDeps,
 	{ commit, event, currentHashes }: { commit: Commit; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
@@ -215,14 +240,14 @@ export function openCommitMenu(
 	 * 先弹已算好的部分，包含关系随后补齐：git 查询要跑几个子进程，等它会让右键明显迟滞。
 	 * 补齐结果整份替换菜单项，刷新时保留已打开的位置与焦点。
 	 */
-	showContextMenu({
-		x: clientX, y: clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items: buildCommitItems(ctx),
-		pendingItems: containingOf(deps, commit).then(
+	showMenuAt(
+		{ clientX, clientY },
+		target,
+		() => buildCommitItems(ctx),
+		containingOf(deps, commit).then(
 			(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
 		),
-	});
+	);
 }
 
 /**
@@ -255,13 +280,13 @@ export function openRefMenu(
 	if (items.length === 0) return;
 	target.classList.add(MENU_TARGET_CLASS);
 	// 与提交菜单同一策略：先弹已算好的部分，包含关系到达后整份替换。
-	showContextMenu({
-		x: clientX, y: clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items,
-		pendingItems: containingOf(deps, commit).then((containing) => {
+	showMenuAt(
+		{ clientX, clientY },
+		target,
+		() => items,
+		containingOf(deps, commit).then((containing) => {
 			const next = itemsOf(containing);
 			return next.length === 0 ? null : next;
 		}),
-	});
+	);
 }

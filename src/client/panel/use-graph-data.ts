@@ -15,7 +15,7 @@ import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot
 import { reportCaught, reportRefreshFailure } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
-import { mergeSnapshot } from './graph-state.ts';
+import { branchFieldsOf, mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
 	branchNamesEqual, commitsListEqual, commitsWithUncommitted, entriesEqual, mergeCommits, mergeEntries,
@@ -24,7 +24,7 @@ import {
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
 
-import type { BusyEntry, PanelState, Settings } from '../shared/types.ts';
+import type { BusyEntry, Commit, PanelState, Settings } from '../shared/types.ts';
 import type { PanelStateAccess } from './panel-state-access.ts';
 import type { GraphData } from '../api/index.ts';
 import {
@@ -118,6 +118,47 @@ function graphRequest(
 		withRepoInfo: known === undefined,
 		...(known === undefined ? {} : { remotes: known.remotes, stashes: known.stashes }),
 		...(skip === undefined ? {} : { skip }),
+	};
+}
+
+/**
+ * 把一轮提交图与工作区快照并入面板状态。
+ *
+ * `keep` 为真时按各项是否变化保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道
+ * 布局与变更树整体重算。`settled` 是这一轮之前的状态（可能已摘掉后台刷新标记）。
+ *
+ * @param previous - 上一份状态。
+ * @param next - 这一轮的数据。
+ * @returns 合并后的状态。
+ */
+function mergedGraphState(
+	previous: PanelState,
+	next: {
+		readonly graph: GraphData;
+		readonly snapshot: WorkingTreeSnapshot;
+		readonly commits: readonly Commit[];
+		readonly keep: boolean;
+		readonly settled: PanelState;
+		readonly detail: PanelState['detail'];
+	},
+): PanelState {
+	const { graph, snapshot, commits, keep, settled } = next;
+	const commitsSame = keep
+		&& settled.head === graph.head && settled.more === graph.moreCommitsAvailable
+		&& commitsListEqual(settled.commits, commits);
+	const entriesSame = keep && entriesEqual(settled.entries, snapshot.entries);
+	const remotesSame = keep && remotesListEqual(settled.remotes, graph.remotes);
+	const foreignSame = keep && branchNamesEqual(settled.foreignBranches, graph.foreignBranches);
+	return {
+		...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
+		commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
+		head: graph.head,
+		...branchFieldsOf(snapshot),
+		more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
+		remotes: remotesSame ? settled.remotes : graph.remotes,
+		foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
+		entries: entriesSame ? settled.entries : mergeEntries(settled.entries, snapshot.entries),
+		detail: next.detail,
 	};
 }
 
@@ -414,28 +455,11 @@ export function useGraphData({
 			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
 			 */
 			const keep = mode === 'reconcile';
-			setState((previous) => {
-				const commitsSame = keep
-					&& previous.head === graph.head && previous.more === graph.moreCommitsAvailable
-					&& commitsListEqual(previous.commits, commits);
-				const entriesSame = keep && entriesEqual(previous.entries, snapshot.entries);
-				const remotesSame = keep && remotesListEqual(previous.remotes, graph.remotes);
-				const foreignSame = keep && branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
-				const settled = background
-					? endBackground(endBackground(previous, 'graph'), 'entries')
-					: previous;
-				return {
-					...settled, phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
-					commits: commitsSame ? settled.commits : mergeCommits(settled.commits, commits),
-					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
-					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
-					remotes: remotesSame ? settled.remotes : graph.remotes,
-					foreignBranches: foreignSame ? settled.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? settled.entries : mergeEntries(settled.entries, snapshot.entries),
-					detail: mode === 'full' ? null : settled.detail,
-				};
-			});
+			setState((previous) => mergedGraphState(previous, {
+				graph, snapshot, commits, keep,
+				settled: background ? endBackground(endBackground(previous, 'graph'), 'entries') : previous,
+				detail: mode === 'full' ? null : previous.detail,
+			}));
 			logClient('I', 'refresh', `${mode === 'full' ? '主动刷新' : '对账刷新'}完成，仓库 ${workingTreePath}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
@@ -509,24 +533,11 @@ export function useGraphData({
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
 			loadedHeadRef.current = snapshot.head;
 			const commits = commitsWithUncommitted(graph, snapshot);
-			setState((previous) => {
-				const commitsSame = previous.head === graph.head && previous.more === graph.moreCommitsAvailable
-					&& commitsListEqual(previous.commits, commits);
-				const entriesSame = entriesEqual(previous.entries, snapshot.entries);
-				const remotesSame = remotesListEqual(previous.remotes, graph.remotes);
-				const foreignSame = branchNamesEqual(previous.foreignBranches, graph.foreignBranches);
-				return {
-					...endBackground(endBackground(previous, 'graph'), 'entries'),
-					phase: 'ready', entriesPhase: 'ready', error: null, merging: snapshot.merging, entriesTruncated: snapshot.truncated,
-					commits: commitsSame ? previous.commits : mergeCommits(previous.commits, commits),
-					head: graph.head, headHash: snapshot.head,
-					upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
-					more: graph.moreCommitsAvailable, nextSkip: graph.nextSkip,
-					remotes: remotesSame ? previous.remotes : graph.remotes,
-					foreignBranches: foreignSame ? previous.foreignBranches : graph.foreignBranches,
-					entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
-				};
-			});
+			setState((previous) => mergedGraphState(previous, {
+				graph, snapshot, commits, keep: true,
+				settled: endBackground(endBackground(previous, 'graph'), 'entries'),
+				detail: previous.detail,
+			}));
 			rememberFromGraph(repo, known, graph);
 		} catch (error) {
 			if (generation !== generationRef.current) return;

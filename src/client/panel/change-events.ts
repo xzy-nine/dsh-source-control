@@ -232,6 +232,19 @@ function resultCallId(data: Record<string, unknown>): string | null {
  */
 export function settledFileChanges(events: readonly SessionEventLike[]): FileChange[] {
 	const pending = new Map<string, Pending>();
+	/**
+	 * 记下某个调用的结局。
+	 *
+	 * 结果帧与派发帧都只做这一件事：按调用 id 找到登记，写入成败。未登记的调用忽略。
+	 *
+	 * @param callId - 调用 id。
+	 * @param ok - 该调用是否成功。
+	 * @returns 无。
+	 */
+	const settle = (callId: string, ok: boolean): void => {
+		const entry = pending.get(callId);
+		if (entry !== undefined) entry.settled = ok;
+	};
 	const settled: FileChange[] = [];
 	for (const event of events) {
 		const data = event.data ?? {};
@@ -246,21 +259,11 @@ export function settledFileChanges(events: readonly SessionEventLike[]): FileCha
 			pending.set(callId, { kind, path, settled: null });
 			continue;
 		}
-		if (event.type === 'tool/result') {
-			const callId = resultCallId(data);
-			if (callId === null) continue;
-			const entry = pending.get(callId);
-			if (entry === undefined) continue;
-			entry.settled = !resultIsError(data);
-			continue;
-		}
-		if (event.type === 'tool/ptc-dispatch') {
-			const callId = data.subCallId;
-			if (typeof callId !== 'string') continue;
-			const entry = pending.get(callId);
-			if (entry === undefined) continue;
-			entry.settled = !resultIsError(data);
-		}
+		// 两帧都以「哪个调用结束了」为内容：结果帧按结果 id 定位，派发帧按子调用 id 定位。
+		const callId = event.type === 'tool/result'
+			? resultCallId(data)
+			: event.type === 'tool/ptc-dispatch' && typeof data.subCallId === 'string' ? data.subCallId : null;
+		if (callId !== null) settle(callId, !resultIsError(data));
 	}
 	for (const [callId, entry] of pending) {
 		if (entry.settled === true) settled.push({ callId, kind: entry.kind, path: entry.path });

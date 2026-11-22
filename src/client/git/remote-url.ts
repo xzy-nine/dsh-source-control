@@ -86,6 +86,77 @@ export function remoteHostOf(url: string): string {
 }
 
 /**
+ * 该协议是否归入 HTTP(S) 一族：`http`、`https` 与 `git` 三者可互相换算。
+ *
+ * @param protocol - 解析出的协议。
+ * @returns 属于这一族时为 true。
+ */
+function isHttpLike(protocol: RemoteProtocol): boolean {
+	return protocol === 'https' || protocol === 'http' || protocol === 'git';
+}
+
+/**
+ * 解析地址并拒绝没有主机的形态。
+ *
+ * 本地路径与空串都没有主机，无法换算成另一种地址形态。
+ *
+ * @param url - 远程地址原文。
+ * @returns 带主机的地址；不可换算时为 null。
+ */
+function addressWithHost(url: string): RemoteAddress | null {
+	const address = parseRemoteAddress(url);
+	return address === null || address.host === '' ? null : address;
+}
+
+/**
+ * 地址的 scp 形态 SSH 写法。
+ *
+ * @param address - 已解析的地址，调用方保证 host 非空。
+ * @returns `git@host:path`。
+ */
+function sshFormOf(address: RemoteAddress): string {
+	return `git@${address.host}:${address.path}`;
+}
+
+/**
+ * 地址的 HTTPS 写法。
+ *
+ * @param address - 已解析的地址，调用方保证 host 非空。
+ * @returns `https://host/path`。
+ */
+function httpsFormOf(address: RemoteAddress): string {
+	return `https://${address.host}/${address.path}`;
+}
+
+/**
+ * 把地址换算到另一个协议族；已属该族时按原文归一。
+ *
+ * 两个方向共用这一处判定：解析、拒绝无主机的形态、已在目标族内时归一原文、否则按目标族的
+ * 写法重写，不为该族时给 null。
+ *
+ * @param url - 远程地址原文。
+ * @param target - 目标族。
+ * @param render - 落在目标族时的写法。
+ * @returns 换算结果；不可换算时为 null。
+ */
+function convertRemoteUrl(
+	url: string,
+	target: RemoteProtocolSlot,
+	render: (address: RemoteAddress) => string,
+): string | null {
+	const address = addressWithHost(url);
+	if (address === null) return null;
+	const family: RemoteProtocolSlot | null = address.protocol === 'ssh' ? 'ssh' : isHttpLike(address.protocol) ? 'https' : null;
+	if (family === null) return null;
+	/*
+	 * 已是目标族时仍要看写法：scp 形态的 SSH 地址原样返回，其余（含 ssh:// 这种 URL 形态）
+	 * 归一为目标族的规范写法。只按「同一族」提前返回会让 ssh:// 原封不动地留在结果里。
+	 */
+	const canonical = target === 'ssh' ? address.form === 'scp' : address.protocol === 'https';
+	return canonical ? url.trim() : render(address);
+}
+
+/**
  * 换算为 scp 形态的 SSH 地址。
  *
  * HTTP(S) 与 `git://` 地址改用 `git@` 用户；已是 SSH 的 scp 形态原样返回，URL 形态归一为
@@ -95,15 +166,7 @@ export function remoteHostOf(url: string): string {
  * @returns SSH 地址；不可换算（本地路径、未知 scheme）时为 null。
  */
 export function toSshRemoteUrl(url: string): string | null {
-	const address = parseRemoteAddress(url);
-	if (address === null || address.host === '') return null;
-	if (address.protocol === 'ssh') {
-		return address.form === 'scp' ? url.trim() : `git@${address.host}:${address.path}`;
-	}
-	if (address.protocol === 'https' || address.protocol === 'http' || address.protocol === 'git') {
-		return `git@${address.host}:${address.path}`;
-	}
-	return null;
+	return convertRemoteUrl(url, 'ssh', sshFormOf);
 }
 
 /**
@@ -121,7 +184,7 @@ export function remoteProtocolSlot(url: string): RemoteProtocolSlot | null {
 	const address = parseRemoteAddress(url);
 	if (address === null) return null;
 	if (address.protocol === 'ssh') return 'ssh';
-	return address.protocol === 'https' || address.protocol === 'http' || address.protocol === 'git' ? 'https' : null;
+	return isHttpLike(address.protocol) ? 'https' : null;
 }
 
 /**
@@ -131,11 +194,5 @@ export function remoteProtocolSlot(url: string): RemoteProtocolSlot | null {
  * @returns HTTPS 地址；不可换算时为 null。
  */
 export function toHttpsRemoteUrl(url: string): string | null {
-	const address = parseRemoteAddress(url);
-	if (address === null || address.host === '') return null;
-	if (address.protocol === 'https') return url.trim();
-	if (address.protocol === 'ssh' || address.protocol === 'http' || address.protocol === 'git') {
-		return `https://${address.host}/${address.path}`;
-	}
-	return null;
+	return convertRemoteUrl(url, 'https', httpsFormOf);
 }

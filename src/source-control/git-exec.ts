@@ -234,6 +234,26 @@ function endOperation(repo: string, operation: GitOperation): void {
 }
 
 /**
+ * 是否没有在跑的写操作满足给定判据。
+ *
+ * 只读操作从不计入：两个空闲判据的差别只在是否把联网命令算作「在跑」，遍历与仓库过滤
+ * 因此共用这一处。
+ *
+ * @param repo - 限定仓库；省略时检查所有仓库。
+ * @param matches - 该写操作是否算作阻塞。
+ * @returns 没有匹配合适的写操作在跑时为 true。
+ */
+function noOperationMatches(repo: string | undefined, matches: (operation: GitOperation) => boolean): boolean {
+	for (const [key, set] of runningOperations) {
+		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
+		for (const operation of set) {
+			if (!operation.readOnly && matches(operation)) return false;
+		}
+	}
+	return true;
+}
+
+/**
  * 是否没有写操作在跑（含联网命令）。
  *
  * 只读操作（status / log / diff / refs / config）不算忙：它们之间互不冲突，
@@ -246,13 +266,7 @@ function endOperation(repo: string, operation: GitOperation): void {
  * @returns 没有写操作在跑时为 true。
  */
 export function isGitIdle(repo?: string): boolean {
-	for (const [key, set] of runningOperations) {
-		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
-		for (const operation of set) {
-			if (!operation.readOnly) return false;
-		}
-	}
-	return true;
+	return noOperationMatches(repo, () => true);
 }
 
 /**
@@ -268,13 +282,7 @@ export function isGitIdle(repo?: string): boolean {
  * @returns 没有会改写本地状态的操作在跑时为 true。
  */
 export function isLocalSettled(repo?: string): boolean {
-	for (const [key, set] of runningOperations) {
-		if (repo !== undefined && key !== normalizeRepo(repo)) continue;
-		for (const operation of set) {
-			if (!operation.readOnly && operation.kind !== 'network') return false;
-		}
-	}
-	return true;
+	return noOperationMatches(repo, (operation) => operation.kind !== 'network');
 }
 
 /**

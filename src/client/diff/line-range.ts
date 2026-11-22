@@ -76,6 +76,39 @@ export function gutterPressed(target: Element, row: Element): boolean {
 }
 
 /**
+ * 取指针事件落到的行。
+ *
+ * 命中判定有三层：目标必须是元素、必须落在可选中行的选择器内、且那一行确实属于当前容器
+ * （事件可能来自浮动层或已卸载的旧节点）。
+ *
+ * @param event - 指针事件。
+ * @param host - 差异视图的根元素。
+ * @returns 命中的行；没落在一行上时为 null。
+ */
+export function rowAt(event: { readonly target: EventTarget | null }, host: Element): Element | null {
+	if (!(event.target instanceof Element)) return null;
+	const row = event.target.closest(ROW_SELECTOR);
+	return row === null || !host.contains(row) ? null : row;
+}
+
+/**
+ * 取指针事件落到的行在给定列表里的下标。
+ *
+ * 两个差异视图的手势均经这一处取下标：事件没落在可选行上时为 null，落在列表之外同样为 null。
+ *
+ * @param event - 指针事件。
+ * @param host - 差异视图的根元素。
+ * @param rows - 可选中行的当前列表。
+ * @returns 行下标；没落在可选行上时为 null。
+ */
+export function rowIndexAt(event: { readonly target: EventTarget | null }, host: Element, rows: readonly Element[]): number | null {
+	const row = rowAt(event, host);
+	if (row === null) return null;
+	const index = rows.indexOf(row);
+	return index < 0 ? null : index;
+}
+
+/**
  * 列出容器里所有可被选中的行，按显示顺序。
  *
  * 折叠的未变更行是一个按钮而不是行，没有行号，因此不参与选择；展开后它变成普通行，

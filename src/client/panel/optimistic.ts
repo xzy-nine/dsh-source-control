@@ -46,6 +46,23 @@ function matches(entry: WorkingTreeEntry, targets: PathTargets): boolean {
 }
 
 /**
+ * 只改写命中给定路径的条目，其余原样保留。
+ *
+ * @param entries - 当前条目。
+ * @param paths - 目标路径。
+ * @param rewrite - 命中条目的改写。
+ * @returns 新条目。
+ */
+function mapTargets(
+	entries: readonly WorkingTreeEntry[],
+	paths: readonly string[],
+	rewrite: (entry: WorkingTreeEntry) => WorkingTreeEntry,
+): WorkingTreeEntry[] {
+	const target = pathTargets(paths);
+	return entries.map((entry) => (matches(entry, target) ? rewrite(entry) : entry));
+}
+
+/**
  * 工作区变更的签名：路径与状态码逐条拼接。
  *
  * @param entries - 工作区条目。
@@ -66,9 +83,7 @@ export function entriesSignature(entries: readonly WorkingTreeEntry[]): string {
  * @returns 新条目。
  */
 export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = pathTargets(paths);
-	return entries.map((entry) => {
-		if (!matches(entry, target)) return entry;
+	return mapTargets(entries, paths, (entry) => {
 		if (entry.index === '?' && entry.worktree === '?') {
 			return { ...entry, index: 'A', worktree: ' ' };
 		}
@@ -88,9 +103,7 @@ export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readon
  * @returns 新条目。
  */
 export function unstageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	const target = pathTargets(paths);
-	return entries.map((entry) => {
-		if (!matches(entry, target)) return entry;
+	return mapTargets(entries, paths, (entry) => {
 		if (entry.index === 'A') return { ...entry, index: '?', worktree: '?' };
 		const nextWorktree = entry.index !== ' ' ? entry.index : entry.worktree;
 		return { ...entry, index: ' ', worktree: nextWorktree };

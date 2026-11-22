@@ -58,13 +58,54 @@ export interface SubmitFeedbackResult extends FeedbackLogFields {
 	readonly kind: FeedbackFailureKind;
 }
 
+/** 一次 `gh` 失败：给前端的结果分类与可读说明。 */
+interface GhFailure {
+	readonly kind: SubmitFeedbackResult['kind'];
+	readonly message: string;
+}
+
+/** 一次带正文的 `gh` 调用：成功给出结果，失败给出已分类的原因。 */
+type GhAttempt =
+	| { readonly ok: true; readonly result: GhResult }
+	| { readonly ok: false; readonly failure: GhFailure };
+
+/**
+ * 以 `--body-file` 形式把正文交给 `gh`，按退出码归纳成败；载体文件在返回前删除。
+ *
+ * 正文一律走 `--body-file`：长描述与日志文本会让命令行参数超出系统上限。文件名带时间戳
+ * 与 `prefix`，同一毫秒内的两条评论因此互不覆盖。
+ *
+ * @param body - 正文。
+ * @param prefix - 文件名前缀，用于在数据目录里区分用途。
+ * @param argsOf - 由临时文件路径构造 `gh` 参数。
+ * @param cwd - 执行 `gh` 的工作目录。
+ * @returns 成功时的调用结果，或已分类的失败原因。
+ */
+async function runGhAttempt(
+	body: string,
+	prefix: string,
+	argsOf: (path: string) => readonly string[],
+	cwd: string,
+): Promise<GhAttempt> {
+	const dir = issueBodyDir();
+	mkdirSync(dir, { recursive: true });
+	const path = join(dir, `${prefix}-${String(Date.now())}.md`);
+	writeFileSync(path, body, 'utf8');
+	try {
+		const result = await runGh(argsOf(path), cwd);
+		return result.code === 0 ? { ok: true, result } : { ok: false, failure: classify(result) };
+	} finally {
+		rmSync(path, { force: true });
+	}
+}
+
 /**
  * 分类 `gh` 的失败。
  *
  * @param result - `gh` 调用结果。
  * @returns 分类与给用户看的说明。
  */
-function classify(result: GhResult): { kind: SubmitFeedbackResult['kind']; message: string } {
+function classify(result: GhResult): GhFailure {
 	const { kind, message } = classifyGhFailure(result);
 	if (kind === 'missing-scope') return { kind, message };
 	if (kind === 'forbidden') return { kind, message: '当前账号没有在该仓库创建 issue 的权限。' };
@@ -178,22 +219,17 @@ export async function submitFeedback(options: SubmitFeedbackOptions): Promise<Su
 			redaction: redactSummary(counts),
 		};
 	}
-	// 正文走 --body-file：长描述与日志说明会让命令行参数超出系统上限。
-	const dir = issueBodyDir();
-	mkdirSync(dir, { recursive: true });
-	const bodyPath = join(dir, `issue-body-${String(Date.now())}.md`);
-	writeFileSync(bodyPath, buildIssueBody(facts), 'utf8');
-	const result = await runGh(
-		['issue', 'create', '--repo', FEEDBACK_REPO, '--title', feedbackIssueTitle(options.type, options.title), '--body-file', bodyPath],
+	const attempt = await runGhAttempt(
+		buildIssueBody(facts),
+		'issue-body',
+		(path) => ['issue', 'create', '--repo', FEEDBACK_REPO, '--title', feedbackIssueTitle(options.type, options.title), '--body-file', path],
 		// 提交与仓库无关：面板未选中仓库时用宿主进程的工作目录。
 		options.cwd === '' ? process.cwd() : options.cwd,
 	);
-	rmSync(bodyPath, { force: true });
-	if (result.code !== 0) {
-		const failure = classify(result);
-		return { url: '', error: failure.message, kind: failure.kind, logDir, commentCount: 0, commentError: null };
+	if (!attempt.ok) {
+		return { url: '', error: attempt.failure.message, kind: attempt.failure.kind, logDir, commentCount: 0, commentError: null };
 	}
-	const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
+	const url = attempt.result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
 	// issue 已建成即算成功：日志评论的失败只回报原因，不重开一条 issue 制造重复。
 	const commentError = await postLogComments(url, comments, options.cwd === '' ? process.cwd() : options.cwd);
 	return { url, error: null, kind: 'ok', logDir, commentCount: comments.length, commentError };
@@ -213,17 +249,14 @@ async function postLogComments(url: string, comments: readonly LogComment[], cwd
 	if (comments.length === 0) return null;
 	const issue = issueNumberFrom(url);
 	if (issue === null) return `无法从 issue 地址识别编号：${url}`;
-	const dir = issueBodyDir();
-	mkdirSync(dir, { recursive: true });
 	for (const [index, comment] of comments.entries()) {
-		const path = join(dir, `comment-${String(Date.now())}-${String(index)}.md`);
-		writeFileSync(path, comment.body, 'utf8');
-		const result = await runGh(['issue', 'comment', issue, '--repo', FEEDBACK_REPO, '--body-file', path], cwd);
-		rmSync(path, { force: true });
-		if (result.code !== 0) {
-			const failure = classify(result);
-			return `第 ${String(index + 1)}/${String(comments.length)} 条日志评论发送失败：${failure.message}`;
-		}
+		const attempt = await runGhAttempt(
+			comment.body,
+			`comment-${String(index)}`,
+			(path) => ['issue', 'comment', issue, '--repo', FEEDBACK_REPO, '--body-file', path],
+			cwd,
+		);
+		if (!attempt.ok) return `第 ${String(index + 1)}/${String(comments.length)} 条日志评论发送失败：${attempt.failure.message}`;
 	}
 	return null;
 }
