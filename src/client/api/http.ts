@@ -23,6 +23,23 @@ export function setApiFailureReporter(reporter: ApiFailureReporter | undefined):
 }
 
 /**
+ * 向一个宿主路由发一次 JSON POST。
+ *
+ * @param path - 路由。
+ * @param body - 请求体。
+ * @param signal - 取消信号。
+ * @returns 原始响应。
+ */
+export function postJson(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+	return fetch(path, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+		signal,
+	});
+}
+
+/**
  * 调用一条宿主命令。
  *
  * 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数），因此先读响应体再判断
@@ -57,12 +74,7 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 	const report = command === 'logEvent' ? undefined : reportApiFailure;
 	let response: Response;
 	try {
-		response = await fetch(API_PATH, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ repo: cwd, ...message }),
-			signal,
-		});
+		response = await postJson(API_PATH, { repo: cwd, ...message }, signal);
 	} catch (error) {
 		// 取消不是失败：面板中止在途请求是常规操作。
 		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${error instanceof Error ? error.message : String(error)}`);

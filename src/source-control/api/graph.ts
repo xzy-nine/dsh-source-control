@@ -10,7 +10,7 @@ import { graphKey, readGraph, readRepoInfo, writeGraph, writeRepoInfo } from '..
 import { repoHead } from '../repo-facts.js';
 import { whenLocalSettled } from '../git-exec.js';
 import { logDebug } from '../logger.js';
-import type { StashEntry } from '../git-types.js';
+import type { CommitOrdering, StashEntry } from '../git-types.js';
 import type { ApiContext } from './context.js';
 
 /**
@@ -248,17 +248,20 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 				logDebug('cache', `提交图窗口未命中缓存，重新取数：${repo}${graphParamsLog(graphParams)}`);
 				const data = await getCommits(
 					repo,
-					branchesArg,
-					limit,
-					graphParams.showTags,
-					showRemoteBranches,
-					graphParams.includeCommitsMentionedByReflogs,
-					graphParams.onlyFollowFirstParent,
-					graphParams.ordering as never,
-					remoteNames,
-					hideRemotes,
-					stashes,
-					skip,
+					{
+						branches: branchesArg,
+						// 多取一条作哨兵：够不够一页由它决定是否还有更多。
+						num: limit + 1,
+						includeTags: graphParams.showTags,
+						includeRemotes: showRemoteBranches,
+						includeCommitsMentionedByReflogs: graphParams.includeCommitsMentionedByReflogs,
+						onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+						ordering: graphParams.ordering as CommitOrdering,
+						remotes: remoteNames,
+						hideRemotes,
+						stashes,
+						skip,
+					},
 					head?.hash ?? null,
 				);
 				const batch = batchSource === null ? null : await batchSource;

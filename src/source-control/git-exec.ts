@@ -8,6 +8,7 @@ import { cancellableKeys, runCollect, terminateAllChildren, terminateCancellable
 import { countSpawnInScope } from './api/refresh-scope.js';
 import { isBrokenSubmoduleFailure, withIgnoredSubmoduleDirt } from './submodule-failure.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
+import { errorText } from '../shared/error-text.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
 const MAX_GIT_LOG_CHARS = 2000;
@@ -679,20 +680,62 @@ export async function runGit(args: readonly string[], cwd: string, options: GitO
 const MASKED_VALUE_ARGS: ReadonlySet<string> = new Set(['-m', '--message', '--body', '-b', '--author', '--committer', '--grep', '-S', '-G']);
 
 /**
+ * 带值参数的可读描述，屏蔽黑名单里的取值。
+ *
+ * 以 `名字=取值` 给出的参数整段换成 `名字=<已屏蔽>`；取值作为下一个参数给出时按 `keepValue`
+ * 决定替换还是保留原文。
+ *
+ * @param args - 参数数组。
+ * @param masked - 取值属于自由文本的参数名。
+ * @param keepValue - 取值即使被屏蔽也保留原文的参数名，用于取值本身可读的参数。
+ * @returns 描述文本。
+ */
+export function describeMaskedArgs(
+	args: readonly string[],
+	masked: ReadonlySet<string>,
+	keepValue: ReadonlySet<string> = new Set<string>(),
+): string {
+	const parts: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		const name = arg.split('=')[0];
+		const hit = masked.has(arg) || masked.has(name);
+		parts.push(hit ? `${name}=<已屏蔽>` : arg);
+		if (hit && !arg.includes('=') && index + 1 < args.length) {
+			parts.push(keepValue.has(name) ? args[index + 1] : '<已屏蔽>');
+			index += 1;
+		}
+	}
+	return parts.join(' ');
+}
+
+/**
  * git 参数的可读描述，屏蔽自由文本取值。
  *
  * @param args - 参数数组。
  * @returns 描述文本。
  */
 export function describeGitArgs(args: readonly string[]): string {
-	const parts: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const arg = args[index];
-		const masked = MASKED_VALUE_ARGS.has(arg);
-		parts.push(masked || MASKED_VALUE_ARGS.has(arg.split('=')[0]) ? `${arg.split('=')[0]}=<已屏蔽>` : arg);
-		if (masked && index + 1 < args.length) { index += 1; }
+	return describeMaskedArgs(args, MASKED_VALUE_ARGS);
+}
+
+/**
+ * 执行一条 git 命令，把失败折成可读文本而不抛错。
+ *
+ * 供一次尝试可失败、失败即结论的调用点使用（分段暂存、冲突解决）。需要区分
+ * 「命令不存在」等查询型失败的调用方用 {@link isProbeCommand} 与原始结果。
+ *
+ * @param args - 参数数组。
+ * @param repo - 仓库路径。
+ * @returns 失败原因；成功为 null。
+ */
+export async function runGitAttempt(args: readonly string[], repo: string): Promise<string | null> {
+	try {
+		await gitOrThrow(args, repo);
+		return null;
+	} catch (error) {
+		return errorText(error);
 	}
-	return parts.join(' ');
 }
 
 /**

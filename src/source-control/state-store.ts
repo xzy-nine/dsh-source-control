@@ -138,7 +138,9 @@ export function normalizePath(path: string | null | undefined): string {
 }
 
 /**
- * 旧版状态文档路径；只作导入来源，不再写入新数据。
+ * 回退状态文档路径。
+ *
+ * 导入时读；域不可用时作为回退写入，见 {@link writeLegacyFile}。
  *
  * @returns 绝对路径。
  */

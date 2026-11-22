@@ -112,7 +112,7 @@ function GitGraphTab(props) {
 	React.useEffect(() => {
 		logClient('D', 'panel', `上屏条件：会话显示=${String(sessionDisplayed === true)}、侧栏页可见=${String(tabVisible)}、合计=${String(onScreen)}`);
 	}, [sessionDisplayed, tabVisible, onScreen]);
-	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
+	// 目录选择器由 ui-workspace 提供；未装载时克隆流程在选目录处说明原因。
 	const pickDirectory = React.useMemo(() => {
 		const service = props.uiWorkspace;
 		return service === undefined || typeof service.pickDirectory !== 'function'
@@ -127,7 +127,7 @@ function GitGraphTab(props) {
 		);
 	}, [props.terminals, props.sidebarRightService]);
 	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
-	// 返回的 promise 供需要排定顺序的调用方等待（先定位、再开浏览器）；失败一律吞掉。
+	// 返回的 promise 在定位结束后兑现，供需要按完成顺序执行的调用方使用；失败一律吞掉。
 	const revealPath = React.useCallback((path: string): Promise<void> => {
 		if (typeof props.revealPath !== 'function') return Promise.resolve();
 		try {
@@ -212,7 +212,7 @@ function GitGraphHeaderAction(props) {
  *
  * 视图用 DSH forge 变更视图的 DiffFile（见 ./forge-adapter.tsx）：它与 DSH 面板
  * 共用同一份实现，因此行号、hunk 头、并排/单栏、代码高亮、未变更行折叠都随 DSH
- * 一起演进，不再由本插件维护副本。
+ * 一起演进，本插件不维护副本。
  *
  * @param props.sessionId - 席位给出的会话 id。
  * @param props.useSessions - session 作用域席位的标准快照 hook。
@@ -221,7 +221,7 @@ function GitGraphHeaderAction(props) {
  */
 function GitDiffTab(props) {
 	const { sessionId, useSessions, useTabInfo, clientContext, inputActions } = props;
-	// 评论的终点是当前会话的输入框：插一条定位引用，用户可先编辑再发送。
+	// 评论的终点是当前会话的输入框：插入一条定位引用，用户编辑后发送。
 	const addToInput = React.useCallback((text: string): boolean => {
 		if (inputActions === undefined || typeof inputActions.insertQuote !== 'function') return false;
 		return inputActions.insertQuote(text);
@@ -276,7 +276,7 @@ function GitDiffTab(props) {
 	React.useEffect(() => {
 		setFileState({ expanded: true, revealed: false, open: new Set() });
 		setFollowedSide(null);
-		// 换文件后重新与地址对齐，标题不再沿用上一个文件的显示侧。
+		// 换文件后重新与地址对齐，标题回到地址对应的一侧。
 		setShownSide(address, null);
 	}, [currentPath, commitHash, stagedScope, baseHash, address]);
 	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
@@ -320,7 +320,7 @@ function GitDiffTab(props) {
 	/**
 	 * 取另一个作用域的内容。
 	 *
-	 * 用于把改动搬走之后接着看另一半：工作区与暂存区互为对侧，提交与对比作用域没有对侧。
+	 * 用于切到另一侧的同一文件：工作区与暂存区互为对侧，提交与对比作用域没有对侧。
 	 *
 	 * @param toStaged - 对侧是否取暂存区。
 	 * @returns 对侧的差异内容；不适用或取数失败时为 null。
@@ -343,9 +343,9 @@ function GitDiffTab(props) {
 	/** 逐段动作进行中：禁用全部段落按钮，避免两次点击撞在一起。 */
 	const [resolving, setResolving] = React.useState(false);
 	/**
-	 * 本次取数是否由本页的暂存动作引起。
+	 * 该次取数是否由本页的暂存动作引起。
 	 *
-	 * 用于区分「本次取数把内容搬空」与「打开时本就无改动」：只有前者切到另一侧。
+	 * 用于区分「取数把内容搬空」与「打开时本就无改动」：只有前者切到另一侧。
 	 */
 	const emptiedSide = React.useRef(false);
 	/** 分段暂存进行中。 */
@@ -458,9 +458,9 @@ function GitDiffTab(props) {
 	/**
 	 * 一侧被搬空后就地切到另一侧并继续看同一个文件。
 	 *
-	 * 工作区与暂存区是同一份文件的两个视图：一侧取空意味着这次改动整体搬到了另一侧，
-	 * 用户紧接着要看的就是搬过去的那一半。打开新地址会把当前页留在「没有改动」上，因此
-	 * 这里在同一页里换内容——页地址仍是原地那一侧，差别只在于显示哪一侧。
+	 * 工作区与暂存区是同一份文件的两个视图：一侧取空意味着改动整体已在另一侧。
+	 * 打开新地址会把当前页留在「没有改动」上，因此这里在同一页里换内容——页地址仍是原地那一侧，
+	 * 差别只在于显示哪一侧。
 	 *
 	 * 切过去之后地址与实际显示的一侧可以不一致；页身份按进入时的作用域算。
 	 *
@@ -495,7 +495,7 @@ function GitDiffTab(props) {
 	const emptyNow = !loading && diffData !== null && !diffData.binary && diffData.hunks.length === 0;
 	React.useEffect(() => {
 		if (!emptyNow || scope === null || scope.kind !== 'worktree') return;
-		// 只在本次取数确实把内容搬空后才切：首次打开一个本就无改动的文件时停在原作用域。
+		// 只在取数确实把内容搬空后才切：打开一个本就无改动的文件时停在原作用域。
 		if (!emptiedSide.current) return;
 		emptiedSide.current = false;
 		switchScopeSide();
@@ -713,7 +713,7 @@ function GitDiffTab(props) {
 		'div',
 		{ className: css.diffTab },
 		React.createElement('div', { className: css.header },
-			// 左侧是文件下拉：列出本次比较涉及的同类文件，选中即在同一页里切换。
+			// 左侧是文件下拉：列出该次比较涉及的同类文件，选中即在同一页里切换。
 			files.length > 1
 				? React.createElement(Menu, {
 					className: css.fileMenu,
@@ -880,8 +880,8 @@ function startWorkspacePreload(ctx) {
 	/**
 	 * 按列表顺序列出会话信息。
 	 *
-	 * 先列 `ids`，再列 `byId` 里不在 `ids` 的保留会话（子代理回退行等）：后者同样可能被
-	 * 主视图持有，排在列表成员之后。
+	 * 按 `ids` 的顺序取会话，其后补上 `byId` 里不在 `ids` 的保留会话（子代理回退行等）：
+	 * 后者同样可能被主视图持有，排在列表成员之后。
 	 */
 	const sessionsOf = (snapshot) => {
 		const byId = snapshot?.byId ?? {};

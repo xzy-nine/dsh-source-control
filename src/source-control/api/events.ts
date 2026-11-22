@@ -5,7 +5,7 @@
  */
 import type http from 'node:http';
 import { logDebug, logInfo, logWarn } from '../logger.js';
-import { sendJson } from './http.js';
+import { openEventStream, sendJson } from './http.js';
 
 /** 事件流连接的保活间隔（毫秒）。 */
 const EVENTS_HEARTBEAT_MS = 25000;
@@ -77,11 +77,7 @@ function handleEvents(req: http.IncomingMessage, res: http.ServerResponse): void
 		sendJson(res, 503, { error: '事件流连接数已达上限' });
 		return;
 	}
-	res.writeHead(200, {
-		'content-type': 'text/event-stream; charset=utf-8',
-		'cache-control': 'no-store',
-		'connection': 'keep-alive',
-	});
+	openEventStream(res);
 	res.write(': connected\n\n');
 	eventStreams.add(res);
 	logDebug('api', `面板已连接事件流，当前共 ${String(eventStreams.size)} 条连接`);

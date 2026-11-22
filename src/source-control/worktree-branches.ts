@@ -7,6 +7,7 @@
  */
 import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
 import { dirname, join, resolve } from 'node:path';
+import { walkUp } from '../shared/path-walk.js';
 
 /** `HEAD` 文件的解析结果。 */
 export interface HeadRef {
@@ -315,16 +316,14 @@ async function isBareGitDir(dir: string): Promise<boolean> {
  * @returns git 目录的绝对路径；向上到文件系统根仍未找到时为 null。
  */
 export async function resolveGitDir(repo: string): Promise<string | null> {
-	let dir = resolve(repo);
-	for (;;) {
-		const found = await gitDirAt(dir);
-		if (found !== null) return found;
-		if (await isBareGitDir(dir)) return dir;
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
+	const found = await walkUp(resolve(repo), async (dir) => {
+		const gitDir = await gitDirAt(dir);
+		if (gitDir !== null) return gitDir;
+		return await isBareGitDir(dir) ? dir : undefined;
+	});
+	return found ?? null;
 }
+
 
 /**
  * 判定一个目录自身是否为仓库根：主工作树、链接工作树、子模块检出或裸仓库。

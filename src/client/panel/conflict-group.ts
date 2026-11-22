@@ -9,10 +9,9 @@ import React from 'react';
 import { IconCheckOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
 import type { ChangeTreeGroupFields } from './change-tree-group.ts';
-import { ChangeFileShell, ChangeFolderRow, ChangeGroupShell, openTargetMenu } from './changes.ts';
+import { ChangeFileShell, ChangeGroupShell, folderChangeNode, openFileChangeMenu } from './changes.ts';
 import { conflictActionsOf, conflictCodeOf, conflictKindOf } from './conflicts.ts';
 import { CONFLICT_KIND_TEXT } from '../../shared/conflict-kind.ts';
-import { changeMenuItems } from './change-menu.ts';
 import { splitPath } from './changes.ts';
 import type { ChangeMenuDeps } from './change-menu.ts';
 import type { ChangeActions, ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
@@ -80,10 +79,7 @@ function ConflictGroupView({
 	const rows = React.useMemo<ChangeRow[]>(() => changeRowsOf(conflicts, collapsed), [conflicts, collapsed]);
 	if (conflicts.length === 0) return [];
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>, entry: WorkingTreeEntry): void => {
-		event.stopPropagation();
-		openTargetMenu(event, () => changeMenuItems({
-			target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1, entry, untracked: false,
-		}));
+		openFileChangeMenu(event, menu, entry);
 	};
 	return React.createElement(ChangeGroupShell, {
 		title: '合并冲突',
@@ -92,12 +88,7 @@ function ConflictGroupView({
 		onToggleGroup,
 	},
 		...rows.map((row) => {
-				if (row.kind === 'folder') {
-					return React.createElement(ChangeFolderRow, {
-						key: 'f:' + row.path, row, open: row.open,
-						onToggle: () => { toggleChange(groupKey, row.path); },
-					});
-				}
+				if (row.kind === 'folder') return folderChangeNode(row, (path) => { toggleChange(groupKey, path); });
 				const entry = row.entry;
 				const kind = conflictKindOf(entry);
 				const { name } = splitPath(entry.path);

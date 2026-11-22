@@ -1,7 +1,7 @@
 /**
  * 提交层面的两项通用操作：创建 Pull Request 与从引用创建归档。
  */
-import type { MenuBuilders } from './shared.ts';
+import { withRefName, type MenuBuilders } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
 	createPullRequest: (ctx, meta) => {
@@ -14,10 +14,8 @@ export const BUILDERS: MenuBuilders = {
 			onClick: () => { void ctx.deps.handleCreatePullRequest(); },
 		};
 	},
-	createArchiveFromRef: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		const kind = ctx.ref.type === 'tag' ? '标签' : '分支';
+	createArchiveFromRef: withRefName((ctx, meta, name) => {
+		const kind = ctx.ref?.type === 'tag' ? '标签' : '分支';
 		return { title: meta.title, onClick: () => { void ctx.deps.handleCreateArchive(name, `${kind} ${name}`); } };
-	},
+	}),
 };
