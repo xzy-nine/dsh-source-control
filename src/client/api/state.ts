@@ -32,7 +32,7 @@ export interface StateSnapshot {
 }
 
 /** 空快照。 */
-const EMPTY_SNAPSHOT: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
+export const EMPTY_SNAPSHOT: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
 
 /**
  * 读取宿主状态快照。

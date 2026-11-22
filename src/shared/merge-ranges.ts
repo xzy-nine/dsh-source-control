@@ -37,8 +37,19 @@ const LCS_BUDGET = 4_000_000;
  */
 export function linesOf(text: string): string[] {
 	if (text === '') return [];
-	const lines = text.split('\n');
-	if (lines[lines.length - 1] === '') lines.pop();
+	return removeTrailingBlankLines(text.split('\n'));
+}
+
+/**
+ * 去掉数组末尾的空行。
+ *
+ * git 的 `-z` 输出与文本切分都会在末尾留下空串，读行之前统一剔掉。
+ *
+ * @param lines - 行数组。
+ * @returns 同一个数组。
+ */
+export function removeTrailingBlankLines<T extends string>(lines: T[]): T[] {
+	while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 	return lines;
 }
 

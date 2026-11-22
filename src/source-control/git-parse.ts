@@ -5,9 +5,12 @@
  * 分隔约定：多记录命令用 `-z` 让 git 以 NUL 终止每条记录，记录内的字段另用 `%x00` 分隔，
  * 因此字段数固定，按固定字段数切分即可；路径与提交信息里的换行不再需要转义。
  */
+import { removeTrailingBlankLines } from '../shared/merge-ranges.js';
 import type {
 	CommitGraph, CommitNode, CommitSignatureFields, CommitStash, FileChange, FileStatus, Signature, SignatureStatus, StashEntry,
 } from './git-types.js';
+
+export { removeTrailingBlankLines };
 
 /** 日志类命令的字段分隔符（即 `--format` 中的 `%x00`）。 */
 const FIELD = '\0';
@@ -259,16 +262,7 @@ export function splitRecords(stdout: string, fieldCount: number): string[][] {
 	return records;
 }
 
-/**
- * 去掉数组末尾的空行。
- *
- * @param lines - 行数组。
- * @returns 同一个数组。
- */
-export function removeTrailingBlankLines(lines: string[]): string[] {
-	while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-	return lines;
-}
+
 
 /**
  * 取字符串数组去重后的结果。

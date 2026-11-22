@@ -16,6 +16,22 @@ import { repoHeadHash } from '../repo-facts.js';
 import { logDebug, logInfo } from '../logger.js';
 import type { ApiContext } from './context.js';
 
+/**
+ * 一条按路径集合改动的日志文本。
+ *
+ * 空集合表示「全部」：暂存与取消暂存都以空 pathspec 表示整批，因此这一句由两者共用。
+ *
+ * @param verb - 动作名，如「已暂存」。
+ * @param repo - 仓库路径。
+ * @param paths - 涉及的路径。
+ * @returns 日志文本。
+ */
+function pathChangeLog(verb: string, repo: string, paths: readonly string[]): string {
+	if (paths.length === 0) return `${verb}全部变更：${repo}`;
+	const head = paths.slice(0, 5).join('、');
+	return `${verb} ${String(paths.length)} 个路径：${head}${paths.length > 5 ? ' 等' : ''}`;
+}
+
 /** 非仓库路径上返回的空工作区快照。 */
 const EMPTY_SNAPSHOT = {
 	entries: [] as unknown[],
@@ -103,9 +119,7 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 				const paths = arr<string>('paths');
 				await stagePaths(repo, paths);
 				// 空路径表示暂存全部：宿主走 `git add --all`，不为条目逐个下 pathspec。
-				logInfo('repo', paths.length === 0
-					? `已暂存全部变更：${repo}`
-					: `已暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				logInfo('repo', pathChangeLog('已暂存', repo, paths));
 				return { repo };
 			});
 			break;
@@ -114,9 +128,7 @@ export async function handleWorkspaceCommand(ctx: ApiContext): Promise<boolean> 
 				const paths = arr<string>('paths');
 				await unstagePaths(repo, paths);
 				// 空路径表示取消全部：git restore 没有 --all，宿主持有 pathspec `.` 的写法。
-				logInfo('repo', paths.length === 0
-					? `已取消暂存全部变更：${repo}`
-					: `已取消暂存 ${String(paths.length)} 个路径：${paths.slice(0, 5).join('、')}${paths.length > 5 ? ' 等' : ''}`);
+				logInfo('repo', pathChangeLog('已取消暂存', repo, paths));
 				return { repo };
 			});
 			break;
