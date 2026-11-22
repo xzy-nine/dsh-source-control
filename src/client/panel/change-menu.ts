@@ -10,13 +10,13 @@
  */
 import type { ContextMenuItem } from '../ui/context-menu.ts';
 import { conflictActionsOf, conflictKindOf } from './conflicts.ts';
-import type { ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
+import type { ChangeActions, ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
 import { CHANGE_MENU_ACTIONS, groupOf, titleOf, type ChangeMenuActionMeta, type ChangeMenuTarget } from './change-menu-actions.ts';
 
 export type { ChangeMenuTarget } from './change-menu-actions.ts';
 
 /** 右键一个目标时已算好的数据与回调。 */
-export interface ChangeMenuDeps {
+export interface ChangeMenuDeps extends Pick<ChangeActions, 'onAddToGitignore' | 'onAddToLocalExclude'> {
 	/** 面板是否正在执行仓库操作。 */
 	readonly busy: boolean;
 	/** 该行是否属于「已暂存的更改」分组。 */
@@ -39,10 +39,6 @@ export interface ChangeMenuDeps {
 	readonly onDiscardGroup: () => void;
 	/** 按整文件打开文件行对应的文件。 */
 	readonly onOpenFile: (entry: WorkingTreeEntry) => void;
-	/** 把路径加入最近的 .gitignore。 */
-	readonly onAddToGitignore: (path: string) => void;
-	/** 把路径加入本地排除文件。 */
-	readonly onAddToLocalExclude: (path: string) => void;
 	/** 复制路径到剪贴板。 */
 	readonly onCopyPath: (path: string) => void;
 	/** 对未合并条目执行解决动作；普通分组不给，此时冲突菜单项不出现。 */

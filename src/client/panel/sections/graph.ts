@@ -11,6 +11,7 @@ import { RepoIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { GitGraphIcon } from '../../ui/plugin-icon.ts';
 import { CommitDetail } from '../changes.ts';
 import { interfaceLanguage, needsTranslationMemo } from '../language.ts';
+import type { UseCommitStatsResult } from '../use-commit-stats.ts';
 import type { BusyFlags, Commit, CommitCacheMaps, CommitFile, PanelPhase, RepoNode, Settings } from '../../shared/types.ts';
 import { iconButton, stopThen } from './icon-button.ts';
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
@@ -21,7 +22,10 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 import { WorkspaceEmpty, refreshButton, SectionHead, css, shared, cx, type SectionEmptyFields } from './section-kit.ts';
 
 
-export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields {
+export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields, Pick<
+	UseCommitStatsResult,
+	'graphTranslated' | 'graphTranslating'
+> {
 	readonly open: boolean;
 	readonly height: number;
 	readonly busy: BusyFlags;
@@ -52,10 +56,6 @@ export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields {
 	readonly onTranslateCommit: (hash: string, text: string) => void;
 	/** 取消一个提交的翻译。 */
 	readonly onCancelTranslateCommit: (hash: string) => void;
-	/** 图形区标题栏的批量翻译是否已生效。 */
-	readonly graphTranslated: boolean;
-	/** 图形区批量翻译的进度；未进行时为 null。 */
-	readonly graphTranslating: { done: number; total: number } | null;
 	/** 批量翻译当前可见窗口内的提交标题。 */
 	readonly onTranslateVisible: (items: readonly { hash: string; text: string }[]) => void;
 	/** 取消图形区的批量翻译。 */
