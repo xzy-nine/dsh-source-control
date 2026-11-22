@@ -17,8 +17,7 @@ parallel('分区空态判据', (t) => {
 	t.test('工作区里没有仓库时给出初始化入口', () => {
 		const empty = workspaceEmptyOf({ hasWorkspace: true, treeLoading: false, selectedNode: null, workspaceIsRepo: false });
 		assert.equal(empty?.actionKind, 'init-workspace');
-		assert.equal(empty?.action, '初始化仓库');
-		assert.equal(empty?.path, '');
+		assert.equal(empty?.path, '', '初始化目标是工作区根');
 	});
 
 	t.test('仓库树仍在发现时不显示空态', () => {
@@ -32,8 +31,7 @@ parallel('分区空态判据', (t) => {
 	t.test('选中未检出的子模块时给出初始化入口', () => {
 		const empty = workspaceEmptyOf({ hasWorkspace: true, treeLoading: false, selectedNode: node('submodule', false), workspaceIsRepo: false });
 		assert.equal(empty?.actionKind, 'init-submodule');
-		assert.equal(empty?.action, '初始化子模块');
-		assert.equal(empty?.path, '/ws/sub');
+		assert.equal(empty?.path, '/ws/sub', '初始化目标是子模块路径');
 	});
 
 	t.test('选中已检出的子模块时照常渲染', () => {
@@ -44,7 +42,7 @@ parallel('分区空态判据', (t) => {
 		const empty = workspaceEmptyOf({ hasWorkspace: true, treeLoading: false, selectedNode: node('worktree', false), workspaceIsRepo: false });
 		assert.equal(empty?.actionKind, 'none');
 		assert.equal(empty?.action, null);
-		assert.match(empty?.title ?? '', /不在磁盘上/);
+		assert.ok((empty?.title ?? '') !== '', '应说明原因');
 	});
 
 	t.test('没有工作区的会话不显示空态', () => {

@@ -2,7 +2,30 @@
  * 仓库发现、仓库同步状态与提交图查询。
  */
 import type { Commit, RefItem, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
-import { callApi } from './http.ts';
+import { callApi, commandError } from './http.ts';
+
+/**
+ * 刷新编号的请求字段；未给出时为空表。
+ *
+ * 编号只用于宿主按轮归组记耗时，不影响取数结果，因此沿用「未给出即不传」的写法。
+ *
+ * @param refreshId - 刷新编号；省略时不带该字段。
+ * @returns 可直接展开进请求体的字段表。
+ */
+function refreshIdOf(refreshId: number | undefined): { refreshId?: number } {
+	return refreshId === undefined ? {} : { refreshId };
+}
+
+/**
+ * 给一条请求体附上刷新编号。
+ *
+ * @param message - 请求体。
+ * @param refreshId - 刷新编号；省略时原样返回。
+ * @returns 带编号的请求体。
+ */
+function withRefreshId(message: Record<string, unknown>, refreshId: number | undefined): Record<string, unknown> {
+	return refreshId === undefined ? message : { ...message, refreshId };
+}
 
 /** 仓库发现结果。 */
 export interface DiscoveryResult {
@@ -149,10 +172,14 @@ export interface WorkingTreeSnapshot {
  * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
 export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false, refreshId?: number): Promise<WorkingTreeSnapshot> {
-	const payload = await callApi(cwd, {
-		command: 'loadWorkingTreeSnapshot', noCache,
-		...(refreshId === undefined ? {} : { refreshId }),
-	}, signal);
+	const payload = await callApi(cwd, withRefreshId({ command: 'loadWorkingTreeSnapshot', noCache }, refreshId), signal);
+	/*
+	 * 快照命令把「仓库可用但工作区读不出来」放在 error 里回投（空条目 + 错误文本），
+	 * 而不是非 2xx：这类结果按失败抛出，否则界面会把空条目当成「没有改动」，刷新的相位也
+	 * 收不回来。非仓库路径回的是空快照且 error 为 null，不受影响。
+	 */
+	const error = commandError(payload);
+	if (error !== null) throw new Error(error);
 	return {
 		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
 		head: typeof payload.head === 'string' ? payload.head : null,
@@ -281,7 +308,7 @@ export async function loadGraph(cwd: string, {
 		...(givenRemotes === undefined ? {} : { remotes: givenRemotes }),
 		...(givenStashes === undefined ? {} : { stashes: givenStashes }),
 		hideRemotes: [],
-		...(refreshId === undefined ? {} : { refreshId }),
+		...refreshIdOf(refreshId),
 	}, signal);
 	const batch = commitsPayload.repoInfo;
 	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;

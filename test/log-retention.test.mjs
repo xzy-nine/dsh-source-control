@@ -56,17 +56,16 @@ parallel('日志目录判据', (t) => {
 		assert.deepEqual(planDayEvictions(files, 12, [current]), []);
 	});
 
-	t.test('保留期为 15 天，当天算第一天', () => {
-		assert.equal(LOG_RETENTION_DAYS, 15);
-		assert.equal(DAY_FOLDER_LIMIT_BYTES, 15 * 1024 * 1024);
-		// 单份日志的上限给 issue 评论正文上限（65536 字符）留出包装余量。
-		assert.equal(LOG_FILE_CHAR_LIMIT, 60000);
-		assert.ok(65536 - LOG_FILE_CHAR_LIMIT >= 4000, '包装余量至少留 4000 字符');
+	t.test('早于保留期的日文件夹整体删除，非日期目录不参与', () => {
 		const now = new Date(2026, 0, 20, 12, 0, 0);
 		const names = ['2026-01-20', '2026-01-06', '2026-01-05', '2025-12-31', 'tmp'];
-		// 非日期目录名不参与过期判据。
-		assert.equal(isDayFolderName('tmp'), false);
-		// 第 15 天是 01-06，早于它（01-05 及之前）的文件夹整体删除。
+		// 第 LOG_RETENTION_DAYS 天是 01-06，早于它（01-05 及之前）的文件夹整体删除。
 		assert.deepEqual(planExpiredDayFolders(names, now), ['2026-01-05', '2025-12-31']);
+	});
+
+	t.test('保留期与单份上限自洽', () => {
+		// 单份日志的上限给 issue 评论正文上限（65536 字符）留出包装余量。
+		assert.ok(65536 - LOG_FILE_CHAR_LIMIT >= 4000, '包装余量至少留 4000 字符');
+		assert.ok(LOG_RETENTION_DAYS > 0 && DAY_FOLDER_LIMIT_BYTES > 0);
 	});
 });

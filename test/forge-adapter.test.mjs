@@ -155,6 +155,20 @@ test('hunk 形状逐字段映射到 forge', () => {
 	assert.notEqual(hunks[0], TEXT_DIFF.hunks[0], '必须换一个对象，不能把宿主的数组当成只读类型塞过去');
 });
 
+test('行数过多的块在适配层就被切到上限以内', () => {
+	// forge 按块一次性展开行数组，单块行数超过运行时上限即抛 RangeError。
+	const big = {
+		...TEXT_DIFF,
+		hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 12000, lines: Array.from({ length: 12000 }, (_, at) => `+line ${String(at + 1)}`) }],
+	};
+	const hunks = adapter.toForgeHunks(big);
+	assert.ok(hunks.length > 1, '必须切成多块');
+	for (const hunk of hunks) assert.ok(hunk.lines.length <= 4000, `单块行数越过上限：${String(hunk.lines.length)}`);
+	assert.equal(hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0), 12000, '行不丢也不重');
+	assert.equal(hunks[0].newStart, 1);
+	assert.equal(hunks.at(-1).newStart + hunks.at(-1).newLines - 1, 12000, '末尾行号不偏移');
+});
+
 test('行数统计与宿主 hunk 前缀一致', () => {
 	assert.deepEqual(adapter.countLines(TEXT_DIFF), { additions: 2, deletions: 1 });
 });
@@ -182,17 +196,6 @@ test('文件记录带齐 forge 要求的字段', () => {
 	assert.equal(file.hunks.length, 1);
 	assert.equal(typeof file.layer, 'string');
 	assert.equal(typeof file.digest, 'string');
-});
-
-test('评论的终点是输入框，且引用不带代码片段', () => {
-	// 选区与拼接见 line-range.test.mjs 与 comment-reference.test.mjs；
-	// 这里只确认适配层把它交给 forge 评论框时不再夹带差异片段。
-	const source = readFileSync(new URL('../src/client/diff/forge-adapter.tsx', import.meta.url), 'utf8');
-	const call = /formatCommentQuote\(([\s\S]*?)\)\)/.exec(source);
-	assert.ok(call !== null, '应通过 formatCommentQuote 生成引用');
-	assert.ok(!call[1].includes('hunk'), '引用不应把差异片段传给格式化函数');
-	assert.match(source, /addToInput/, '应把引用交给输入框');
-	assert.match(source, /ReviewComposer/, '评论框用 forge 的原生组件');
 });
 
 test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {

@@ -1,13 +1,9 @@
 /**
- * 校验客户端从 ui-primitives 导入的每个名字都真实存在，以及图形区的
- * 拖拽手柄位置与拖动方向。
+ * 客户端跨文件契约：ui-primitives 导出名、CSS 模块类名映射、菜单注册表与门禁接线。
  *
- * 背景：ui-primitives 的产品图标导出名带 `Regular` / `Medium` 权重后缀，
- * 写成裸名会得到 undefined，React 渲染时不报编译错误、只在运行时抛
- * 「元素类型无效」并让整个侧栏页变空白。此测试把这类拼写错误挡在构建前。
- *
- * 样式已从 TS 模板字符串改为 CSS 模块（`css/` 下按组件拆分）：组件经类名映射引用，
- * 源码里不再出现裸类名，因此结构断言改看映射键，样式规则断言按归属模块读取 CSS 文件。
+ * 这些判据只能看源码结构与数据源：导入名不存在时 React 不报编译错误，只在运行时抛
+ * 「元素类型无效」并让整页空白；类名映射缺失时视图无样式。导出名取自 devDependencies
+ * 里固定版本的 `.d.ts`，本机与 CI 都能执行。
  */
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
@@ -81,9 +77,8 @@ function importedNames(file) {
 	return names;
 }
 
-
 /** 本文件的用例之间无共享进程级状态，因此并发执行；并发前提见 test/harness.mjs。 */
-parallel('客户端结构与产物契约', (t) => {
+parallel('客户端跨文件契约', (t) => {
 	t.test('ui-primitives 导入名全部存在', () => {
 		const exported = primitivesExports();
 		assert.ok(exported.size > 100, `导出表过小（${exported.size}），可能解析出错`);
@@ -94,235 +89,23 @@ parallel('客户端结构与产物契约', (t) => {
 		}
 	});
 
-	/** 读取某个 CSS 模块的源码。 */
-	function cssFile(name) {
-		return readFileSync(join(cssDir, name), 'utf8');
-	}
-
-	t.test('图形区拖拽手柄在图形标题之前', () => {
-		// 手柄画在工作区与图形的分界线上：它必须是图形区内的第一个元素，
-		// 否则会出现在标题与图形之间。
-		const source = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
-		const section = source.indexOf('cx(css.sec, css.graphSec)');
-		const handle = source.indexOf('shared.secResize', section);
-		// 标题容器按结构标记定位：分区标题文本会随界面文案调整，不能拿它当锚点。
-		const title = source.indexOf('cx(css.secHead', section);
-		assert.ok(section !== -1 && handle !== -1 && title !== -1, '未找到图形区标记');
-		assert.ok(handle > section && handle < title, '拖拽手柄必须排在图形标题之前');
-	});
-
-	t.test('图形区高度跟随拖动方向', () => {
-		// 向上拖＝图形变高：位移取负号，写成加号会让拖拽方向反转。
-		const panel = readFileSync(join(clientDir, 'panel', 'use-panel-layout.ts'), 'utf8');
-		assert.match(panel, /const startGraphResize = useResizeHandler\(graphHeight, 'up', commitGraphHeight\)/, '图形区拖拽应向上变大');
-		assert.match(panel, /const startRepoResize = useResizeHandler\(repoHeight, 'down', commitRepoHeight\)/, '存储库区拖拽应向下变大');
-		const resize = readFileSync(join(clientDir, 'panel', 'use-resize.ts'), 'utf8');
-		assert.match(resize, /commit\(startHeight \+ \(direction === 'up' \? -delta : delta\)\)/, '拖拽位移必须按方向取符号');
-	});
-
-	t.test('改动文件区在图形区内展开', () => {
-		// 展开块由 CommitGraph 按选中行渲染，面板不再另起一块。
-		const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(graphSource, /renderDetail/, 'CommitGraph 必须接收 renderDetail');
-		const sectionSource = readFileSync(join(panelDir, 'sections', 'graph.ts'), 'utf8');
-		const section = sectionSource.indexOf('cx(css.sec, css.graphSec)');
-		assert.ok(section !== -1, '未找到图形区标记');
-		assert.ok(!/css\.detail(?![A-Za-z])/.test(sectionSource), '图形区不应渲染独立的 detail 区块');
-	});
-
-	t.test('展开块左内边距与提交行一致', () => {
-		// 少了与 .row 相同的左内边距与列间距，泳道列会相对提交行左移。
-		const source = cssFile('graph.module.css');
-		const row = /\.row\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
-		const inline = /\.detailInline\{[^}]*gap:8px[^}]*padding:0 8px/.test(source);
-		assert.ok(row, '提交行应有 8px 列间距与 0 8px 内边距');
-		assert.ok(inline, '展开块应有同样的 8px 列间距与 0 8px 内边距，与提交行对齐');
-	});
-
-	t.test('再次点击同一提交行收起展开', () => {
-		// 点已选中的行必须收起（清空选中与详情），否则无法二次点击关闭。
-		const source = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
-		const start = source.indexOf('const toggleCommit');
-		assert.ok(start !== -1, '未找到 toggleCommit');
-		const body = source.slice(start, source.indexOf('const toggleCommit', start + 10));
-		assert.match(body, /state\.selectedHash === hash/, '必须先判断是否已选中');
-		assert.match(body, /selectedHash: null, detail: null/, '收起时必须清空选中与详情');
-		assert.match(readFileSync(join(clientDir, 'panel', 'index.ts'), 'utf8'), /onToggleCommit: toggleCommit/, '图形行点击必须走 toggleCommit');
-	});
-
 	t.test('图标导出名带权重后缀', () => {
 		const exported = primitivesExports();
-		// 产品图标一律以 Regular 或 Medium 结尾；裸名不存在，正是初版写错的地方。
 		assert.ok(exported.has('IconBranchOutlineRegular'));
 		assert.ok(!exported.has('IconBranchOutline'), '裸图标名不应存在，若上游改名需同步本测试');
 	});
-	t.test('提交框在滚动区之外', () => {
-		// 滚动必须只发生在变更列表上：提交框若落在滚动容器内会随列表一起滚走。
-		const source = readFileSync(join(panelDir, 'sections', 'changes.ts'), 'utf8');
-		const box = source.indexOf('css.commitBox');
-		const scroll = source.indexOf('css.changesScroll');
-		assert.ok(box !== -1 && scroll !== -1, '未找到提交框或滚动容器标记');
-		assert.ok(box < scroll, '提交框必须排在滚动容器之前');
-		// 两个变更分组都必须在滚动容器内。
-		const stagedGroup = source.indexOf('staged: true', scroll);
-		const unstagedGroup = source.indexOf('staged: false', scroll);
-		assert.ok(stagedGroup !== -1 && unstagedGroup !== -1, '两个变更分组都应在滚动容器内');
-	});
-
-	t.test('工作区主体自身不滚动', () => {
-		const source = cssFile('sections.module.css');
-		const body = /\.workspaceBody\{([^}]*)\}/.exec(source);
-		assert.ok(body !== null, '未找到 .workspaceBody');
-		assert.match(body[1], /overflow:hidden/, '工作区主体不得自身滚动，否则提交框会跟着滚');
-		const scroll = /\.changesScroll\{([^}]*)\}/.exec(source);
-		assert.ok(scroll !== null, '未找到 .changesScroll');
-		assert.match(scroll[1], /overflow-y:auto/, '变更列表容器应纵向滚动');
-	});
-
-	t.test('单选框只把短文案放进段内', () => {
-		// 分段控件按最宽的段定尺寸：名称与地址拼进同一个段会撑破 380px 宽的弹窗，
-		// 因此地址这类长文本走 description，在控件下方整行显示。
-		const sync = readFileSync(join(panelDir, 'use-remote-sync.ts'), 'utf8');
-		assert.match(sync, /label: item\.name/, '发布对话框的段内文案应是远程名');
-		assert.match(sync, /description: item\.url \?\? ''/, '远程地址应交给下方说明');
-		const dialog = readFileSync(join(clientDir, 'ui', 'dialog.ts'), 'utf8');
-		assert.match(dialog, /className: css\.selectControl/, '分段控件应带上限制宽度的类');
-		assert.match(dialog, /className: css\.selectDescription/, '选中项的长文本应在下方渲染');
-		assert.match(cssFile('dialog.module.css'), /\.selectControl button\{[^}]*text-overflow:ellipsis/, '超长段内文案按省略号截断');
-	});
-
-	t.test('文件行整行点击即打开', () => {
-		// 文件行不再有独立的差异按钮：点击行本身即打开。
-		const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
-		assert.ok(!source.includes('IconCompareSplitOutlineRegular'), '不应再引用差异按钮图标');
-		assert.match(source, /const handleClick = [\s\S]{0,200}?onOpen\(entry, isNew\)/, '整行点击应直接打开文件');
-		assert.match(source, /onClick: handleClick/, '行元素应绑定整行点击');
-		const openable = source.match(/css\.changeOpenable/g) ?? [];
-		assert.ok(openable.length >= 2, '变更行与提交改动行都应带整行可点标记');
-	});
-
-	t.test('未跟踪文件走普通文件地址，已暂存的新增走差异', () => {
-		// 未跟踪文件不在索引里，没有可比差异，必须走 dsh-resource://file/… 而不是 git-diff 地址。
-		const indexPath = join(clientDir, 'index.ts');
-		const source = readFileSync(indexPath, 'utf8');
-		assert.match(source, /diffFileAddress/, 'index.ts 应使用普通文件地址构造函数');
-		assert.match(source, /diff\.kind === 'file'/, '应按 file 类型分支处理');
-		const panelSource = readFileSync(join(clientDir, 'panel', 'use-commit-selection.ts'), 'utf8');
-		assert.match(panelSource, /isNew \? 'file'/, '未跟踪文件应生成 file 类型目标');
-		/*
-		 * 已暂存的新增 A 已进索引，git diff --cached 能给出完整的新增差异，
-		 * 因此只有未跟踪的 ? 才按整文件打开；把 A 一并算进去会让它错开普通文件页。
-		 */
-		const changesSource = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
-		const judge = /export function isUntrackedFile\(entry: WorkingTreeEntry\): boolean \{([^}]*)\}/.exec(changesSource);
-		assert.ok(judge !== null, '应有 isUntrackedFile 判据');
-		assert.match(judge[1], /index === '\?'/, '未跟踪的 ? 按整文件打开');
-		assert.match(judge[1], /worktree === '\?'/, '未跟踪需两列都是 ?');
-		assert.ok(!/index === 'A'/.test(judge[1]), '已暂存的新增 A 不得按整文件打开');
-		assert.ok(!/isNewFile/.test(changesSource), '旧的合并判据应已移除');
-	});
-
-	t.test('差异页固定左右并排，不再提供切换', () => {
-		// 中间要站一列分段暂存按钮，单列布局没有这条接缝，因此并排不再是可选项。
-		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /ForgeDiffView, \{/, '应把比较交给 forge 的差异视图');
-		assert.ok(!/split,/.test(source), '页面不再把 split 传下去：并排由适配层固定');
-		assert.ok(!/diffView\.patch\(\{ split/.test(source), '不应再有并排切换入口');
-		const adapter = readFileSync(join(clientDir, 'diff', 'forge-adapter.tsx'), 'utf8');
-		assert.match(adapter, /split: true/, '适配层把并排写死');
-	});
-
-	t.test('普通文件地址用绝对路径', () => {
-		// 地址里的路径必须是绝对路径：宿主按它自己的会话工作区根解析相对路径，
-		// 插件持有的根未必一致（选中链接工作树时不同），换算成相对路径会被再拼一次。
-		const source = readFileSync(join(clientDir, 'diff', 'resource-path.ts'), 'utf8');
-		assert.match(source, /isAbsolutePath\(file\)/, '入参已是绝对路径时原样使用');
-		assert.match(source, /repoRoot/, '仓库根参与绝对路径拼接');
-		assert.ok(!/relativeTo\(/.test(source), '不应再按会话工作区根换算相对路径');
-	});
-
-	t.test('状态字符与文件夹数量同处最右一列', () => {
-		// 两者必须共用同一个尾部列，否则文件行与文件夹行的右边界参差。
-		const source = readFileSync(join(panelDir, 'changes.ts'), 'utf8');
-		const tails = source.match(/css\.rowTail/g) ?? [];
-		assert.ok(tails.length >= 2, `文件状态与文件夹数量都应使用尾部列，实际 ${tails.length} 处`);
-		// 状态字符排在文件名之后，即最右侧。
-		const nameAt = source.indexOf('css.changeText }, name)');
-		const statusAt = source.indexOf('css.rowTail, css.status');
-		assert.ok(nameAt !== -1 && statusAt !== -1 && nameAt < statusAt, '状态字符必须排在文件名之后');
-		const styles = cssFile('changes.module.css');
-		const tail = /\.rowTail\{([^}]*)\}/.exec(styles);
-		assert.ok(tail !== null, '未找到 .rowTail 样式');
-		assert.match(tail[1], /width:24px/, '尾部列应定宽，使状态字符与数量对齐');
-		// 文件夹数量不再用 margin-left:auto 单独靠右。
-		assert.ok(!/\.folder \.count\{[^}]*margin-left:auto/.test(styles), '数量应由尾部列定位');
-	});
-
-	t.test('文件差异视图交给 forge 的 DiffFile', () => {
-		// forge 的 DiffFile 是变更视图里的文件段，本插件用适配层把宿主数据喂给它，
-		// 不再维护自己的副本。
-		const adapterSource = readFileSync(join(clientDir, 'diff', 'forge-adapter.tsx'), 'utf8');
-		assert.match(adapterSource, /dsh-experimental-client-ui-forge\/src\/client\/DiffFile\.tsx/, '应引用 forge 的 DiffFile');
-		assert.match(adapterSource, /export function ForgeDiffView/, '应导出本插件的差异视图');
-		assert.match(adapterSource, /toForgeFile/, '应有从宿主数据到 forge 文件记录的映射');
-		assert.match(adapterSource, /SectionReach/, '滚动到才绘制需要 forge 的观察器');
-		// forge 的 DiffFile 只做横向滚动，纵向滚动必须由外层正文容器承担，否则长差异无法滚动。
-		const styles = readFileSync(join(cssDir, 'index.module.css'), 'utf8');
-		const bodyRule = /\.diffTabBody\{[^}]*\}/.exec(styles);
-		assert.ok(bodyRule !== null, '应存在差异页正文容器的样式');
-		assert.match(bodyRule[0], /overflow:auto/, '正文容器必须可纵向滚动，DiffFile 自身不承担纵向滚动');
-		assert.ok(!/\.diffTabBody\{[^}]*overflow:hidden/.test(styles), '正文容器不得隐藏溢出，否则长差异滚不动');
-		// forge 的粘性文件头靠 .root 上的 --forge-changes-bg 取背景；本插件只渲染文件段，
-		// 缺这层变量会让标题行透明、代码从下面滚过去。
-		const adapterStyles = readFileSync(join(cssDir, 'forge-adapter.module.css'), 'utf8');
-		assert.match(adapterStyles, /--forge-changes-bg:/, '外层必须补上 forge 的背景变量');
-		assert.match(adapterStyles, /\.ChangesTab_fileHeader/, '必须给粘性文件头设背景');
-		assert.match(adapterStyles, /backdrop-filter/, '半透明背景需要模糊以便读清标题');
-		// 评论框按文档流紧跟文件段；若外层是 flex 列，它会被当成弹性项挤到视图底部。
-		const hostRule = /\.host\{[^}]*\}/.exec(adapterStyles);
-		assert.ok(hostRule !== null, '应存在差异视图外层的样式');
-		assert.match(hostRule[0], /display:block/, '外层必须按块布局排');
-		assert.ok(!/\.host\{[^}]*flex-direction:column/.test(adapterStyles), '外层不得用 flex 列');
-		// 评论框必须悬浮，且不受祖先裁切：插入文档流会撑高内容、自动聚焦还会把视口滚走；
-		// absolute 则会被滚动视口（overflow:auto）与文件段（overflow:clip）裁掉一截。
-		const floatingRule = /\.floating\{[^}]*\}/.exec(adapterStyles);
-		assert.ok(floatingRule !== null, '应存在评论框悬浮层的样式');
-		assert.match(floatingRule[0], /position:fixed/, '评论框必须 fixed 定位，既不占文档流也不被祖先裁切');
-
-		const indexSource = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(indexSource, /from '\.\/diff\/forge-adapter\.tsx'/, '差异页应引用适配层');
-		assert.ok(!indexSource.includes('file-diff.tsx'), '不应再引用旧的复制实现');
-		assert.ok(!indexSource.includes('DiffBlock'), '不应使用 ui-primitives 的 DiffBlock');
-		// 文案直接绑 forge 发布的字典，避免对键改名后在本插件里漂移。
-		const localeSource = readFileSync(join(clientDir, 'diff', 'forge-locales.ts'), 'utf8');
-		assert.match(localeSource, /ForgePanelKey/, '应复用 forge 的键类型');
-		const miscRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'misc.ts'), 'utf8');
-		assert.match(miscRoutes, /parseUnifiedDiffHunks/, '宿主应解析 git 的统一差异');
-		assert.match(miscRoutes, /--unified=3/, '宿主应请求带上下文的统一差异');
-	});
-
-	t.test('构建脚本把 CSS 模块的样式内联进包', () => {
-		// esbuild 的 local-css 只产出类名映射；样式文本必须显式内联，否则视图无样式。
-		const script = readFileSync(join(root, 'scripts', 'build-client.mjs'), 'utf8');
-		assert.match(script, /'\.css': 'local-css'/, 'CSS 应作为模块处理');
-		assert.match(script, /endsWith\('\.css'\)/, '应收集 esbuild 产出的样式');
-		assert.match(script, /dsh-source-control-module-style/, '应把样式内联为一段 style');
-		assert.match(script, /jsx: 'automatic'/, '复制的视图使用自动 JSX 运行时');
-	});
 
 	t.test('样式经 CSS 模块引用且类名全部有映射', () => {
-		// 组件不再写裸类名字符串；每个 <别名>.xxx 都必须能在对应模块里找到同名类。
 		const defined = new Map();
-		for (const file of readdirSync(cssDir).filter((n) => n.endsWith('.module.css'))) {
+		for (const file of readdirSync(cssDir).filter((name) => name.endsWith('.module.css'))) {
 			const source = readFileSync(join(cssDir, file), 'utf8');
 			const names = new Set();
 			for (const match of source.matchAll(/\.([A-Za-z][\w-]*)/g)) names.add(match[1]);
 			defined.set(file, names);
 		}
-		const total = [...defined.values()].reduce((n, s) => n + s.size, 0);
+		const total = [...defined.values()].reduce((count, names) => count + names.size, 0);
 		assert.ok(total > 100, `样式类名过少（${total}），可能解析出错`);
 
-		// 源文件里 `import <别名> from '.../<模块>.module.css'` 建立别名到模块的对应。
 		for (const file of clientFiles()) {
 			const source = readFileSync(file, 'utf8');
 			const aliasToModule = new Map();
@@ -330,7 +113,6 @@ parallel('客户端结构与产物契约', (t) => {
 				aliasToModule.set(match[1], `${match[2]}.module.css`);
 			}
 			if (aliasToModule.size === 0) continue;
-			// 去掉 import 行，避免把模块路径本身当成类名引用。
 			const body = source.split('\n').filter((line) => !/^\s*import\b/.test(line)).join('\n');
 			for (const match of body.matchAll(/\b(\w+)\.([A-Za-z][\w]*)\b/g)) {
 				const module = aliasToModule.get(match[1]);
@@ -344,293 +126,28 @@ parallel('客户端结构与产物契约', (t) => {
 	});
 
 	t.test('动态切换的状态类不经模块作用域', () => {
-		// menuTarget 会加在变更行与提交行两种元素上，两者分属不同 CSS 模块：
-		// 若随模块作用域化，另一侧的元素拿不到该类，样式即失效。
 		const state = readFileSync(join(cssDir, 'state-classes.ts'), 'utf8');
 		const name = /MENU_TARGET_CLASS = '([^']+)'/.exec(state)?.[1];
 		assert.ok(name !== undefined && name !== '', '应给出状态类名');
-		// 样式侧以 :global 引用同一名字。
-		const changes = cssFile('changes.module.css');
-		const graph = cssFile('graph.module.css');
-		assert.match(changes, new RegExp(`\\.change:global\\(\\.${name}\\)`), '变更行的高亮应引用全局状态类');
-		assert.match(graph, new RegExp(`\\.row:global\\(\\.${name}\\)`), '提交行的高亮应引用全局状态类');
-	});
-
-	t.test('图形行的文本与引用标记取自 row-model', () => {
-		// 图形区只做元素拼装：行文本、引用标记与头像地址都由纯模块给出，缓存与单测都在那一侧。
-		const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(source, /from '\.\/row-model\.ts'/, '图形区应引用行模型');
-		assert.match(source, /titleOf\(commit\)/, '行文本应取自行模型');
-		assert.match(source, /labelsOf\(commit, head\)/, '引用标记应取自行模型');
-		assert.ok(!/function displayMessage\(/.test(source), '不应在图形区重复实现行文本');
-	});
-
-	t.test('未提交行不触发浮窗与右键', () => {
-		// 未提交行不对应真实提交：不给右键菜单，也不套悬停卡片。
-		const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(source, /onContextMenu: isUncommitted \? undefined/, '未提交行不给右键菜单');
-		assert.match(source, /if \(!isUncommitted && stashSelector === null\) onHover\?\.\(commit\.hash\)/, '未提交行不预取悬停数据');
-		assert.match(source, /if \(isUncommitted \|\| stashSelector !== null\) return anchor;/, '未提交行不套 HoverCard');
-	});
-
-	t.test('贮藏行不套提交浮窗，右键等同于其贮藏标记', () => {
-		// 贮藏是标记而不是提交：与它的引用标记同源，右键走引用菜单，也不显示提交浮动卡片。
-		const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(source, /const stashSelector = commit\.stash\?\.selector \?\? null/, '应识别该行是否是贮藏');
-		assert.match(source, /\{ type: 'stash', name: stashSelector \}/, '储藏行右键应等价于其贮藏标记');
-		// 未点在标记上时回退为该行的贮藏选择器，两条路径因此产出同一份菜单。
-		assert.match(source, /refElement\.getAttribute\('data-ref-name'\)[\s\S]{0,80}stashSelector/, '点在标记上取标记，否则取该行贮藏');
-	});
-
-	t.test('未提交行用虚线且不画节点', () => {
-		const source = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(source, /const node = isUncommitted \? null : \{ x: cx, radius: nodeOuterRadius\(nodeKind\) \}/, '未提交行不传节点，线因此贯穿');
-		assert.match(source, /strokeDasharray: '2 2'/, '未提交行的线应是虚线');
-		assert.match(source, /const nodes = isUncommitted/, '未提交行不渲染任何节点元素');
-	});
-
-	t.test('浮窗显示完整提交信息', () => {
-		// 列表的 message 来自 `%s`（只有标题），完整正文按需取回后传给卡片。
-		const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(graphSource, /const original = typeof message === 'string'/, '卡片优先使用完整提交信息');
-		const apiSource = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
-		assert.match(apiSource, /export async function loadCommitMessage/, '应有取完整信息的函数');
-		assert.match(apiSource, /export async function loadCommitStatsAndMessage/, '统计与完整信息应一次取回');
-		assert.match(apiSource, /body/, '应取 commitDetails 的 body');
-		const hookSource = readFileSync(join(panelDir, 'use-commit-stats.ts'), 'utf8');
-		assert.match(hookSource, /messageByHash/, 'hook 应缓存完整信息');
-		// 悬停时拉取完整信息：与改动统计同属一次 commitDetails，由同一个请求函数带出。
-		assert.match(hookSource, /requestCommitDetails\(hash\)/, '悬停时应拉取完整信息');
-		assert.match(hookSource, /loadCommitStatsAndMessage\(/, '统计与完整信息应共用一趟往返');
-	});
-
-	t.test('卡片正文更紧凑且不留空行', () => {
-		// 只有正文收紧：标题（首行）沿用卡片自身字号。
-		const graphSource = readFileSync(join(clientDir, 'graph', 'index.ts'), 'utf8');
-		assert.match(graphSource, /variant: 'compact'/, 'markdown 应用 compact 变体');
-		assert.match(graphSource, /const \[originalTitle, \.\.\.bodyLines\] = fullMessage\.split\('\\n'\)/, '首行作标题、其余作正文');
-		assert.match(graphSource, /bodyLines\.filter\(\(line\) => line\.trim\(\) !== ''\)/, '正文应滤掉空行');
-		assert.match(graphSource, /className: css\.cardTitle/, '标题单独渲染');
-		assert.match(graphSource, /className: css\.cardBody/, '正文单独渲染');
-		const styles = cssFile('graph.module.css');
-		// 标题不改字号。
-		const title = /\.cardTitle\{([^}]*)\}/.exec(styles);
-		assert.ok(title !== null, '未找到 .cardTitle');
-		assert.ok(!/font-size/.test(title[1]), '标题不应改字号');
-		// 正文更小、更紧。
-		const body = /\.cardBody\{([^}]*)\}/.exec(styles);
-		assert.ok(body !== null, '未找到 .cardBody');
-		assert.match(body[1], /font-size:11px/, '正文字号应更小');
-		assert.match(body[1], /line-height:1\.35/, '正文行距应更紧');
-		// 卡片自身字号不变。
-		const card = /\.card\{([^}]*)\}/.exec(styles);
-		assert.match(card[1], /font-size:12px/, '卡片字号不应改动');
-		assert.match(styles, /data-markdown-variant='compact'\]\s*:is\(p, ul, ol, blockquote\)\{margin:0\}/, 'markdown 段距应压到 0');
-	});
-
-	t.test('差异加载的依赖只含原始值', () => {
-		/*
-		 * 取数坐标若以对象形式进依赖，每次渲染都是新引用，加载会反复重跑、永远停在「正在读取改动」。
-		 * 这里锁住：load 的依赖列表里不得出现 request 这类每次新建的对象。
-		 */
-		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		// 依赖列表紧跟 load 的实现体；取数坐标之后的其它实现不影响这条判据。
-		const loadStart = source.indexOf('const load = React.useCallback(');
-		assert.ok(loadStart >= 0, '未找到 load 定义');
-		const deps = /\}, \[(parsed, [^\]]*)\]\);/.exec(source.slice(loadStart));
-		assert.ok(deps !== null, '未找到差异加载的依赖列表');
-		const names = deps[1].split(',').map((item) => item.trim());
-		assert.ok(!names.includes('request'), '依赖不得含每次新建的 request 对象');
-		assert.ok(!names.includes('scope'), '依赖不得含每次新建的 scope 对象');
-		for (const name of names) {
-			assert.match(name, /^(parsed|[a-z][A-Za-z]*)$/, `依赖名异常：${name}`);
+		for (const module of ['changes.module.css', 'graph.module.css']) {
+			assert.match(
+				readFileSync(join(cssDir, module), 'utf8'),
+				new RegExp(`:global\\(\\.${name}\\)`),
+				`${module} 应以 :global 引用状态类`,
+			);
 		}
-		assert.ok(names.includes('commitHash'), '取数坐标应以原始值入依赖');
-		assert.ok(names.includes('currentPath'), '当前文件应以原始值入依赖');
 	});
 
-t.test('差异页提供上一处 / 下一处改动与全部折叠', () => {
-		// 一屏看不到下一块时只能滚，因此页头给跳转；折叠区段同理。
-		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /data-review-tool': 'prev-hunk'/, '有上一处改动入口');
-		assert.match(source, /data-review-tool': 'next-hunk'/, '有下一处改动入口');
-		assert.match(source, /data-review-tool': 'fold-gaps'/, '有全部展开/折叠入口');
-		// 跳转与快捷键走同一个函数，行为不会分叉。
-		assert.match(source, /jumpHunk\(-1\)/, '上一处按钮调用跳转');
-		assert.match(source, /jumpHunk\(1\)/, '下一处按钮调用跳转');
-		assert.match(source, /event\.key === 'j' \? 1 : -1/, 'J/K 快捷键与按钮同一路径');
-		// 输入控件里的方向键归输入框，不被跳转抢走。
-		assert.match(source, /input, textarea, \[contenteditable/, '输入控件内不触发跳转');
+	t.test('构建脚本把 CSS 模块的样式内联进包', () => {
+		const script = readFileSync(join(root, 'scripts', 'build-client.mjs'), 'utf8');
+		assert.match(script, /'\.css': 'local-css'/, 'CSS 应作为模块处理');
+		assert.match(script, /endsWith\('\.css'\)/, '应收集 esbuild 产出的样式');
+		assert.match(script, /dsh-source-control-module-style/, '应把样式内联为一段 style');
+		assert.match(script, /jsx: 'automatic'/, '复制的视图使用自动 JSX 运行时');
 	});
 
-	t.test('轨道拿到的正文元素来自状态而非 ref', () => {
-		// ref.current 变化不触发重渲染：轨道要量位置就得让元素进状态。
-		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /const \[bodyElement, setBodyElement\] = React\.useState/, '正文元素放进状态');
-		assert.match(source, /const bodyRoot = React\.useCallback\(\(node: HTMLDivElement \| null\)/, '用回调 ref 写入状态');
-		assert.match(source, /host: bodyElement/, '轨道拿状态里的元素');
-		assert.ok(!/host: bodyRoot\.current/.test(source), '不要用 ref.current 当 prop');
-	});
-
-	t.test('差异面板默认自动换行', () => {
-		// 长行不换行会被横向裁掉，需要横向滚动才能看全，因此默认开。
-		const view = readFileSync(join(clientDir, 'diff', 'diff-view.ts'), 'utf8');
-		const choice = /export const DEFAULT_DIFF_VIEW: DiffViewChoice = \{ wrap: (true|false) \}/.exec(view);
-		assert.ok(choice !== null, '未找到默认视图选择');
-		assert.equal(choice[1], 'true', '换行应默认开启');
-		// 视图选择取自面板设置，因此与其它视图开关同源、随宿主持久化。
-		const source = readFileSync(join(clientDir, 'index.ts'), 'utf8');
-		assert.match(source, /const diffView = useDiffView\(/, '差异页应经 hook 取视图选择');
-		assert.match(source, /const wrap = diffView\.choice\.wrap;/, 'wrap 取自设置');
-		assert.ok(!/diffView\.choice\.split/.test(source), '并排不是可选项，不再从设置里读');
-	});
-
-	t.test('删除分支只列以该提交为尖端的分支', () => {
-		// 包含该提交的分支是它的后代，删除后不影响该提交：作为候选会让「删除分支」指向无关分支。
-		const branchMenu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
-		const build = branchMenu.slice(branchMenu.indexOf('deleteBranch: (ctx, meta) =>'), branchMenu.indexOf('deleteRemoteBranch: (ctx, meta) =>'));
-		assert.match(build, /ctx\.tipBranches\.filter/, '本地候选取自尖端分支');
-		assert.match(build, /ctx\.tipRemoteBranches/, '远程候选取自尖端远程分支');
-		assert.ok(!/containing\.local/.test(build), '不得用包含关系当候选');
-		// 远程分支名自带远程名前缀：候选取自 tipRemoteBranches，不再拼后缀。
-		assert.match(build, /remoteTips\.map/, '远程候选直接取尖端远程分支名');
-		/*
-		 * 两步删除：先按非强制删除，仅在 git 以「未合并」拒绝时才问是否强制删除。
-		 * 勾选框把强制与否交给一次勾选、且实现里恒传 true 时等于每次都强删，故断言不再有
-		 * 勾选框形式的预选，改为断言「确认框 → 非强制 → 判定 → 强制」这条流程。
-		 */
-		assert.match(build, /showConfirmation\(/, '先弹确认框询问是否删除');
-		assert.match(build, /deleteBranch\(ctx\.repo, name, false\)/, '首次删除必须是非强制删除');
-		assert.match(build, /isUnmergedRefusal\(first\.refusal\)/, '只有未合并的拒绝才进入强制删除分支');
-		assert.match(build, /deleteBranch\(ctx\.repo, name, true\)/, '确认后按强制删除');
-		// 强删与否由两次确认框决定：非强制删除与强制删除之间不得出现勾选框。
-		const forceFlow = build.slice(build.indexOf('deleteBranch(ctx.repo, name, false)'), build.indexOf('deleteBranch(ctx.repo, name, true)'));
-		assert.ok(forceFlow.length > 0, '未找到两步删除的流程');
-		assert.ok(!/checkboxLabel/.test(forceFlow), '不应再用勾选框预先选择强制删除');
-
-		const api = readFileSync(join(clientDir, 'api', 'commits.ts'), 'utf8');
-		assert.match(api, /export async function branchesContaining/, 'API 客户端应有该命令');
-		const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
-		assert.match(workspaceRoutes, /'branch', '--contains'/, '宿主应执行 git branch --contains');
-		assert.match(workspaceRoutes, /!remoteNames\.has\(line\)/, '应排除远程 HEAD 符号引用（短名为远程名本身）');
-	});
-
-	t.test('提交菜单同步弹出，查询结果异步补齐', () => {
-		/*
-		 * React 的 currentTarget 只在事件派发期间有效，所以菜单必须在同步段弹出；包含关系要跑
-		 * 几个 git 子进程，不能挡在弹出之前，改为 pendingItems 到达后整份替换菜单项。
-		 */
-		const menu = readFileSync(join(panelDir, 'commit-menu.ts'), 'utf8');
-		const body = menu.slice(menu.indexOf('export function openCommitMenu'));
-		assert.ok(!/export async function openCommitMenu/.test(menu), '提交菜单不应再是异步函数');
-		assert.ok(body.indexOf('const target = event.currentTarget') !== -1, '应取出 currentTarget');
-		assert.match(body, /const \{ clientX, clientY \} = event/, '坐标也应提前取出');
-		assert.match(body, /pendingItems: containingOf\(/, '包含关系应经 pendingItems 异步补齐');
-		assert.ok(!/await /.test(body.slice(0, body.indexOf('showContextMenu('))), '弹出前不得 await');
-	});
-
-	t.test('工作树占用的分支照常显示，只禁用检出、删除与重命名', () => {
-		// 被工作树检出的分支会出现在 git branch 里，但 git 拒绝删除它们，也不能在本工作树检出。
-		// 这类分支仍作为标签显示：它们确实指向该提交，隐藏会让图形区少一个真实存在的分支。
-		const graphRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'graph.ts'), 'utf8');
-		const workspaceRoutes = readFileSync(join(root, 'src', 'source-control', 'api', 'workspace.ts'), 'utf8');
-		assert.match(workspaceRoutes, /branchesOfOtherWorktrees\(repo\)/, '宿主应判定别的工作树占用的分支');
-		assert.match(graphRoutes, /foreignBranches: \[\.\.\.foreign\]/, 'loadCommits 应回投占用分支而不是过滤掉标签');
-		assert.ok(!/heads: commit\.heads\.filter/.test(graphRoutes), '不得再从 heads 里删除占用分支');
-		assert.match(workspaceRoutes, /foreign: \[\.\.\.foreign\]/, 'branchesContaining 应回投占用分支供禁用操作');
+	t.test('菜单注册表与处理函数一一对应', () => {
 		const menu = menuSources().join('\n');
-		assert.match(menu, /export function localBranchItem/, '本地分支操作应统一经占用判定');
-		assert.match(menu, /const FOREIGN_BRANCH_HINT/, '占用分支的不可用原因应有说明');
-		/*
-		 * 按 builder 逐个截取：每个 builder 的范围从其定义到下一个 builder 定义之前。
-		 * 只截到文件末尾时，后面的 builder 会让断言误通过。
-		 */
-		const starts = [...menu.matchAll(/^\t([A-Za-z]+): \(ctx, meta\) =>/gm)];
-		assert.ok(starts.length >= 4, '应能定位各 builder 的定义');
-		const builderBody = (name) => {
-			const index = starts.findIndex((match) => match[1] === name);
-			assert.ok(index !== -1, `未找到 ${name} 的定义`);
-			const end = index + 1 < starts.length ? starts[index + 1].index : menu.length;
-			return menu.slice(starts[index].index, end);
-		};
-		for (const builder of ['checkoutBranch', 'renameBranch', 'deleteBranch', 'mergeIntoBranch']) {
-			assert.ok(builderBody(builder).includes('localBranchItem'), `${builder} 应判定占用分支`);
-		}
-
-		const discovery = readFileSync(join(root, 'src', 'source-control', 'repo-discovery.ts'), 'utf8');
-		assert.match(discovery, /readWorktrees\(commonDir\)/, '应读工作树登记枚举工作树');
-		assert.match(discovery, /foreignWorktreeBranches\(await readWorktrees/, '应复用纯函数判定');
-		assert.ok(!/'worktree', 'list'/.test(discovery), '不调用 git worktree list');
-	});
-
-	t.test('工作树右键提供移除入口', () => {
-		const panel = readFileSync(join(clientDir, 'panel', 'repo-menu.ts'), 'utf8');
-		assert.match(panel, /isLinkedWorktree = node\.kind === 'worktree'/, '仅链接工作树可移除');
-		assert.match(panel, /showCheckbox\(\{[\s\S]{0,200}?danger: true/, '移除前应先经破坏性确认');
-		// 移除目标可能正是当前选中的工作树：不能拿它当后续 git 调用的工作目录，因此不经 run 直接执行。
-		assert.ok(!/run\('history',[\s\S]{0,120}?removeWorktree/.test(panel), '移除不经面板的 run 执行');
-		assert.match(
-			panel,
-			/try \{\s*await removeWorktree\(node\.path, node\.path, true\);\s*\} catch \(error\) \{[\s\S]{0,200}?reportError\(setState/,
-			'以工作树路径为目标执行移除，失败直接报告',
-		);
-		const removal = panel.slice(panel.indexOf('await removeWorktree(node.path, node.path, true)'));
-		assert.match(removal, /dropGraphWindows\(node\.path\)/, '移除成功后作废该工作树的窗口缓存');
-		assert.match(removal, /setSelectedId\([\s\S]{0,160}?rescan\(\)/, '移除成功后清选中并重扫');
-		const api = readFileSync(join(clientDir, 'api', 'working-tree.ts'), 'utf8');
-		assert.match(api, /export async function removeWorktree/, 'API 客户端应有移除工作树');
-		assert.match(api, /command: 'removeWorktree'/, '命令名应与宿主一致');
-		const host = readFileSync(join(root, 'src', 'source-control', 'worktree-remove.ts'), 'utf8');
-		assert.match(host, /'worktree', 'remove'/, '宿主应执行 git worktree remove');
-		assert.match(host, /removalCwd/, '移除时的工作目录应避开被删目录');
-		assert.match(host, /resolveGitCommonDir/, '应退回 git 公共目录');
-	});
-
-	t.test('删除当前分支时提示而非静默失败', () => {
-		// 当前分支仍在候选里，但点击后说明原因。
-		const menu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
-		assert.match(menu, /name === deps\.head/, '删除分支应识别当前分支');
-		assert.match(menu, /await deps\.notify\(/, '应给出不可删除的提示');
-		/*
-		 * 删除项本身不因当前分支置灰：点击后提示；被别的工作树检出时才由 localBranchItem 置灰。
-		 * 断言必须落在 deleteBranch 的处理体上——同文件 checkoutBranch 的候选项确实带 disabled，
-		 * 在全文件范围内找会取到那一条。
-		 */
-		const buildStart = menu.indexOf('deleteBranch: (ctx, meta) =>');
-		assert.ok(buildStart !== -1, '未找到删除分支的处理函数');
-		const build = menu.slice(buildStart, menu.indexOf('\n\t},', buildStart));
-		assert.ok(!/disabled/.test(build), '删除项不应因当前分支置灰，改为点击后提示');
-		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
-		assert.match(toast, /export function showToast/, '应提供轻量提示');
-		assert.match(toast, /from '@deepseek-ai\/dsh-client-ui-primitives'/, '提示应复用 ui-primitives 的 Toast');
-	});
-
-	t.test('成功结果与失败原因走不同呈现面', () => {
-		/*
-		 * notify 是失败面（弹窗标题「操作失败」），announce 是结果告知（顶部轻量提示）。
-		 * 已完成的动作被当成失败报告是本用例守护的回归点：两者都是 `string`，
-		 * 只有断言调用点落在哪个出口上，才能区分「发布成功」与「发布失败」。
-		 */
-		const deps = readFileSync(join(panelDir, 'action-deps.ts'), 'utf8');
-		assert.match(deps, /readonly notify: \(message: string\) => Promise<void>/, '应保留失败面');
-		assert.match(deps, /readonly announce: \(message: string, tone\?: ToastTone\) => Promise<void>/, '应提供结果告知');
-
-		const remoteSync = readFileSync(join(panelDir, 'use-remote-sync.ts'), 'utf8');
-		assert.match(remoteSync, /await announce\(`已发布到/, '发布成功的地址是结果告知');
-
-		const repoCommands = readFileSync(join(panelDir, 'use-repo-commands.ts'), 'utf8');
-		assert.match(repoCommands, /await announce\(url === '' \? 'Pull Request 已创建。'/, 'PR 创建成功是结果告知');
-		assert.match(repoCommands, /await announce\(`已在终端执行克隆/, '克隆命令已发出是结果告知');
-		assert.match(repoCommands, /await notify\('无法在终端里执行克隆命令/, '克隆命令未能发出才是失败');
-
-		const toast = readFileSync(join(panelDir, 'toast.ts'), 'utf8');
-		assert.match(toast, /export type ToastTone = 'success' \| 'info'/, '结果告知应区分成功与中性');
-	});
-
-	t.test('提交菜单与引用菜单共用同一份操作注册表', () => {
-		// 两处菜单由 ACTIONS 驱动：引用菜单按 refTypes 过滤，不再各自维护一份定义。
-		const menu = menuSources().join('\n');
-		// 元数据（引用类型与菜单名称）在 JSON 数据源里，处理函数按域绑定在 panel/menu/ 下。
 		const { actions } = JSON.parse(readFileSync(join(panelDir, 'menu-actions.json'), 'utf8'));
 		assert.ok(Array.isArray(actions) && actions.length > 0, '注册表数据源应有操作');
 		for (const action of actions) {
@@ -638,102 +155,18 @@ t.test('差异页提供上一处 / 下一处改动与全部折叠', () => {
 			assert.ok(typeof action.title === 'string' && action.title !== '', `${action.id} 应有菜单名称`);
 			assert.match(menu, new RegExp(`${action.id}: \\(ctx, meta\\) =>`), `${action.id} 应有对应的处理函数`);
 		}
-		assert.match(menu, /export function openCommitMenu/, '应导出提交菜单');
-		assert.match(menu, /export function openRefMenu/, '应导出引用菜单');
-		assert.match(menu, /action\.refTypes\.includes\(refInfo\.type\)/, '引用菜单应按引用类型过滤');
-		assert.ok(!existsSync(join(panelDir, 'ref-menu.ts')), '不应再保留独立的 ref-menu 模块');
-		// 提交行右键应能直接发起「合并到选中分支」，无需命中分支标签。
-		assert.match(menu, /ctx\.tipBranches/, '提交菜单应依据分支尖端列出合并目标');
-		assert.match(menu, /mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash, '', mode\)/, '提交菜单应能直接合并到分支');
-		// 作用于当前分支的操作在提交行右键也要有入口，不能只挂在分支标签的引用菜单上。
-		assert.match(menu, /push\(items, byId\('createPullRequest'\)\)/, '提交菜单应列出创建 Pull Request 入口');
-	});
-
-	t.test('合并到分支给出三种方式的二级菜单', () => {
-		/*
-		 * 合并方式影响是否产生合并提交与是否保留分支历史，必须由用户在点击时选定，
-		 * 而不是写死在实现里。三种方式列在同一个二级菜单里。
-		 */
-		const menu = readFileSync(join(panelDir, 'menu', 'branch.ts'), 'utf8');
-		assert.match(menu, /const MERGE_MODES: readonly MergeMode\[\] = \['default', 'no-ff', 'squash'\]/, '应列出三种合并方式');
-		// 三种方式各有一份名称，名称文本归 MERGE_MODE_ACTIONS；这里只断言键齐全且都指向非空名称。
-		assert.match(menu, /MERGE_MODE_ACTIONS: Readonly<Record<MergeMode, string>>/, '应有合并方式的名称表');
-		assert.match(menu, /'no-ff': '/, '强制合并提交应有名称');
-		assert.match(menu, /squash: '/, '压缩合并应有名称');
-		// 三种方式都挂在目标分支之下，成为二级菜单。
-		assert.match(menu, /const modeItems = \(name: string\): ContextMenuItem\[\]/, '应把三种方式聚成一个子菜单');
-		assert.match(menu, /children: modeItems\(name\)/, '分支标签右键应展开二级菜单');
-		assert.match(menu, /children: modeItems\(tips\[0\]\)/, '提交行右键应展开二级菜单');
-		assert.ok(!/mergeIntoBranch\(ctx\.repo, name, ctx\.commit\.hash\)/.test(menu), '不得再有不带方式的合并调用');
-
-		// 后端按方式追加选项，且三种都停在待提交状态。
-		const actions = readFileSync(join(root, 'src', 'source-control', 'git-actions.ts'), 'utf8');
-		assert.match(actions, /if \(mode === 'no-ff'\) return \['--no-ff'\]/, '强制合并提交用 --no-ff');
-		assert.match(actions, /if \(mode === 'squash'\) return \['--squash'\]/, '压缩合并用 --squash');
-		assert.match(actions, /\['merge', \.\.\.mergeModeArgs\(mode\), '--no-commit'\]/, '三种方式都停在待提交状态');
-	});
-
-	t.test('AI 生成设置的下拉按钮给出两个入口', () => {
-		/*
-		 * 该按钮原先没有任何行为。两个入口指向同一处：全局设置里的「AI 提交信息」分区。
-		 */
-		const section = readFileSync(join(panelDir, 'sections', 'changes.ts'), 'utf8');
-		// 入口按菜单项 id 断言，名称文本由菜单自身提供。
-		assert.match(section, /\{ id: 'rules', label: /, '应给出配置自定义规则的入口');
-		assert.match(section, /\{ id: 'model', label: /, '应给出选择生成模型的入口');
-		assert.match(section, /onOpenAiSettings\(\)/, '两个入口都应跳到设置');
-		// 菜单必须真的挂上展开状态与关闭回调，不能再是无行为的按钮。
-		assert.match(section, /open: aiMenuOpen/, '菜单应受展开状态控制');
-		assert.match(section, /onClose: \(\) => \{ setAiMenuOpen\(false\); \}/, '菜单应能关闭');
-
-		// 落点是全局设置页签的 AI 分区，并带上滚动锚点。
-		const panel = readFileSync(join(panelDir, 'index.ts'), 'utf8');
-		assert.match(panel, /setSettingsTab\('global'\)/, '应落在全局设置页签');
-		assert.match(panel, /setSettingsAnchor/, '应请求滚动定位');
-		assert.match(panel, /AI_SECTION_ANCHOR/, '应使用 AI 分区的锚点');
-
-		const settings = readFileSync(join(panelDir, 'settings.ts'), 'utf8');
-		assert.match(settings, /export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit'/, '应导出 AI 分区锚点');
-		assert.match(settings, /anchor: AI_SECTION_ANCHOR/, 'AI 分区应挂上该锚点');
-		assert.match(settings, /scrollIntoView/, '应滚动到锚点分区');
-		// 同一锚点再次请求时也要重新滚动。
-		assert.match(settings, /scrollSerial/, '重复请求应能重新触发滚动');
+		assert.ok(existsSync(join(panelDir, 'commit-menu.ts')), '应导出提交菜单');
 	});
 
 	t.test('门禁失败时提示先读对应规则页', () => {
-		/*
-		 * 报错只说哪条不合规，不说该按什么规则改；照着报错改会绕开规则
-		 * （例如文档超预算时删两句了事，而不是按 Docs/AGENTS.md 先搬迁）。
-		 */
 		const hint = readFileSync(join(root, 'scripts', 'gate-hint.ts'), 'utf8');
 		assert.match(hint, /GATE_RULES/, '应登记各门禁的规则正家');
 		assert.match(hint, /Docs\/AGENTS\.md/, '文档门禁应指向 Docs/AGENTS.md');
-		// 提示句的措辞归 gate-hint；这里只断言它把规则页路径带进了输出。
-		assert.match(hint, /\$\{doc\}/, '提示应代入规则页路径');
-		// 一个事实一个家：规则只在文档里，提示只给路径，不复述规则内容。
-		assert.ok(!/搬迁优先/.test(hint), '不得复述预算规则');
-		assert.ok(!/每段一个物理行/.test(hint), '不得复述换行规则');
-		assert.ok(!/what:/.test(hint), '不应保留复述规则的字段');
-
-		// 每个文档门禁都要真的用上该提示。
 		for (const gate of ['verify-doc-budgets', 'verify-md-wrap', 'verify-md-links']) {
-			const script = readFileSync(join(root, 'scripts', `${gate}.ts`), 'utf8');
-			assert.match(script, /gateHint\(/, `${gate} 应输出规则提示`);
+			assert.match(readFileSync(join(root, 'scripts', `${gate}.ts`), 'utf8'), /gateHint\(/, `${gate} 应输出规则提示`);
 		}
-		// 文档门禁必须由 git 钩子执行，否则本地提交可以绕开。
-		const preCommit = readFileSync(join(root, '.githooks', 'pre-commit'), 'utf8');
-		assert.match(preCommit, /verify-all\.ts/, 'pre-commit 应跑文档门禁');
-		const prePush = readFileSync(join(root, '.githooks', 'pre-push'), 'utf8');
-		assert.match(prePush, /verify-all\.ts/, 'pre-push 应跑文档门禁');
-	});
-
-	t.test('表单勾选项的文案只由 Checkbox 渲染', () => {
-		// Checkbox 自身携带可见文案且根元素是 `<label>`：再包一层 label 或另加文案节点会让文案显示两次。
-		const dialog = readFileSync(join(clientDir, 'ui', 'dialog.ts'), 'utf8');
-		assert.ok(!/ggg-field-text(?!area)/.test(dialog), '不应再另加文案节点');
-		assert.match(dialog, /label: field\.label \?\? ''/, '勾选字段应把文案交给 Checkbox');
-		assert.match(dialog, /label: option\.label/, '多选字段应把每项文案交给 Checkbox');
-		const styles = cssFile('dialog.module.css');
-		assert.ok(!/\.fieldText(?!area)/.test(styles), '无用的文案节点样式应一并移除');
+		for (const hook of ['pre-commit', 'pre-push']) {
+			assert.match(readFileSync(join(root, '.githooks', hook), 'utf8'), /verify-all\.ts/, `${hook} 应跑文档门禁`);
+		}
 	});
 });

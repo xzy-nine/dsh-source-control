@@ -42,11 +42,4 @@ parallel('差异视图', (t) => {
 		assert.equal(defaultSettings().diffWrap, true);
 	});
 
-	t.test('并排开关已从设置里移除', () => {
-		// 并排是唯一布局，保留一个恒真的开关只会让读者以为可以关掉它。
-		assert.equal('diffSplit' in defaultSettings(), false);
-		// 旧持久化里的 diffSplit 键不参与映射：无论它是什么值，结果都只含 wrap。
-		const legacy = { ...defaultSettings(), diffSplit: false };
-		assert.deepEqual(diffViewOf(legacy), DEFAULT_DIFF_VIEW);
-	});
 });

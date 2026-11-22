@@ -258,7 +258,7 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 					 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
 					 *
 					 * 不比较的话，自动抓取（默认每 180s 一轮）会让所有面板每轮都重取一次提交图
-					 * 与工作区，而实际上什么都没变。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
+					 * 与工作区，而取到的内容并没有变化。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。
 					 */
 					const before = await refsSignature(repo);
 					const error = remoteBranch === null

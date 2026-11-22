@@ -53,10 +53,7 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 		case 'loadRepoInfo': {
 			// 读远程与贮藏列表：不碰工作区，抓取期间照常读。
 			await whenLocalSettled(repo);
-			/*
-			 * 非仓库路径直接回空信息，不起子进程。原先靠 getRepoInfo 失败后再启一次
-			 * `git rev-parse` 反判，等于先失败一遍再确认。
-			 */
+			// 非仓库路径直接回空信息，不起子进程。
 			if (!(await isRepoPath(repo))) {
 				logDebug('repo', `目标路径不是 git 仓库，按空仓库信息返回：${repo}`);
 				respond({
@@ -220,7 +217,7 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 				 * 仓库信息批：仓库信息（含引用与分支列表，一次 `for-each-ref` 同时得到两者）、贮藏与
 				 * 别的工作树占用分支，三者互不依赖，同批并行。
 				 *
-				 * 提交图的引用标记不再来自这里：它取自同一次 `git log` 的装饰。
+				 * 提交图的引用标记取自同一次 `git log` 的装饰，不在这里装配。
 				 */
 				const batchSource = withRepoInfo
 					? Promise.all([

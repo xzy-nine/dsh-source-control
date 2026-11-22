@@ -6,6 +6,7 @@
  */
 import { cancellableKeys, runCollect, terminateAllChildren, terminateCancellable } from './host-runtime.js';
 import { countSpawnInScope } from './api/refresh-scope.js';
+import { isBrokenSubmoduleFailure, withIgnoredSubmoduleDirt } from './submodule-failure.js';
 import { logDebug, logInfo, logTrace, logWarn } from './logger.js';
 
 /** 一次失败写进日志的 stderr 字符上限。 */
@@ -453,8 +454,8 @@ const READ_ONLY_FORMS: ReadonlyArray<{ subcommand: string; allow?: readonly stri
 /**
  * 取子命令在参数数组中的下标。
  *
- * git 允许全局选项出现在子命令之前，本仓库用过的是 `-c key=value`（见 `git-query.ts` 的
- * `getLog`）。全局选项不改变子命令语义，但不先跳过就会让按首参识别子命令的判定把只读命令
+ * git 允许全局选项出现在子命令前，本仓库传入的是 `-c key=value`（见 `git-query.ts` 的
+ * `getLog`）。全局选项不改变子命令语义，但跳不过去会让按首参识别子命令的判定把只读命令
  * 当成写操作。未识别的全局选项不跳过，这类命令仍按写操作处理。
  *
  * @param args - 完整参数数组。
@@ -743,6 +744,18 @@ function spawnGit(args: readonly string[], cwd: string, cancelKey?: string): Pro
 export async function gitOrThrow(args: readonly string[], cwd: string): Promise<string> {
 	const result = await runGit(args, cwd);
 	if (result.code !== 0) {
+		/*
+		 * 损坏的子模块登记会让整条 status / diff 失败，但仓库本身仍然可用：按忽略子模块
+		 * 工作树内部改动的口径重跑一次，其余改动照常读。只在这一类失败上降级，正常仓库的
+		 * 取数口径不变。
+		 */
+		if (isBrokenSubmoduleFailure(result.stderr)) {
+			const retried = await runGit(withIgnoredSubmoduleDirt(args), cwd);
+			if (retried.code === 0) {
+				logWarn('git', `子模块的模块目录不可用，已按忽略其内部改动重跑：git ${describeGitArgs(args)}，仓库 ${normalizeRepo(cwd)}`);
+				return retried.stdout;
+			}
+		}
 		// 走查错误信息，git 的失败原因在 stderr；为空时退回 stdout。
 		throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args[0] ?? ''} 执行失败`);
 	}

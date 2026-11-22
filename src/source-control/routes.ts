@@ -94,7 +94,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	/**
 	 * 客户端给出的轮次编号；0 与缺失都按「未给出」处理。
 	 *
-	 * 0 是旧版客户端的缺省值，与真实轮次 0 无法区分，因此统一当成没有编号。
+	 * 0 与真实轮次 0 无法区分，因此统一当成没有编号；`refreshId` 缺省时发送的正是 0。
 	 */
 	const refreshIdParam = typeof msg.refreshId === 'number' && msg.refreshId !== 0 ? msg.refreshId : null;
 	// 日志与反馈与仓库无关：面板未选中仓库时也要能用。
@@ -104,7 +104,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 	}
 
 	/*
-	 * 并发合并：同一键已有请求在飞时直接等它的载荷，不再执行一遍。
+	 * 并发合并：同一键已有请求在飞时直接等它的载荷。
 	 *
 	 * 只合并能整份复用结果的只读命令；发送本身仍按各自的响应对象进行，因此两个面板都拿到
 	 * 完整响应，只是背后只取了一次数。
@@ -367,7 +367,7 @@ export function registerGgRoutes(webServer: GgRouteContext, aiDeps?: AiCommitDep
 	// 消息 API（POST）：前端面板与宿主之间的唯一通道。
 	registerMethodRoute('/dsh-source-control/gg/api', 'POST', (req, res) => {
 		void handleApi(req, res, aiDeps).catch((e: unknown) => {
-			// 兜底：处理函数自身抛错时响应还没写，这里的错误以前只回给前端。
+			// 兜底：处理函数自身抛错时响应还没写。
 			const message = e instanceof Error ? e.message : String(e);
 			logError('api', `处理请求时抛出未捕获的错误：${message}`);
 			sendJson(res, 500, { error: message });

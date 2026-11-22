@@ -1,7 +1,6 @@
 /**
  * 执行 Agent Note 的头部、按生命周期的章节、备选方案与已退役标记规则。
- * 分类与文件名归同级的树门禁；翻译结构归配对门禁。确切的格式与豁免规则
- * 见 `.agents/notes/README.md`。
+ * 分类与文件名归同级的树门禁。确切的格式与豁免规则见 `.agents/notes/README.md`。
  */
 
 import { readFileSync } from 'node:fs'

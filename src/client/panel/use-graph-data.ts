@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { loadGraph, loadWorkingTreeSnapshot, logClient, type WorkingTreeSnapshot } from '../api/index.ts';
-import { reportError } from './errors.ts';
+import { reportError, reportRefreshFailure } from './errors.ts';
 import { entriesSignature } from './optimistic.ts';
 import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
@@ -445,8 +445,9 @@ export function useGraphData({
 			logClient('I', 'refresh', `${mode === 'full' ? '主动刷新' : '对账刷新'}完成，仓库 ${workingTreePath}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
-			if (background) setState((previous) => endBackground(endBackground(previous, 'graph'), 'entries'));
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportRefreshFailure(setState, (previous) => (background
+				? endBackground(endBackground(previous, 'graph'), 'entries')
+				: previous), error);
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, branchesKey]);
 
@@ -485,8 +486,7 @@ export function useGraphData({
 			logClient('D', 'refresh', `只取工作区快照完成，仓库 ${repo}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (controller.signal.aborted) return;
-			setState((previous) => endBackground(previous, 'entries'));
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportRefreshFailure(setState, (previous) => endBackground(previous, 'entries'), error);
 		}
 	}, [workingTreePath, selectedId]);
 

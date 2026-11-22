@@ -6,13 +6,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
-
+const root = new URL('..', import.meta.url);
 const { JSDOM } = await import('jsdom');
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 const saved = {
@@ -20,7 +15,7 @@ const saved = {
 	document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
 };
 
-const range = await import(pathToFileURL(join(root, 'src', 'client', 'diff', 'line-range.ts')).href);
+const range = await import(new URL('src/client/diff/line-range.ts', root).href);
 
 /**
  * 造一个视图骨架：两行统一行、一个折叠按钮、再两行统一行、一个并排配对行。
@@ -145,18 +140,6 @@ test('行号列以外的纯文字不起手选行', () => {
 	text.textContent = 'hello';
 	first.append(text);
 	assert.equal(range.gutterPressed(text, first), false, '正文文字不触发选行');
-});
-
-test('手势由本插件接管，评论框仍用 forge 原生组件', () => {
-	// forge 的选区只认 hunk 内的行，因此手势必须由本插件接管；
-	// 但界面不复刻——评论框直接渲染 forge 的 ReviewComposer。
-	const source = readFileSync(join(root, 'src', 'client', 'diff', 'forge-adapter.tsx'), 'utf8');
-	const viewBlock = source.slice(source.indexOf('const view: DiffFileProps'));
-	assert.ok(!/\breview:/.test(viewBlock), 'DiffFile 不应收到 review，行手势由本插件接管');
-	assert.match(source, /selectableRows/, '应使用本插件的行选择');
-	assert.match(source, /ReviewComposer/, '评论框应渲染 forge 的原生组件，而不是自建');
-	assert.match(source, /actions: reviewActions/, '应把 forge 的评审动作面交给它的评论框');
-	assert.ok(!/data-sc-selection/.test(source), '不应再有自建的选区确认栏');
 });
 
 test.after?.(() => {

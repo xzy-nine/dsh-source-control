@@ -67,8 +67,7 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 		/*
 		 * 状态文档接进 DSH 的 storage domain；未装载时回退到旧版 state.json，路由照常可用。
 		 *
-		 * 域打开是异步的，而预扫与清理要读已持久化的工作区根，因此串在同一个异步链上：
-		 * 先接域、再清理、最后预扫。
+		 * 域打开是异步的，而预扫与清理要读已持久化的工作区根，因此串在同一个异步链上。
 		 */
 		const ready = openStateStoreWhenReady(
 			() => (ctx as unknown as { get(name: string): unknown }).get('storageDomain'),
