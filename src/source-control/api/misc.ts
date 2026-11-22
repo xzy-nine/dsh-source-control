@@ -192,6 +192,17 @@ function configLocationOf(str: (name: string) => string): 'local' | 'global' {
  */
 export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 	const { msg, repo, str, bool, arr, aiDeps, respond, respondResult, respondResultSync, respondError, sendBadRequest } = ctx;
+	/**
+	 * 需要 `filePath` 的命令：这三个命令都以它为必需参数。
+	 *
+	 * 校验放在 switch 之前：缺失时回 400 并直接结束。
+	 */
+	const FILE_PATH_COMMANDS: ReadonlySet<string> = new Set(['mergeContents', 'applyHunk', 'fileHunks']);
+	const needsFilePath = FILE_PATH_COMMANDS.has(ctx.command);
+	const requiredPath = needsFilePath ? requiredFilePathOf(str, sendBadRequest) : null;
+	if (needsFilePath && requiredPath === null) return true;
+	/** 需要它的三个命令在上方已保证非空。 */
+	const filePath = requiredPath as string;
 	switch (ctx.command) {
 		/* --- 其它 --- */
 		case 'cleanUntrackedFiles':
@@ -337,16 +348,16 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				let hasParent = true;
 				if (baseHash !== '') {
 					// 两提交对比：旧侧取 baseHash，新侧取 commitHash（'*' 表示工作区文件）。
-					oldText = await contentAt(repo, baseHash, filePath);
-					newText = commitHash === '*' ? await worktreeText(repo, filePath) : await contentAt(repo, commitHash, filePath);
+					oldText = await contentAt(repo, filePath, `${baseHash}:`);
+					newText = commitHash === '*' ? await worktreeText(repo, filePath) : await contentAt(repo, filePath, `${commitHash}:`);
 				} else if (commitHash === '*') {
 					if (staged) {
 						// 暂存区 vs HEAD
-						oldText = await contentAt(repo, 'HEAD', filePath);
-						newText = await contentAt(repo, ':', filePath);
+						oldText = await contentAt(repo, filePath, 'HEAD:');
+						newText = await contentAt(repo, filePath, ':');
 					} else {
 						// 工作区 vs 暂存区
-						oldText = await contentAt(repo, ':', filePath);
+						oldText = await contentAt(repo, filePath, ':');
 						newText = await worktreeText(repo, filePath);
 					}
 				} else {
@@ -356,8 +367,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 					 * 根提交没有父提交：直接给空旧侧，不先跑一条注定失败的 `show <hash>~1:<path>`。
 					 */
 					hasParent = await revParseHasParent(repo, commitHash);
-					if (hasParent) oldText = await contentAt(repo, `${commitHash}~1`, filePath);
-					newText = await contentAt(repo, commitHash, filePath);
+					if (hasParent) oldText = await contentAt(repo, filePath, `${commitHash}~1:`);
+					newText = await contentAt(repo, filePath, `${commitHash}:`);
 				}
 				// 真实 hunk 由 git 算出：交给前端的本地 diff 在改动量超过其搜索上限时
 				// 会退化成整文件「全删全加」，因此这里直接给出逐块内容。
@@ -385,8 +396,6 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'mergeContents': {
-			const filePath = requiredFilePathOf(str, sendBadRequest);
-			if (filePath === null) break;
 			await respondResult('mergeContents', async () => {
 				const contents = await mergeContentsOf(repo, filePath);
 				const worktree = await readWorktreeText(repo, filePath);
@@ -435,8 +444,6 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'applyHunk': {
-			const filePath = requiredFilePathOf(str, sendBadRequest);
-			if (filePath === null) break;
 			const direction = str('direction') === 'unstage' ? 'unstage' : 'stage';
 			const indexes = arr<number>('indexes').filter((value) => Number.isInteger(value) && value >= 0);
 			await respondResult('applyHunk', async () => {
@@ -448,8 +455,6 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'fileHunks': {
-			const filePath = requiredFilePathOf(str, sendBadRequest);
-			if (filePath === null) break;
 			const staged = bool('staged');
 			await respondResult('fileHunks', async () => ({ repo, hunks: await hunkListOf(repo, filePath, staged) }));
 			break;
