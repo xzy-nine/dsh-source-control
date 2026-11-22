@@ -12,6 +12,7 @@ import { GitGraphIcon } from '../../ui/plugin-icon.ts';
 import { CommitDetail } from '../changes.ts';
 import { interfaceLanguage, needsTranslationMemo } from '../language.ts';
 import type { BusyFlags, Commit, CommitCacheMaps, CommitFile, PanelPhase, RepoNode, Settings } from '../../shared/types.ts';
+import { iconButton, stopThen } from './icon-button.ts';
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
 const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent)
 	? '⌘'
@@ -238,12 +239,11 @@ function GraphSectionView({
 				'aria-label': graphTranslated ? '取消翻译' : '翻译可见的提交标题',
 				'data-translated': graphTranslated ? '1' : undefined,
 				'data-translating': translating ? '1' : undefined,
-				onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
-					event.stopPropagation();
-					// 进行中再点即取消；否则按当前状态发起或撤销。
+				// 进行中再点即取消；否则按当前状态发起或撤销。
+				onClick: stopThen(() => {
 					if (translating || graphTranslated) onCancelTranslate();
 					else onTranslateVisible(visible);
-				},
+				}),
 			}, React.createElement(TranslateIcon, { inverted: graphTranslated })),
 			actions: React.createElement(React.Fragment, null,
 				selectedNode !== null && React.createElement('span', { className: css.headRepo },
@@ -252,16 +252,10 @@ function GraphSectionView({
 				),
 				React.createElement('button', {
 					type: 'button', className: cx(css.iconBtn, filterActive && css.actionOn), title: '筛选分支与标签',
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFilter(); },
+					onClick: stopThen(onOpenFilter),
 				}, React.createElement(GitGraphIcon, { size: 14 }), filterSummary),
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '转到当前历史记录',
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onGoToHead(); },
-				}, React.createElement(IconGoalOutlineRegular, { size: 14 })),
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '从所有远程抓取', disabled: busy.network,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onFetch(); },
-				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
+				iconButton({ title: '转到当前历史记录', onClick: onGoToHead, children: React.createElement(IconGoalOutlineRegular, { size: 14 }) }),
+				iconButton({ title: '从所有远程抓取', disabled: busy.network, onClick: onFetch, children: React.createElement(IconDownloadOutlineRegular, { size: 14 }) }),
 				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
 			),
 		}),

@@ -1,8 +1,9 @@
 /**
  * 提交改动、完整提交信息、包含分支与文件差异内容查询。
  */
-import { callApi } from './http.ts';
+import { callApi, stringsOf } from './http.ts';
 import type { ConflictKind } from '../../shared/conflict-kind.ts';
+import type { HunkRange } from '../../shared/patch-hunks.ts';
 
 /** 提交改动文件。 */
 export interface CommitFileEntry {
@@ -148,10 +149,7 @@ export async function loadCommitMessage(cwd: string, hash: string, signal?: Abor
  */
 export async function branchesContaining(cwd: string, hash: string): Promise<{ local: string[]; remote: string[]; foreign: string[] }> {
 	const payload = await callApi(cwd, { command: 'branchesContaining', commitHash: hash });
-	const read = (value: unknown): string[] => Array.isArray(value)
-		? value.filter((item): item is string => typeof item === 'string')
-		: [];
-	return { local: read(payload.local), remote: read(payload.remote), foreign: read(payload.foreign) };
+	return { local: stringsOf(payload.local), remote: stringsOf(payload.remote), foreign: stringsOf(payload.foreign) };
 }
 
 /** 差异内容。 */
@@ -168,13 +166,7 @@ export interface FileDiffContent {
 	/** 冲突阶段是否存在；非冲突条目为 null。 */
 	readonly conflictStages: { readonly base: boolean; readonly ours: boolean; readonly theirs: boolean } | null;
 	/** 由 git 算出的逐块差异（形状同 DSH 的 WorkspaceDiffHunk）。 */
-	readonly hunks: Array<{
-		readonly oldStart: number;
-		readonly oldLines: number;
-		readonly newStart: number;
-		readonly newLines: number;
-		readonly lines: string[];
-	}>;
+	readonly hunks: Array<HunkRange & { readonly lines: string[] }>;
 }
 
 /**

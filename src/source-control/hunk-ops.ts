@@ -9,7 +9,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitOrThrow, runGitAttempt } from './git-exec.js';
-import { parsePatch, patchOf } from '../shared/patch-hunks.js';
+import { parsePatch, patchOf, rangeOf, type HunkRange } from '../shared/patch-hunks.js';
 
 /** 一次分段操作的结果。 */
 export interface HunkApplyOutcome {
@@ -108,12 +108,9 @@ export async function applyHunks(
  * @param staged - true 取索引相对 HEAD 的补丁，false 取工作区相对索引的补丁。
  * @returns 各块的块头与下标；无改动时为空数组。
  */
-export async function hunkListOf(repo: string, path: string, staged: boolean): Promise<Array<{ index: number; header: string; oldStart: number; oldLines: number; newStart: number; newLines: number }>> {
+export async function hunkListOf(repo: string, path: string, staged: boolean): Promise<Array<HunkRange & { index: number; header: string }>> {
 	const patchText = staged
 		? await gitOrThrow(['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=0', '--', path], repo)
 		: await filePatchOf(repo, path);
-	return parsePatch(patchText).hunks.map((hunk) => ({
-		index: hunk.index, header: hunk.header.trimEnd(),
-		oldStart: hunk.oldStart, oldLines: hunk.oldLines, newStart: hunk.newStart, newLines: hunk.newLines,
-	}));
+	return parsePatch(patchText).hunks.map((hunk) => ({ index: hunk.index, header: hunk.header.trimEnd(), ...rangeOf(hunk) }));
 }

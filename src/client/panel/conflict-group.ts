@@ -17,6 +17,7 @@ import type { ChangeMenuDeps } from './change-menu.ts';
 import type { ChangeActions, ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import { cx } from '../css/cx.ts';
+import { stopThen } from './sections/icon-button.ts';
 
 /** 合并冲突分组的属性。 */
 export interface ConflictGroupProps extends ChangeActions, ChangeTreeGroupFields {
@@ -55,10 +56,7 @@ function conflictButtons(
 		nodes.push(React.createElement('button', {
 			key: item.action, type: 'button', className: css.changeBtn, title: item.title,
 			disabled: busy,
-			onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
-				event.stopPropagation();
-				onResolve([entry.path], item.action);
-			},
+			onClick: stopThen(() => { onResolve([entry.path], item.action); }),
 		}, item.action === 'markResolved'
 			? React.createElement(IconCheckOutlineRegular, { size: 14 })
 			: React.createElement('span', { className: css.conflictActionText }, item.action === 'ours' ? '我' : item.action === 'theirs' ? '他' : '删')));

@@ -6,7 +6,7 @@
  * 因此字段数固定，按固定字段数切分即可；路径与提交信息里的换行不再需要转义。
  */
 import type {
-	CommitGraph, CommitNode, CommitStash, FileChange, FileStatus, Signature, SignatureStatus, StashEntry,
+	CommitGraph, CommitNode, CommitSignatureFields, CommitStash, FileChange, FileStatus, Signature, SignatureStatus, StashEntry,
 } from './git-types.js';
 
 /** 日志类命令的字段分隔符（即 `--format` 中的 `%x00`）。 */
@@ -124,13 +124,9 @@ export interface Decorations {
 }
 
 /** `git log` 的一条原始记录。 */
-export interface LogRecord {
+export interface LogRecord extends CommitSignatureFields {
 	readonly hash: string;
 	readonly parents: string[];
-	readonly author: string;
-	readonly email: string;
-	readonly date: number;
-	readonly message: string;
 	/** 指向该提交的引用。 */
 	readonly decorations: Decorations;
 }

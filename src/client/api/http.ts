@@ -23,6 +23,18 @@ export function setApiFailureReporter(reporter: ApiFailureReporter | undefined):
 }
 
 /**
+ * 把未知值读成字符串数组。
+ *
+ * 宿主载荷里的数组元素类型不可信：非数组给空数组，元素逐个按字符串筛掉其余类型。
+ *
+ * @param value - 待读的载荷字段。
+ * @returns 只含字符串的数组。
+ */
+export function stringsOf(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
  * 向一个宿主路由发一次 JSON POST。
  *
  * @param path - 路由。
@@ -131,7 +143,7 @@ export function commandError(payload: Record<string, unknown>): string | null {
  * @returns 其中的字符串项；字段缺失或类型不符时为空数组。
  */
 export function errorList(payload: Record<string, unknown>): string[] {
-	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+	return stringsOf(payload.errors);
 }
 
 /**
