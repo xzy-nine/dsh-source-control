@@ -2,7 +2,7 @@
   "note": "当前已接受的重复；只允许调低。调高须先确认无法消除，并在提交信息里说明理由。",
   "minLines": 2,
   "minTokens": 20,
-  "count": 108,
+  "count": 106,
   "fingerprints": [
     "src/client/api/commits.ts|src/client/api/commits.ts|3|62b3e6a4383b899d",
     "src/client/api/commits.ts|src/client/api/merge.ts|3|1594f6adcf019e77",
@@ -89,9 +89,7 @@
     "src/client/ui/overlay-host.ts|src/client/ui/overlay-host.ts|3|fd76cd19fe67a204",
     "src/source-control/api/history.ts|src/source-control/api/state.ts|7|c4fb9c0c3c4d1d4c",
     "src/source-control/api/misc.ts|src/source-control/api/misc.ts|3|0036b292e4abf834",
-    "src/source-control/api/misc.ts|src/source-control/api/misc.ts|3|32c61221fd963b88",
     "src/source-control/api/misc.ts|src/source-control/api/misc.ts|4|1a233bb4c416916d",
-    "src/source-control/api/misc.ts|src/source-control/api/misc.ts|4|f95207102323928b",
     "src/source-control/api/repos.ts|src/source-control/repo-discovery.ts|1|0eaf1ea84f8fa111",
     "src/source-control/api/workspace.ts|src/source-control/ignore-rules.ts|3|b4140a743d946379",
     "src/source-control/conflict-ops.ts|src/source-control/conflict-ops.ts|3|df44cd7a41c6d0a6",
