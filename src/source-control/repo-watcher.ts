@@ -207,7 +207,7 @@ function workspaceOf(key: string): WorkspaceWatch | null {
  * @returns 无。
  */
 function closeQuietly(close: WatchCloser): void {
-	closeQuietly(close);
+	void close().catch(() => { /* 句柄已关闭 */ });
 }
 
 /**
