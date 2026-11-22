@@ -858,7 +858,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => {
 		if (refInfo !== null && refInfo.type !== null && refInfo.name !== null) {
-			openRefMenuFor({ commit, refInfo: { type: refInfo.type, name: refInfo.name }, event });
+			openRefMenuFor({ commit, refInfo: { type: refInfo.type, name: refInfo.name, remote: refInfo.remote ?? null }, event });
 		} else {
 			openCommitMenuFor({ commit, event });
 		}
