@@ -7,8 +7,18 @@ import { logDebug } from './logger.js';
 import { runGit } from './working-tree.js';
 import { isRepoRoot } from './worktree-branches.js';
 
+/** 一个仓库相对其上游的同步状态。 */
+export interface RepoSyncFields {
+	readonly branch: string | null;
+	readonly upstream: string | null;
+	readonly upstreamRef: string | null;
+	readonly upstreamRemote: string | null;
+	readonly ahead: number;
+	readonly behind: number;
+}
+
 /** 无法读出自身仓库的节点的同步状态：分支、上游与领先/落后都为空。 */
-const EMPTY_SYNC = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 } as const;
+const EMPTY_SYNC: RepoSyncFields = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
 
 /** 仓库树批量领先/落后取数的并发上限。 */
 const SYNC_CONCURRENCY = 5;
@@ -32,10 +42,7 @@ const syncLimiter = createLimiter(SYNC_CONCURRENCY);
  * @param repo - 仓库路径。
  * @returns 分支、上游名与领先/落后数；无上游时两者为 0。
  */
-export async function loadRepoSync(repo: string): Promise<{
-	branch: string | null; upstream: string | null; upstreamRef: string | null; upstreamRemote: string | null;
-	ahead: number; behind: number;
-}> {
+export async function loadRepoSync(repo: string): Promise<RepoSyncFields> {
 	if (!(await isRepoRoot(repo))) return EMPTY_SYNC;
 	const refs = await runGit(['for-each-ref', '--format=' + BRANCH_SYNC_FORMAT, 'refs/heads'], repo);
 	const sync = parseBranchSync(refs.stdout);
@@ -54,10 +61,7 @@ export async function loadRepoSync(repo: string): Promise<{
  * @param repos - 仓库路径。
  * @returns 每个入参仓库的同步状态，顺序与去重后的入参一致。
  */
-export async function loadReposSync(repos: readonly string[]): Promise<Array<{
-	path: string; branch: string | null; upstream: string | null; upstreamRef: string | null; upstreamRemote: string | null;
-	ahead: number; behind: number;
-}>> {
+export async function loadReposSync(repos: readonly string[]): Promise<Array<RepoSyncFields & { readonly path: string }>> {
 	const unique: string[] = [];
 	const seen = new Set<string>();
 	for (const repo of repos) {

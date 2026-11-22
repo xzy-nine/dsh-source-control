@@ -261,6 +261,21 @@ export function dangerConfirmItem(
 }
 
 /**
+ * 把一步仓库操作包成点击处理函数。
+ *
+ * 菜单里的操作都属于 history 影响面：点击即 unsafely 发起并让面板记忙碌，失败由
+ * {@link throwIfError} 统一转成提示。这一层在所有菜单模块里都一样。
+ *
+ * @param ctx - 构建上下文。
+ * @param act - 要执行的仓库操作。
+ * @param failureText - 失败文本的改写；省略时原样上报 git 的说明。
+ * @returns 点击处理函数。
+ */
+export function runHistory(ctx: MenuContext, act: () => Promise<string>, failureText?: (message: string) => string): () => void {
+	return () => { void ctx.deps.run('history', async () => { throwIfError(await act(), failureText); }); };
+}
+
+/**
  * 删除远程分支的点击处理：勾选确认后按远程与短名删除。
  *
  * @param ctx - 构建上下文。
@@ -272,7 +287,7 @@ export function deleteRemoteBranchClick(ctx: MenuContext, name: string, remote: 
 	return checkboxThenRun({
 		title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
 		checkboxLabel: '我已知晓并继续', danger: true,
-	}, () => { void ctx.deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); }); });
+	}, runHistory(ctx, () => deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)));
 }
 
 /**

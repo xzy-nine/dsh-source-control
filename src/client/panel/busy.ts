@@ -60,6 +60,21 @@ export function setBusyLabel(entries: readonly BusyEntry[], cancelKey: string, l
 }
 
 /**
+ * 某个仓库是否有满足判据的记录。
+ *
+ * 两个忙碌判据只差筛选条件；仓库过滤与空仓库的短路共用这一处。
+ *
+ * @param entries - 现有记录。
+ * @param repo - 仓库路径；null 表示未选中仓库。
+ * @param matches - 该记录是否算作命中。
+ * @returns 有匹配记录时为 true。
+ */
+function matchesBusy(entries: readonly BusyEntry[], repo: string | null, matches: (entry: BusyEntry) => boolean): boolean {
+	if (repo === null) return false;
+	return entries.some((entry) => entry.repo === repo && matches(entry));
+}
+
+/**
  * 某个仓库是否有进行中的操作。
  *
  * @param entries - 现有记录。
@@ -68,8 +83,7 @@ export function setBusyLabel(entries: readonly BusyEntry[], cancelKey: string, l
  * @returns 有匹配记录时为 true。
  */
 export function isRepoBusy(entries: readonly BusyEntry[], repo: string | null, scope?: BusyScope): boolean {
-	if (repo === null) return false;
-	return entries.some((entry) => entry.repo === repo && (scope === undefined || entry.scope === scope));
+	return matchesBusy(entries, repo, (entry) => scope === undefined || entry.scope === scope);
 }
 
 /**
@@ -90,8 +104,7 @@ const BLOCKING_SCOPES: ReadonlySet<BusyScope> = new Set<BusyScope>(['read', 'com
  * @returns 有会阻塞读取的记录时为 true。
  */
 export function isReadBlocked(entries: readonly BusyEntry[], repo: string | null): boolean {
-	if (repo === null) return false;
-	return entries.some((entry) => entry.repo === repo && BLOCKING_SCOPES.has(entry.scope));
+	return matchesBusy(entries, repo, (entry) => BLOCKING_SCOPES.has(entry.scope));
 }
 
 /**

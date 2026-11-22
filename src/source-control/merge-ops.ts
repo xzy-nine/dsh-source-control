@@ -7,8 +7,7 @@
  */
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
-import { gitOrThrow } from './git-exec.js';
-import { worktreeText } from './conflict-ops.js';
+import { contentAt, worktreeText } from './conflict-ops.js';
 import { analyzeMerge, resultLinesOf, type MergeChoice } from '../shared/merge-ranges.js';
 import type { MergeContents } from '../shared/merge-contents.js';
 
@@ -23,11 +22,7 @@ export type { MergeContents } from '../shared/merge-contents.js';
  * @returns 全文；该阶段不存在时为 null。
  */
 async function stageText(repo: string, stage: 1 | 2 | 3, path: string): Promise<string | null> {
-	try {
-		return await gitOrThrow(['show', `:${String(stage)}:${path}`], repo);
-	} catch {
-		return null;
-	}
+	return contentAt(repo, path, `:${String(stage)}:`);
 }
 
 /**

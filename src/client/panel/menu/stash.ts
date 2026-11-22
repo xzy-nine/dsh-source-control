@@ -3,18 +3,27 @@
  */
 import { applyStash, branchFromStash, dropStash, popStash, throwIfError } from '../../api/index.ts';
 import {
-	copyRefNameItem, dangerConfirmItem, textThenRun, withRefName, type MenuBuilders,
+	copyRefNameItem, dangerConfirmItem, runHistory, textThenRun, withRefName, type MenuBuilder, type MenuBuilders, type MenuContext,
 } from './shared.ts';
 
+/**
+ * 对贮藏执行一次 git 操作。
+ *
+ * 应用与弹出只差调用的命令，前置的引用名判定与后续的失败提示同构。
+ *
+ * @param act - 拿到选择器后的执行体。
+ * @returns 菜单构建器。
+ */
+function stashAction(act: (ctx: MenuContext, selector: string) => Promise<string>): MenuBuilder {
+	return withRefName((ctx, meta, selector) => ({
+		title: meta.title, danger: meta.danger,
+		onClick: runHistory(ctx, () => act(ctx, selector)),
+	}));
+}
+
 export const BUILDERS: MenuBuilders = {
-	applyStash: withRefName((ctx, meta, selector) => ({
-		title: meta.title, danger: meta.danger,
-		onClick: () => { void ctx.deps.run('history', async () => { throwIfError(await applyStash(ctx.repo, selector, false)); }); },
-	})),
-	popStash: withRefName((ctx, meta, selector) => ({
-		title: meta.title, danger: meta.danger,
-		onClick: () => { void ctx.deps.run('history', async () => { throwIfError(await popStash(ctx.repo, selector, false)); }); },
-	})),
+	applyStash: stashAction((ctx, selector) => applyStash(ctx.repo, selector, false)),
+	popStash: stashAction((ctx, selector) => popStash(ctx.repo, selector, false)),
 	branchFromStash: withRefName((ctx, meta, selector) => ({
 		title: meta.title,
 		onClick: textThenRun({ title: '从贮藏创建分支', label: '新分支名', placeholder: 'feature/xxx' }, (newName) => {
