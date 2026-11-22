@@ -5,6 +5,7 @@
  * 草稿存会话级存储，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import {
 	clearPersistedDraft, commitStaged, generateCommitMessage, loadCommitMessage, loadHooksState, logClient,
 	takePersistedDraft, translateAvailable, translateText,
@@ -336,7 +337,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 				setMessage(await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale)));
 				setTranslatedFrom(source);
 			} catch (error) {
-				await notify(error instanceof Error ? error.message : String(error));
+				await notify(errorText(error));
 			} finally {
 				setTranslateBusy(false);
 			}

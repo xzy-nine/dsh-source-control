@@ -5,6 +5,7 @@
  * ./git-actions.ts，工作区变更见 ./working-tree.ts。前端是主文档内的 React 面板。
  */
 import type http from 'node:http';
+import { errorText } from '../shared/error-text.js';
 import { onRepositoryWrite } from './git-exec.js';
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import { clearDiscoveryCache } from './repo-discovery.js';
@@ -202,7 +203,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 		try {
 			respond({ command: cmd, ...(await fn()), error: null });
 		} catch (error) {
-			respond({ command: cmd, error: error instanceof Error ? error.message : String(error) });
+			respond({ command: cmd, error: errorText(error) });
 		}
 	};
 

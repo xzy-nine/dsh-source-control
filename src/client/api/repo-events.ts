@@ -10,6 +10,7 @@
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
 import { readStreamText } from './stream.ts';
+import { errorText } from '../../shared/error-text.ts';
 import { logClient } from './log.ts';
 
 /** 事件流地址。 */
@@ -199,7 +200,7 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 			}, () => disposed.current);
 		} catch (error) {
 			// 取消订阅导致的断开不是异常。
-			if (!disposed.current) logClient('W', 'events', `事件流连接失败：${error instanceof Error ? error.message : String(error)}`);
+			if (!disposed.current) logClient('W', 'events', `事件流连接失败：${errorText(error)}`);
 		} finally {
 			options.onState?.('closed');
 		}

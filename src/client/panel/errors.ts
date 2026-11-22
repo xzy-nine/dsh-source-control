@@ -2,6 +2,7 @@
  * 面板状态辅助：把错误文本写进面板状态。
  */
 import type { Dispatch, SetStateAction } from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import type { PanelState } from '../shared/types.ts';
 
 /**
@@ -23,7 +24,7 @@ export function reportError(setState: Dispatch<SetStateAction<PanelState>>, erro
  * @returns 无。
  */
 export function reportCaught(setState: Dispatch<SetStateAction<PanelState>>, error: unknown): void {
-	reportError(setState, error instanceof Error ? error.message : String(error));
+	reportError(setState, errorText(error));
 }
 
 /** 一次刷新失败要收回哪些分区。 */

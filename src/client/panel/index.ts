@@ -6,6 +6,7 @@
  * 同目录按职责拆分。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import {
 	cancelOperation, discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
@@ -470,7 +471,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			setRefsRevision((previous) => previous + 1);
 			await refresh('reconcile');
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errorText(error);
 			logClient('E', 'action', `操作失败：${intent}：${message}`);
 			reportError(setState, message);
 		} finally {
@@ -494,7 +495,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		if (target === null) return;
 		logClient('W', 'action', `用户停止操作：${cancelKey}`);
 		void cancelOperation(target, cancelKey).catch((error: unknown) => {
-			logClient('E', 'action', `停止操作失败：${error instanceof Error ? error.message : String(error)}`);
+			logClient('E', 'action', `停止操作失败：${errorText(error)}`);
 		});
 	}, [state.busy, workingTreePath]);
 
@@ -568,7 +569,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 				await perform();
 				showToast(empty.actionKind === 'init-workspace' ? '已初始化仓库' : '已初始化子模块', { tone: 'success' });
 			} catch (error) {
-				void showError(error instanceof Error ? error.message : String(error));
+				void showError(errorText(error));
 			} finally {
 				setEmptyActionBusy(false);
 			}

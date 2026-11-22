@@ -13,6 +13,7 @@ import {
 	planSelection, saveExpanded, saveSelection,
 } from './repo-tree.ts';
 import { mapsEqual } from '../shared/cache.ts';
+import { toggleIn } from '../shared/set-ops.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
@@ -259,9 +260,7 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 	/** 展开或收起一个仓库节点。 */
 	const toggleNode = React.useCallback((node: RepoNode) => {
 		setExpandedIds((previous) => {
-			const next = new Set(previous);
-			if (next.has(node.id)) next.delete(node.id);
-			else next.add(node.id);
+			const next = toggleIn(previous, node.id);
 			saveExpanded(cwd ?? null, next);
 			return next;
 		});

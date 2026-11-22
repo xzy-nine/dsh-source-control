@@ -5,6 +5,7 @@
  * （只译当前可见窗口内的标题）。两者写入同一份译文缓存，取消批量翻译时只回退该批次。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import { loadCommitStatsAndMessage, translateText } from '../api/index.ts';
 import { trimOldest } from '../shared/cache.ts';
 import { useCacheCleanup } from './use-cache-cleanup.ts';
@@ -163,7 +164,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 	 */
 	const reportTranslateFailure = (controller: AbortController, error: unknown): void => {
 		if (controller.signal.aborted) return;
-		onTranslateErrorRef.current(error instanceof Error ? error.message : String(error));
+		onTranslateErrorRef.current(errorText(error));
 	};
 
 	// 换仓库后旧的统计、信息与译文都不再适用。

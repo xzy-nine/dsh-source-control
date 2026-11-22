@@ -2,6 +2,7 @@
  * 仓库节点构造：读取 HEAD、枚举工作树与子模块，并按路径补齐。
  */
 import { listDirAt, probePathAt, readTextAt } from './host-runtime.js';
+import { errorText } from '../shared/error-text.js';
 import { basename, join, resolve } from 'node:path';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { logDebug } from './logger.js';
@@ -24,7 +25,7 @@ async function headOf(dir: string): Promise<{ branch: string | null; head: strin
 	try {
 		return parseHead(await readTextAt(join(gitDir, 'HEAD')));
 	} catch (error) {
-		logDebug('repo', `读取 HEAD 失败，该仓库按无分支处理：${dir}：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `读取 HEAD 失败，该仓库按无分支处理：${dir}：${errorText(error)}`);
 		return { branch: null, head: null };
 	}
 }
@@ -57,7 +58,7 @@ async function worktreesOf(dir: string): Promise<RepoNode[]> {
 		}
 	} catch (error) {
 		// 工作树枚举失败不影响仓库节点，但会让工作树节点缺失，需要留痕。
-		logDebug('repo', `枚举工作树失败，该仓库按无工作树处理：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `枚举工作树失败，该仓库按无工作树处理：${errorText(error)}`);
 	}
 	return nodes;
 }
