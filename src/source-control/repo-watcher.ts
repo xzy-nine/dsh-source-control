@@ -1,19 +1,6 @@
 /**
  * 仓库结构监视：观察 git 目录里的工作树登记、子模块目录、工作区的子模块声明，以及工作区里
  * 仓库目录的出现与消失。
- *
- * 工作树与子模块的增删不一定经过本插件的执行层：宿主自己的工作树工具、外部命令与编辑器
- * 都会改动它们，因此结构变化只能从文件系统观察。监视只通知「某处结构可能已变」，不携带
- * 数据，由接收方重新枚举。
- *
- * 两套监视层次不同：
- * - 仓库级：按 git 公共目录去重，观察工作树登记与子模块；主工作树、链接工作树与子模块共用
- *   同一公共目录，因此同一仓库只挂一套句柄。目标见 {@link structureWatchTargets}。
- * - 工作区级：递归观察工作区根，只判定「仓库集合是否可能已变」。新建的仓库或工作树此前没有
- *   任何句柄，只能由这一层发现。见 {@link watchWorkspace}。
- *
- * 事件到达后按当前形态补挂缺失的目录、摘掉已消失的目录，已有句柄保持不动：整体重建会让
- * 重建窗口内的事件丢失。
  */
 import { basename, dirname, join, resolve } from 'node:path';
 import { nodeId, shouldPruneDirectory } from './repo-node.js';
@@ -94,11 +81,6 @@ interface WorkspaceWatch {
 	root: string;
 	/** 根目录的句柄；挂载完成前为 null。 */
 	handle: WatchCloser | null;
-	/**
-	 * 直接子目录的句柄：键为规范化后的目录路径。
-	 *
-	 * 后端不支持递归监视时用它补上第二层，否则在已有子目录里新建的仓库收不到任何事件。
-	 */
 	children: Map<string, WatchCloser>;
 	/** 合并定时器。 */
 	timer: ReturnType<typeof setTimeout> | null;
@@ -134,20 +116,6 @@ async function declaredSubmodules(repo: string): Promise<string[] | null> {
 
 /**
  * 取一个仓库需要监视的目标。
- *
- * 三类目标：
- * - git 公共目录：`worktrees` 与 `modules` 两个名字的出现与消失（新建或移除工作树、初始化
- *   子模块都会改动它们）；
- * - 仓库根：`.gitmodules` 的出现与消失（新增或删除子模块声明）；
- * - 每个声明的子模块：其父目录（子模块目录的出现与消失）。
- *
- * 仓库根只按 `.gitmodules` 过滤，**不含 `.git`**：`.git` 目录内部每次写操作都会以 `.git`
- * 名字冒泡到父目录（实测一轮 `status` / `add` / `commit` 产生数十次），而结构变化本身已由
- * 公共目录上的 `worktrees` / `modules` 名字事件覆盖。监视 `.git` 会形成
- * 「事件 → 重扫 → git → 事件」的死循环。`.gitmodules` 在普通 git 操作中不产生事件。
- *
- * 不监视 `worktrees` 与 `modules` 目录自身：Windows 上这两个目录的句柄在目录被删除后持续
- * 报错，且每次工作树操作会触发数万次事件。
  *
  * @param repo - 仓库根或工作树根路径。
  * @param commonDir - 该仓库的 git 公共目录。
@@ -385,10 +353,7 @@ function arm(repo: string): void {
 }
 
 /**
- * 登记一个按 key 合并的定时器：同一 key 的旧定时器先撤掉。
- *
- * 定时器不阻止宿主退出；到点时先从表里删除自身。
- *
+ * 登记一个按 key 合并的定时器
  * @param table - key 到定时器的映射。
  * @param key - 合并键。
  * @param delayMs - 合并窗口毫秒数。
@@ -431,8 +396,6 @@ function schedule(key: string): void {
 /**
  * 监视一组仓库的结构变化。
  *
- * 同一公共目录只挂一套句柄；超出上限时淘汰最早登记的仓库。
- *
  * @param repos - 仓库、工作树或子模块路径。
  * @returns 无。
  */
@@ -453,16 +416,6 @@ export function watchRepositories(repos: readonly string[]): void {
 /**
  * 判定一次工作区事件是否可能表示仓库集合变化。
  *
- * 三条判据，与句柄在这台机器上实际报出的形态对应：
- * - 名字里有 `.git` 段：取其所属的仓库根，根未知才算变化。已知仓库内部的 `.git` 写操作由
- *   仓库级监视负责；普通 git 操作会在 `.git` 下产生数十次事件，在这里一并触发会形成
- *   「事件 → 重新发现 → 读 `.git` → 事件」的死循环。
- * - 名字是有过的普通路径且事件为 `rename`：该路径自身或下探 {@link PROBE_DEPTH} 层内出现
- *   或消失了仓库（新建仓库先建目录再写 `.git`，事件只给目录名），或者是已知仓库及其祖先
- *   （仓库目录被整体删除）。
- * - 名字缺失：核对已知仓库是否仍存在。Windows 的递归句柄删除目录树时只报 `change` 而不给
- *   名字，仓库被整个删除只有这条信号；普通 git 操作同样会报一条，此处几个 `stat` 即可结束。
- *
  * @param target - 事件给出的绝对路径；名字缺失时为 null。
  * @param kind - 事件类型。
  * @param repos - 已知仓库路径；省略时用监视登记的集合。
@@ -476,12 +429,6 @@ export async function isRepositorySetChange(
 ): Promise<boolean> {
 	const known = new Set([...repos].map((repo) => nodeId(repo)));
 	if (target === null) {
-		/*
-		 * 名字缺失：事件只说明「该目录下可能已变」，出现与消失都要查。
-		 *
-		 * 出现只能靠核对集合发现：后端不给名字时，一条「目录变了」既可能是新建仓库，也可能是
-		 * 普通文件改动。核对用快照比较，未变即不通知，因此噪声事件不会变成重扫。
-		 */
 		if (scope !== null) return await repositorySetChangedUnder(scope);
 		/*
 		 * 已知仓库不再有 git 目录时把它移出已知集合：仓库已消失，留在集合里会让此后每一条
@@ -512,11 +459,6 @@ export async function isRepositorySetChange(
 
 /**
  * 核对一个被监视目录下的仓库集合是否与上次不同。
- *
- * 后端不给名字时，一条「目录变了」既可能是新建仓库、也可能是普通文件改动；枚举该目录自身
- * 与直接子项里的仓库再比较，未变即不通知——新建空目录因此不产生通知。
- *
- * 快照只覆盖到直接子项这一层，深度 2 的仓库由它所属的子目录句柄负责。
  *
  * @param scope - 被监视的目录（工作区根或其直接子目录）。
  * @returns 仓库集合已变时为 true。

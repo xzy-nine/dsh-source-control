@@ -1,14 +1,6 @@
 /**
  * 仓库发现：从工作区根按层递归寻找最多三层的 git 仓库，并枚举各仓库的工作树与子模块。
  *
- * 递归只用于仓库发现。子模块按 `.gitmodules` 判定、工作树按 git 公共目录下的登记项读取，
- * 两者都不参与递归、不受层数限制，工作树可位于工作区根之外。
- *
- * 实现按职责分散在下列模块，本文件只做发现流程与再导出：
- * - `repo-node.ts`：节点类型、路径归一与目录探测
- * - `repo-enrich.ts`：仓库节点构造与工作树、子模块补齐
- * - `repo-discovery-cache.ts`：60 秒 TTL 发现缓存与作废
- * - `repo-sync.ts`：批量领先/落后取数
  */
 import { dirname, resolve } from 'node:path';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
