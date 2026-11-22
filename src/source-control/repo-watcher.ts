@@ -378,19 +378,13 @@ function scheduleTimer(table: Map<string, ReturnType<typeof setTimeout>>, key: s
  * @returns 无。
  */
 function schedule(key: string): void {
-	const existing = pending.get(key);
-	if (existing !== undefined) clearTimeout(existing);
-	const timer = setTimeout(() => {
-		pending.delete(key);
+	scheduleTimer(pending, key, COALESCE_MS, () => {
 		const repo = repoOfCommon.get(key);
 		if (repo === undefined) return;
 		// 先补挂再通知：接收方重新枚举期间产生的事件也要能落到句柄上。
 		sync(key);
 		notify(repo);
-	}, COALESCE_MS);
-	// 监视不应阻止宿主退出。
-	if (typeof timer.unref === 'function') timer.unref();
-	pending.set(key, timer);
+	});
 }
 
 /**

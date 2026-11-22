@@ -19,12 +19,12 @@
  */
 import { normalizePath } from '../shared/path-key.ts';
 import {
-	readState, writeLayout, writeRefFilters, writeWorkspace, writeSettings,
+	EMPTY_SNAPSHOT, readState, writeLayout, writeRefFilters, writeWorkspace, writeSettings,
 	type PanelLayoutSnapshot, type StateSnapshot,
 } from '../api/index.ts';
 
 /** 内存缓存：宿主状态快照的镜像。 */
-let cache: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
+let cache: StateSnapshot = EMPTY_SNAPSHOT;
 
 /** 是否已完成首次预取。 */
 let primed = false;
@@ -212,7 +212,7 @@ export function setWorkspace(workspaceCwd: string, partial: { selectedRepo?: str
  * @returns 无。
  */
 export function resetStorageCache(): void {
-	cache = { settings: null, layout: null, refFilters: {}, workspaces: {} };
+	cache = EMPTY_SNAPSHOT;
 	primed = false;
 	priming = null;
 }

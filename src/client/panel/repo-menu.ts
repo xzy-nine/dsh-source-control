@@ -6,11 +6,11 @@
 import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, restoreFullHistory, throwIfError } from '../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ContextMenuItem } from '../ui/context-menu.ts';
-import { showCheckbox } from '../ui/dialog.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { reportCaught } from './errors.ts';
 import { openTargetMenu } from './changes.ts';
+import { checkboxThenRun } from './menu/shared.ts';
 import { dropGraphWindows } from './graph-window-cache.ts';
 import type { HookSelection } from './hook-selection.ts';
 import type { Commit, RepoNode, PanelRun, Settings } from '../shared/types.ts';
@@ -122,31 +122,29 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 	if (isLinkedWorktree) {
 		items.push({ type: 'divider' }, {
 			title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, deps.workingTreePath, 'history'),
-			onClick: () => {
-				void (async () => {
-					const ok = await showCheckbox({
-						title: '移除工作树',
-						message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
-						checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
-					});
-					if (!ok) return;
+			onClick: checkboxThenRun({
+				title: '移除工作树',
+				message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
+				checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
+			}, () => {
 					/*
 					 * 直接以该工作树路径为目标执行移除，不经面板的 `run`：被移除的可能正是当前
 					 * 选中的工作树，之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
 					 */
 					logClient('I', 'action', `用户操作：移除工作树 ${node.name}（${node.path}，强制）`);
-					try {
-						await removeWorktree(node.path, node.path, true);
-					} catch (error) {
-						reportCaught(setState, error);
-						return;
-					}
-					dropGraphWindows(node.path);
-					// 该节点已不存在，清掉选中以免刷新后指向失效节点。
-					setSelectedId((previous) => (previous === node.id ? null : previous));
-					rescan();
-				})();
-			},
+					void (async () => {
+						try {
+							await removeWorktree(node.path, node.path, true);
+						} catch (error) {
+							reportCaught(setState, error);
+							return;
+						}
+						dropGraphWindows(node.path);
+						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
+						setSelectedId((previous) => (previous === node.id ? null : previous));
+						rescan();
+					})();
+			}),
 		});
 	}
 	openTargetMenu(event, () => items);

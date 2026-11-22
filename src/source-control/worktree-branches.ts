@@ -223,7 +223,18 @@ export function parseHeadRef(content: string): HeadRef {
  */
 export async function readHeadRef(repo: string): Promise<HeadRef | null> {
 	const gitDir = await resolveGitDir(repo);
-	if (gitDir === null) return null;
+	return gitDir === null ? null : readHeadFile(gitDir);
+}
+
+/**
+ * 读一个 git 目录下的 `HEAD` 文件。
+ *
+ * 仓库事实层（`repo-facts.ts`）用它读已知 git 目录的 HEAD，因此导出。
+ *
+ * @param gitDir - git 目录。
+ * @returns 解析结果；文件不存在或格式不可识别时为 null。
+ */
+export async function readHeadFile(gitDir: string): Promise<HeadRef | null> {
 	try {
 		return parseHeadRef(await readTextAt(resolve(gitDir, 'HEAD')));
 	} catch {
@@ -368,8 +379,7 @@ export async function gitCommonDirOf(gitDir: string): Promise<string> {
  */
 export async function resolveGitCommonDir(repo: string): Promise<string | null> {
 	const gitDir = await resolveGitDir(repo);
-	if (gitDir === null) return null;
-	return gitCommonDirOf(gitDir);
+	return gitDir === null ? null : gitCommonDirOf(gitDir);
 }
 
 /**

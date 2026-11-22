@@ -14,7 +14,7 @@ import { getCached, noteRepoCommonDir, putCached } from './host-cache.js';
 import type { CacheEntry } from './host-cache.js';
 import { LruMap, TRIM_RATIO } from '../shared/lru-map.js';
 import { onRepositoryWrite } from './working-tree.js';
-import { gitCommonDirOf, gitDirAt, parseHeadRef, readLooseRef } from './worktree-branches.js';
+import { gitCommonDirOf, gitDirAt, readHeadFile, readLooseRef } from './worktree-branches.js';
 import type { HeadRef } from './worktree-branches.js';
 
 /** 一个仓库的 git 目录布局。 */
@@ -171,20 +171,6 @@ async function packedRefsOf(commonDir: string): Promise<PackedRefsSnapshot | nul
 export async function readPackedRef(commonDir: string, refName: string): Promise<string | null> {
 	const snapshot = await packedRefsOf(commonDir);
 	return snapshot?.refs.get(refName) ?? null;
-}
-
-/**
- * 读一个 git 目录下的 `HEAD` 文件。
- *
- * @param gitDir - git 目录。
- * @returns 解析结果；文件不存在或格式不可识别时为 null。
- */
-async function readHeadFile(gitDir: string): Promise<HeadRef | null> {
-	try {
-		return parseHeadRef(await readTextAt(resolve(gitDir, 'HEAD')));
-	} catch {
-		return null;
-	}
 }
 
 /**

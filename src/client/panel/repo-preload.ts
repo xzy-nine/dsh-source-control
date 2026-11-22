@@ -428,30 +428,19 @@ async function syncAll(entry: WorkspaceEntry, controller: AbortController): Prom
 	 * 会让那一行一直显示空分支。
 	 */
 	const availability = new Map<string, boolean>();
-	const noteAvailability = (list: readonly RepoNode[]): void => {
-		for (const node of list) {
-			if (entry.availabilityById.get(node.id) === false && node.available) entry.syncedIds.delete(node.id);
-			availability.set(node.id, node.available);
-			noteAvailability(node.children);
-		}
-	};
-	noteAvailability(entry.snapshot.nodes);
+	walkRepoNodes(entry.snapshot.nodes, (node) => {
+		if (entry.availabilityById.get(node.id) === false && node.available) entry.syncedIds.delete(node.id);
+		availability.set(node.id, node.available);
+	});
 	// 只保留仍在树上的记录：节点消失后它的可用性是过时事实。
 	entry.availabilityById = availability;
-	const collect = (nodes: readonly RepoNode[]): void => {
-		for (const node of nodes) {
-			// 已取过且值仍在快照里：沿用，不重复请求。
-			if (entry.syncedIds.has(node.id) && entry.snapshot.syncById.has(node.id)) {
-				collect(node.children);
-				continue;
-			}
-			const ids = idsByPath.get(node.path);
-			if (ids === undefined) idsByPath.set(node.path, [node.id]);
-			else ids.push(node.id);
-			collect(node.children);
-		}
-	};
-	collect(entry.snapshot.nodes);
+	walkRepoNodes(entry.snapshot.nodes, (node) => {
+		// 已取过且值仍在快照里：沿用，不重复请求。
+		if (entry.syncedIds.has(node.id) && entry.snapshot.syncById.has(node.id)) return;
+		const ids = idsByPath.get(node.path);
+		if (ids === undefined) idsByPath.set(node.path, [node.id]);
+		else ids.push(node.id);
+	});
 	const paths = [...idsByPath.keys()];
 	if (paths.length === 0) return;
 	const results = await loadReposSync(entry.root, paths, controller.signal);
