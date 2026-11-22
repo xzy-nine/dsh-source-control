@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import type { MergeAnalysis, MergeChoice, MergeRange } from '../../shared/merge-ranges.js';
-import { gutterPressed, markRange, ROW_SELECTOR, type LineRange } from './line-range.ts';
+import { gutterPressed, markRange, ROW_SELECTOR, rowAt, rowIndexAt, type LineRange } from './line-range.ts';
 import css from '../css/merge-view.module.css';
 
 /** 一个区间的覆盖方向。 */
@@ -182,12 +182,11 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		if (element === null) return undefined;
 		/** 从行号列按下才开始选行；正文区交给浏览器做文本选区与复制。 */
 		const down = (event: PointerEvent): void => {
-			if (event.button !== 0 || !(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			if (!gutterPressed(event.target, row)) return;
-			const list = selectable();
-			const index = list.indexOf(row);
+			if (event.button !== 0) return;
+			const row = rowAt(event, element);
+			if (row === null) return;
+			if (!gutterPressed(event.target as Element, row)) return;
+			const index = selectable().indexOf(row);
 			if (index < 0) return;
 			event.preventDefault();
 			anchor.current = index;
@@ -197,11 +196,8 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		};
 		const over = (event: PointerEvent): void => {
 			if (anchor.current === null || event.buttons !== 1) return;
-			if (!(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			const index = selectable().indexOf(row);
-			if (index < 0) return;
+			const index = rowIndexAt(event, element, selectable());
+			if (index === null) return;
 			head.current = index;
 			paint(Math.min(anchor.current, index), Math.max(anchor.current, index));
 		};

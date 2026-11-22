@@ -8,6 +8,19 @@ import { join } from 'node:path';
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 
 /**
+ * 测试隔离目录。
+ *
+ * `DSH_SOURCE_CONTROL_HOME` 指向插件数据的独立目录，单测用它把数据与真实 home 隔开。
+ *
+ * @returns 隔离目录绝对路径；未设置该变量时为 null。
+ */
+function isolatedHome(): string | null {
+	const override = process.env.DSH_SOURCE_CONTROL_HOME;
+	const trimmed = override === undefined ? '' : override.trim();
+	return trimmed === '' ? null : trimmed;
+}
+
+/**
  * 取 DSH home。
  *
  * 测试隔离变量 `DSH_SOURCE_CONTROL_HOME` 优先于 `DSH_HOME`：它把插件数据整体挪到临时目录。
@@ -15,9 +28,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
  * @returns DSH home 绝对路径；测试隔离时即隔离目录本身。
  */
 export function dshHome(): string {
-	const override = process.env.DSH_SOURCE_CONTROL_HOME;
-	if (override !== undefined && override.trim().length > 0) return override.trim();
-	return resolveDshHome();
+	return isolatedHome() ?? resolveDshHome();
 }
 
 /**
@@ -28,7 +39,5 @@ export function dshHome(): string {
  * @returns 插件数据目录绝对路径。
  */
 export function pluginHome(): string {
-	const override = process.env.DSH_SOURCE_CONTROL_HOME;
-	if (override !== undefined && override.trim().length > 0) return override.trim();
-	return join(resolveDshHome(), 'dsh-source-control');
+	return isolatedHome() ?? join(resolveDshHome(), 'dsh-source-control');
 }

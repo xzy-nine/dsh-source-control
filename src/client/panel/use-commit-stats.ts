@@ -68,6 +68,18 @@ function bodyTranslator(
  * @param hashes - 要丢弃的哈希。
  * @returns 新缓存。
  */
+/**
+ * 把「按 hashes 清理一个 map」包成 setState 需要的 drop 回调。
+ *
+ * 三处缓存清理都只做这一件事，差别只在写回哪个 map。
+ *
+ * @param setter - 该 map 的状态写入器。
+ * @returns 接受 hashes 的 drop 回调。
+ */
+function dropFrom<T>(setter: React.Dispatch<React.SetStateAction<Map<string, T>>>): (hashes: Iterable<string>) => void {
+	return (hashes) => { setter((previous) => dropHashes(previous, hashes)); };
+}
+
 function dropHashes<T>(previous: Map<string, T>, hashes: Iterable<string>): Map<string, T> {
 	const next = new Map(previous);
 	for (const hash of hashes) next.delete(hash);
@@ -173,22 +185,11 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		translationStamps.current = new Map();
 	}, [workingTreePath]);
 
-	useCacheCleanup({
-		stamps: statsStamps,
-		drop: (hashes) => { setStatsByHash((previous) => dropHashes(previous, hashes)); },
-		periodSeconds: cleanupSeconds,
-	});
-	useCacheCleanup({
-		stamps: messageStamps,
-		drop: (hashes) => { setMessageByHash((previous) => dropHashes(previous, hashes)); },
-		periodSeconds: cleanupSeconds,
-	});
+	useCacheCleanup({ stamps: statsStamps, drop: dropFrom(setStatsByHash), periodSeconds: cleanupSeconds });
+	useCacheCleanup({ stamps: messageStamps, drop: dropFrom(setMessageByHash), periodSeconds: cleanupSeconds });
 	useCacheCleanup({
 		stamps: translationStamps,
-		drop: (hashes) => {
-			setTranslatedByHash((previous) => dropHashes(previous, hashes));
-			setTranslatedFromByHash((previous) => dropHashes(previous, hashes));
-		},
+		drop: (hashes) => { dropFrom(setTranslatedByHash)(hashes); dropFrom(setTranslatedFromByHash)(hashes); },
 		periodSeconds: cleanupSeconds,
 	});
 

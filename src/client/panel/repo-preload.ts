@@ -458,10 +458,7 @@ async function syncAll(entry: WorkspaceEntry, controller: AbortController): Prom
 	if (controller.signal.aborted) return;
 	const next = new Map(entry.snapshot.syncById);
 	for (const result of results) {
-		const sync: RepoSync = {
-			branch: result.branch, upstream: result.upstream,
-			upstreamRef: result.upstreamRef ?? null, ahead: result.ahead, behind: result.behind,
-		};
+		const sync = repoNodeSync(result);
 		for (const id of idsByPath.get(result.path) ?? []) {
 			next.set(id, sync);
 			entry.syncedIds.add(id);
@@ -513,15 +510,27 @@ function idsAtPath(nodes: readonly RepoNode[], path: string): string[] {
  * @param ids - 该路径上的节点 id。
  * @returns 无。
  */
+/**
+ * 批量取数结果里仓库节点要的同步字段。
+ *
+ * 批量响应的字段与 {@link RepoSync} 只差取值形态：`upstreamRef` 可能缺省，这里补成 null。
+ *
+ * @param result - 一条批量取数结果。
+ * @returns 仓库树的同步条目。
+ */
+function repoNodeSync(result: Awaited<ReturnType<typeof loadReposSync>>[number]): RepoSync {
+	return {
+		branch: result.branch, upstream: result.upstream,
+		upstreamRef: result.upstreamRef ?? null, ahead: result.ahead, behind: result.behind,
+	};
+}
+
 async function syncPath(entry: WorkspaceEntry, path: string, ids: readonly string[]): Promise<void> {
 	const results = await loadReposSync(entry.root, [path]);
 	if (results.length === 0) return;
 	const result = results[0];
 	const next = new Map(entry.snapshot.syncById);
-	const sync: RepoSync = {
-		branch: result.branch, upstream: result.upstream,
-		upstreamRef: result.upstreamRef ?? null, ahead: result.ahead, behind: result.behind,
-	};
+	const sync = repoNodeSync(result);
 	for (const id of ids) {
 		// 仍在树上才写入：重取期间节点可能已被移除。
 		next.set(id, sync);

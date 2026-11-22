@@ -402,6 +402,26 @@ export function noteRepoCommonDir(repo: string, commonDir: string): void {
 }
 
 /**
+ * 对一个仓库及与它共享 git 公共目录的其它工作树各执行一次操作。
+ *
+ * 主工作树与链接工作树是不同路径，公共目录把它们连在一起；仓库自身不在回调范围内。
+ * 未登记公共目录的仓库只处理自身。
+ *
+ * @param repo - 仓库路径。
+ * @param visit - 每个相关仓库的键。
+ * @returns 无。
+ */
+function forEachSiblingWorktree(repo: string, visit: (key: string) => void): void {
+	const key = keyOf(repo);
+	visit(key);
+	const commonDir = commonDirByRepo.get(key);
+	if (commonDir === undefined) return;
+	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
+		if (cachedCommonDir === commonDir && cachedRepo !== key) visit(cachedRepo);
+	}
+}
+
+/**
  * 作废一个仓库及其共享公共目录的其它工作树的工作区快照。
  *
  * 只索引或工作区的写不会移动 HEAD、不会改引用与贮藏，因此提交图窗口、仓库信息与钩子路径
@@ -411,14 +431,7 @@ export function noteRepoCommonDir(repo: string, commonDir: string): void {
  * @returns 无。
  */
 function invalidateSnapshotsOnWrite(repo: string): void {
-	const key = keyOf(repo);
-	dropAffected(snapshots, key);
-	const commonDir = commonDirByRepo.get(key);
-	if (commonDir === undefined) return;
-	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
-		if (cachedCommonDir !== commonDir || cachedRepo === key) continue;
-		dropAffected(snapshots, cachedRepo);
-	}
+	forEachSiblingWorktree(repo, (sibling) => { dropAffected(snapshots, sibling); });
 }
 
 /**
@@ -435,11 +448,7 @@ function invalidateSnapshotsOnWrite(repo: string): void {
 export function invalidateOnWrite(repo: string, surface: WriteSurface = 'history'): void {
 	if (surface === 'index') { invalidateSnapshotsOnWrite(repo); return; }
 	invalidateRepo(repo);
-	const commonDir = commonDirByRepo.get(keyOf(repo));
-	if (commonDir === undefined) return;
-	for (const [cachedRepo, cachedCommonDir] of commonDirByRepo) {
-		if (cachedCommonDir === commonDir && cachedRepo !== keyOf(repo)) invalidateRepo(cachedRepo);
-	}
+	forEachSiblingWorktree(repo, invalidateRepo);
 }
 
 /*
