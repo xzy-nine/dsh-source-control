@@ -60,6 +60,7 @@ function annotatedOf(tag: CommitTag): unknown {
 	return (tag as { readonly annotated?: unknown }).annotated;
 }
 
+
 /**
  * 两个标签列表是否相等。
  *

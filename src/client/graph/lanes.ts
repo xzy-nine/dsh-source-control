@@ -196,7 +196,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 	const baseRows: LaneRow[] = [];
 
 	for (const commit of commits) {
-		const input = lanes.map((lane) => (lane === null ? null : { ...lane }));
+		const input = lanes.map(cloneLane);
 		const parentIds = commit.parents ?? [];
 		const commitColour = refColour(commit.hash);
 
@@ -205,7 +205,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 		const output: Array<Lane | null> = [];
 		let nodeLane = -1;
 		for (const [index, lane] of input.entries()) {
-			if (lane === null || lane.hash !== commit.hash) { output.push(lane === null ? null : { ...lane }); continue; }
+			if (lane === null || lane.hash !== commit.hash) { output.push(cloneLane(lane)); continue; }
 			if (nodeLane === -1) {
 				nodeLane = index;
 				output.push({ hash: parentIds[0] ?? null, colour: commitColour ?? lane.colour });
@@ -389,6 +389,17 @@ function quarterArc(sweep: number, x?: number, y?: number): string {
 	return `A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep}${end}`;
 }
 /**
+ * 复制一条泳道；空泳道保持为空。
+ *
+ * 布局按行推进，写入下一行的泳道是新对象，上一行的记录因此保持不变。
+ *
+ * @param lane - 来源泳道。
+ * @returns 新泳道。
+ */
+function cloneLane(lane: Lane | null): Lane | null {
+	return lane === null ? null : { ...lane };
+}
+/**
  * 圆弧上某角度的点。
  *
  * @param centre - 圆弧圆心。
@@ -480,6 +491,22 @@ function forkOutPath(x1: number, x2: number, radius: number): string {
 }
 
 /**
+ * 一段 S 形平移：两段四分之一圆夹一段水平线。
+ *
+ * @param x1 - 行顶的泳道中心线。
+ * @param x2 - 行底的泳道中心线。
+ * @param bend - 第一段圆弧的纵向起点。
+ * @param radius - 圆弧半径。
+ * @param lowerSweep - 第二段圆弧的 sweep 标记。
+ * @returns SVG 路径描述。
+ */
+function sCurve(x1: number, x2: number, bend: number, radius: number, lowerSweep: number): string {
+	const upperSweep = lowerSweep === 1 ? 0 : 1;
+	const towards = lowerSweep === 1 ? x2 - radius : x2 + radius;
+	return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 ${upperSweep} ${x1 + (lowerSweep === 1 ? radius : -radius)} ${ROW_HALF}`
+		+ ` H ${towards} A ${radius} ${radius} 0 0 ${lowerSweep} ${x2} ${ROW_HALF + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
+}
+/**
  * 泳道整行平移的 S 形路径：两段半径 S_CURVE_RADIUS 的四分之一圆接住行顶与行底的
  * 竖直切向，中间的水平段吃掉横向位移。
  *
@@ -488,15 +515,8 @@ function forkOutPath(x1: number, x2: number, radius: number): string {
  * @returns SVG 路径描述。
  */
 function shiftPath(x1: number, x2: number): string {
-	const half = ROW_HALF;
-	const radius = S_CURVE_RADIUS;
-	const bend = half - radius;
-	if (x2 < x1) {
-		return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 1 ${x1 - radius} ${half}`
-			+ ` H ${x2 + radius} A ${radius} ${radius} 0 0 0 ${x2} ${half + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
-	}
-	return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 0 ${x1 + radius} ${half}`
-		+ ` H ${x2 - radius} A ${radius} ${radius} 0 0 1 ${x2} ${half + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
+	// 向左平移时两段圆弧的 sweep 相反（先 1 后 0），向右时先 0 后 1。
+	return sCurve(x1, x2, ROW_HALF - S_CURVE_RADIUS, S_CURVE_RADIUS, x2 < x1 ? 0 : 1);
 }
 
 /**

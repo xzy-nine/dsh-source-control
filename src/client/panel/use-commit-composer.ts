@@ -23,6 +23,30 @@ import { canLandGeneration } from './generation-landing.ts';
 import type { AiStats, Commit, PanelRun, Settings, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
+ * 依赖工作树的异步读取：卸载或换工作树后，迟到结果与失败都丢弃。
+ *
+ * `onReset` 在未选工作树与读取失败时执行。
+ *
+ * @param workingTreePath - 当前工作树；未选中时为 null。
+ * @param read - 读取函数，入参为工作树路径。
+ * @param onData - 成功回调。
+ * @param onReset - 未选中工作树或读取失败时的回调。
+ * @returns React 的清理函数。
+ */
+function readForWorktree<T>(
+	workingTreePath: string | null,
+	read: (path: string) => Promise<T>,
+	onData: (data: T) => void,
+	onReset: () => void,
+): (() => void) | undefined {
+	if (workingTreePath === null) { onReset(); return undefined; }
+	let cancelled = false;
+	void read(workingTreePath)
+		.then((data) => { if (!cancelled) onData(data); })
+		.catch(() => { if (!cancelled) onReset(); });
+	return () => { cancelled = true; };
+}
+/**
  * 翻译服务是否可用：换仓库时重查一次（同一进程内结果稳定，不必频繁请求）。
  *
  * 提交框与图形区都按它决定是否显示翻译入口，因此独立成一个 hook，供两处共用。
@@ -32,12 +56,12 @@ import type { AiStats, Commit, PanelRun, Settings, WorkingTreeEntry } from '../s
  */
 export function useTranslateReady(workingTreePath: string | null): boolean {
 	const [translateReady, setTranslateReady] = React.useState(false);
-	React.useEffect(() => {
-		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
-		let cancelled = false;
-		void translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
-		return () => { cancelled = true; };
-	}, [workingTreePath]);
+	React.useEffect(() => readForWorktree(
+		workingTreePath,
+		translateAvailable,
+		setTranslateReady,
+		() => { setTranslateReady(false); },
+	), [workingTreePath]);
 	return translateReady;
 }
 
@@ -238,12 +262,12 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	 */
 	React.useEffect(() => {
 		setRunHooks(true);
-		if (workingTreePath === null) { setHooksState({ commit: false, push: false, directory: null }); return undefined; }
-		let cancelled = false;
-		loadHooksState(workingTreePath)
-			.then((state) => { if (!cancelled) setHooksState(state); })
-			.catch(() => { if (!cancelled) setHooksState({ commit: false, push: false, directory: null }); });
-		return () => { cancelled = true; };
+		return readForWorktree(
+			workingTreePath,
+			loadHooksState,
+			setHooksState,
+			() => { setHooksState({ commit: false, push: false, directory: null }); },
+		);
 	}, [workingTreePath]);
 
 	/**

@@ -432,40 +432,64 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		});
 	};
 
+	/** 一次覆盖的完整目标：同步状态、工作树路径、上游拆分与本地分支名。 */
+	type OverwriteCall = OverwriteTarget & { readonly branch: string };
+
+	/**
+	 * 一项整体覆盖：确认框文案与执行体由调用方给出。
+	 *
+	 * 两项覆盖共用同一个骨架：目标不可用时直接返回，否则进入勾选确认，未勾选即不执行。
+	 *
+	 * @param optionsOf - 由覆盖目标给出确认框文案；上游为空时由调用方兜底。
+	 * @param exec - 用户勾选并确认后的执行体。
+	 * @returns 点击处理函数。
+	 */
+	const overwriteAction = (
+		optionsOf: (target: OverwriteCall) => CheckboxOptions,
+		exec: (target: OverwriteCall) => Promise<void>,
+	): (() => void) => () => {
+		confirmOverwrite((target) => {
+			const call: OverwriteCall = { ...target };
+			const { withCheckbox } = target;
+			withCheckbox(optionsOf(call), async () => { await exec(call); });
+		});
+	};
+
 	/** 用本地分支覆盖远程分支：远程独有的提交会被丢弃。 */
 	const overwriteRemoteWithLocal = React.useCallback(() => {
-		confirmOverwrite(({ sync, path, parts, branch, withCheckbox }) => {
-			const skipHooks = pushHookActive && !runHooks;
-			withCheckbox({
+		const skipHooks = pushHookActive && !runHooks;
+		overwriteAction(
+			({ sync, parts, branch }) => ({
 				title: '用本地覆盖远程',
 				message: `把本地 ${branch} 强制推送到 ${parts.remote}/${parts.branch}：远程分支上独有的 ${String(sync.behind)} 个提交会被丢弃，推送后无法恢复。`,
 				checkboxLabel: '我确认用本地分支覆盖远程分支',
 				confirmLabel: '覆盖远程', danger: true,
-			}, async () => {
+			}),
+			async ({ path, parts, branch }) => {
 				await run('network', async () => { await pushOrThrow(path, branch, [parts.remote], skipHooks, 'force'); }, undefined, undefined, { intent: '用本地覆盖远程（强制推送）' });
-			});
-		});
-	}, [currentSync, workingTreePath, pushHookActive, runHooks, run]);
+			},
+		)();
+	}, [currentSync, workingTreePath, pushHookActive, runHooks, run, overwriteAction]);
 
 	/** 用远程分支覆盖本地分支：本地独有的提交与已跟踪改动会被丢弃。 */
 	const overwriteLocalWithRemote = React.useCallback(() => {
-		confirmOverwrite(({ sync, path, parts, branch, withCheckbox }) => {
-			const upstream = sync.upstream as string;
-			withCheckbox({
+		overwriteAction(
+			({ sync, branch }) => ({
 				title: '用远程覆盖本地',
-				message: `把本地 ${branch} 重置到 ${upstream}：本地独有的 ${String(sync.ahead)} 个提交与已跟踪文件的未提交改动都会被丢弃（未跟踪文件保留），重置后无法恢复。`,
+				message: `把本地 ${branch} 重置到 ${String(sync.upstream)}：本地独有的 ${String(sync.ahead)} 个提交与已跟踪文件的未提交改动都会被丢弃（未跟踪文件保留），重置后无法恢复。`,
 				checkboxLabel: '我确认用远程分支覆盖本地分支',
 				confirmLabel: '覆盖本地', danger: true,
-			}, async () => {
+			}),
+			async ({ sync, path, parts }) => {
 				await run('history', async () => {
 					// 只抓要被采用的那一个远程分支：整包抓取会把它名下其他分支的缺失对象一并下载。
 					await fetchRepo(path, parts.remote, false, false, parts.branch);
 					const error = await resetToCommit(path, remoteTrackingRef(sync), 'hard');
 					if (error !== null) throw new Error(error);
 				}, undefined, undefined, { intent: '用远程覆盖本地（硬重置）' });
-			});
-		});
-	}, [currentSync, workingTreePath, run]);
+			},
+		)();
+	}, [currentSync, workingTreePath, run, overwriteAction]);
 
 	/** 同步按钮的右键菜单：双向分叉时给出两种整体覆盖。 */
 	const handleSyncContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {

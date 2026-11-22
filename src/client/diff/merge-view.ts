@@ -72,6 +72,18 @@ export function rowsOfAnalysis(analysis: MergeAnalysis): ViewRow[] {
 }
 
 /**
+ * 区间两侧的一栏。
+ *
+ * @param side - 所属侧。
+ * @param lines - 该侧内容。
+ * @param from - 该侧首行的行号。
+ * @returns 该栏元素。
+ */
+function sideCell(side: 'ours' | 'theirs', lines: readonly string[], from: number): React.ReactElement {
+	return React.createElement('div', { className: css.sideCell },
+		React.createElement(Column, { lines, from, side }));
+}
+/**
  * 一栏内容：该区间在这一侧的行。
  *
  * @param props - 行、起始行号与所属侧。侧决定行号属性名，供选区读出（`ours` / `theirs`）。
@@ -276,8 +288,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 						'data-conflicting': range.conflicting ? '1' : '0',
 						'data-handled': choice === undefined ? '0' : '1',
 					},
-					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, { lines: oursLines, from: start, side: 'ours' })),
+					sideCell('ours', oursLines, start),
 					React.createElement(
 						'div',
 						{ className: css.actions },
@@ -295,8 +306,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 							onClick: () => { onChoose(range.index, action.choice); },
 						}, action.mark)),
 					),
-					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, { lines: theirsLines, from: start, side: 'theirs' })),
+					sideCell('theirs', theirsLines, start),
 				);
 			}),
 		),
