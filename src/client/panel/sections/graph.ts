@@ -4,10 +4,7 @@
  * 只接收已算好的数据与回调，状态与数据加载由面板主体持有。
  */
 import React from 'react';
-import {
-	IconChevronDownOutlineRegular, IconDownloadOutlineRegular,
-	IconGoalOutlineRegular, StateDot,
-} from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconDownloadOutlineRegular, IconGoalOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 import { CommitGraph } from '../../graph/index.ts';
 import type { ScrollToRowRequest } from '../../graph/use-graph-windowing.ts';
 import { RepoIcon, TranslateIcon } from '../../ui/ref-icons.ts';
@@ -21,8 +18,9 @@ const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.
 	: 'Ctrl';
 
 import { WorkspaceEmpty } from './empty-state.ts';
-import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
+import type { SectionEmptyFields } from './empty-state.ts';
 import { refreshButton } from './refresh-button.ts';
+import { SectionHead } from './section-head.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
 import { cx } from '../../css/cx.ts';
@@ -100,7 +98,7 @@ export interface GraphSectionProps extends CommitCacheMaps {
 	 *
 	 * 与更改区取同一份判据：两处同时显示空态，不会一处空态、另一处停在取数占位。
 	 */
-	readonly empty: WorkspaceEmptyInfo | null;
+	readonly empty: SectionEmptyFields['empty'];
 	/** 空态动作进行中：只禁用该按钮。 */
 	readonly emptyBusy: boolean;
 	/** 执行空态动作。 */
@@ -235,16 +233,14 @@ function GraphSectionView({
 			title: '拖动调整图形区高度',
 			onPointerDown: onResizeStart,
 		}),
-		React.createElement('div', {
-			className: cx(css.secHead, !open && css.collapsed),
-			onClick: onToggleSection,
-		},
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
-			'图形',
-			React.createElement(StateDot, { state: refreshing ? 'ongoing' : 'idle', size: 8, className: css.headDot }),
-			lastRefresh !== '' && React.createElement('span', { className: css.headRefreshNote }, lastRefresh),
+		React.createElement(SectionHead, {
+			title: '图形',
+			open,
+			onToggle: onToggleSection,
+			refreshing,
+			lastRefresh,
 			// 翻译当前可见窗口内的提交标题，紧随标题文本；已翻译时图标反色，再点即取消。
-			showGraphTranslate && React.createElement('button', {
+			before: showGraphTranslate && React.createElement('button', {
 				type: 'button',
 				className: cx(css.iconBtn, css.headAction, graphTranslated && css.actionOn),
 				title: graphTranslated
@@ -260,7 +256,7 @@ function GraphSectionView({
 					else onTranslateVisible(visible);
 				},
 			}, React.createElement(TranslateIcon, { inverted: graphTranslated })),
-			React.createElement('span', { className: css.headActions },
+			actions: React.createElement(React.Fragment, null,
 				selectedNode !== null && React.createElement('span', { className: css.headRepo },
 					React.createElement(RepoIcon),
 					React.createElement('span', null, selectedNode.name),
@@ -279,7 +275,7 @@ function GraphSectionView({
 				}, React.createElement(IconDownloadOutlineRegular, { size: 14 })),
 				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
 			),
-		),
+		}),
 		open && graphBody(),
 	);
 }

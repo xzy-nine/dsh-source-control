@@ -9,9 +9,8 @@
  */
 import React from 'react';
 import { hasRepositoryChange, settledFileChanges, type SessionEventLike } from './change-events.ts';
-import { createRefreshScheduler } from './refresh-scheduler.ts';
+import { createRefreshScheduler, type RefreshGateOptions } from './refresh-scheduler.ts';
 import { isReadBlocked } from './busy.ts';
-import type { BusyEntry } from '../shared/types.ts';
 
 /** 事件窗口保留的事件数：一次写入的结果可能晚于调用到达。 */
 const EVENT_WINDOW = 400;
@@ -45,19 +44,13 @@ export interface SessionsLike {
 }
 
 /** 事件驱动刷新的入参。 */
-export interface UseFileChangeRefreshOptions {
+export interface UseFileChangeRefreshOptions extends RefreshGateOptions {
 	/** 会话服务；未装载时为 null，此时不订阅。 */
 	readonly sessions: SessionsLike | null;
 	/** 当前会话 id。 */
 	readonly sessionId: string;
-	/** 当前工作树路径；未选中时为 null。 */
-	readonly workingTreePath: string | null;
 	/** 会话工作区路径，用于解析模型给出的相对路径。 */
 	readonly cwd: string | null;
-	/** 是否启用；关闭时不订阅。 */
-	readonly enabled: boolean;
-	/** 进行中的操作记录；目标仓库忙时挂起刷新。 */
-	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 只重取选中仓库的工作区快照。 */
 	readonly refresh: () => Promise<void>;
 }

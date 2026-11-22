@@ -4,7 +4,7 @@
 import { checkoutCommit, createBranch, deleteTag, throwIfError } from '../../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import { checkoutFailureText } from '../git-messages.ts';
-import { checkboxThenRun, tagItem, tagTargets, textThenRun, type MenuBuilders } from './shared.ts';
+import { dangerConfirmItem, tagItem, tagTargets, textThenRun, type MenuBuilders } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
 	checkoutTag: (ctx, meta) => tagItem(tagTargets(ctx), '检出标签', () => ({
@@ -21,14 +21,12 @@ export const BUILDERS: MenuBuilders = {
 		title: meta.title,
 		onClick: () => { void writeClipboard(tagName); },
 	})),
-	deleteTag: (ctx, meta) => tagItem(tagTargets(ctx), '删除标签', (tagName) => ({
-		title: meta.title, danger: meta.danger,
-		onClick: checkboxThenRun({
-			title: '删除标签', message: `确定删除标签 ${tagName}？`,
-			checkboxLabel: '同时删除远程标签', danger: true,
-		}, () => {
+	deleteTag: (ctx, meta) => tagItem(tagTargets(ctx), '删除标签', (tagName) => dangerConfirmItem(
+		meta,
+		{ title: '删除标签', message: `确定删除标签 ${tagName}？`, checkboxLabel: '同时删除远程标签' },
+		() => {
 			const { remotes } = ctx.deps;
 			void ctx.deps.run('history', async () => { throwIfError(await deleteTag(ctx.repo, tagName, remotes.length > 0 ? remotes[0].name : null)); });
-		}),
-	})),
+		},
+	)),
 };

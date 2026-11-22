@@ -4,7 +4,7 @@
 import { checkoutBranch, deleteRemoteBranch, fetchIntoLocalBranch, merge, throwIfError } from '../../api/index.ts';
 import { checkoutFailureText } from '../git-messages.ts';
 import {
-	branchFromRemoteItem, checkboxThenRun, confirmThenRun, copyRefNameItem, remoteRefOf, shortBranchName, type MenuBuilders,
+	branchFromRemoteItem, confirmThenRun, copyRefNameItem, dangerConfirmItem, remoteRefOf, shortBranchName, type MenuBuilders,
 } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
@@ -30,13 +30,11 @@ export const BUILDERS: MenuBuilders = {
 		if (ref === null) return null;
 		const remote = ref.remote ?? '';
 		const short = shortBranchName(ref.name);
-		return {
-			title: meta.title, danger: meta.danger,
-			onClick: checkboxThenRun({
-				title: '删除远程分支', message: `确定删除远程分支 ${ref.name}？`,
-				checkboxLabel: '我已知晓并继续', danger: true,
-			}, () => { void ctx.deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, short, remote)); }); }),
-		};
+		return dangerConfirmItem(
+			meta,
+			{ title: '删除远程分支', message: `确定删除远程分支 ${ref.name}？`, checkboxLabel: '我已知晓并继续' },
+			() => { void ctx.deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, short, remote)); }); },
+		);
 	},
 	copyRemoteName: (ctx, meta) => copyRefNameItem(ctx, meta),
 };

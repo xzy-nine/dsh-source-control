@@ -57,7 +57,7 @@ export function splitPath(path: string): { dir: string; name: string } {
  * @param build - 构建菜单项。
  * @returns 无。
  */
-export function openTargetMenu(event: React.MouseEvent<HTMLDivElement>, build: () => ContextMenuItem[]): void {
+export function openTargetMenu(event: React.MouseEvent<HTMLElement>, build: () => ContextMenuItem[]): void {
 	event.preventDefault();
 	const target = event.currentTarget;
 	target.classList.add(MENU_TARGET_CLASS);
@@ -440,7 +440,7 @@ function ChangeGroupView({
 	}, [visible, confirmDiscard]);
 	const onDiscard = React.useCallback((paths: readonly string[], untracked: boolean): void => {
 		// 丢弃改动不可撤销：文件与文件夹右键、行内按钮、丢弃全部都经这里，统一先确认。
-		// 未跟踪文件是被真正删除，而不是还原到某个版本，措辞需说清。
+		// 未跟踪文件经 `git clean` 删除。
 		const message = untracked
 			? (paths.length === 1
 				? '确定删除未跟踪文件 ' + paths[0] + '？删除后无法恢复。'

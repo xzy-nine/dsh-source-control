@@ -1,6 +1,6 @@
 {
   "note": "已接受的存量解释性注释；只允许调低。新增命中应改写散文或就地加 prose-ok 标记。",
-  "count": 248,
+  "count": 247,
   "entries": [
     [
       "src/client/api/http.ts",
@@ -261,11 +261,6 @@
       "src/client/panel/change-events.ts",
       "session-scope",
       "* 本次事件是否应触发自动刷新。"
-    ],
-    [
-      "src/client/panel/changes.ts",
-      "session-scope",
-      "* 本次真正丢弃的路径；未能丢弃的条目必须留在列表里。"
     ],
     [
       "src/client/panel/changes.ts",

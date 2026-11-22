@@ -18,8 +18,8 @@ import { beginBackground, endBackground } from './refresh-status.ts';
 import { mergeSnapshot } from './graph-state.ts';
 import { useGraphPolling } from './use-graph-polling.ts';
 import {
-	branchNamesEqual, commitsListEqual, entriesEqual, mergeCommits, mergeEntries,
-	remotesListEqual, uncommittedParentOf, withUncommittedCount,
+	branchNamesEqual, commitsListEqual, commitsWithUncommitted, entriesEqual, mergeCommits, mergeEntries,
+	remotesListEqual,
 } from './commit-diff.ts';
 import { DEFAULT_REF_FILTER, filterBranchesOf } from './refs.ts';
 import type { RefFilter } from './refs.ts';
@@ -411,10 +411,7 @@ export function useGraphData({
 			 * 补出的行必须挂在提交列表里真实存在的父提交上：宿主列表与快照可能读自不同的时刻，
 			 * HEAD 已移动时该行会指向一个不在列表里的哈希，泳道图在该处断线。
 			 */
-			const commits = withUncommittedCount(
-				graph.commits, snapshot.entries.length,
-				uncommittedParentOf(graph.commits, snapshot.head),
-			);
+			const commits = commitsWithUncommitted(graph, snapshot);
 			/*
 			 * 对账刷新时数据未变则保持原数组引用：图形区与更改区按引用记忆化，换引用会让泳道布局
 			 * 与变更树整体重算。用户主动刷新（`full`）不做短路：它必须真正重建。
@@ -514,10 +511,7 @@ export function useGraphData({
 			});
 			if (generation !== generationRef.current || repo !== loadedRepoRef.current) return;
 			loadedHeadRef.current = snapshot.head;
-			const commits = withUncommittedCount(
-				graph.commits, snapshot.entries.length,
-				uncommittedParentOf(graph.commits, snapshot.head),
-			);
+			const commits = commitsWithUncommitted(graph, snapshot);
 			setState((previous) => {
 				const commitsSame = previous.head === graph.head && previous.more === graph.moreCommitsAvailable
 					&& commitsListEqual(previous.commits, commits);

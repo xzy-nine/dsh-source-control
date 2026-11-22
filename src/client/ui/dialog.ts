@@ -117,7 +117,7 @@ function confirmFooter(
 /**
  * 把一个弹窗投进覆盖层队列，并在结束后摘除。
  *
- * 传入的是组件而不是元素：覆盖层在挂载时才渲染它，弹窗内用到的状态钩子因此落在组件里。
+ * 传入的是组件；覆盖层在挂载时才渲染它，弹窗内的状态钩子落在组件里。
  *
  * @param build - 接收 finish(result) 回调，返回弹窗组件。
  * @returns 用户操作结果。
@@ -136,7 +136,7 @@ function runDialog<T>(build: (finish: (result: T) => void) => React.FunctionComp
 }
 
 /**
- * 取消与关闭同义的弹窗：两者都返回 null，确认回调自行决定结果。
+ * 取消与关闭同义的弹窗：两者都返回 null。
  *
  * @param title - 标题。
  * @param finish - 结果回调。
@@ -168,7 +168,7 @@ export interface ConfirmOptions {
 export type ConfirmationOptions = ConfirmOptions;
 
 /**
- * 关闭与确认各自结束的弹窗：关闭回投 `closeWith`，确认由页脚自行决定。
+ * 关闭与确认各自结束的弹窗：关闭回投 `closeWith`。
  *
  * @param title - 标题。
  * @param finish - 结果回调。
@@ -309,7 +309,7 @@ export function showError(message: string): Promise<void> {
 				{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
 				messageText(message),
 			),
-			// 复制与关闭都是页脚按钮：取消位承担复制，确认位承担关闭。
+			// 取消位承担复制，确认位承担关闭。
 			confirmFooter(() => { void copy(); }, () => { finish(undefined); }, '知道了', copied ? '已复制' : '复制'),
 		);
 	});
@@ -373,7 +373,7 @@ export function showText({ title, message = '', label = '', value = '', placehol
 				value: text,
 				placeholder,
 				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
-				// 单行输入框里回车即确认：换行没有意义。
+				// 单行输入框里回车即确认。
 				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
 					if (event.key === 'Enter') { event.preventDefault(); submit(); }
 				},
@@ -514,7 +514,7 @@ export interface TabbedFormOptions {
  */
 export function showTabbedForm({ title, pages, confirmLabel = '确定' }: TabbedFormOptions): Promise<Record<string, unknown> | null> {
 	return runDialog<Record<string, unknown> | null>((finish) => function Content(): React.ReactElement {
-		// 每页一份值对象：同名不跨页覆盖。
+		// 每页一份值对象，同名不跨页覆盖。
 		const initial: Record<string, Record<string, unknown>> = {};
 		for (const page of pages) initial[page.value] = initialValues(page.fields);
 		const [values, setValues] = React.useState<Record<string, Record<string, unknown>>>(initial);
@@ -589,7 +589,7 @@ function DropdownField({ name, label, options, value, onChange }: {
 /**
  * 回车键按下时执行确认。
  *
- * 单行字段与输入框里回车没有换行语义，按下即确认；多行字段保留 Shift+回车换行。
+ * 单行字段按下回车即确认；多行字段保留 Shift+回车换行。
  *
  * @param onEnter - 确认回调。
  * @param shiftInsertsNewline - 是否保留 Shift+回车插入换行。

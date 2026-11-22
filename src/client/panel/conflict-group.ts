@@ -7,9 +7,8 @@
  */
 import React from 'react';
 import { IconChevronDownOutlineRegular, IconCheckOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
-import { showContextMenu } from '../ui/context-menu.ts';
 import { changeRowsOf, type ChangeRow } from './change-tree.ts';
-import { ChangeFileShell, ChangeFolderRow } from './changes.ts';
+import { ChangeFileShell, ChangeFolderRow, openTargetMenu } from './changes.ts';
 import { conflictActionsOf, conflictCodeOf, conflictKindOf } from './conflicts.ts';
 import { CONFLICT_KIND_TEXT } from '../../shared/conflict-kind.ts';
 import { changeMenuItems } from './change-menu.ts';
@@ -18,7 +17,6 @@ import type { ChangeMenuDeps } from './change-menu.ts';
 import type { ChangeActions, ConflictAction, ConflictStages, WorkingTreeEntry } from '../shared/types.ts';
 import css from '../css/changes.module.css';
 import shared from '../css/shared.module.css';
-import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
 import { cx } from '../css/cx.ts';
 
 /** 合并冲突分组的属性。 */
@@ -85,17 +83,10 @@ function ConflictGroupView({
 	const rows = React.useMemo<ChangeRow[]>(() => changeRowsOf(conflicts, collapsed), [conflicts, collapsed]);
 	if (conflicts.length === 0) return [];
 	const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>, entry: WorkingTreeEntry): void => {
-		event.preventDefault();
 		event.stopPropagation();
-		const target = event.currentTarget;
-		target.classList.add(MENU_TARGET_CLASS);
-		showContextMenu({
-			x: event.clientX, y: event.clientY,
-			items: changeMenuItems({
-				target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1, entry, untracked: false,
-			}),
-			onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		});
+		openTargetMenu(event, () => changeMenuItems({
+			target: 'file', deps: menu, path: entry.path, paths: [entry.path], count: 1, entry, untracked: false,
+		}));
 	};
 	return React.createElement(
 		'div',

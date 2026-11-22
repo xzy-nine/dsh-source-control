@@ -396,6 +396,28 @@ function arm(repo: string): void {
 }
 
 /**
+ * 登记一个按 key 合并的定时器：同一 key 的旧定时器先撤掉。
+ *
+ * 定时器不阻止宿主退出；到点时先从表里删除自身。
+ *
+ * @param table - key 到定时器的映射。
+ * @param key - 合并键。
+ * @param delayMs - 合并窗口毫秒数。
+ * @param run - 到点后的动作。
+ * @returns 无。
+ */
+function scheduleTimer(table: Map<string, ReturnType<typeof setTimeout>>, key: string, delayMs: number, run: () => void): void {
+	const existing = table.get(key);
+	if (existing !== undefined) clearTimeout(existing);
+	const timer = setTimeout(() => {
+		table.delete(key);
+		run();
+	}, delayMs);
+	if (typeof timer.unref === 'function') timer.unref();
+	table.set(key, timer);
+}
+
+/**
  * 合并一次结构变化并通知订阅者。
  *
  * @param key - 规范化后的公共目录。
@@ -410,13 +432,7 @@ function schedule(key: string): void {
 		if (repo === undefined) return;
 		// 先补挂再通知：接收方重新枚举期间产生的事件也要能落到句柄上。
 		sync(key);
-		for (const listener of [...listeners]) {
-			try {
-				listener(repo);
-			} catch {
-				/* 单个订阅者异常不影响其它订阅者 */
-			}
-		}
+		notify(repo);
 	}, COALESCE_MS);
 	// 监视不应阻止宿主退出。
 	if (typeof timer.unref === 'function') timer.unref();
@@ -602,14 +618,7 @@ function scheduleWorkspace(watch: WorkspaceWatch): void {
  * @returns 无。
  */
 function scheduleChildSync(key: string): void {
-	const existing = childSyncTimers.get(key);
-	if (existing !== undefined) clearTimeout(existing);
-	const timer = setTimeout(() => {
-		childSyncTimers.delete(key);
-		void syncWorkspaceChildren(key);
-	}, WORKSPACE_COALESCE_MS);
-	if (typeof timer.unref === 'function') timer.unref();
-	childSyncTimers.set(key, timer);
+	scheduleTimer(childSyncTimers, key, WORKSPACE_COALESCE_MS, () => { void syncWorkspaceChildren(key); });
 }
 
 /**

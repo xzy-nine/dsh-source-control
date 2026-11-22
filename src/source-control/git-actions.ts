@@ -57,9 +57,43 @@ async function gitErrorInfo(args: readonly string[], cwd: string, options: { rea
 }
 
 /**
+ * 贮藏应用时是否恢复暂存状态的参数。
+ *
+ * @param reinstateIndex - 是否恢复暂存状态。
+ * @returns 要追加的参数。
+ */
+function indexFlags(reinstateIndex: boolean): string[] {
+	return reinstateIndex ? ['--index'] : [];
+}
+
+/**
+ * 合并提交要沿用的父提交序号参数。
+ *
+ * @param parentIndex - 父提交序号；非合并提交传不大于 0 的值。
+ * @returns 要追加的参数。
+ */
+function parentFlags(parentIndex: number): string[] {
+	return parentIndex > 0 ? ['-m', parentIndex.toString()] : [];
+}
+
+/**
+ * 合并与拉取的压缩方式参数：压缩合并优先于合并提交。
+ *
+ * 两者互斥：`--squash` 让 git 跳过合并提交，`--no-ff` 随之失效。
+ *
+ * @param createNewCommit - 是否使用 `--no-ff`。
+ * @param squash - 是否使用 `--squash`。
+ * @returns 要追加的参数。
+ */
+function squashFlags(createNewCommit: boolean, squash: boolean): string[] {
+	if (squash) return ['--squash'];
+	return createNewCommit ? ['--no-ff'] : [];
+}
+
+/**
  * 依次向各远程推送，遇到首个错误即停。
  *
- * 单点失败的写法统一在这里：调用方只给出「推某一个远程」的实现，停止条件不必各写一遍。
+ * 调用方只给出推单个远程的实现，停止条件在此处。
  *
  * @param remotes - 目标远程名列表。
  * @param pushOne - 推送到单个远程的实现。
@@ -591,9 +625,7 @@ export function fetchIntoLocalBranch(repo: string, remote: string, remoteBranch:
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export async function pullBranch(repo: string, branchName: string, remote: string, createNewCommit: boolean, squash: boolean): Promise<ErrorInfo> {
-	const args = ['pull', remote, branchName];
-	if (squash) args.push('--squash');
-	else if (createNewCommit) args.push('--no-ff');
+	const args = ['pull', remote, branchName, ...squashFlags(createNewCommit, squash)];
 
 	const pullError = await gitErrorInfo(args, repo);
 	if (pullError !== null) return pullError;
@@ -626,9 +658,7 @@ export function renameBranch(repo: string, oldName: string, newName: string): Pr
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean, cancelKey = ''): Promise<ErrorInfo> {
-	const args = ['merge', obj];
-	if (squash) args.push('--squash');
-	else if (createNewCommit) args.push('--no-ff');
+	const args = ['merge', obj, ...squashFlags(createNewCommit, squash)];
 	if (noCommit) args.push('--no-commit');
 
 	const mergeError = await gitErrorInfo(args, repo, { cancelKey });
@@ -703,10 +733,9 @@ export function checkoutCommit(repo: string, commitHash: string): Promise<ErrorI
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function cherrypickCommit(repo: string, commitHash: string, parentIndex: number, recordOrigin: boolean, noCommit: boolean): Promise<ErrorInfo> {
-	const args = ['cherry-pick'];
+	const args = ['cherry-pick', ...parentFlags(parentIndex)];
 	if (noCommit) args.push('--no-commit');
 	if (recordOrigin) args.push('-x');
-	if (parentIndex > 0) args.push('-m', parentIndex.toString());
 	args.push(commitHash);
 	return gitErrorInfo(args, repo);
 }
@@ -743,9 +772,7 @@ export function resetToCommit(repo: string, commit: string, resetMode: ResetMode
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function revertCommit(repo: string, commitHash: string, parentIndex: number): Promise<ErrorInfo> {
-	const args = ['revert', '--no-edit'];
-	if (parentIndex > 0) args.push('-m', parentIndex.toString());
-	args.push(commitHash);
+	const args = ['revert', '--no-edit', ...parentFlags(parentIndex), commitHash];
 	return gitErrorInfo(args, repo);
 }
 
@@ -819,10 +846,7 @@ export function resetFileToRevision(repo: string, commitHash: string, filePath: 
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function applyStash(repo: string, selector: string, reinstateIndex: boolean): Promise<ErrorInfo> {
-	const args = ['stash', 'apply'];
-	if (reinstateIndex) args.push('--index');
-	args.push(selector);
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(['stash', 'apply', ...indexFlags(reinstateIndex), selector], repo);
 }
 
 /**
@@ -857,10 +881,7 @@ export function dropStash(repo: string, selector: string): Promise<ErrorInfo> {
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function popStash(repo: string, selector: string, reinstateIndex: boolean): Promise<ErrorInfo> {
-	const args = ['stash', 'pop'];
-	if (reinstateIndex) args.push('--index');
-	args.push(selector);
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(['stash', 'pop', ...indexFlags(reinstateIndex), selector], repo);
 }
 
 /**

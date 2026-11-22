@@ -162,6 +162,21 @@ async function conflictLookup(repo: string, filePath: string): Promise<ConflictL
 }
 
 /**
+ * 取必需的文件路径参数；缺失时已回 400。
+ *
+ * 多个命令以 `filePath` 为必需参数，缺失时的拒绝文案与提前返回集中在此。
+ *
+ * @param str - 上下文给出的字符串参数读取器。
+ * @param sendBadRequest - 上下文给出的 400 响应函数。
+ * @returns 文件路径；缺失时为 null。
+ */
+function requiredFilePathOf(str: (name: string) => string, sendBadRequest: (message: string) => void): string | null {
+	const filePath = str('filePath');
+	if (filePath === '') { sendBadRequest('缺少 filePath'); return null; }
+	return filePath;
+}
+
+/**
  * 处理其余命令。
  *
  * @param ctx - 命令上下文。
@@ -187,7 +202,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 				await gitOrThrow(['archive', `--format=${fmtArg}`, `--output=${outputPath}`, ref], repo);
 				respond({ command: 'createArchive', error: null });
 			} catch (e) {
-				respond({ command: 'createArchive', error: e instanceof Error ? e.message : String(e) });
+				respond({ command: 'createArchive', error: String(e instanceof Error ? e.message : e) });
 			}
 			break;
 		}
@@ -371,8 +386,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'mergeContents': {
-			const filePath = str('filePath');
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			const filePath = requiredFilePathOf(str, sendBadRequest);
+			if (filePath === null) break;
 			await respondResult('mergeContents', async () => {
 				const contents = await mergeContentsOf(repo, filePath);
 				const worktree = await readWorktreeText(repo, filePath);
@@ -396,8 +411,8 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 			break;
 		}
 		case 'applyMerge': {
-			const filePath = str('filePath');
-			if (filePath === '') { sendBadRequest('缺少 filePath'); break; }
+			const filePath = requiredFilePathOf(str, sendBadRequest);
+			if (filePath === null) break;
 			const rawChoices = msg.choices;
 			const choices = new Map<number, MergeChoice>();
 			if (Array.isArray(rawChoices)) {

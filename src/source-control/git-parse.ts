@@ -200,8 +200,7 @@ export const GITLINK_MODE = '160000';
  */
 export function parseIndexEntries(stdout: string): IndexEntry[] {
 	const entries: IndexEntry[] = [];
-	for (const record of stdout.split(FIELD)) {
-		if (record === '') continue;
+	for (const record of nonEmptyRecords(stdout)) {
 		const tab = record.indexOf('\t');
 		if (tab === -1) continue;
 		const header = record.slice(0, tab).split(' ');
@@ -211,6 +210,36 @@ export function parseIndexEntries(stdout: string): IndexEntry[] {
 		entries.push({ mode: header[0], sha: header[1], stage, path });
 	}
 	return entries;
+}
+
+/**
+ * 取出一份按行输出的 NUL 分隔记录。
+ *
+ * @param stdout - git 的标准输出。
+ * @param minFields - 每行至少需要的字段数；不足的行丢弃。
+ * @returns 各行的字段数组。
+ */
+function nonEmptyFieldRows(stdout: string, minFields: number): string[][] {
+	const rows: string[][] = [];
+	for (const line of stdout.split('\n')) {
+		if (line === '') continue;
+		const fields = line.split(FIELD);
+		if (fields.length < minFields) continue;
+		rows.push(fields);
+	}
+	return rows;
+}
+
+/**
+ * 取出 `-z` 输出里的非空记录。
+ *
+ * `-z` 在每条记录后补一个 NUL，split 后末尾会多一个空串；记录本身不会是空串。
+ *
+ * @param stdout - git 的标准输出。
+ * @returns 非空记录。
+ */
+function nonEmptyRecords(stdout: string): string[] {
+	return stdout.split(FIELD).filter((record) => record !== '');
 }
 
 /**
@@ -256,6 +285,31 @@ export function unique(items: readonly string[]): string[] {
 }
 
 /**
+ * 建立提交哈希到数组下标的查表。
+ *
+ * 传入 `target` 时原位重写它：插入贮藏行后下标整体右移，同一份查表要重建。
+ *
+ * @param nodes - 提交节点列表。
+ * @param target - 待重写的查表；省略时新建。
+ * @returns 哈希到下标的映射。
+ */
+function indexByHash(nodes: readonly CommitNode[], target: Map<string, number> = new Map()): Map<string, number> {
+	target.clear();
+	for (const [index, node] of nodes.entries()) target.set(node.hash, index);
+	return target;
+}
+
+/**
+ * 解析 `%P` 的父提交字段。
+ *
+ * @param field - 空格分隔的父提交哈希；根提交为空串。
+ * @returns 父提交哈希数组。
+ */
+function parseParents(field: string): string[] {
+	return field === '' ? [] : field.split(' ');
+}
+
+/**
  * 解析 `git log -z --format=<LOG_FORMAT>` 的输出。
  *
  * @param stdout - git 的标准输出。
@@ -264,7 +318,7 @@ export function unique(items: readonly string[]): string[] {
 export function parseLog(stdout: string): LogRecord[] {
 	return splitRecords(stdout, LOG_FIELD_COUNT).map((fields) => ({
 		hash: fields[0],
-		parents: fields[1] === '' ? [] : fields[1].split(' '),
+		parents: parseParents(fields[1]),
 		author: fields[2],
 		email: fields[3],
 		date: Number.parseInt(fields[4], 10),
@@ -405,7 +459,7 @@ function tagOf(refname: string, objectname: string, peeled: string): RefTag {
 /**
  * 一次引用枚举要填充的三组引用，以及远程引用的隐藏前缀。
  *
- * 两个引用解析器逐条分流到同三组里，空的容器与隐藏前缀因此只有一处定义。
+ * 两个引用解析器逐条分流到这三组里。
  *
  * @param hideRemotes - 要隐藏的远程名。
  * @returns 三组空引用与隐藏前缀。
@@ -435,10 +489,7 @@ function emptyRefBuckets(hideRemotes: readonly string[]): {
 export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], showRemoteHeads = false): RefData {
 	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
 
-	for (const line of stdout.split('\n')) {
-		if (line === '') continue;
-		const fields = line.split(FIELD);
-		if (fields.length < REF_FIELD_COUNT) continue;
+	for (const fields of nonEmptyFieldRows(stdout, REF_FIELD_COUNT)) {
 		const refname = fields[0];
 		const objectname = fields[1];
 		const peeled = fields[2];
@@ -472,10 +523,7 @@ export function parseRefsAndBranches(stdout: string, hideRemotes: readonly strin
 	const branches: string[] = [];
 	let branch: string | null = null;
 
-	for (const line of stdout.split('\n')) {
-		if (line === '') continue;
-		const fields = line.split(FIELD);
-		if (fields.length < REF_BRANCH_FIELD_COUNT) continue;
+	for (const fields of nonEmptyFieldRows(stdout, REF_BRANCH_FIELD_COUNT)) {
 		const isHead = fields[0].trim() === '*';
 		const refname = fields[1];
 		const short = fields[2];
@@ -532,8 +580,7 @@ function showRemoteBranch(short: string): boolean {
  */
 export function parseConfigList(stdout: string): Record<string, string> {
 	const configs: Record<string, string> = {};
-	for (const record of stdout.split(FIELD)) {
-		if (record === '') continue;
+	for (const record of nonEmptyRecords(stdout)) {
 		const newline = record.indexOf('\n');
 		if (newline === -1) configs[record] = '';
 		else configs[record.slice(0, newline)] = record.slice(newline + 1);
@@ -545,7 +592,7 @@ export function parseConfigList(stdout: string): Record<string, string> {
  * 把 `-z` 的差异输出切成字段：去掉末尾空字段，按需跳过首条记录的对象名。
  *
  * `git diff-tree` 的 `-z` 输出以被查询的提交对象名开头，`git diff` 两个修订的形式没有；
- * 两个差异解析器共用这段切分，跳过与否只由调用方决定。
+ * 跳过与否由调用方的 `options` 决定。
  *
  * @param stdout - git 的标准输出。
  * @param options - 见 {@link DiffParseOptions}。
@@ -715,7 +762,7 @@ export function parseCommitDetails(stdout: string): {
 	const status = parseSignatureStatus(fields[8]);
 	return {
 		hash: fields[0],
-		parents: fields[1] === '' ? [] : fields[1].split(' '),
+		parents: parseParents(fields[1]),
 		author: fields[2],
 		authorEmail: fields[3],
 		authorDate: Number.parseInt(fields[4], 10),
@@ -748,9 +795,7 @@ export function parseSignatureStatus(code: string): SignatureStatus | null {
  */
 export function parseBranchSync(stdout: string): BranchSync {
 	const empty: BranchSync = { branch: null, upstream: null, upstreamRef: null, upstreamRemote: null, ahead: 0, behind: 0 };
-	for (const line of stdout.split('\n')) {
-		if (line === '') continue;
-		const fields = line.split(FIELD);
+	for (const fields of nonEmptyFieldRows(stdout, 1)) {
 		if (fields[0] !== '*') continue;
 		const branch = fields[1] ?? '';
 		if (branch === '') return empty;
@@ -818,8 +863,7 @@ export function assembleCommits(
 	const nodes: CommitNode[] = commits.map((commit) => ({
 		...commit, heads: [], tags: [], remotes: [], stash: null,
 	}));
-	const lookup = new Map<string, number>();
-	nodes.forEach((node, index) => lookup.set(node.hash, index));
+	const lookup = indexByHash(nodes);
 
 	/* 插入贮藏：已在列表中的直接标记；只在基提交上出现的插入到基提交之前。 */
 	const toAdd: Array<{ index: number; data: StashEntry }> = [];
@@ -842,8 +886,7 @@ export function assembleCommits(
 		});
 	}
 	// 插入后下标整体右移，重建查表。
-	lookup.clear();
-	nodes.forEach((node, index) => lookup.set(node.hash, index));
+	indexByHash(nodes, lookup);
 
 	for (const head of refs.heads) {
 		const at = lookup.get(head.hash);

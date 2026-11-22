@@ -2,7 +2,7 @@
  * 插件数据目录解析：统一走 DSH 的 home 规则，测试隔离变量优先。
  *
  * 与 DSH 的 `dsh-home-paths` 同序：`DSH_SOURCE_CONTROL_HOME`（单测隔离）→ `DSH_HOME` → `~/.dsh`。
- * 状态文档、文本日志与旧会话解析三处调用方共用本模块，`$DSH_HOME` 因此只有一个解析入口。
+ * 状态文档、文本日志与旧会话解析三处调用方共用本模块的 `$DSH_HOME` 解析。
  */
 import { join } from 'node:path';
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';

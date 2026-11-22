@@ -53,7 +53,7 @@ export interface GhOwner {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 退出码与输出。
  */
-async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
+export async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
 	logDebug('gh', `调用 GitHub CLI：gh ${describeGhArgs(args)}`);
 	const result = await runCollect({
 		command: 'gh',

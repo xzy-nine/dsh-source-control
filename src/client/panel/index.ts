@@ -228,7 +228,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/*
 	 * 载入当前仓库的筛选状态。
 	 *
-	 * 必须等宿主持久化预取完成：预取前读到的只会是回退值，而 useState 的初值不会随预取重算。
+	 * 等宿主持久化预取完成后再读；useState 的初值不随预取重算。
 	 */
 	React.useEffect(() => {
 		if (!storageReady || workingTreePath === null) return;
@@ -410,7 +410,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 执行一次操作并刷新。
 	 *
 	 * 忙碌按「目标仓库 + 影响面」记录：只禁用该仓库同类用途的控件，其它仓库与其它影响面不受
-	 * 影响。`read` 影响面的操作自身已经刷新，这里不追加一次；目标是别的仓库时也不刷新当前仓库，
+	 * 影响。`read` 影响面的操作自身已经刷新；目标是别的仓库时不刷新当前仓库，
 	 * 选中项变化后由提交图数据自行加载。
 	 *
 	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
@@ -539,7 +539,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 执行空态里的主按钮动作。
 	 *
 	 * 初始化仓库落在会话工作区根：那正是仓库树发现失败的那一层。初始化成功后按最新结构重取仓库树
-	 * 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立，两个分区因此都脱离空态。
+	 * 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立。
 	 *
 	 * 初始化子模块沿用仓库行菜单的同一条命令：宿主按路径向上找声明它的父仓库，因此子模块尚未
 	 * 检出也能执行；该命令可能访问远端。

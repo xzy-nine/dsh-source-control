@@ -72,16 +72,15 @@ export function NumberRow({ label, value, min, max, onChange }: {
 		if (!Number.isFinite(parsed)) { setDraft(String(value)); return; }
 		onChange(Math.min(max, Math.max(min, parsed)));
 	};
-	return React.createElement(
-		'div',
-		{ className: css.setRow },
-		React.createElement('span', { className: css.setRowText }, label),
-		React.createElement(Input, {
+	return React.createElement(SettingRow, {
+		label,
+		labelClass: css.setRowText,
+		control: React.createElement(Input, {
 			value: draft, type: 'number', min, max,
 			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setDraft(event.target.value); },
 			onBlur: (event: React.FocusEvent<HTMLInputElement>) => { commit(event.target.value); },
 		}),
-	);
+	});
 }
 
 /**
@@ -102,6 +101,33 @@ export function SettingRow({ label, labelClass, control }: {
 		{ className: css.setRow },
 		React.createElement('span', { className: labelClass }, label),
 		control,
+	);
+}
+
+/**
+ * 表单里的一行输入框：块状标签 + 输入控件。
+ *
+ * 标签在上，输入框占满一行。
+ *
+ * @param label - 行标签。
+ * @param placeholder - 输入框占位提示。
+ * @param value - 当前值。
+ * @param onChange - 变更回调。
+ * @returns 表单行元素。
+ */
+export function FieldBlock({ label, placeholder, value, onChange }: {
+	label: string;
+	placeholder: string;
+	value: string;
+	onChange: (next: string) => void;
+}): React.ReactElement {
+	return React.createElement('label', { className: css.setRowBlock },
+		React.createElement('span', { className: css.setRowText }, label),
+		React.createElement(Input, {
+			value,
+			placeholder,
+			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { onChange(event.target.value); },
+		}),
 	);
 }
 
@@ -142,9 +168,5 @@ export function DropdownRow({ label, options, value, onChange }: {
 	value: string;
 	onChange: (next: string) => void;
 }): React.ReactElement {
-	return React.createElement(SettingRow, {
-		label,
-		labelClass: css.setLabel,
-		control: React.createElement(Dropdown, { options, value, onChange }),
-	});
+	return React.createElement(SettingRow, { label, labelClass: css.setLabel, control: React.createElement(Dropdown, { options, value, onChange }) });
 }

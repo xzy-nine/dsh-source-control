@@ -14,20 +14,13 @@ import React from 'react';
 import { logClient, matchesRepository, subscribeRepositoryWrites } from '../api/index.ts';
 import { refreshRepoSync } from './repo-preload.ts';
 import { dropGraphWindows } from './use-graph-data.ts';
-import { createRefreshScheduler } from './refresh-scheduler.ts';
+import { createRefreshScheduler, type RefreshGateOptions } from './refresh-scheduler.ts';
 import { isReadBlocked } from './busy.ts';
-import type { BusyEntry } from '../shared/types.ts';
 
 /** 仓库写事件订阅的入参。 */
-export interface UseRepositoryWriteEventsOptions {
-	/** 当前工作树路径；未选中时为 null。 */
-	readonly workingTreePath: string | null;
+export interface UseRepositoryWriteEventsOptions extends RefreshGateOptions {
 	/** 仓库树所属的工作区根；无工作区时为 null。 */
 	readonly cwd: string | null;
-	/** 是否启用；关闭时不订阅。 */
-	readonly enabled: boolean;
-	/** 进行中的操作记录；目标仓库忙时挂起刷新。 */
-	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 重载选中仓库的提交图与工作区。 */
 	readonly refresh: () => Promise<void>;
 	/** 按最新结构重取仓库树，不清空已显示的树；结构事件命中工作区时调用。 */

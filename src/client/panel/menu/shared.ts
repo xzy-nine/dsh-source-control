@@ -78,7 +78,7 @@ export interface MenuContext {
 	readonly foreignBranches: ReadonlySet<string>;
 }
 
-/** 一个菜单构建器的签名：同一份上下文，返回菜单项或 `null`（该上下文下不适用）。 */
+/** 一个菜单构建器的签名：同一份上下文，返回菜单项或 `null`。 */
 export type MenuBuilder = (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null;
 
 /** 一组按操作 id 索引的构建器。 */
@@ -205,7 +205,7 @@ export function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): Context
 }
 
 /**
- * 把一次询问包成点击处理函数：答案交给执行体，调用方不必各写一层异步包装。
+ * 把一次询问包成点击处理函数；答案交给执行体。
  *
  * @param ask - 询问；解析值为用户给出的答案。
  * @param act - 拿到答案后的执行体。
@@ -231,7 +231,7 @@ export function confirmThenRun(confirm: ConfirmationOptions, act: () => void): (
 /**
  * 先弹勾选确认框，勾选并确认后执行一步仓库操作。
  *
- * 用于不可撤销的删除与丢弃：勾选是这类动作的额外确认，未勾选时确认按钮本就禁用。
+ * 用于不可撤销的删除与丢弃；未勾选时确认按钮禁用。
  *
  * @param options - 勾选确认框选项。
  * @param act - 确认后的执行体。
@@ -239,6 +239,27 @@ export function confirmThenRun(confirm: ConfirmationOptions, act: () => void): (
  */
 export function checkboxThenRun(options: CheckboxOptions, act: () => void): () => void {
 	return afterAnswer(() => showCheckbox(options), (ok) => { if (ok) act(); });
+}
+
+/**
+ * 渲染一个勾选确认后执行的危险菜单项。
+ *
+ * 危险样式取自注册表元数据，确认框文案由调用方给出。
+ *
+ * @param meta - 操作元数据。
+ * @param ask - 勾选确认框的标题、正文与勾选文案。
+ * @param act - 确认后的执行体。
+ * @returns 菜单项。
+ */
+export function dangerConfirmItem(
+	meta: MenuActionMeta,
+	ask: { title: string; message: string; checkboxLabel: string },
+	act: () => void,
+): ContextMenuItem {
+	return {
+		title: meta.title, danger: meta.danger,
+		onClick: checkboxThenRun({ ...ask, danger: true }, act),
+	};
 }
 
 /**
@@ -272,7 +293,7 @@ export function textThenRun(options: TextOptions, act: (value: string) => void):
 /**
  * 把一个需要引用名的构建器包成菜单构建器。
  *
- * 引用菜单的目标来自被点击的引用标记；提交行右键时没有引用，菜单项不出现。
+ * 引用菜单的目标来自被点击的引用标记；提交行右键时没有引用。
  *
  * @param build - 拿到引用名后的构建体。
  * @returns 菜单构建器；没有引用目标时返回 null。

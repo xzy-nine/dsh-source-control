@@ -5,12 +5,12 @@
  */
 import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, restoreFullHistory, throwIfError } from '../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
-import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
+import type { ContextMenuItem } from '../ui/context-menu.ts';
 import { showCheckbox } from '../ui/dialog.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { reportError } from './errors.ts';
-import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
+import { openTargetMenu } from './changes.ts';
 import { dropGraphWindows } from './graph-window-cache.ts';
 import type { Commit, RepoNode, PanelRun, Settings } from '../shared/types.ts';
 import type { PanelState } from '../shared/types.ts';
@@ -61,8 +61,6 @@ export interface RepoMenuDeps {
  */
 export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.MouseEvent<HTMLElement>): void {
 	const { state, settings, run, refresh, rescan, refreshTree, setState, setSelectedId, selectNodeAndReset, pushCurrentBranch } = deps;
-	const target = event.currentTarget;
-	target.classList.add(MENU_TARGET_CLASS);
 	const branchName = node.branch ?? '';
 	const isLinkedWorktree = node.kind === 'worktree';
 	const isUninitializedSubmodule = node.kind === 'submodule' && !node.available;
@@ -156,11 +154,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 			},
 		});
 	}
-	showContextMenu({
-		x: event.clientX, y: event.clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items,
-	});
+	openTargetMenu(event, () => items);
 }
 
 /**
@@ -182,14 +176,8 @@ export function openRepoBranchMenu(deps: RepoMenuDeps, node: RepoNode, event: Re
 		for (const name of commit.heads ?? []) branches.add(name);
 	}
 	if (branches.size === 0) return;
-	const target = event.currentTarget;
-	target.classList.add(MENU_TARGET_CLASS);
-	showContextMenu({
-		x: event.clientX, y: event.clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items: [...branches].sort().map((name) => ({
-			title: name,
-			onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path, undefined, { intent: `检出分支 ${name}` }); },
-		})),
-	});
+	openTargetMenu(event, () => [...branches].sort().map((name) => ({
+		title: name,
+		onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path, undefined, { intent: `检出分支 ${name}` }); },
+	})));
 }

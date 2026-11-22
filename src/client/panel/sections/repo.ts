@@ -5,14 +5,13 @@
  */
 import React from 'react';
 import {
-	IconChevronDownOutlineRegular,
 	IconPaperPlaneOutlineRegular, IconPlusOutlineRegular, IconSettingsOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { RepoRow } from '../repo-row.ts';
 import type { BusyFlags, RepoNode, RepoSync } from '../../shared/types.ts';
+import { SectionHead } from './section-head.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
-import { cx } from '../../css/cx.ts';
 
 /** 存储库分区。 */
 export interface RepoSectionProps {
@@ -62,14 +61,12 @@ function RepoSectionView({
 	return React.createElement(
 		'div',
 		{ className: css.sec },
-		React.createElement('div', {
-			className: cx(css.secHead, !open && css.collapsed),
-			onClick: onToggleSection,
-		},
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
-			'存储库',
-			treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
-			React.createElement('span', { className: css.headActions },
+		React.createElement(SectionHead, {
+			title: '存储库',
+			open,
+			onToggle: onToggleSection,
+			before: treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
+			actions: React.createElement(React.Fragment, null,
 				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
 				React.createElement('button', {
 					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy.network || cloneBusy,
@@ -86,7 +83,7 @@ function RepoSectionView({
 					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },
 				}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
 			),
-		),
+		}),
 		open && React.createElement(
 			'div',
 			{ className: css.repos, style: { maxHeight: height, overflowY: 'auto' } },

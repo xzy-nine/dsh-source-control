@@ -3,7 +3,7 @@
  */
 import { applyStash, branchFromStash, dropStash, popStash, throwIfError } from '../../api/index.ts';
 import {
-	checkboxThenRun, copyRefNameItem, textThenRun, withRefName, type MenuBuilders,
+	copyRefNameItem, dangerConfirmItem, textThenRun, withRefName, type MenuBuilders,
 } from './shared.ts';
 
 export const BUILDERS: MenuBuilders = {
@@ -21,12 +21,10 @@ export const BUILDERS: MenuBuilders = {
 			void ctx.deps.run('history', async () => { throwIfError(await branchFromStash(ctx.repo, selector, newName)); });
 		}),
 	})),
-	dropStash: withRefName((ctx, meta, selector) => ({
-		title: meta.title, danger: meta.danger,
-		onClick: checkboxThenRun({
-			title: '丢弃贮藏', message: `确定丢弃贮藏 ${selector}？`,
-			checkboxLabel: '我已知晓并继续', danger: true,
-		}, () => { void ctx.deps.run('history', async () => { throwIfError(await dropStash(ctx.repo, selector)); }); }),
-	})),
+	dropStash: withRefName((ctx, meta, selector) => dangerConfirmItem(
+		meta,
+		{ title: '丢弃贮藏', message: `确定丢弃贮藏 ${selector}？`, checkboxLabel: '我已知晓并继续' },
+		() => { void ctx.deps.run('history', async () => { throwIfError(await dropStash(ctx.repo, selector)); }); },
+	)),
 	copyStashSelector: copyRefNameItem,
 };

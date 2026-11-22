@@ -6,7 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, StateDot, writeClipboard,
+	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { PublishIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { ChangeGroup } from '../changes.ts';
@@ -18,8 +18,9 @@ import { indexGroupOf } from '../conflicts.ts';
 import { absolutePathOf } from '../change-tree.ts';
 import type { ChangeMenuDeps } from '../change-menu.ts';
 import { WorkspaceEmpty } from './empty-state.ts';
-import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
+import type { SectionEmptyFields } from './empty-state.ts';
 import { refreshButton } from './refresh-button.ts';
+import { SectionHead } from './section-head.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
 import { cx } from '../../css/cx.ts';
@@ -101,7 +102,7 @@ export interface ChangesSectionProps extends ChangeActions {
 	 *
 	 * 非空时提交框与变更列表都不渲染：此时提交、暂存与丢弃都无处落地。
 	 */
-	readonly empty: WorkspaceEmptyInfo | null;
+	readonly empty: SectionEmptyFields['empty'];
 	/** 空态动作进行中：只禁用该按钮。 */
 	readonly emptyBusy: boolean;
 	/** 执行空态动作。 */
@@ -282,17 +283,13 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.workspace) },
-		React.createElement(
-			'div',
-			{ className: css.secHead },
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
-			'更改',
-			React.createElement(StateDot, { state: refreshing ? 'ongoing' : 'idle', size: 8, className: css.headDot }),
-			lastRefresh !== '' && React.createElement('span', { className: css.headRefreshNote }, lastRefresh),
-			React.createElement('span', { className: css.headActions },
-				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
-			),
-		),
+		React.createElement(SectionHead, {
+			title: '更改',
+			open: true,
+			refreshing,
+			lastRefresh,
+			actions: refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
+		}),
 		React.createElement(
 			'div',
 			{ className: css.workspaceBody },
