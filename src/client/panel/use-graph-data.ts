@@ -463,9 +463,10 @@ export function useGraphData({
 			logClient('I', 'refresh', `${mode === 'full' ? '主动刷新' : '对账刷新'}完成，仓库 ${workingTreePath}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
 			if (generation !== generationRef.current || controller.signal.aborted) return;
+			// 完整刷新两路都走过，两处分区一并收回。
 			reportRefreshFailure(setState, (previous) => (background
 				? endBackground(endBackground(previous, 'graph'), 'entries')
-				: previous), error);
+				: previous), { graph: true, entries: true }, error);
 		}
 	}, [workingTreePath, maxCommits, settings, hasWorkspace, branchesKey]);
 
@@ -503,8 +504,10 @@ export function useGraphData({
 	
 			logClient('D', 'refresh', `只取工作区快照完成，仓库 ${repo}，耗时 ${String(Date.now() - startedAt)} ms`);
 		} catch (error) {
-			if (controller.signal.aborted) return;
-			reportRefreshFailure(setState, (previous) => endBackground(previous, 'entries'), error);
+			// 与成功分支同一判据：换仓库后该失败属于旧请求，不影响当前仓库。
+			if (controller.signal.aborted || repo !== loadedRepoRef.current) return;
+			// 这一路只取快照，提交图可能仍在跑，因此只收回条目分区。
+			reportRefreshFailure(setState, (previous) => endBackground(previous, 'entries'), { graph: false, entries: true }, error);
 		}
 	}, [workingTreePath, selectedId]);
 

@@ -8,93 +8,16 @@
  * 同一指纹在基线与当前各出现 N 次时视为未新增：jscpd 会把一处重复按相邻窗口合并成多条克隆，
  * 只比对实例存在与否会让基线随首处重复的条数变化而失效。
  *
+ * 阈值语义与指纹算法见 `duplication-scan.mjs`。
+ *
  * 用法：node scripts/check-duplication.mjs [--update]
  *   --update  按当前扫描结果重写基线。
  */
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { detectClones } from 'jscpd';
+import { join } from 'node:path';
+import { fingerprints, MIN_LINES, MIN_TOKENS, REPO_ROOT, scanClones } from './duplication-scan.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const baselinePath = join(root, 'baselines', 'duplication-baseline.json');
-
-/**
- * 扫描参数。取宽口径：宁可在基线里多记几处短重复，也不要放过一处真正的复制粘贴。
- *
- * 5 行 / 50 token 只够拦下成段复制，把「改了名字的同一段逻辑」整批放过去；3 行 /
- * 20 token 能抓到同一分支结构被抄第二遍，代价是基线变长、相邻窗口的重叠片段变多。
- */
-const MIN_LINES = 3;
-const MIN_TOKENS = 20;
-
-/**
- * 扫描 `src/` 下的克隆。
- *
- * 路径统一成正斜杠形式：jscpd 对 Windows 反斜杠绝对路径会静默扫不到文件（返回空结果）。
- *
- * @returns 克隆列表。
- */
-async function scanClones() {
-	const target = join(root, 'src').split('\\').join('/');
-	return await detectClones({
-		path: [target],
-		minLines: MIN_LINES,
-		minTokens: MIN_TOKENS,
-		format: ['typescript', 'tsx'],
-		silent: true,
-		reporters: [],
-	});
-}
-
-/**
- * 计算片段内容摘要。
- *
- * 先归一化行尾再摘要：同一份片段在检出为 CRLF 与 LF 的机器上文本不同，不归一化会让基线
- * 只在某一侧通过。摘要取两侧片段中字节序较小的一侧，使指纹与 A/B 侧归属无关（两侧片段通常不同）。
- *
- * @param a - 第一侧片段文本。
- * @param b - 第二侧片段文本。
- * @returns 摘要的前 16 位十六进制。
- */
-function fragmentDigest(a, b) {
-	const normalize = (text) => text.replace(/\r\n?/g, '\n');
-	const first = normalize(a);
-	const second = normalize(b);
-	const [head, tail] = first <= second ? [first, second] : [second, first];
-	return createHash('sha256').update(`${head}\u0000${tail}`).digest('hex').slice(0, 16);
-}
-
-/**
- * 把克隆折成指纹。
- *
- * 指纹不含行号：行号随无关改动漂移。文件对 + 片段长度 + 片段内容摘要共同定位一处重复，
- * 因此同文件对、同长度但内容被替换时视为新的重复。
- *
- * 长度取两侧行数的较小值，两侧各自取绝对值：jscpd 合并相邻窗口时给出一侧起止行反向的区间，
- * 其 `end - start + 1` 为负数。
- *
- * @param clones - 克隆列表。
- * @returns 指纹数组，已排序。
- */
-function fingerprints(clones) {
-	return clones
-		.map((clone) => {
-			const a = clone.duplicationA;
-			const b = clone.duplicationB;
-			const pair = [a.sourceId, b.sourceId]
-				.map((name) => name.slice(root.length + 1).replace(/\\/g, '/'))
-				.sort()
-				.join('|');
-			const lines = Math.max(1, Math.min(
-				Math.abs(a.end.line - a.start.line + 1),
-				Math.abs(b.end.line - b.start.line + 1),
-			));
-			return `${pair}|${lines}|${fragmentDigest(a.fragment ?? '', b.fragment ?? '')}`;
-		})
-		.sort();
-}
+const baselinePath = join(REPO_ROOT, 'baselines', 'duplication-baseline.json');
 
 /**
  * 统计指纹出现次数。
@@ -137,7 +60,8 @@ for (const [item, times] of seen) {
 
 if (added.length > 0) {
 	console.error(`[duplication] 新增 ${added.length} 处重复（基线 ${baseline.count} 处，当前 ${current.length} 处）：`);
-	for (const item of added) console.error(`  - ${item}`);
+	for (const item of added.slice(0, 40)) console.error(`  - ${item}`);
+	if (added.length > 40) console.error(`  …还有 ${added.length - 40} 处`);
 	console.error('消除重复后重试；确需保留时用 --update 调高基线并说明理由。');
 	process.exit(1);
 }

@@ -26,22 +26,37 @@ export function reportCaught(setState: Dispatch<SetStateAction<PanelState>>, err
 	reportError(setState, error instanceof Error ? error.message : String(error));
 }
 
+/** 一次刷新失败要收回哪些分区。 */
+export interface RefreshFailureScope {
+	/** 是否收图形区的提交图分区。 */
+	readonly graph: boolean;
+	/** 是否收更改区的条目分区。 */
+	readonly entries: boolean;
+}
+
 /**
- * 把一次取数失败写进面板：相位收回到已结束，错误照常上报。
+ * 把一次取数失败写进面板：只收回失败涉及的分区，错误照常上报。
  *
- * 取数失败后停在 loading 会让更改区与图形区一直显示占位，而占位没有重试入口；两路刷新
- * 因此共用这一条收尾。
+ * 取数失败后停在 loading 会让分区一直显示占位，而占位没有重试入口。收回范围必须与失败
+ * 的那一路一致：只重取快照的那一路不动图形区，否则一次快照失败会把仍在运行的提交图
+ * 标成已结束，用户看到空图且没有重试入口。
  *
  * @param setState - 状态更新。
  * @param settle - 清除后台刷新登记。
+ * @param scope - 要收回的分区。
  * @param error - 抛出的值。
  * @returns 无。
  */
 export function reportRefreshFailure(
 	setState: Dispatch<SetStateAction<PanelState>>,
 	settle: (previous: PanelState) => PanelState,
+	scope: RefreshFailureScope,
 	error: unknown,
 ): void {
-	setState((previous) => ({ ...settle(previous), phase: 'ready', entriesPhase: 'ready' }));
+	setState((previous) => ({
+		...settle(previous),
+		phase: scope.graph ? 'ready' : previous.phase,
+		entriesPhase: scope.entries ? 'ready' : previous.entriesPhase,
+	}));
 	reportCaught(setState, error);
 }

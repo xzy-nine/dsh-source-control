@@ -14,7 +14,7 @@ import {
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
-import { ForgeDiffView, type DiffFileState } from './diff/forge-adapter.tsx';
+import { ForgeDiffView, toForgeHunks, type DiffFileState } from './diff/forge-adapter.tsx';
 import { SectionReach } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/section-reach.ts';
 import { diffStats } from './diff/diff-stats.ts';
 import { useDiffView } from './diff/use-diff-view.ts';
@@ -569,15 +569,16 @@ function GitDiffTab(props) {
 	/**
 	 * 全部展开或全部折叠未变更区段。
 	 *
-	 * 展开时把每个区段的下标都放进去：区段数由补丁块决定，越界下标不会画出任何行，
-	 * 因此不必先请点当前文件有几个折叠区。
+	 * 区段数由 forge 实际收到的块数决定，而非宿主给出的块数：`toForgeHunks` 会把超过行数
+	 * 上限的块切成若干小块，切分后的块数多于 `diffData.hunks.length`。按宿主块数算会让
+	 * 末尾那些区段拿不到下标、展不开。越界下标不会画出任何行，因此宁可多算。
 	 *
 	 * @returns 无。
 	 */
 	const toggleGaps = React.useCallback((): void => {
 		setFileState((previous) => {
 			if (previous.open.size > 0) return { ...previous, open: new Set() };
-			const count = diffData === null ? 0 : diffData.hunks.length + 1;
+			const count = diffData === null ? 0 : toForgeHunks(diffData).length + 1;
 			return { ...previous, open: new Set(Array.from({ length: count }, (_, at) => at)) };
 		});
 	}, [diffData]);

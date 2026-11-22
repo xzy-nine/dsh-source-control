@@ -11,7 +11,7 @@ import { checkoutFailureText } from '../git-messages.ts';
 import { fillText } from '../menu-actions.ts';
 import { localNameForRemoteBranch, remoteNameOfBranch } from '../github.ts';
 import {
-	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, textThenRun, withRefName, type MenuBuilders,
+	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, runHistory, textThenRun, withRefName, type MenuBuilders,
 } from './shared.ts';
 
 /** 合并方式，按菜单里的排列顺序。 */
@@ -66,9 +66,8 @@ export const BUILDERS: MenuBuilders = {
 	},
 	createBranchFromRef: withRefName((ctx, meta, name) => ({
 		title: meta.title,
-		onClick: textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' }, (newName) => {
-			void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
-		}),
+		onClick: textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' },
+			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, `refs/heads/${name}`, true))(); }),
 	})),
 	renameBranch: (ctx, meta) => {
 		const name = refNameOf(ctx);
@@ -77,7 +76,7 @@ export const BUILDERS: MenuBuilders = {
 			title: meta.title, disabled: name === ctx.deps.head,
 			onClick: textThenRun({ title: '重命名分支', label: '新分支名', value: name }, (newName) => {
 				if (newName === name) return;
-				void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
+				runHistory(ctx, () => renameBranch(ctx.repo, name, newName))();
 			}),
 		});
 	},
@@ -138,7 +137,7 @@ export const BUILDERS: MenuBuilders = {
 			onClick: () => {
 				void (async () => {
 					const ok = await showConfirmation({ title: '变基', message: `把当前分支变基到 ${label}？`, confirmLabel: '变基', danger: true });
-					if (ok) void ctx.deps.run('history', async () => { throwIfError(await rebase(ctx.repo, obj)); });
+					if (ok) runHistory(ctx, () => rebase(ctx.repo, obj))();
 				})();
 			},
 		};

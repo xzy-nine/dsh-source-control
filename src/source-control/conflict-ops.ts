@@ -132,14 +132,16 @@ export async function conflictDiffOf(repo: string, path: string, sources: Confli
 }
 
 /**
- * 取一个未合并路径的一侧内容。
+ * 取一个路径在某个引用前缀下的内容。
+ *
+ * 前缀形如 `HEAD:` 或 `:2:`；合并时的各阶段内容也经这一处读，因此导出供 `merge-ops` 复用。
  *
  * @param repo - 仓库路径。
  * @param path - 文件路径，相对仓库根。
- * @param ref - 引用前缀，形如 `HEAD:` 或 `:2:`。
+ * @param ref - 引用前缀。
  * @returns 内容；该侧不存在时返回 null。
  */
-async function contentAt(repo: string, path: string, ref: string): Promise<string | null> {
+export async function contentAt(repo: string, path: string, ref: string): Promise<string | null> {
 	try {
 		return await gitOrThrow(['show', `${ref}${path}`], repo);
 	} catch {

@@ -68,6 +68,30 @@ interface OverwriteTarget {
 }
 
 /**
+ * 推送一个分支，失败时抛出首个错误。
+ *
+ * `pushBranch` 把失败收集成列表返回而不抛错；面板的 `run` 用异常决定是否报错，因此
+ * 两者之间需要这一层。四处推送都经它，错误改写的时机只有一处。
+ *
+ * @param path - 仓库路径。
+ * @param branch - 本地分支名。
+ * @param remotes - 目标远程。
+ * @param skipHooks - 是否跳过推送钩子。
+ * @param mode - 推送模式；省略时按配置。
+ * @returns 推送完成。
+ */
+async function pushOrThrow(
+	path: string,
+	branch: string,
+	remotes: readonly string[],
+	skipHooks: boolean,
+	mode?: 'force',
+): Promise<void> {
+	const errors = await pushBranch(path, branch, remotes, skipHooks, mode);
+	if (errors.length > 0) throw new Error(errors.join('\n'));
+}
+
+/**
  * 把上游短名写成交给 git 的完整引用。
  *
  * 本地分支名可能形如 `远程名/分支名`，与同名的远程跟踪分支撞名，短名会被 git 解析到本地分支。
@@ -323,16 +347,12 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 				await run('network', async () => {
 					const addError = await addRemote(path, source.name, source.url, null, false);
 					if (addError !== null) throw new Error(addError);
-					const errors = await pushBranch(path, branch, [source.name], skipHooks);
-					if (errors.length > 0) throw new Error(errors.join('\n'));
+					await pushOrThrow(path, branch, [source.name], skipHooks);
 				}, undefined, undefined, { intent: '添加远程并推送（发布）' });
 				publishDone();
 				return;
 			}
-			await run('network', async () => {
-				const errors = await pushBranch(path, branch, [remote], skipHooks);
-				if (errors.length > 0) throw new Error(errors.join('\n'));
-			}, undefined, undefined, { intent: `推送分支 ${branch}` });
+			await run('network', async () => { await pushOrThrow(path, branch, [remote], skipHooks); }, undefined, undefined, { intent: `推送分支 ${branch}` });
 			publishDone();
 		})();
 	}, [busyFlags.network, remotes, currentSync, workingTreePath, run, askRemoteSource, announce, pushHookActive, runHooks, setRunHooks]);
@@ -422,10 +442,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 				checkboxLabel: '我确认用本地分支覆盖远程分支',
 				confirmLabel: '覆盖远程', danger: true,
 			}, async () => {
-				await run('network', async () => {
-					const errors = await pushBranch(path, branch, [parts.remote], skipHooks, 'force');
-					if (errors.length > 0) throw new Error(errors.join('\n'));
-				}, undefined, undefined, { intent: '用本地覆盖远程（强制推送）' });
+				await run('network', async () => { await pushOrThrow(path, branch, [parts.remote], skipHooks, 'force'); }, undefined, undefined, { intent: '用本地覆盖远程（强制推送）' });
 			});
 		});
 	}, [currentSync, workingTreePath, pushHookActive, runHooks, run]);

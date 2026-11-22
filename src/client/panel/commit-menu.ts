@@ -130,7 +130,7 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	items.push({ type: 'divider', visible: githubUrl !== null });
 	push(items, byId('checkoutBranch'));
 	push(items, { title: COMMIT_MENU.checkoutDetached, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutCommit(ctx.repo, commit.hash), checkoutFailureText); }); } });
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	push(items, { title: COMMIT_MENU.createBranch, disabled: isUncommitted, onClick: () => {
 		void (async () => {
 			const name = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
@@ -143,7 +143,7 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	// 标签相关操作自成一组：用分割线与上方的分支操作、下方的提交操作隔开。
 	// 未提交伪提交上既不能创建标签、也没有标签可操作，整组不显示。
 	if (!isUncommitted) {
-		items.push({ type: 'divider' });
+		items.push(DIVIDER);
 		push(items, { title: COMMIT_MENU.createTag, onClick: () => {
 			void (async () => {
 				const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
@@ -163,10 +163,10 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		} });
 		for (const item of tagItems) items.push(item);
 	}
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	push(items, { title: COMMIT_MENU.cherrypick, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
 	push(items, { title: COMMIT_MENU.revert, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	// 重置只对当前分支可达的提交有意义：重置到其他分支的提交会改写当前分支。
 	push(items, ctx.onCurrentBranch ? { title: COMMIT_MENU.resetHere, danger: true, disabled: isUncommitted, children: [
 		{ title: COMMIT_MENU.resetSoft, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
@@ -179,7 +179,7 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	] } : null);
 	push(items, byId('rebaseOnto'));
 	push(items, byId('mergeIntoBranch'));
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	push(items, { title: COMMIT_MENU.copyHash, onClick: () => { void writeClipboard(commit.hash); } });
 	push(items, { title: COMMIT_MENU.copyMessage, onClick: () => { void writeClipboard(commit.message ?? ''); } });
 	return items;
@@ -235,6 +235,9 @@ function showMenuAt(
 		pendingItems,
 	});
 }
+
+/** 菜单分隔线；同一份字面量在多处分组之间使用。 */
+const DIVIDER: ContextMenuItem = { type: 'divider' };
 
 export function openCommitMenu(
 	deps: GraphMenuDeps,

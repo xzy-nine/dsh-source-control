@@ -491,7 +491,7 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 			const short = refname.slice('refs/remotes/'.length);
 			// 远程 HEAD 是指向分支的符号引用，不是可操作的分支。
 			if (!showRemoteHeads && short.endsWith('/HEAD')) continue;
-			if (hidePrefixes.some((prefix) => refname.startsWith(prefix))) continue;
+			if (isHiddenRemote(refname, hidePrefixes)) continue;
 			remotes.push({ hash: objectname, name: short });
 		}
 	}
@@ -508,6 +508,19 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
  * @param hideRemotes - 要隐藏的远程名。
  * @returns 引用集合、分支名列表与当前分支名。
  */
+/**
+ * 该远程引用是否属于被隐藏的远程。
+ *
+ * 两个引用解析入口都要做这一判定：隐藏按完整引用名的前缀匹配。
+ *
+ * @param refname - 完整引用名。
+ * @param hidePrefixes - 被隐藏远程的引用前缀。
+ * @returns 应跳过时为 true。
+ */
+function isHiddenRemote(refname: string, hidePrefixes: readonly string[]): boolean {
+	return hidePrefixes.some((prefix) => refname.startsWith(prefix));
+}
+
 export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
 	const { heads, tags, remotes, hidePrefixes } = emptyRefBuckets(hideRemotes);
 	const branches: string[] = [];
@@ -537,10 +550,10 @@ export function parseRefsAndBranches(stdout: string, hideRemotes: readonly strin
 			continue;
 		}
 		if (!refname.startsWith('refs/remotes/')) continue;
-		const name = refname.slice('refs/remotes/'.length);
 		/* 远程 HEAD 是指向分支的符号引用，不是可操作的分支。 */
 		if (symref !== '') continue;
-		if (hidePrefixes.some((prefix) => refname.startsWith(prefix))) continue;
+		if (isHiddenRemote(refname, hidePrefixes)) continue;
+		const name = refname.slice('refs/remotes/'.length);
 		remotes.push({ hash: objectname, name });
 		if (showRemoteBranch(short)) branches.push(short);
 	}

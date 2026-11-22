@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, pickByDepth, runGit } from './working-tree.js';
 import type { WorkingTreeEntry, WorkingTreeSnapshot } from './working-tree.js';
 import { conflictKindOfPair } from '../shared/conflict-kind.js';
+import { errorText } from '../shared/error-text.js';
 import { readHeadRef } from './worktree-branches.js';
 import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -552,16 +553,6 @@ export async function repoRoot(pathOfPotentialRepo: string): Promise<string | nu
 	} catch {
 		return null;
 	}
-}
-
-/**
- * 把捕获到的错误转成错误文本。
- *
- * @param error - 捕获到的值。
- * @returns 错误文本。
- */
-function errorText(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 /**
