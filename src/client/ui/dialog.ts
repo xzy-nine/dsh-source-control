@@ -1,7 +1,6 @@
 /**
  * 自建弹窗基础设施：基于 DSH 的 Modal 封装确认框、输入框、表单与单选。
  *
- * 不使用浏览器原生 confirm / prompt，统一走 DSH 的 dialog 外观。
  * 这些封装以 Promise 返回用户操作结果，调用方用 await 串接即可。
  */
 import React from 'react';
@@ -146,6 +145,26 @@ function dialogContent<T>(build: (finish: (result: T) => void) => React.ReactEle
 }
 
 /**
+ * 带一份局部状态的弹窗：状态在内容组件里建立，内容函数拿到当前值与写入器。
+ *
+ * @param initial - 初始值，或惰性给出初始值的函数。
+ * @param build - 内容函数：接收 finish 回调与这份状态。
+ * @returns 用户操作结果。
+ */
+function statefulDialog<T, S>(
+	initial: S | (() => S),
+	build: (
+		finish: (result: T) => void,
+		value: S,
+		setValue: React.Dispatch<React.SetStateAction<S>>,
+	) => React.ReactElement,
+): Promise<T> {
+	return dialogContent<T>((finish) => {
+		const [value, setValue] = React.useState(initial);
+		return build(finish, value, setValue);
+	});
+}
+/**
  * 取消与关闭同义的弹窗：两者都返回 null。
  *
  * @param title - 标题。
@@ -271,8 +290,7 @@ export interface MessageLinksOptions {
  * @returns 关闭时是否勾选；没有勾选项时恒为 false。
  */
 export function showMessageWithLinks({ title, message, links = [], checkboxLabel, checked = true, closeLabel = '知道了' }: MessageLinksOptions): Promise<boolean> {
-	return dialogContent<boolean>((finish) => {
-	const [on, setOn] = React.useState(checked);
+	return statefulDialog<boolean, boolean>(checked, (finish, on, setOn) => {
 	const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
 	return dialogModal(
 		title,
@@ -301,8 +319,7 @@ export function showMessageWithLinks({ title, message, links = [], checkboxLabel
  * @returns 用户关闭后完成。
  */
 export function showError(message: string): Promise<void> {
-	return dialogContent<undefined>((finish) => {
-	const [copied, setCopied] = React.useState(false);
+	return statefulDialog<undefined, boolean>(false, (finish, copied, setCopied) => {
 	/** 复制正文；写入失败时按钮文案保持「复制」。 */
 	const copy = async (): Promise<void> => {
 		try {
@@ -337,8 +354,7 @@ export interface CheckboxOptions extends ConfirmOptions {
  * @returns 用户勾选并确认返回 true，否则 false。
  */
 export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '确认', cancelLabel = '取消' }: CheckboxOptions): Promise<boolean> {
-	return dialogContent<boolean>((finish) => {
-	const [acknowledged, setAcknowledged] = React.useState(false);
+	return statefulDialog<boolean, boolean>(false, (finish, acknowledged, setAcknowledged) => {
 	return React.createElement(RiskConfirmation, {
 		open: true,
 		title,
@@ -372,8 +388,7 @@ export interface TextOptions {
  * @returns 用户确认返回输入文本，取消返回 null。
  */
 export function showText({ title, message = '', label = '', value = '', placeholder = '', confirmLabel = '确定' }: TextOptions): Promise<string | null> {
-	return dialogContent<string | null>((finish) => {
-	const [text, setText] = React.useState(value);
+	return statefulDialog<string | null, string>(value, (finish, text, setText) => {
 	const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
 	return cancelableModal(title, finish, dialogBody(
 		message,
@@ -413,8 +428,7 @@ export interface SelectOptions {
  * @returns 用户确认返回所选值，取消返回 null。
  */
 export function showSelect({ title, message = '', options, value, confirmLabel = '确定' }: SelectOptions): Promise<string | null> {
-	return dialogContent<string | null>((finish) => {
-	const [selected, setSelected] = React.useState(value ?? options.at(0)?.value ?? '');
+	return statefulDialog<string | null, string>(value ?? options.at(0)?.value ?? '', (finish, selected, setSelected) => {
 	const detail = options.find((option) => option.value === selected)?.description;
 	return cancelableModal(title, finish, dialogBody(
 		message,
@@ -498,32 +512,21 @@ export function primaryButton({ label, onClick, disabled = false, danger = false
 }
 
 /**
- * 单个值对象的字段写入器。
+ * 按字段名写入一格值。
  *
- * @param setValues - 值对象的状态写入器。
+ * 单个值对象与分页表单的某一页共用这一层：差别只在「写哪一份」，因此由调用方给出写入函数。
+ *
+ * @param setValues - 状态写入器。
+ * @param write - 拿到上一份值与字段名后给出新一份值。
  * @returns 按字段名写入的回调。
  */
-function fieldSetter(
-	setValues: React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
+function fieldWriter<S>(
+	setValues: React.Dispatch<React.SetStateAction<S>>,
+	write: (previous: S, name: string, value: unknown) => S,
 ): (name: string, value: unknown) => void {
-	return (name, value) => { setValues((previous) => ({ ...previous, [name]: value })); };
+	return (name, value) => { setValues((previous) => write(previous, name, value)); };
 }
 
-/**
- * 分页表单里某一页的字段写入器。
- *
- * 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
- *
- * @param setValues - 全部页面的状态写入器。
- * @param page - 当前页的键。
- * @returns 按字段名写入的回调。
- */
-function pageFieldSetter(
-	setValues: React.Dispatch<React.SetStateAction<Record<string, Record<string, unknown>>>>,
-	page: string,
-): (name: string, value: unknown) => void {
-	return (name, value) => { setValues((previous) => ({ ...previous, [page]: { ...(previous[page] ?? {}), [name]: value } })); };
-}
 
 /**
  * 表单：支持文本、下拉、单选、勾选与多选项。
@@ -532,9 +535,10 @@ function pageFieldSetter(
  * @returns 用户确认返回字段值对象，取消返回 null。
  */
 export function showForm({ title, message = '', fields, confirmLabel = '确定' }: FormOptions): Promise<Record<string, unknown> | null> {
-	return dialogContent<Record<string, unknown> | null>((finish) => {
-		const [values, setValues] = React.useState<Record<string, unknown>>(() => initialValues(fields));
-		const setField = fieldSetter(setValues);
+	return statefulDialog<Record<string, unknown> | null, Record<string, unknown>>(
+		() => initialValues(fields),
+		(finish, values, setValues) => {
+		const setField = fieldWriter(setValues, (previous, name, value) => ({ ...previous, [name]: value }));
 		const submit = (): void => { finish(values); };
 		return cancelableModal(
 			title,
@@ -543,7 +547,8 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 			submit,
 			confirmLabel,
 		);
-	});
+		},
+	);
 }
 
 /** 分页表单的一页。 */
@@ -576,15 +581,19 @@ export interface TabbedFormOptions {
  * @returns 用户确认返回当前页的字段值（含 `page`），取消返回 null。
  */
 export function showTabbedForm({ title, pages, confirmLabel = '确定' }: TabbedFormOptions): Promise<Record<string, unknown> | null> {
-	return dialogContent<Record<string, unknown> | null>((finish) => {
-		// 每页一份值对象，同名不跨页覆盖。
-		const initial: Record<string, Record<string, unknown>> = {};
-		for (const page of pages) initial[page.value] = initialValues(page.fields);
-		const [values, setValues] = React.useState<Record<string, Record<string, unknown>>>(initial);
+	// 每页一份值对象，同名不跨页覆盖。
+	const initial: Record<string, Record<string, unknown>> = {};
+	for (const page of pages) initial[page.value] = initialValues(page.fields);
+	return statefulDialog<Record<string, unknown> | null, Record<string, Record<string, unknown>>>(
+		initial,
+		(finish, values, setValues) => {
 		const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
 		const active = pages.find((page) => page.value === activeValue) ?? pages[0];
 		const activeValues = values[active.value] ?? {};
-		const setField = pageFieldSetter(setValues, active.value);
+		// 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
+		const setField = fieldWriter(setValues, (previous, name, value) => ({
+			...previous, [active.value]: { ...(previous[active.value] ?? {}), [name]: value },
+		}));
 		// SegmentedTabs 要求非空元组：首项单独取，其余展开。
 		const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
 			{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
@@ -604,7 +613,8 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 			hintNode(active.message ?? ''),
 			...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
 		), submit, confirmLabel);
-	});
+		},
+	);
 }
 
 /**

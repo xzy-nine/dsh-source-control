@@ -82,6 +82,21 @@ export function isUntrackedEntry(entry: WorkingTreeEntry): boolean {
 	return entry.index === '?' && entry.worktree === '?';
 }
 /**
+ * 按路径集合改写条目的状态。
+ *
+ * @param entries - 当前条目。
+ * @param paths - 目标路径。
+ * @param nextOf - 由条目给出新状态。
+ * @returns 新条目。
+ */
+function mapEntriesToStatus(
+	entries: readonly WorkingTreeEntry[],
+	paths: readonly string[],
+	nextOf: (entry: WorkingTreeEntry) => { index: string; worktree: string },
+): WorkingTreeEntry[] {
+	return mapTargets(entries, paths, (entry) => ({ ...entry, ...nextOf(entry) }));
+}
+/**
  * 暂存路径：把工作区的内容与状态并入索引。
  *
  * - 未跟踪（`??`）变成新增（`A `）。
@@ -92,13 +107,9 @@ export function isUntrackedEntry(entry: WorkingTreeEntry): boolean {
  * @returns 新条目。
  */
 export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	return mapTargets(entries, paths, (entry) => {
-		if (entry.index === '?' && entry.worktree === '?') {
-			return { ...entry, index: 'A', worktree: ' ' };
-		}
-		const nextIndex = entry.worktree !== ' ' ? entry.worktree : entry.index;
-		return { ...entry, index: nextIndex, worktree: ' ' };
-	});
+	return mapEntriesToStatus(entries, paths, (entry) => (entry.index === '?' && entry.worktree === '?'
+		? { index: 'A', worktree: ' ' }
+		: { index: entry.worktree !== ' ' ? entry.worktree : entry.index, worktree: ' ' }));
 }
 
 /**
@@ -112,11 +123,9 @@ export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readon
  * @returns 新条目。
  */
 export function unstageEntries(entries: readonly WorkingTreeEntry[], paths: readonly string[]): WorkingTreeEntry[] {
-	return mapTargets(entries, paths, (entry) => {
-		if (entry.index === 'A') return { ...entry, index: '?', worktree: '?' };
-		const nextWorktree = entry.index !== ' ' ? entry.index : entry.worktree;
-		return { ...entry, index: ' ', worktree: nextWorktree };
-	});
+	return mapEntriesToStatus(entries, paths, (entry) => (entry.index === 'A'
+		? { index: '?', worktree: '?' }
+		: { index: ' ', worktree: entry.index !== ' ' ? entry.index : entry.worktree }));
 }
 
 /**
