@@ -3,6 +3,7 @@
  */
 import type { DiscardReport, SubmoduleDiscardReport, SubmoduleDiscardStatus, WorkingTreeEntry } from '../shared/types.ts';
 import { callApi, callApiRaw, commandError } from './http.ts';
+import { recordListOf } from '../../shared/record-list.ts';
 
 /**
  * 读取工作区变更。
@@ -53,21 +54,17 @@ function readDiscardReport(payload: Record<string, unknown>, paths: readonly str
 		? (payload.discarded as unknown[]).filter((path): path is string => typeof path === 'string')
 		: [...paths];
 	const submodules: SubmoduleDiscardReport[] = [];
-	if (Array.isArray(payload.submodules)) {
-		for (const item of payload.submodules as unknown[]) {
-			if (item === null || typeof item !== 'object') continue;
-			const record = item as Record<string, unknown>;
-			if (typeof record.path !== 'string') continue;
-			const status = typeof record.status === 'string' && SUBMODULE_STATUSES.has(record.status)
-				? record.status as SubmoduleDiscardStatus
-				: 'unchanged';
-			submodules.push({
-				path: record.path,
-				status,
-				reason: typeof record.reason === 'string' ? record.reason : null,
-				dirty: record.dirty === true,
-			});
-		}
+	for (const record of recordListOf(payload.submodules)) {
+		if (typeof record.path !== 'string') continue;
+		const status = typeof record.status === 'string' && SUBMODULE_STATUSES.has(record.status)
+			? record.status as SubmoduleDiscardStatus
+			: 'unchanged';
+		submodules.push({
+			path: record.path,
+			status,
+			reason: typeof record.reason === 'string' ? record.reason : null,
+			dirty: record.dirty === true,
+		});
 	}
 	const skippedRepositories = Array.isArray(payload.skippedRepositories)
 		? (payload.skippedRepositories as unknown[]).filter((path): path is string => typeof path === 'string')

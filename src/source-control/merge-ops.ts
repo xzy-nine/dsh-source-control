@@ -10,16 +10,9 @@ import nodePath from 'node:path';
 import { gitOrThrow } from './git-exec.js';
 import { worktreeText } from './conflict-ops.js';
 import { analyzeMerge, resultLinesOf, type MergeChoice } from '../shared/merge-ranges.js';
+import type { MergeContents } from '../shared/merge-contents.js';
 
-/** 三方内容。 */
-export interface MergeContents {
-	/** 基线（共同祖先）；双方新增的冲突没有基线段，为 null。 */
-	readonly base: string | null;
-	/** 我方。 */
-	readonly ours: string | null;
-	/** 对方。 */
-	readonly theirs: string | null;
-}
+export type { MergeContents } from '../shared/merge-contents.js';
 
 /**
  * 取一个路径某个阶段的全文。

@@ -95,32 +95,7 @@ export interface CommitFile {
 /** 合并方式：默认交给 git 决定是否快进，强制建立合并提交，或压缩为一次待提交的改动。 */
 export type MergeMode = 'default' | 'no-ff' | 'squash';
 
-/** 仓库树的节点种类。 */
-export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
-
-/** 仓库树节点。 */
-export interface RepoNode {
-	/** 稳定标识。 */
-	readonly id: string;
-	/** 绝对路径。 */
-	readonly path: string;
-	/** 末段目录名。 */
-	readonly name: string;
-	/** 节点种类。 */
-	readonly kind: RepoNodeKind;
-	/** 展示缩进层级。 */
-	readonly depth: number;
-	/** 当前分支；分离头指针为 null。 */
-	readonly branch: string | null;
-	/** 分离头指针提交的短哈希；已检出的子模块也带这一项。 */
-	readonly head: string | null;
-	/** 路径在磁盘上是否存在。 */
-	readonly available: boolean;
-	/** 该节点所属仓库是否为浅克隆：历史被截断，浅克隆之外的分支与标签不可见。 */
-	readonly shallowClone: boolean;
-	/** 工作树与子模块。 */
-	readonly children: RepoNode[];
-}
+export type { RepoNode, RepoNodeKind } from '../../shared/repo-node.ts';
 
 /** 仓库领先/落后信息。 */
 export interface RepoSync {

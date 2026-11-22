@@ -21,6 +21,7 @@ import { listDirAt, probePathAt, readTextAt, watchDirAt, type DirChangeListener 
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
 import { logDebug, logInfo, logWarn } from './logger.js';
+import { createListenerSet, subscribeIn } from '../shared/listener-set.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
 const COALESCE_MS = 250;
@@ -60,7 +61,7 @@ function pathKey(path: string): string {
 }
 
 /** 结构变化订阅者。 */
-const listeners = new Set<(repo: string) => void>();
+const listeners = createListenerSet<(repo: string) => void>();
 
 /** 一个已挂的目录监视：关闭函数。 */
 type WatchCloser = () => Promise<void>;
@@ -124,8 +125,7 @@ const workspaceSignals = new Map<string, AbortController>();
  * @returns 取消订阅。
  */
 export function onRepositoryTreeChange(listener: (repo: string) => void): () => void {
-	listeners.add(listener);
-	return () => { listeners.delete(listener); };
+	return subscribeIn(listeners, listener);
 }
 
 /**
@@ -628,7 +628,7 @@ function scheduleChildSync(key: string): void {
  * @returns 无。
  */
 function notify(repo: string): void {
-	for (const listener of [...listeners]) {
+	for (const listener of listeners.snapshot()) {
 		try {
 			listener(repo);
 		} catch {

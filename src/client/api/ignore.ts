@@ -2,26 +2,9 @@
  * 忽略规则写入与本地排除文件状态。
  */
 import { callApi } from './http.ts';
+import type { IgnoreWriteResult, LocalExcludeState } from '../../shared/ignore-types.ts';
 
-/** 写入 `.gitignore` 的结果。 */
-export interface IgnoreWriteResult {
-	/** 规则写入的文件，相对仓库根。 */
-	readonly file: string;
-	/** 该文件是否为本次新建。 */
-	readonly created: boolean;
-	/** 写入前该文件是否已在版本控制中：未跟踪时没有可比较的差异。 */
-	readonly tracked: boolean;
-	/** 本次写入的规则；规则已存在时为 null。 */
-	readonly rule: string | null;
-}
-
-/** 本地排除文件的状态。 */
-export interface LocalExcludeState {
-	/** 排除文件的绝对路径。 */
-	readonly path: string;
-	/** 有效条目。 */
-	readonly entries: readonly string[];
-}
+export type { IgnoreWriteResult, LocalExcludeState } from '../../shared/ignore-types.ts';
 
 /**
  * 把路径写进最近的 `.gitignore`。

@@ -1,6 +1,6 @@
 {
   "note": "已接受的存量解释性注释；只允许调低。新增命中应改写散文或就地加 prose-ok 标记。",
-  "count": 247,
+  "count": 243,
   "entries": [
     [
       "src/client/api/http.ts",
@@ -11,16 +11,6 @@
       "src/client/api/http.ts",
       "step-narration",
       "* 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数），因此先读响应体再判断"
-    ],
-    [
-      "src/client/api/ignore.ts",
-      "session-scope",
-      "* 本次写入的规则；规则已存在时为 null。"
-    ],
-    [
-      "src/client/api/ignore.ts",
-      "session-scope",
-      "* 该文件是否为本次新建。"
     ],
     [
       "src/client/api/repos.ts",
@@ -996,16 +986,6 @@
       "src/source-control/hunk-ops.ts",
       "planning-residue",
       "* 补丁经临时文件传入：`git apply` 从标准输入读补丁时，空补丁与参数错误的表现一致，"
-    ],
-    [
-      "src/source-control/ignore.ts",
-      "session-scope",
-      "* 本次写入的规则；规则已存在时为 null。"
-    ],
-    [
-      "src/source-control/ignore.ts",
-      "session-scope",
-      "* 该文件是否为本次新建。"
     ],
     [
       "src/source-control/log-redact.ts",

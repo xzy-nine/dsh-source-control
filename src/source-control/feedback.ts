@@ -17,6 +17,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { classifyGhFailure, runGh, type GhResult } from './gh-cli.js';
+import type { FeedbackFailureKind, FeedbackLogFields } from '../shared/feedback-outcome.js';
 import { buildIssueBody, FEEDBACK_REPO, feedbackIssueTitle, type FeedbackFacts, type FeedbackType } from './feedback-text.js';
 import { groupLogComments, type LogComment, type LogSource } from './feedback-comment.js';
 import { currentLogFile, logRoot, recentLogFiles } from './logger.js';
@@ -48,19 +49,13 @@ export interface SubmitFeedbackOptions {
 }
 
 /** 反馈提交结果。 */
-export interface SubmitFeedbackResult {
+export interface SubmitFeedbackResult extends FeedbackLogFields {
 	/** issue 地址；失败时为空串。 */
 	readonly url: string;
 	/** 失败原因；成功时为 null。 */
 	readonly error: string | null;
 	/** 失败分类，供前端决定提示方式。 */
-	readonly kind: 'ok' | 'missing-cli' | 'not-logged-in' | 'missing-scope' | 'forbidden' | 'invalid' | 'unknown';
-	/** 日志目录绝对路径：失败时提示用户手动提交用。 */
-	readonly logDir: string;
-	/** 已追加的日志评论条数；未附带日志时为 0。 */
-	readonly commentCount: number;
-	/** 日志评论提交失败的原因；全部成功或未附带日志时为 null。 */
-	readonly commentError: string | null;
+	readonly kind: FeedbackFailureKind;
 }
 
 /**

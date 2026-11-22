@@ -6,6 +6,7 @@
  */
 import { callApi, callApiRaw, commandError } from './http.ts';
 import type { MergeChoice } from '../../shared/merge-ranges.ts';
+import type { MergeContents } from '../../shared/merge-contents.ts';
 
 /** 一个补丁块的范围。 */
 export interface FileHunk {
@@ -57,14 +58,8 @@ export async function loadFileHunks(repo: string, filePath: string, staged: bool
 	});
 }
 
-/** 一份三方内容。 */
-export interface MergeContentsPayload {
-	/** 基线；双方新增时没有基线段，为 null。 */
-	readonly base: string | null;
-	/** 我方。 */
-	readonly ours: string | null;
-	/** 对方。 */
-	readonly theirs: string | null;
+/** 一份三方内容，附工作区当前内容。 */
+export interface MergeContentsPayload extends MergeContents {
 	/** 工作区当前内容，用于提示「已手工改过」。 */
 	readonly worktree: string | null;
 }

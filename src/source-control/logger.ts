@@ -12,6 +12,7 @@ import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:f
 import { dirname, join } from 'node:path';
 import { pluginHome } from './dsh-home.js';
 import { formatLogLines, type LogLevel } from './log-format.js';
+import { createCoalesceTimer } from '../shared/coalesce-timer.js';
 
 export type { LogLevel };
 import {
@@ -46,7 +47,7 @@ let buffer: string[] = [];
 let fileChars = 0;
 
 /** 合并写定时器。 */
-let timer: ReturnType<typeof setTimeout> | undefined;
+const flushTimer = createCoalesceTimer(FLUSH_DELAY_MS, () => { flushSync(); }, true);
 
 /** 是否已安装退出钩子。 */
 let exitHookInstalled = false;
@@ -165,10 +166,7 @@ function splitFile(now: Date): void {
  * 同步写出全部缓冲。
  */
 export function flushSync(): void {
-	if (timer !== undefined) {
-		clearTimeout(timer);
-		timer = undefined;
-	}
+	flushTimer.cancel();
 	if (buffer.length === 0) return;
 	const lines = buffer;
 	buffer = [];
@@ -179,13 +177,7 @@ export function flushSync(): void {
  * 安排一次合并写。
  */
 function schedule(): void {
-	if (timer !== undefined) return;
-	timer = setTimeout(() => {
-		timer = undefined;
-		flushSync();
-	}, FLUSH_DELAY_MS);
-	// 定时器不阻止进程退出。
-	timer.unref();
+	flushTimer.schedule();
 }
 
 /**

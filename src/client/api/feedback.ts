@@ -3,6 +3,7 @@
  */
 import { callApi, commandError } from './http.ts';
 import { textOf } from '../shared/text.ts';
+import type { FeedbackLogFields } from '../../shared/feedback-outcome.ts';
 
 /** 反馈类型。 */
 export type FeedbackType = 'bug' | 'suggestion' | 'other';
@@ -27,19 +28,13 @@ export interface FeedbackInfo {
 }
 
 /** 提交结果。 */
-export interface SubmitFeedbackOutcome {
+export interface SubmitFeedbackOutcome extends FeedbackLogFields {
 	/** issue 地址；失败时为空串。 */
 	readonly url: string;
 	/** 失败原因；成功时为 null。 */
 	readonly error: string | null;
 	/** 失败分类。 */
 	readonly kind: string;
-	/** 日志目录。 */
-	readonly logDir: string;
-	/** 已追加的日志评论条数；未附带日志时为 0。 */
-	readonly commentCount: number;
-	/** 日志评论提交失败的原因；全部成功或未附带日志时为 null。 */
-	readonly commentError: string | null;
 }
 
 /**
