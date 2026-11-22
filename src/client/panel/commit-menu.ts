@@ -19,7 +19,7 @@ import { checkoutFailureText } from './git-messages.ts';
 import { COMMIT_MENU, MENU_ACTIONS } from './menu-actions.ts';
 import type { Commit } from '../shared/types.ts';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
-import { checkboxThenRun } from './menu/shared.ts';
+import { checkboxThenRun, textThenRun } from './menu/shared.ts';
 import type { GraphMenuDeps, MenuAction, MenuContext, RefMenuTarget } from './menu/shared.ts';
 export type { GraphMenuDeps, RefMenuTarget } from './menu/shared.ts';
 import { BUILDERS } from './menu/registry.ts';
@@ -131,12 +131,11 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	push(items, byId('checkoutBranch'));
 	push(items, { title: COMMIT_MENU.checkoutDetached, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutCommit(ctx.repo, commit.hash), checkoutFailureText); }); } });
 	items.push(DIVIDER);
-	push(items, { title: COMMIT_MENU.createBranch, disabled: isUncommitted, onClick: () => {
-		void (async () => {
-			const name = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
-			if (name !== null && name !== '') void deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); });
-		})();
-	} });
+	push(items, {
+		title: COMMIT_MENU.createBranch, disabled: isUncommitted,
+		onClick: textThenRun({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' },
+			(name) => { void deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); }); }),
+	});
 	push(items, byId('deleteBranch'));
 	// PR 是分支级操作，作用于当前分支而非选中的提交；条件不满足时该项自身返回 null。
 	push(items, byId('createPullRequest'));

@@ -6,6 +6,7 @@
  * 那一份即幂等。提交信息草稿是会话级数据，不经本模块迁移。
  */
 import { callApi } from './http.ts';
+import { storageKeys } from '../shared/storage-keys.ts';
 
 /** 面板布局快照。 */
 export interface PanelLayoutSnapshot {
@@ -183,9 +184,7 @@ export async function migrateLegacyState(cwd: string): Promise<void> {
 		const entries: Record<string, unknown> = {};
 		const keys: string[] = [];
 		for (const store of [localStorage, sessionStorage]) {
-			for (let at = 0; at < store.length; at += 1) {
-				const key = store.key(at);
-				if (key === null) continue;
+			for (const key of storageKeys(store)) {
 				if (!key.startsWith(LEGACY_PREFIX)) continue;
 				if (key === LEGACY_MIGRATED_KEY) continue;
 				if (key in entries) continue;

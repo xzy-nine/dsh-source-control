@@ -13,6 +13,7 @@ import type { IgnoreWriteResult, LocalExcludeState } from '../api/index.ts';
 import { showForm, showSelect, showText } from '../ui/dialog.ts';
 import { cloneTerminalCommand } from '../git/clone-command.ts';
 import { reportCaught, reportError } from './errors.ts';
+import { useMountedRead } from './use-mounted-read.ts';
 import { saveSettings } from './settings.ts';
 import { hasGitHubRemote } from './github.ts';
 import { textOf, trimmedTextOf } from '../shared/text.ts';
@@ -114,18 +115,12 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 	/* 本地排除条目按工作树归属：换工作树即重读，切换后显示与操作都落在新路径上。 */
 	React.useEffect(() => {
 		if (workingTreePath === null) { setLocalExclude(null); return undefined; }
-		const cancelled = { current: false };
-		void (async () => {
-			try {
-				const state = await localExcludeState(workingTreePath);
-				if (cancelled.current) return;
-				setLocalExclude(state.path === '' ? null : state);
-			} catch {
-				// 读取失败按无排除条目处理，不保留上一工作树的状态。
-				if (!cancelled.current) setLocalExclude(null);
-			}
-		})();
-		return () => { cancelled.current = true; };
+		return useMountedRead(
+			() => localExcludeState(workingTreePath),
+			(state) => { setLocalExclude(state.path === '' ? null : state); },
+			// 读取失败按无排除条目处理，不保留上一工作树的状态。
+			() => { setLocalExclude(null); },
+		);
 	}, [workingTreePath]);
 	/** 克隆进行中：只禁用克隆入口，不影响面板其余控件。 */
 	const [cloneBusy, setCloneBusy] = React.useState(false);
@@ -198,21 +193,43 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 	}, [workingTreePath, run]);
 
 	/**
+	 * 把一条忽略规则写进仓库，随后按回调处理结果。
+	 *
+	 * 写入走 `run('commit', …)`：失败由 run 统一提示，成功与否按回调返回值判读。
+	 * 刷新时把该路径从条目里剔除：写入成功后它由忽略规则覆盖。
+	 *
+	 * @param path - 被忽略的路径。
+	 * @param write - 写入动作。
+	 * @param intent - 日志用的用户意图描述。
+	 * @param done - 写入返回非 null 时处理结果。
+	 * @returns 无。
+	 */
+	const writeIgnoreRule = React.useCallback(<T,>(
+		path: string,
+		write: (repo: string, path: string) => Promise<T | null>,
+		intent: string,
+		done: (result: T) => Promise<void>,
+	): void => {
+		void (async () => {
+			const written: { value: T | null } = { value: null };
+			await run('commit', async () => { written.value = await write(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent });
+			const result = written.value;
+			if (result !== null) await done(result);
+		})();
+	}, [run, workingTreePath]);
+	/**
 	 * 把未暂存的路径加入 `.gitignore`，随后打开该文件的差异视图。
 	 *
 	 * 规则写进最近的 `.gitignore`（没有则在仓库根新建）；新建的文件没有旧侧内容，
 	 * 因此按普通文件打开而不是差异。
 	 */
 	const handleAddToGitignore = React.useCallback((path: string) => {
-		void (async () => {
-			const written: { value: IgnoreWriteResult | null } = { value: null };
-			await run('commit', async () => { written.value = await addToGitignore(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent: `加入 .gitignore：${path}` });
-			const result = written.value;
-			if (result === null || result.file === '') return;
+		writeIgnoreRule<IgnoreWriteResult>(path, addToGitignore, `加入 .gitignore：${path}`, async (result) => {
+			if (result.file === '') return;
 			await announce(result.rule === null ? `${result.file} 已包含该忽略规则。` : `已写入 ${result.file}：${result.rule}`, 'success');
 			await openDiff('*', result.file, false, !result.tracked);
-		})();
-	}, [run, workingTreePath, openDiff, announce]);
+		});
+	}, [writeIgnoreRule, openDiff, announce]);
 
 	/**
 	 * 把未暂存的路径加入本地排除文件 `.git/info/exclude`，随后打开该文件。
@@ -220,16 +237,13 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 	 * 该文件在 `.git` 目录内，以宿主返回的绝对路径按普通文件打开。
 	 */
 	const handleAddToLocalExclude = React.useCallback((path: string) => {
-		void (async () => {
-			const written: { value: LocalExcludeState | null } = { value: null };
-			await run('commit', async () => { written.value = await addToLocalExclude(workingTreePath as string, path); }, undefined, (entries) => entries.filter((entry) => entry.path !== path), { historyChanged: false, intent: `加入本地排除：${path}` });
-			const state = written.value;
+		writeIgnoreRule<LocalExcludeState>(path, addToLocalExclude, `加入本地排除：${path}`, async (state) => {
 			// 写入失败时 run 已提示错误：保留原有状态，不清掉已有的查看入口。
-			if (state === null || state.path === '') return;
+			if (state.path === '') return;
 			setLocalExclude(state);
 			await openDiff('*', state.path, false, true);
-		})();
-	}, [run, workingTreePath, openDiff]);
+		});
+	}, [writeIgnoreRule, openDiff]);
 
 	/** 打开本地排除文件；它在 `.git` 目录内，以绝对路径按普通文件打开。 */
 	const handleShowLocalExclude = React.useCallback(() => {

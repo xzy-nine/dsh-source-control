@@ -59,6 +59,11 @@ export function createEnrichClaims(): EnrichClaims {
 	const settled = new Set<string>();
 	const inFlight = new Set<string>();
 	const failures = new Map<string, number>();
+	/** 清掉一条路径的在途占用与失败计数；已完成集合由调用方按语义增删。 */
+	const releaseCounters = (path: string): void => {
+		inFlight.delete(path);
+		failures.delete(path);
+	};
 	return {
 		has(path) {
 			return settled.has(path) || inFlight.has(path);
@@ -68,9 +73,8 @@ export function createEnrichClaims(): EnrichClaims {
 		},
 		settle(paths) {
 			for (const path of paths) {
-				inFlight.delete(path);
+				releaseCounters(path);
 				settled.add(path);
-				failures.delete(path);
 			}
 		},
 		release(paths) {
@@ -94,9 +98,8 @@ export function createEnrichClaims(): EnrichClaims {
 		},
 		forget(paths) {
 			for (const path of paths) {
-				inFlight.delete(path);
+				releaseCounters(path);
 				settled.delete(path);
-				failures.delete(path);
 			}
 		},
 		clear() {
