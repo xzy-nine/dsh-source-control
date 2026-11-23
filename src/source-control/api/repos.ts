@@ -46,7 +46,7 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 				});
 				// 顶层仓库纳入结构监视：工作树与子模块的增删由此即时反映。
 				watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
-				// 工作区根本身纳入监视：新建或删除的仓库此前没有任何句柄，只能由这一层发现。
+				// 工作区根本身纳入监视：新建或删除的仓库在仓库级监视里没有句柄，只能由这一层发现。
 				watchWorkspace(repo);
 				return { root: repo, nodes: result.nodes, truncated: result.truncated, usedCache: result.usedCache };
 			});

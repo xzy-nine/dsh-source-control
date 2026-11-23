@@ -40,7 +40,7 @@ export interface GitOptions {
 	/**
 	 * 可停止的登记键。
 	 *
-	 * 给出时该子进程归入这次操作，用户可据此手动停止；省略时不可单独停止。
+	 * 给出时该子进程登记到可停止集合，用户可据此手动停止；省略时不可单独停止。
 	 */
 	readonly cancelKey?: string | undefined;
 }
@@ -58,7 +58,7 @@ export interface GitOptions {
  * `GIT_OPTIONAL_LOCKS=0` 只加在只读命令上：它让 git 跳过「刷新索引」这类可选加锁，
  * 读操作因此不必等待写锁、也不会在仓库里留下锁文件。写命令不能设它，否则索引可能不落盘。
  *
- * @param readOnly - 本次命令是否只读。
+ * @param readOnly - 命令是否只读。
  * @returns 传给子进程的环境变量。
  */
 export function gitEnvironment(readOnly = false): NodeJS.ProcessEnv {
@@ -81,7 +81,7 @@ const environmentCache = new Map<string, NodeJS.ProcessEnv>();
 /**
  * 构造子进程环境，未命中缓存时调用一次。
  *
- * @param readOnly - 本次命令是否只读。
+ * @param readOnly - 命令是否只读。
  * @returns 传给子进程的环境变量。
  */
 function buildGitEnvironment(readOnly: boolean): NodeJS.ProcessEnv {
@@ -271,7 +271,7 @@ export function isGitIdle(repo?: string): boolean {
  * 是否没有会改写本地状态的操作在跑。
  *
  * 本地状态指工作区、索引与引用。与 {@link isGitIdle} 的区别是联网命令不算阻塞：推送与抓取期间
- * 本地对象库与工作区都不被改写，引用由 git 逐个原子更新（先写临时文件再重命名），读到的要么是
+ * 本地对象库与工作区都不被改写，引用由 git 逐个原子更新（写中间文件后重命名），读到的要么是
  * 命令前、要么是命令后的一致状态。一次推送可能挂几十秒到几分钟，等它会让变更列表与提交图整段空白。
  *
  * 写操作（提交、合并、检出、重置等）仍要等：它们会连续改写多个引用与索引，中途读到的组合不一致。

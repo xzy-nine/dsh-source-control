@@ -299,7 +299,7 @@ export type PanelRun = RunSignature<
 	/**
 	 * 操作体。
 	 *
-	 * 可停止的操作经入参拿到本次的停止键，并把它传给宿主侧对应的 git 调用；不可停止的操作
+	 * 可停止的操作经入参拿到该操作的停止键，并把它传给宿主侧对应的 git 调用；不可停止的操作
 	 * 忽略该入参即可。
 	 *
 	 * 分多个阶段的长操作在每段开始前调用第二个入参声明当前阶段，界面据此显示执行到哪一步。
@@ -309,7 +309,7 @@ export type PanelRun = RunSignature<
 		readonly historyChanged?: boolean;
 		readonly intent?: string;
 		/**
-		 * 允许用户手动停止本次操作。
+		 * 允许用户手动停止该操作。
 		 *
 		 * 给出时该操作进入可停止清单，用户从停止入口主动终止；不给时只能等它自己结束。
 		 * 只有确信「停下不留下半截状态」的操作才该给。
@@ -328,7 +328,7 @@ export type PanelRun = RunSignature<
 /**
  * 一条进行中的操作：目标仓库路径、影响面与可停止信息。
  *
- * `cancelKey` 只在这次操作可被用户手动停止时给出；`label` 是给用户看的动作名。
+ * `cancelKey` 只在该操作可被用户手动停止时给出；`label` 是给用户看的动作名。
  */
 export interface BusyEntry {
 	readonly repo: string;

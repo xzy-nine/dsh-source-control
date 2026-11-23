@@ -206,7 +206,7 @@ test('预加载：同一工作区在途只发一份请求，force 受冷却约�
 		assert.equal(discovers, 1, '在途期间重复调用只发一份请求');
 
 		/*
-		 * 同一工作区的多个会话面板各自挂载时都会请求一次重取；冷却期内不再重做全目录扫描，
+		 * 同一工作区的多个会话面板各自挂载时都会请求一次重取；冷却期内跳过全目录扫描，
 		 * 否则每挂一个面板就把上一份在途取数中止重来。
 		 */
 		preloadWorkspace(root, { force: true });
@@ -268,7 +268,7 @@ test('dropWorkspace：保留条目与订阅者，发布空 loading 快照，重�
 			unsubscribe();
 		}
 
-		// 冷却不再挡住下一次取数：在途状态已清空、最近取数时刻已复位。
+		// 冷却不会挡住下一次取数：在途状态已清空、最近取数时刻已复位。
 		preloadWorkspace(root);
 		assert.ok(await waitFor(() => discovers >= 2), '重新预加载重新取数');
 		assert.equal(discovers, 2, '只重取一次');
@@ -321,7 +321,7 @@ test('预加载：节点未变时不重复取领先/落后', async () => {
 		preloadWorkspace(root);
 		await waitFor(() => syncCalls >= 1);
 		assert.equal(syncCalls, 1, '首轮取一次');
-		// 结构事件后的重取：节点集合没变，已取过的领先/落后沿用，不再下发。
+		// 结构事件后的重取：节点集合没变，已取过的领先/落后沿用，不下发。
 		refreshWorkspace(root);
 		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) > 0 && getWorkspaceSnapshot(root)?.status === 'ready');
 	} finally {

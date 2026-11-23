@@ -9,7 +9,7 @@
  *   {@link loadSessionValue} / {@link saveSessionValue} / {@link clearSessionValue}。
  *
  * 会话级存储是「浏览器不持久化」这条规则**唯一**的例外：草稿随标签页消失正是期望行为，搬进
- * 宿主会让关掉的标签页在下次启动时冒出半截提交信息。除本模块与 `api/state.ts` 的旧键迁移外，
+ * 宿主会让已关闭标签页的半截提交信息在下次启动时出现。除本模块与 `api/state.ts` 的遗留键迁移外，
  * 其它模块不直接访问浏览器存储。
  *
  * 预取是异步的，而 `useState(() => get…())` 在挂载时同步执行，因此首次渲染读到的是回退值，
@@ -290,7 +290,7 @@ export function migrateLegacyDrafts(): void {
 			if (store.getItem(key) !== null) local?.removeItem(key);
 		}
 	} catch {
-		/* 清理失败时保留旧键，下次进入! 进入重试 */
+		/* 清理失败时保留遗留键，下次进入时重试 */
 	}
 }
 

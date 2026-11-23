@@ -520,7 +520,7 @@ function ChangeGroupView({
 	 * @returns 无。
 	 */
 	const discardBoth = React.useCallback(async (tracked: readonly string[], untrackedPaths: readonly string[]): Promise<void> => {
-		/** 本次真正丢弃的路径；由操作体写入，乐观更新据此移除条目。 */
+		/** 该次操作实际丢弃的路径；由操作体写入，乐观更新据此移除条目。 */
 		const discarded: string[] = [];
 		// 丢弃只改工作区条目，不动引用与提交历史：对账只重取工作区快照。
 		await run('commit', async () => {

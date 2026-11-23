@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from '../lib-import.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const mod = await importHostModule('source-control/git-parse.js');
 const {
@@ -21,7 +21,7 @@ const {
 } = mod;
 
 /**
- * 建一个临时仓库。
+ * 建一个隔离仓库。
  *
  * @returns 仓库路径与执行 git 的辅助函数。
  */

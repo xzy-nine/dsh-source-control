@@ -175,7 +175,7 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 		void selectCommit(hash);
 	}, [state.selectedHash, state.detail, state.commits, selectCommit, setState]);
 
-	/** 待定位的目标提交哈希；null 表示没有进行中的定位。 */
+	/** 尚未定位的目标提交哈希；null 表示没有进行中的定位。 */
 	const pendingRef = React.useRef<string | null>(null);
 	/** 已为其发出翻页请求的提交列表：同一份列表上不重复取同一页。 */
 	const pagedForRef = React.useRef<readonly Commit[] | null>(null);

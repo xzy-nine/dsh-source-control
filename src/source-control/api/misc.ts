@@ -116,7 +116,7 @@ async function diffHunksOf(repo: string, commitHash: string, filePath: string, s
 /**
  * 判定一个提交是否有父提交。
  *
- * 根提交没有父提交：对它的 `~1` 取内容或取差异都会以退出码 128 失败一次，因此先问再取。
+ * 根提交没有父提交：对它的 `~1` 取内容或取差异会以退出码 128 失败，因此用 `rev-parse` 判定。
  * `rev-parse` 属查询型命令，非零退出不记警告，且只读结果有短时缓存。
  *
  * @param repo - 仓库路径。
@@ -538,8 +538,7 @@ export async function handleMiscCommand(ctx: ApiContext): Promise<boolean> {
 		 * 写操作已由执行层自动作废该仓库的缓存；这个命令覆盖「外部进程改了仓库、但没有经过本插件」
 		 * 的情形——那种改动不产生写事件，宿主无从得知。
 		 *
-		 * 只作废目标仓库及其祖先与后代：别的仓库的缓存与本次改动无关，全量清空会让它们
-		 * 各自重取一次提交图与工作区。
+		 * 只作废目标仓库及其祖先与后代：无关仓库的缓存保留，避免各自重取提交图与工作区。
 		 */
 		case 'invalidateCache':
 			invalidateRepo(repo);

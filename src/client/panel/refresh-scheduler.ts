@@ -22,7 +22,7 @@ export interface RefreshGateOptions {
 
 /** 调度器的入参。 */
 export interface RefreshSchedulerOptions {
-	/** 当前是否具备刷新条件；为 false 时放弃本次刷新。 */
+	/** 当前是否具备刷新条件；为 false 时放弃该次刷新。 */
 	readonly canRefresh: () => boolean;
 	/** 目标仓库是否正忙；为 true 时挂起到空闲。 */
 	readonly isBusy: () => boolean;

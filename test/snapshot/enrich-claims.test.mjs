@@ -1,7 +1,7 @@
 /**
  * 补齐占用的路径登记与一批补齐的结局处理：失败与取消都必须释放，空结果还必须驱动重试。
  *
- * 面板按仓库路径去重下发补齐请求：已登记的路径不再下发。登记分在途与已完成两种状态，
+ * 面板按仓库路径去重下发补齐请求：已登记的路径不下发。登记分在途与已完成两种状态，
  * 若在途路径在请求被取消时不释放，该路径此后既不下发、也不在已完成集合里，补齐永久停摆。
  *
  * 结局判定由生产函数 `runEnrichBatch` 承担，本测试直接调用它——`use-repos.ts` 的补齐 effect
@@ -131,7 +131,7 @@ parallel('补齐占用与结局', (t) => {
 		assert.deepEqual(await outcome('cancel'), {
 			result: 'cancelled', has: false, inFlight: 0, settled: 0, retried: 0, written: 0,
 		});
-		// 空结果：释放占用**并**重试，否则该批路径此后不再下发。
+		// 空结果：释放占用**并**重试，否则该批路径此后不下发。
 		assert.deepEqual(await outcome('empty'), {
 			result: 'empty', has: false, inFlight: 0, settled: 0, retried: 1, written: 0,
 		});

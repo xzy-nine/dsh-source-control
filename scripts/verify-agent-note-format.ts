@@ -14,7 +14,7 @@ const FORMAT_ADOPTED = '2026-07-05'
 /** 格式规则生效前的 Agent Note 用以替代 `## Alternatives considered` 的确切注释。 */
 const GRANDFATHER = '<!-- agent-note-format: alternatives-not-recorded (pre-format Agent Note) -->'
 
-/** 曾标记旧格式正文的已退役债务标记；禁止出现，以免回流。 */
+/** 已退役的格式债务标记，曾用于标注早期 ADR/RFC 正文；禁止出现，以免回流。 */
 const LEGACY_MARKERS = ['XXX: legacy ADR/RFC body format', 'XXX: legacy ADR/Agent Note body format']
 
 /** 每个生命周期文件夹的状态行语法。 */

@@ -1,8 +1,7 @@
 # 拦截直接指向 main 的非作者 PR：留言说明规则并关闭。
 #
-# 用 pull_request_target 而不是 pull_request：来自 fork 的 PR 在 pull_request 下拿到的
-# GITHUB_TOKEN 只有只读权限，无法留言与关闭。本工作流不检出、不执行 PR 里的任何内容，
-# 且 pull_request_target 取的是基分支上的工作流文件，贡献者改不到它。
+# 采用 pull_request_target：fork PR 在 pull_request 下只拿到只读 GITHUB_TOKEN，无法留言与关闭。
+# 本工作流不检出、不执行 PR 内容；pull_request_target 取基分支上的工作流文件，贡献者无法修改。
 name: 拦截指向 main 的 PR
 
 on:
@@ -20,9 +19,8 @@ jobs:
     name: 留言并关闭
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # 放行名单是封闭枚举，不按 [bot] 之类的前后缀通配放行。当前只有两类：仓库 owner
-    # （作者本人，本仓库 114 次提交）与历史里出现过的机器人提交者 semantic-release-bot；
-    # github-actions[bot] 是工作流用 GITHUB_TOKEN 开 PR 时的身份。放行更多机器人时逐条追加。
+    # 放行名单是封闭枚举，不按 [bot] 等前后缀通配放行：仓库 owner、semantic-release-bot 与
+    # github-actions[bot]（工作流用 GITHUB_TOKEN 开 PR 时的身份）。新增放行对象时逐条追加。
     # 已关闭的 PR 直接跳过，避免编辑标题或正文时重复留言。
     if: >-
       github.event.pull_request.state == 'open' &&

@@ -55,7 +55,7 @@ function installLocal(store) {
 	return installGlobal('localStorage', store);
 }
 
-/** 把 sessionStorage 暂时摘掉，返回还原函数。 */
+/** 在测试期间摘掉 sessionStorage，返回还原函数。 */
 function withoutSessionStorage() {
 	return installGlobal('sessionStorage', undefined);
 }

@@ -253,7 +253,7 @@ export function useRepoCommands(deps: RepoCommandDeps): RepoCommands {
 	}, [localExclude, openDiff]);
 
 	/**
-	 * 克隆远程仓库：先填地址，再选父目录，然后在 DSH 终端里执行克隆命令。
+	 * 克隆远程仓库：填写地址与父目录后，克隆命令交给 DSH 终端执行。
 	 *
 	 * 克隆由终端承担——进度、凭据提示与交互都在那里，插件不自己跑 git；命令只依赖
 	 * `git -C <父目录> clone`，不必切换终端目录。命令写入后置起重扫标志，窗口重新获得

@@ -1,4 +1,4 @@
-# dsh-source-control：把本插件插进 profile 的层栈（host 路由 + client 面板同包）。
+# 把本插件作为同一包的 host 路由与 client 面板插入 profile 层栈。
 - insert:
     - id: source-control
       name: dsh-source-control

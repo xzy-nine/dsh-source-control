@@ -58,7 +58,7 @@ export type GitDiffScope =
 export interface GitDiffAddress {
 	readonly sessionId: string;
 	readonly scope: GitDiffScope;
-	/** 旧格式地址里的路径；新格式把路径放在导航参数里，此处为空串。 */
+	/** 旧格式地址里的路径；新格式把路径放在导航参数里，此处为空串。prose-ok: 运行时协议兼容 */
 	readonly legacyPath: string;
 }
 
@@ -134,6 +134,7 @@ function scopeOfToken(token: string): GitDiffScope | null {
  * 解析 git-diff 资源地址。
  *
  * 兼容旧格式 `session/<id>/<hash>/<path>`：多出的路径段原样带回 `legacyPath`。
+ * prose-ok: 旧格式/新格式是运行时并存的两种地址形态，不是仓库变更叙述
  *
  * @param address - `dsh-resource://git-diff/session/<sessionId>/<作用域>[/<旧路径>]` 地址。
  * @returns 解析结果；地址不合法时返回 null。

@@ -21,7 +21,7 @@ export interface CancelBannerProps {
 	/**
 	 * 需要额外用行内形式呈现的停止键。
 	 *
-	 * 阻塞型操作收起弹窗后归到这里：它仍然在跑，不能再让它没有任何可见的停止入口。
+	 * 阻塞型操作收起弹窗后归到这里：操作仍在运行，行内必须保留可见的停止入口。
 	 */
 	readonly extraRowKeys?: readonly string[];
 }
@@ -74,7 +74,7 @@ export interface CancelDialogProps extends CancelBannerProps {
 /**
  * 阻塞操作的停止弹窗。
  *
- * 只在操作本身挡住其他功能时出现，说明界面为何暂时不可用，并给出停止入口。
+ * 只在操作本身挡住其他功能时出现，说明界面为何不可用，并给出停止入口。
  *
  * @param props - 见 {@link CancelDialogProps}。
  * @returns 弹窗元素；没有可停止的阻塞操作时返回 null。

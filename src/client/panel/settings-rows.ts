@@ -30,7 +30,7 @@ export function Section({ title, anchor, children }: {
 /**
  * 一个开关行。
  *
- * Checkbox 自身携带文案且根元素是 `<label>`，因此这里用 `div` 作行容器、不再另加文案节点：
+ * Checkbox 自身携带文案且根元素是 `<label>`，因此这里用 `div` 作行容器、不另加文案节点：
  * 再套一层 `<label>` 会形成嵌套，重复显示文案并让点击行为异常。
  *
  * @param props.label - 文案。

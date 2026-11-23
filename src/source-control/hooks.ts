@@ -1,9 +1,9 @@
 /**
- * git 钩子的探测与临时禁用判据。
+ * git 钩子的探测与 `--no-verify` 跳过判据。
  *
  * 提交钩子（`pre-commit`、`commit-msg`）与推送钩子（`pre-push`）的启用状态由三处决定：
  * `core.hooksPath` 指向的目录、`core.hooksPath` 为空时的 `<git 目录>/hooks`，以及钩子文件
- * 是否可执行。`--no-verify` 让本次调用跳过这些钩子，但不改配置。
+ * 是否可执行。`--no-verify` 让调用跳过这些钩子，但不改配置。
  *
  * 探测只读文件系统，不调用 git。
  */

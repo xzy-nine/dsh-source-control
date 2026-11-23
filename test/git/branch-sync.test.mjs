@@ -13,20 +13,20 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importHostModule } from '../lib-import.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
 const { BRANCH_SYNC_FORMAT, parseBranchSync } = await importHostModule('source-control/git-parse.js');
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 隔离目录登记表；文件级 after 统一删除。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 });
 
 /**
- * 建一个临时目录并登记清理。
+ * 建一个隔离目录并登记清理。
  *
  * @param prefix - 目录名前缀。
  * @returns 目录绝对路径。
@@ -49,7 +49,7 @@ function gitIn(cwd, ...args) {
 }
 
 /**
- * 建一个已配置身份的临时仓库。
+ * 建一个已配置身份的隔离仓库。
  *
  * @param prefix - 目录名前缀。
  * @returns 仓库绝对路径。

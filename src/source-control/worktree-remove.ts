@@ -10,9 +10,9 @@ import { resolveGitCommonDir } from './worktree-branches.js';
  * 主工作树不能被移除（git 报 `is a main working tree`）。工作树内有未提交改动时 git 会
  * 拒绝并要求 `--force`；目录已不存在时 git 会直接清理登记项，因此两种情况都不需要重试。
  *
- * git 子进程的工作目录不能落在被移除的工作树里：Windows 上该目录正被占用，删除会
- * `Permission denied`；工作目录本身也可能在移除后不存在，导致后续命令 `spawn git ENOENT`。
- * 因此从 `repo` 所在的工作树之外执行，拿不到仓库根时退回仓库自身的 git 公共目录。
+ * git 子进程的工作目录取仓库的 git 公共目录，不在被移除的工作树内：
+ * Windows 上待移除目录正被占用会导致 `Permission denied`，目录移除后自身消失会导致
+ * 后续命令 `spawn git ENOENT`。
  *
  * @param repo - 仓库路径（任意工作树均可）。
  * @param worktreePath - 要移除的工作树路径。

@@ -23,7 +23,7 @@ function isolatedHome(): string | null {
 /**
  * 取 DSH home。
  *
- * 测试隔离变量 `DSH_SOURCE_CONTROL_HOME` 优先于 `DSH_HOME`：它把插件数据整体挪到临时目录。
+ * 测试隔离变量 `DSH_SOURCE_CONTROL_HOME` 优先于 `DSH_HOME`：它把插件数据整体指向隔离目录。
  *
  * @returns DSH home 绝对路径；测试隔离时即隔离目录本身。
  */

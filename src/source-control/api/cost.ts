@@ -5,7 +5,7 @@
  * 又看不出那一次刷新到底花了多少。
  *
  * 分组按客户端随请求带来的 `refreshId`：同一轮刷新的命令归到一组，轮次边界由客户端决定。
- * 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的、或旧版客户端）按仓库与时间窗口归组。
+ * 没有 `refreshId` 的命令（抓取这类由用户操作直接触发的，以及不提供该字段的客户端）按仓库与时间窗口归组。
  */
 import { flushSync, logInfo } from '../logger.js';
 
@@ -17,15 +17,15 @@ let exitFlushRegistered = false;
 
 /** 一轮刷新内的累计。 */
 interface CostBucket {
-	/** 本轮的标识，仅用于日志展示。 */
+	/** 刷新轮次的标识，仅用于日志展示。 */
 	readonly label: string;
-	/** 本轮所属仓库；git 子进程计数按它取。 */
+	/** 该刷新轮次所属仓库；git 子进程计数按它取。 */
 	readonly repo: string;
-	/** 本轮第一条命令的开始时刻。 */
+	/** 该轮次第一条命令的开始时刻。 */
 	firstStartedAt: number;
-	/** 本轮最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
+	/** 该轮次最后一条命令的结束时刻；墙钟由它与 firstStartedAt 相减得到。 */
 	lastEndedAt: number;
-	/** 本轮已启动的 git 子进程数，由各条命令的轮次登记累加。 */
+	/** 该轮次已启动的 git 子进程数，由各条命令的轮次登记累加。 */
 	spawns: number;
 	/** 各命令的执行次数。 */
 	readonly counts: Map<string, number>;
@@ -35,7 +35,7 @@ interface CostBucket {
 	readonly cachedCounts: Map<string, number>;
 	/** 最慢的一条命令与其耗时。 */
 	slowest: { command: string; ms: number } | null;
-	/** 本轮累计耗时（毫秒）。 */
+	/** 该轮次累计耗时（毫秒）。 */
 	totalMs: number;
 }
 

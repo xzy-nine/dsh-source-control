@@ -11,12 +11,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from '../lib-import.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const { collectDiff, splitDiffBlocks, fitSingleDiff, fitDiffBlock, deletionNote, isDocPath, isBinaryBuffer, SINGLE_DIFF_MAX, DIFF_TOTAL_MAX, TRUNCATED_NOTE } = await importHostModule('source-control/commit-diff.js');
 
 /**
- * 建一个已配置身份的临时仓库。
+ * 建一个已配置身份的隔离仓库。
  *
  * @returns 仓库路径与 git / 写文件辅助函数。
  */
@@ -41,7 +41,7 @@ test('修补路径：上一次提交只有超长文件时仍返回截断后的 d
 		write('base.txt', 'base\n');
 		git('add', '-A');
 		git('commit', '-q', '-m', 'first');
-		// 超过总量上限的单文件，旧实现会因此整份丢弃。
+		// 超过总量上限的单文件必须保留，不能整份丢弃。
 		write('huge.txt', 'x\n'.repeat(DIFF_TOTAL_MAX + 1));
 		git('add', '-A');
 		git('commit', '-q', '-m', 'second');
@@ -106,7 +106,7 @@ test('collectDiff：超长删除文件压缩为路径标记并省出预算', asy
 	const { repo, git, write } = makeRepo();
 	try {
 		write('base.txt', 'base\n');
-		// 超过单文件上限的整文件删除：旧实现保留五万字符删除正文。
+		// 超过单文件上限的整文件删除：正文按上限收敛，不保留五万字符的删除正文。
 		write('gone.ts', 'x\n'.repeat(SINGLE_DIFF_MAX));
 		git('add', '-A');
 		git('commit', '-q', '-m', 'first');

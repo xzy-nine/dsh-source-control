@@ -121,7 +121,7 @@ export function showSharedContextMenu(
 		resolve: () => current,
 	});
 	/*
-	 * 收尾推迟到选中动作之后，且判据是「活动目标不再是这一份」。
+	 * 收尾推迟到选中动作之后，且判据是「活动目标已不是这一份」。
 	 *
 	 * select 的顺序是「置空 active → 再执行选中的 run」：在 active 变空的那一刻就注销贡献，
 	 * registry 记住的回调会先被 abort 清掉，随后的 select 找不到动作而静默返回，菜单能弹出、

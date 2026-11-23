@@ -183,7 +183,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 每一条 git 命令都以 `not a git repository` 失败：一轮刷新起五六个必然失败的子进程，
 	 * 日志里全是错误。判据是树里有没有该路径的节点——发现层只产出仓库节点。
 	 *
-	 * 发现结束前不按工作区根加载，避免先加载一次再被选中结果覆盖。路径已不存在的节点
+	 * 发现结束前不按工作区根加载：否则按根加载的结果会被随后到达的选中结果覆盖。路径已不存在的节点
 	 * （刚被移除的工作树或子模块）按未选中处理：否则 git 子进程的工作目录不存在，
 	 * 命令以 `spawn git ENOENT` 失败，而重取尚未返回时节点仍在树上。
 	 */
@@ -206,7 +206,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 *
 	 * 触底自动加载会持续累加，切换仓库时收回到该仓库上次的值（没有记录时用初始值）：避免跨仓库
 	 * 累积，同时保证切回同一仓库时提交图窗口缓存的键不变、不必重发 `git log`。初值同样取缓存，
-	 * 否则首帧会先按初始值取一次、再按恢复值重取。
+	 * 否则首帧按初始值取数后，又按恢复值重取一次。
 	 */
 	const [maxCommits, setMaxCommits] = React.useState(
 		() => (workingTreePath === null ? INITIAL_MAX_COMMITS : (rememberedMaxCommits(workingTreePath) ?? INITIAL_MAX_COMMITS)),
@@ -238,7 +238,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/*
 	 * 弹窗与手选校验需要的全部引用。
 	 *
-	 * 只在打开弹窗或处于手选模式时读：刷新路径不为筛选列表起这次 `for-each-ref`。
+	 * 只在打开弹窗或处于手选模式时读：刷新路径不为筛选列表额外发起 `for-each-ref`。
 	 */
 	React.useEffect(() => {
 		if (workingTreePath === null) return undefined;
@@ -272,7 +272,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	const { state, setState, refresh, refreshEntries, loadMore, busyRef, graphScope } = useGraphData({
 		workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
 		filter: refFilter, branchBase, headHint: selectedNode?.branch ?? null,
-		// 仅作首轮筛选的起点提示：这是渲染态缺席时的兜底，取数结果仍以本轮快照为准。
+		// 仅作首轮筛选的起点提示：这是渲染态缺席时的兜底，取数结果仍以该轮快照为准。
 		upstreamHint: currentSync?.upstream ?? null,
 		// 完整引用一并给出：缺了它只能按远程跟踪引用猜种类，本地上游会被拼成不存在的引用。
 		upstreamRefHint: currentSync?.upstreamRef ?? null,
@@ -500,7 +500,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	}, [state.busy, workingTreePath]);
 
 	/**
-	 * 阻塞型可停止操作的弹窗：用户可暂时收起，收起后仍以行为单位提供停止入口。
+	 * 阻塞型可停止操作的弹窗：用户可收起，收起后仍以行为单位提供停止入口。
 	 */
 	const [cancelDialogDismissed, setCancelDialogDismissed] = React.useState<string | null>(null);
 	const blockingCancellable = React.useMemo(
@@ -549,7 +549,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 */
 	const runEmptyAction = React.useCallback((empty: { readonly actionKind: string; readonly path: string }) => {
 		if (emptyActionBusy) return;
-		/** 本次动作的目标与执行体；两种动作只有这两项不同。 */
+		/** 该动作的目标与执行体；两种动作只有这两项不同。 */
 		let target: string;
 		let perform: () => Promise<void>;
 		if (empty.actionKind === 'init-workspace') {

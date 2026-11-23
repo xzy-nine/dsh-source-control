@@ -133,7 +133,7 @@ function GraphSectionView({
 	const handleDetailOpen = React.useCallback((path: string, isNew: boolean) => {
 		if (detail === null) return;
 		// 对比模式下新增文件仍有可比差异（旧侧为空），不按普通文件打开。
-		// 本次提交的改动文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
+		// 该提交的改动文件列表一并传下去：差异页的下拉框据此在同一作用域内切换。
 		void onOpenDiff(detail.commit.hash, path, false, detail.compareWith === null && isNew, detail.compareWith?.hash,
 			detail.files.map((file) => file.path));
 	}, [detail, onOpenDiff]);

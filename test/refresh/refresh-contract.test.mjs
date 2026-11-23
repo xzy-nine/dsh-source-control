@@ -214,7 +214,7 @@ test('提交图在途时触发只取快照的刷新：phase 仍收敛到 ready',
 		assert.equal(harness.latest.state.phase, 'loading', '触发时提交图应在途');
 		await harness.latest.refreshEntries();
 	});
-	// 在途窗口已构造完毕：后续重取不再人为延迟，只验证 phase 能收敛。
+	// 在途窗口已构造完毕：后续重取没有人为延迟，只验证 phase 能收敛。
 	harness.delays.clear();
 	await settle(harness, 1500);
 	assert.equal(harness.latest.state.phase, 'ready', 'phase 必须收敛到 ready');
@@ -398,7 +398,7 @@ test('对账刷新：窗口不随列表里的贮藏行逐轮增大', { skip }, a
 	assert.equal(lastLimit(harness), first, '第二轮窗口必须与第一轮相同');
 	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
 	assert.equal(lastLimit(harness), first, '第三轮窗口同样不变');
-	// 窗口稳定后数据不再变化：提交列表必须保持原引用，图形区因此不重算。
+	// 窗口稳定后数据保持不变：提交列表必须保持原引用，图形区因此不重算。
 	const before = harness.latest.state.commits;
 	await harness.act(async () => { await harness.latest.refresh('reconcile'); });
 	assert.equal(harness.latest.state.commits, before, '数据未变时提交列表保持原引用');

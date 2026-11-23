@@ -280,7 +280,7 @@ export function settledFileChanges(events: readonly SessionEventLike[]): FileCha
  * 把模型给出的路径折算成仓库相对路径。
  *
  * 模型写相对路径时按会话工作区解析，写绝对路径时按仓库根判断是否在仓库内；
- * 仓库之外（如临时目录）返回 null。
+ * 仓库之外（如工作区外的其他目录）返回 null。
  *
  * @param repoRoot - 仓库根绝对路径。
  * @param cwd - 会话工作区绝对路径，用于解析相对路径。
@@ -327,7 +327,7 @@ export function hasRepositoryChange(changes: readonly FileChange[], repoRoot: st
 }
 
 /**
- * 本次事件是否应触发自动刷新。
+ * 到达的事件是否应触发自动刷新。
  *
  * @param lastRefreshAt - 上一次自动刷新时间戳；从未刷新时为 0。
  * @param now - 当前时间戳。

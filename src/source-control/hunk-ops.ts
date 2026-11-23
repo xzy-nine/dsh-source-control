@@ -21,7 +21,7 @@ export interface HunkApplyOutcome {
 	readonly error: string | null;
 }
 
-/** 补丁临时文件的前缀。 */
+/** 补丁隔离目录的前缀。 */
 const PATCH_PREFIX = 'dsh-sc-hunk-';
 
 /**
@@ -42,8 +42,8 @@ export async function filePatchOf(repo: string, path: string): Promise<string> {
 /**
  * 把一个补丁交给 `git apply` 处理。
  *
- * 补丁经临时文件传入：`git apply` 从标准输入读补丁时，空补丁与参数错误的表现一致，
- * 而临时文件让失败信息里能带出具体行号。
+ * 补丁经隔离目录中的文件传入：`git apply` 从标准输入读补丁时，空补丁与参数错误的表现一致，
+ * 用文件传入让失败信息里能带出具体行号。
  *
  * @param repo - 仓库路径。
  * @param patchText - 补丁文本。

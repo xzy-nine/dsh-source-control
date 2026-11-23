@@ -1,9 +1,9 @@
 /**
- * 宿主侧状态读写，以及浏览器遗留数据的一次性迁移。
+ * 宿主侧状态读写，以及浏览器旧存储数据的迁移。
  *
- * 持久化统一落在宿主（见 source-control/state-store.ts）；本模块是客户端入口，并在首次
- * 连接时把浏览器 localStorage / sessionStorage 里的遗留数据搬到宿主类型化分区，搬完清掉浏览器
- * 那一份即幂等。提交信息草稿是会话级数据，不经本模块迁移。
+ * 持久化统一落在宿主（见 source-control/state-store.ts）；本模块是客户端入口，首次连接时把浏览器
+ * localStorage / sessionStorage 里的旧存储数据搬到宿主类型化分区，搬完清掉浏览器那一份即幂等。
+ * 提交信息草稿是会话级数据，不经本模块迁移。
  */
 import { callApi } from './http.ts';
 import { storageKeys } from '../shared/storage-keys.ts';
@@ -104,7 +104,7 @@ export async function writeWorkspace(cwd: string, workspaceCwd: string, partial:
 /**
  * 取回宿主持久化里的提交信息草稿。
  *
- * 草稿是会话级数据，宿主那份只是更早写入的遗留值；调用方在首次挂载时用本函数取回一次。
+ * 草稿是会话级数据，宿主那份是更早写入的旧存储值；调用方在首次挂载时用本函数取回一次。
  * 本函数只读宿主，不删除；调用方在草稿落到会话存储后调用 {@link clearPersistedDraft}
  * 删除宿主侧的键，删除失败不影响已取回的文本。
  *
@@ -119,7 +119,7 @@ export async function takePersistedDraft(cwd: string, repoPath: string): Promise
 }
 
 /**
- * 删除宿主持久化里的一个遗留草稿。
+ * 删除宿主持久化里的一个旧存储草稿。
  *
  * @param cwd - 会话工作区路径。
  * @param repoPath - 仓库路径。
@@ -156,24 +156,24 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 }
 
 /**
- * 浏览器遗留键的前缀，这些键需要搬到宿主。
+ * 浏览器旧存储键的前缀，这些键需要搬到宿主。
  *
  * 这两个常量与下面的迁移循环是本仓库**唯一**允许直接访问 `localStorage` / `sessionStorage`
- * 的位置：遗留数据存在浏览器里，迁移必须先把它们读出来。浏览器不是新数据的来源，
+ * 的位置：旧存储数据存在浏览器里，迁移必须先把它们读出来。浏览器不是新数据的来源，
  * 新数据一律走宿主持久化（见 `source-control/state-store.ts`）。
  */
 const LEGACY_PREFIX = 'dsh-source-control-';
 const LEGACY_MIGRATED_KEY = 'dsh-source-control-migrated';
 
 /**
- * 把浏览器里的遗留持久化数据搬到宿主。
+ * 把浏览器里的旧存储数据搬到宿主。
  *
- * 设置、布局与引用筛选的遗留数据收在 localStorage / sessionStorage 里，由本模块搬进宿主分区。
+ * 设置、布局与引用筛选的旧存储数据收在 localStorage / sessionStorage 里，由本模块搬进宿主分区。
  * 客户端只负责收集这些键原样发给宿主，分类与合并由宿主 `mergeLegacyEntries` 统一完成——浏览器不
  * 持久化，也不承担格式转换。提交信息草稿是会话级数据，由 `panel/storage.ts` 的
  * migrateLegacyDrafts 转入会话存储，不进宿主。清掉浏览器那一份后迁移即幂等。
  *
- * 浏览器存储只在这一个函数里被读取，且只为搬迁遗留键。
+ * 浏览器存储只在这一个函数里被读取，且只为搬迁旧存储键。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。

@@ -29,7 +29,7 @@ const PATTERNS = ['src/**/*.ts', 'src/**/*.tsx'] as const
 /** 基线文件，相对仓库根。 */
 const BASELINE = join('baselines', 'comment-prose-baseline.json')
 
-/** 本次要扫描的绝对路径。 */
+/** 当前要扫描的绝对路径。 */
 function targets(): string[] {
 	if (!process.argv.includes('--staged')) {
 		return uniqueRepoFiles(repoRoot, PATTERNS).map((file) => file.abs)

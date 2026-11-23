@@ -3,9 +3,9 @@
  *
  * 宿主的打开流程是先收掉上一份菜单（活动目标置空、旧目标作废）、再置入新目标。承载侧若把
  * 这一拍的空值当成「本份关闭」，刚登记的贡献会在弹窗出现前就被注销：菜单弹出时没有条目，
- * 而这次空开又把活动目标留在非空态，下一次右键重复同一过程——菜单从此打不开。
+ * 而空开又把活动目标留在非空态，下一次右键重复同一过程——菜单从此打不开。
  *
- * 这里用一个按宿主契约实现的最小服务当被测面：活动目标是快照源，打开时先置空再置入新目标。
+ * 这里用一个按宿主契约实现的最小服务当被测面：活动目标是快照源，打开时先置空、随后置入新目标。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -62,7 +62,7 @@ function createFakeMenus() {
 			};
 		},
 		open(target, point) {
-			// 宿主先收掉上一份，再置入新目标。
+			// 宿主收掉上一份后置入新目标。
 			active.set(null);
 			const resolution = resolve(target);
 			active.set(target);
@@ -70,7 +70,7 @@ function createFakeMenus() {
 		},
 		close() { active.set(null); },
 		select(id) {
-			// 宿主的 select：先置空活动目标，再执行选中动作。
+			// 宿主的 select：先置空活动目标，随后执行选中动作。
 			const resolution = opened[opened.length - 1].resolution;
 			active.set(null);
 			const action = resolution.entries.flatMap((entry) => entry.actions).find((entry) => entry.id === id);

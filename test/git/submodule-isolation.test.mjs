@@ -17,17 +17,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tempPath } from '../harness.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const libPath = (relative) => pathToFileURL(join(root, 'lib', 'src', 'source-control', relative)).href;
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 隔离目录登记表；文件级 after 统一删除。 */
 const temps = [];
 test.after(() => { for (const dir of temps) rmSync(dir, { recursive: true, force: true }); });
 
 /**
- * 建一个临时目录并登记清理。
+ * 建一个隔离目录并登记清理。
  *
  * @param prefix - 目录名前缀。
  * @returns 目录绝对路径。
@@ -192,7 +192,7 @@ test('isRepoPath 命令判据：未检出的子模块按非仓库处理', async 
 test('enrichRepositories：过期的子模块节点在磁盘上消失后不再列出', async () => {
 	/*
 	 * `.gitmodules` 里删掉声明后，节点必须消失：留着它会让面板显示一个指向已不存在目录的行，
-	 * 点它即得到「未检出子模块」空态，而它其实已被移除。
+	 * 点它即得到「未检出子模块」空态，而该目录已被移除。
 	 */
 	const { discoverRepositories, clearDiscoveryCache } = await import(libPath('repo-discovery.js'));
 	clearDiscoveryCache();

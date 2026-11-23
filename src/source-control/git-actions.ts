@@ -2,7 +2,7 @@
  * DSH 版源代码管理的 git 操作层：分支、标签、远程、贮藏、合并、变基与配置等写操作。
  *
  * 每个导出函数以数组参数跑一次或多次 git，返回 `ErrorInfo`：成功为 null，失败为 git 的
- * stderr 文本。多步操作按顺序执行，任一步失败即返回该步错误，后续步骤不再执行。
+ * stderr 文本。多步操作按顺序执行，任一步失败即返回该步错误并停止后续步骤。
  */
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
@@ -183,14 +183,14 @@ export function deleteRemote(repo: string, name: string): Promise<ErrorInfo> {
 /**
  * 编辑一个远程仓库的名称、抓取 URL 与推送 URL。
  *
- * 名称变化时先改名，其后各步以新名称寻址；URL 只在旧值不等于新值时下发。
+ * 名称变化时先改名，其后各步以新名称寻址；URL 仅在新旧取值不同时下发。
  *
  * @param repo - 仓库路径。
  * @param nameOld - 原远程名。
  * @param nameNew - 新远程名。
- * @param urlOld - 原抓取 URL；null 表示原先未单独配置。
+ * @param urlOld - 原抓取 URL；null 表示此前未单独配置。
  * @param urlNew - 新抓取 URL；null 表示删除该配置。
- * @param pushUrlOld - 原推送 URL；null 表示原先未单独配置。
+ * @param pushUrlOld - 原推送 URL；null 表示此前未单独配置。
  * @param pushUrlNew - 新推送 URL；null 表示删除该配置。
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
@@ -311,7 +311,7 @@ export function fetch(repo: string, remote: string | null, prune: boolean, prune
  * 一次抓取即整包传输，耗时可达数分钟并卡住整条抓取链。只需要当前分支的上游时用本函数，
  * 传输量按该分支的新提交计。
  *
- * 同时把远端该分支的最新提交写入它的远程跟踪引用：后续的领先/落后与合并都靠这条引用。
+ * 同时把远端该分支的最新提交写入它的远程跟踪引用：领先/落后计算与合并都读这条引用。
  *
  * @param repo - 仓库路径。
  * @param remote - 远程名。
@@ -322,7 +322,7 @@ export function fetch(repo: string, remote: string | null, prune: boolean, prune
 export function fetchRemoteBranch(repo: string, remote: string, branch: string, quiet = false, cancelKey = ''): Promise<ErrorInfo> {
 	/*
 	 * 显式写出去向：短名抓取是否更新远程跟踪引用取决于该远程的 refspec 配置，
-	 * 单分支克隆留下的写法下不会更新，后续的领先/落后与合并就拿不到新提交。
+	 * 单分支克隆留下的写法下不会更新，领先/落后计算与合并就拿不到新提交。
 	 * 信源限定在 refs/heads 之下，同名标签不会参与匹配。
 	 */
 	const refspec = 'refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch;
@@ -335,7 +335,7 @@ export function fetchRemoteBranch(repo: string, remote: string, branch: string, 
  * 浅克隆由三处设置共同截断，恢复时逐项回退：
  * - 公共目录下的 `shallow` 文件记录被截断的历史起点，由 `fetch --unshallow` 从远端取回缺失的历史块；
  * - remote 的 refspec 决定抓哪些分支，`--single-branch` 留下的写法只含一条，需还原成全部远程分支；
- * - `remote.<name>.tagopt` 决定是否跟随标签，`--no-tags` 留下的取值要清掉，否则后续抓取仍不跟随。
+ * - `remote.<name>.tagopt` 决定是否跟随标签，`--no-tags` 留下的取值要清掉，否则抓取仍不跟随标签。
  *
  * 一次 `--unshallow` 即补完所有远程共用的历史，因此只有第一个远程需要它；其余远程补一次普通抓取
  * 把分支与标签取回。任一步失败即返回该步错误，之前已完成的步骤保留，重试时按当前状态继续。
@@ -437,7 +437,7 @@ export function pushUpstream(repo: string, skipHooks = false, cancelKey = '', ta
 	 *
 	 * 不带 refspec 的推送由 `push.default` 决定去向：上游远程分支与本地分支不同名时
 	 * （`branch.<名字>.merge` 指向别的名字），`simple` 会直接拒绝；显式写出两侧名字
-	 * 让这次推送按上游实际绑定的分支走。
+	 * 让推送按上游实际绑定的分支走。
 	 */
 	const args = ['push'];
 	if (target !== null) args.push(target.remote);
@@ -455,7 +455,7 @@ export function pushUpstream(repo: string, skipHooks = false, cancelKey = '', ta
  * @param setUpstream - 是否设置上游分支。
  * @param mode - 推送模式；空串表示普通推送。
  * @param skipHooks - 是否跳过推送钩子（`--no-verify`）。
- * @returns 各远程的结果错误；无错误时为空数组，遇到首个错误后不再继续推送。
+ * @returns 各远程的结果错误；无错误时为空数组，首个错误处停止推送。
  */
 export async function pushBranchToMultipleRemotes(repo: string, branchName: string, remotes: readonly string[], setUpstream: boolean, mode: PushMode, skipHooks = false): Promise<ErrorInfo[]> {
 	if (remotes.length === 0) {
@@ -476,7 +476,7 @@ export async function pushBranchToMultipleRemotes(repo: string, branchName: stri
  * @param remotes - 目标远程名列表。
  * @param commitHash - 标签指向的提交哈希。
  * @param skipRemoteCheck - 是否跳过远程存在性检查。
- * @returns 各远程的结果错误；无错误时为空数组，遇到首个错误后不再继续推送。
+ * @returns 各远程的结果错误；无错误时为空数组，首个错误处停止推送。
  */
 export async function pushTag(repo: string, tagName: string, remotes: readonly string[], commitHash: string, skipRemoteCheck: boolean): Promise<ErrorInfo[]> {
 	if (remotes.length === 0) {
@@ -543,7 +543,7 @@ export async function checkoutBranch(repo: string, branchName: string, remoteBra
 /**
  * 在指定提交上创建分支，可同时检出。
  *
- * `checkout` 与 `force` 同时为真时先强制重建分支再检出，检出失败会追加到结果列表。
+ * `checkout` 与 `force` 同时为真时强制重建分支后检出；检出失败写入结果列表。
  *
  * @param repo - 仓库路径。
  * @param branchName - 新分支名。

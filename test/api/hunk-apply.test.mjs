@@ -1,7 +1,7 @@
 /**
  * 分段暂存的粒度：块只含红绿本身，不含未改动的上下文行。
  *
- * 走真实路由与临时仓库：`-U3` 会把上下文并进块里，相邻改动也容易被并成一块；这里锁住
+ * 走真实路由与隔离仓库：`-U3` 会把上下文并进块里，相邻改动也容易被并成一块；这里锁住
  * 零上下文切块的两个可观察后果——块的范围等于改动范围，且单独重放一块只把那一处写进索引。
  */
 import test from 'node:test';
@@ -12,12 +12,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
-/** 建一个临时仓库并给出 git 辅助函数。 */
+/** 建一个隔离仓库并给出 git 辅助函数。 */
 function makeRepo() {
 	const repo = mkdtempSync(join(tmpdir(), 'gg-hunk-apply-'));
 	const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });

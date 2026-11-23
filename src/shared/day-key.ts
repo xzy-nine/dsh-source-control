@@ -1,6 +1,5 @@
 /**
- * 本地日期的换算：日志目录按 `YYYY-MM-DD` 分日，比较用字符串即可。
- *
+ * 本地日期键换算：日志目录按 `YYYY-MM-DD` 分日，比较用字符串即可。
  */
 import { pad2 } from './pad-number.js';
 

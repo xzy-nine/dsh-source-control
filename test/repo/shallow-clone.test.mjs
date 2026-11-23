@@ -16,14 +16,14 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 隔离目录登记表；文件级 after 统一删除。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 });
 
 /**
- * 建一个临时目录并登记清理。
+ * 建一个隔离目录并登记清理。
  *
  * @param prefix - 目录名前缀。
  * @returns 目录绝对路径。

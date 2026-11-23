@@ -2,7 +2,7 @@
  * forge 差异视图适配层的测试：hunk 映射、行数统计、文件状态，以及渲染产物。
  *
  * 客户端测试从 `src/` 直连 `.ts`，但 Node 的类型剥离不处理 JSX，因此 `.tsx` 适配层
- * 改为从构建产物 `lib/client.js` 取：那里的适配层函数是包内可调用的实现。这样断言
+ * 从构建产物 `lib/client.js` 取：那里的适配层函数是包内可调用的实现。断言
  * 的正是实际会跑的那份代码，而不是另一条编译路径。
  */
 import test from 'node:test';
@@ -240,7 +240,7 @@ test('jsdom 里真实渲染 forge 的 DiffFile', { skip }, async () => {
 		assert.ok(html.length > 0, '必须渲染出内容');
 		assert.match(html, /app\.ts/, '显示文件路径');
 		assert.match(html, /const b = 20/, '显示新增行');
-		// 已审阅控件（唯一带 data-disabled 的 label）由样式隐藏，DOM 里仍存在但不可见。
+		// 只读勾选控件（唯一带 data-disabled 的 label）由样式隐藏，DOM 里仍存在但不可见。
 		const viewed = document.querySelector('label[data-disabled]');
 		assert.ok(viewed !== null, 'forge 的画法仍会渲染该控件，由样式隐藏');
 		assert.equal(viewed.querySelector('input[type="checkbox"]')?.disabled, true);

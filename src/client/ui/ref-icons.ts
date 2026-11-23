@@ -22,7 +22,7 @@ const REPO_ICON_SIZE = 14;
 const ACTION_ICON_SIZE = 15;
 
 /**
- * 把资源 SVG 转成行内标记：改为图标边长，并让颜色随外层文字色。
+ * 把资源 SVG 转成行内标记：以图标边长替换原始尺寸，并让颜色随外层文字色。
  *
  * @param svg - 资源文件内容。
  * @param size - 图标边长（像素）。

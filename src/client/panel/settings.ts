@@ -96,8 +96,8 @@ export function SettingsPanel({
 	// 外部指定页签时跟随：面板打开前先设好目标页签，打开即落位。
 	React.useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
 	/*
-	 * 滚动定位：分区在本次渲染后才挂到正文里，因此在渲染提交之后按 id 找元素。
-	 * 页签切换会换掉正文内容，定位因此依赖 tab：目标分区在别的页签时先落页签再滚动。
+	 * 滚动定位：分区在该次渲染后才挂到正文里，因此在渲染提交之后按 id 找元素。
+	 * 页签切换会换掉正文内容，定位因此依赖 tab：目标分区在别的页签时，定位需等待页签切换完成后执行。
 	 */
 	React.useEffect(() => {
 		if (!open || scrollTo === null) return;

@@ -31,7 +31,7 @@ function mergeModeOf(value: string): MergeMode {
 /**
  * 读全部引用的签名。
  *
- * 抓取只改动引用与 `FETCH_HEAD`；签名前后一致即表示本次抓取没有拉回任何东西，
+ * 抓取只改动引用与 `FETCH_HEAD`；签名前后一致即表示抓取没有拉回任何东西，
  * 不必让面板重取，也不必作废缓存。
  *
  * @param repo - 仓库路径。
@@ -45,7 +45,7 @@ async function refsSignature(repo: string): Promise<string> {
 /**
  * 在途的抓取：同一目标并发请求共享一次 git fetch，避免多面板各起一遍。
  *
- * 同时记下发起方使用的停止键：后来者共享这次抓取时，把自己的停止键指向同一组子进程，
+ * 同时记下发起方使用的停止键：后来者共享抓取时，把自己的停止键指向同一组子进程，
  * 否则它的停止请求找不到任何进程。
  */
 const inFlightFetches = new Map<string, { readonly promise: Promise<{ repo: string; changed: boolean }>; readonly cancelKey: string }>();
@@ -249,13 +249,13 @@ export async function handleHistoryCommand(ctx: ApiContext): Promise<boolean> {
 				const requestKey = str('cancelKey');
 				const existing = inFlightFetches.get(key);
 				if (existing !== undefined) {
-					// 共享这次抓取，同时让请求方的停止键也能终止它名下的子进程。
+					// 共享在途抓取，同时让请求方的停止键也能终止它名下的子进程。
 					if (requestKey !== '') shareCancellable(requestKey, existing.cancelKey);
 					return existing.promise;
 				}
 				const promise = (async () => {
 					/*
-					 * 抓取前后比一次引用：远端没有新东西时这次抓取不改变任何可见状态。
+					 * 抓取前后比一次引用：远端没有新东西时抓取不改变任何可见状态。
 					 *
 					 * 不比较的话，自动抓取（默认每 180s 一轮）会让所有面板每轮都重取一次提交图
 					 * 与工作区，而取到的内容并没有变化。抓取本身要几秒，两次 `for-each-ref` 的代价可忽略。

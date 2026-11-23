@@ -1,7 +1,7 @@
 /**
  * 提交列表与工作区条目的逐字段比对。
  *
- * 刷新时用它对上一次的数据与本次取回的数据做比对：未变化时调用方可以保持原数组引用，
+ * 刷新时用它对前一轮的数据与新取回的数据做比对：未变化时调用方可以保持原数组引用，
  * 使下游按引用记忆化的泳道布局与变更树计算不重算。纯函数、无 React 依赖，可直接单测。
  *
  * 比对字段与参考实现 vscode-git-graph 的 `loadCommits` 一致：只比对影响图形的字段，
@@ -160,7 +160,7 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 		if (match !== null && Number.parseInt(match[1], 10) === count) return commits;
 		return [{ ...existing, message }, ...commits.slice(1)];
 	}
-	// 仓库此前干净（列表里没有该行），首次产生改动时补出它；没有 HEAD 时无法给出父提交，留给下一次取图。
+	// 列表里没有该行而快照出现改动时补出它；没有 HEAD 时无法给出父提交，留待后续取图。
 	if (head === null || head === '') return commits;
 	return [{
 		hash: UNCOMMITTED_HASH, parents: [head], heads: [], tags: [], remotes: [], stash: null,

@@ -51,7 +51,7 @@ export interface ShowContextMenuOptions {
 	 * 稍后补齐的菜单项。
 	 *
 	 * 需要向 git 查询才完整的菜单（如「包含该提交的分支」）先用已算好的部分弹出，再把
-	 * 查询结果整体替换进来：菜单不再等子进程往返，用户看到的是立刻响应。返回 null 表示
+	 * 查询结果整体替换进来：菜单无需等子进程往返，用户看到的是立刻响应。返回 null 表示
 	 * 放弃替换（菜单已关闭或查询失败）。
 	 */
 	readonly pendingItems?: Promise<readonly ContextMenuItem[] | null>;

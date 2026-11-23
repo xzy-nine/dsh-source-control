@@ -65,8 +65,8 @@ export function postJson(path: string, body: Record<string, unknown>, signal?: A
 /**
  * 调用一条宿主命令。
  *
- * 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数），因此先读响应体再判断
- * 状态码：能取到文本就用它，取不到才退回状态码。
+ * 宿主在非 2xx 响应里同样带 `error` 文本（如未知命令、缺少参数）；命令级错误文本优先于
+ * HTTP 状态码，取不到文本时才用状态码。
  *
  * @param cwd - 会话工作区路径，作为 repo 传给宿主。
  * @param message - 命令载荷，`command` 由调用方给出。
@@ -92,7 +92,7 @@ export async function callApi(cwd: string, message: Record<string, unknown>, sig
  * @returns 宿主响应，含可能的 `error` 字段。
  */
 export async function callApiRaw(cwd: string, message: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
-	// 日志上报自身失败不再上报：否则一次失败会引出下一次上报。
+	// 日志上报自身的失败不上报，避免一次失败递归引出下一次上报。
 	const command = typeof message.command === 'string' ? message.command : '';
 	const report = command === 'logEvent' ? undefined : reportApiFailure;
 	let response: Response;

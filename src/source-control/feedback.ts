@@ -1,17 +1,11 @@
 /**
- * 反馈提交：把用户填写的正文、环境信息交 `gh issue create` 建 issue，再把日志文本作为
- * 独立评论追加到该 issue 下。
+ * 反馈提交：用 `gh issue create` 建立 issue，日志脱敏后作为独立评论追加到该 issue 下。
  *
- * 流程固定为三步：
- * 1. 取日志、脱敏；磁盘上的原始日志不动；
- * 2. `gh issue create` 用 `--body-file` 建 issue；
- * 3. 按 issue 评论上限把日志合并成若干条评论（`./feedback-comment.ts`），逐条
- *    `gh issue comment --body-file` 追加。
+ * 正文与环境信息写进 `--body-file`；磁盘上的原始日志不动。日志按评论上限合并成若干条评论
+ * （`./feedback-comment.ts`），逐条经 `gh issue comment --body-file` 追加。GitHub 的附件接口
+ * 不接受日志等文本类型，因此日志走评论而不是附件。
  *
- * 日志走评论而不是附件：GitHub 的附件接口不接受日志等文本类型，而评论正文上限 65536
- * 字符，落盘侧已按它约束单份文件，因此不需要附件环节。
- *
- * 失败一律归类为可读原因交给前端：缺 CLI、未登录、缺 scope、无权限、日志不可读。
+ * 失败归类为可读原因交给前端：缺 CLI、未登录、缺 scope、无权限、日志不可读。
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';

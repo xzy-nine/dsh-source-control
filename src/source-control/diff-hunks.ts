@@ -1,8 +1,8 @@
 /**
  * 统一差异（unified diff）的 hunk 解析：把 git 的输出切成逐块内容与行号区间。
  *
- * 差异视图按 hunk 逐块渲染，而不是把整份文件交给前端本地算 diff：
- * 后者在改动量超过本地搜索上限时会退化成整文件「全删全加」。
+ * 差异视图按 hunk 逐块渲染，不把整份文件交给前端本地算 diff：
+ * 本地 diff 在改动量超过搜索上限时会退化成整文件「全删全加」。
  * 输出形状与 DSH 的 WorkspaceDiffHunk 一致，供复制来的 FileDiff 直接使用。
  */
 
@@ -61,7 +61,7 @@ export function parseUnifiedDiffHunks(diffText: string): DiffHunkText[] {
 		current = null;
 	};
 
-	// 末尾换行是行终止符而非额外空行，先去掉再切分。
+	// 末尾换行是行终止符而非额外空行，切分前去掉。
 	const body = diffText.endsWith('\n') ? diffText.slice(0, -1) : diffText;
 	if (body === '') return hunks;
 

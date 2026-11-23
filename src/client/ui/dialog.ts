@@ -121,7 +121,7 @@ function runDialog<T>(build: (finish: (result: T) => void) => React.FunctionComp
 		pushDialog((id) => {
 			const Content = build((result) => {
 				resolve(result);
-				// 先让出一帧再摘除：退出动画在这段时间里播放。
+				// 摘除延后一帧执行：退出动画在这段时间里播放。
 				requestAnimationFrame(() => { removeDialog(id); });
 			});
 			return React.createElement(Content);
@@ -686,7 +686,7 @@ function checkboxRow(
 	label: string,
 	onChange: (next: boolean) => void,
 ): React.ReactElement {
-	/* Checkbox 自身携带可见文案且根元素是 `<label>`，文案不再另加节点。 */
+	/* Checkbox 自身携带可见文案且根元素是 `<label>`，文案由它承载，无需另加节点。 */
 	return React.createElement('div', { key, className: cx(css.field, css.fieldInline) },
 		React.createElement(Checkbox, { checked, onChange, label }));
 }

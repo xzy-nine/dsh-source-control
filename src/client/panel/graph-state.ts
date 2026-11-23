@@ -52,8 +52,8 @@ export function branchFieldsOf(snapshot: WorkingTreeSnapshot): Pick<
 /**
  * 按一轮快照就地修正条目与未提交伪提交行。
  *
- * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。父提交必须已在列表中，宿主不再负责
- * 这一判定，两处补出该行的调用点共用同一判据。
+ * 条目未变时保持原引用：更改区的树计算按 `entries` 记忆化。父提交必须已在列表中，该判定由调用点
+ * 承担，两处补出该行的调用点共用同一判据。
  *
  * @param previous - 当前状态。
  * @param snapshot - 本轮工作区快照。
@@ -66,7 +66,7 @@ export function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapsho
 		? previous.commits
 		: mergeCommits(previous.commits, withUncommittedCount(previous.commits, snapshot.entries.length, parent));
 	return {
-		// 手里已有本轮快照：变更列表那一路就是就绪的，与提交图是否还在取数无关。
+		// 已有该轮快照：变更列表那一路就是就绪的，与提交图是否还在取数无关。
 		...previous, error: null, entriesPhase: 'ready', merging: snapshot.merging, entriesTruncated: snapshot.truncated,
 		...branchFieldsOf(snapshot),
 		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),

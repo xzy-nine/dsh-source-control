@@ -195,7 +195,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 		}
 	};
 
-	// 换仓库后旧的统计、信息与译文都不再适用。
+	// 统计、信息与译文按仓库存储，切换仓库时清空。
 	React.useEffect(() => {
 		setStatsByHash(new Map());
 		setMessageByHash(new Map());
@@ -265,13 +265,13 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 					STATS_CACHE_LIMIT,
 				));
 			}
-			// 取不到完整信息时卡片继续显示列表里的标题，不再提示。
+			// 取不到完整信息时卡片继续显示列表里的标题，不提示。
 			if (message !== null) {
 				messageStamps.current = trimOldest(new Map(messageStamps.current).set(hash, now), MESSAGE_CACHE_LIMIT);
 				setMessageByHash((previous) => trimOldest(new Map(previous).set(hash, message), MESSAGE_CACHE_LIMIT));
 			}
 		}).catch(() => {
-			// 统计失败只影响卡片上的那一行，不再提示。
+			// 统计失败只影响卡片上的那一行，不提示。
 			statsInFlight.current.delete(hash);
 		});
 	}, [workingTreePath, statsByHash, messageByHash]);
@@ -361,7 +361,7 @@ export function useCommitStats({ workingTreePath, translateReady, onTranslateErr
 			let done = 0;
 			for (const item of targets) {
 				const translated = await translateCommitMessage(item.text, bodyTranslator(workingTreePath, locale, controller));
-				// 取消后不再写回：这一批要整体回退，写一半会留下半译状态。
+				// 取消后不写回：这一批要整体回退，写一半会留下半译状态。
 				if (controller.signal.aborted) return;
 				storeTranslation(item.hash, item.text, translated);
 				done++;

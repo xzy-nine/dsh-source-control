@@ -1,7 +1,7 @@
 /**
  * 损坏的子模块登记：模块目录缺失时 git 会把整条 status / diff 判成失败，仓库本身却仍可用。
  *
- * 判据与降级参数都是纯函数，因此先直接测它们；再用真实 git 与真实路由验证取数确实恢复。
+ * 判据与降级参数都是纯函数，因此直接测它们；另用真实 git 与真实路由验证取数确实恢复。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/* 本文件的用例串行执行：每个用例起真实 git 子进程与临时仓库。 */
+/* 本文件的用例串行执行：每个用例起真实 git 子进程与隔离仓库。 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
@@ -19,7 +19,7 @@ const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 const { isBrokenSubmoduleFailure, withIgnoredSubmoduleDirt, hasIgnoreSubmodulesFlag } =
 	await import('../../src/source-control/submodule-failure.ts');
 
-/** 临时仓库登记表。 */
+/** 隔离仓库登记表。 */
 const temps = [];
 
 test.after(() => {
@@ -40,7 +40,7 @@ function git(repo, ...args) {
 const BROKEN_MODULE_ERROR = /not a git repository|gitfile does not point to a valid repository/;
 
 /**
- * 建一个带子模块的父仓库，并把子模块的模块目录改成损坏状态。
+ * 建一个带子模块的父仓库，并把子模块的模块目录设为损坏状态。
  *
  * 损坏形态取自实测：模块目录里只剩 config 与 objects，HEAD、refs 与 index 都不在，
  * 子模块工作树里也只剩一个指向它的 .git 指针文件。此时 git 报
@@ -86,7 +86,7 @@ function makeBrokenSubmoduleRepo(prefix, options = {}) {
 		git(join(parent, 'goodlib'), 'checkout', '-q', 'HEAD~1');
 	}
 
-	// 一条本仓库自己的改动，用来验证降级之后它仍在。先提交一次再改，改动才落在工作区列。
+	// 一条本仓库自己的改动，用来验证降级之后它仍在。提交一次后再改，改动才落在工作区列。
 	writeFileSync(join(parent, 'own.txt'), 'first\n');
 	git(parent, 'add', 'own.txt');
 	git(parent, 'commit', '-qm', 'own');

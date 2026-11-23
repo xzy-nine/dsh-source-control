@@ -201,7 +201,7 @@ export function graphKey(repo: string, params: {
 	readonly branches: readonly string[] | null;
 	readonly remotes: readonly string[];
 	readonly stashes: readonly string[];
-	/** 本次取数时的 HEAD；未知时为 null。 */
+	/** 取数时的 HEAD；未知时为 null。 */
 	readonly head: string | null;
 }): string {
 	return [
@@ -425,7 +425,7 @@ function forEachSiblingWorktree(repo: string, visit: (key: string) => void): voi
  * 作废一个仓库及其共享公共目录的其它工作树的工作区快照。
  *
  * 只索引或工作区的写不会移动 HEAD、不会改引用与贮藏，因此提交图窗口、仓库信息与钩子路径
- * 仍然有效；清掉它们会让紧接着的全量刷新重跑一次 `git log` 与仓库信息批。
+ * 仍然有效；清掉它们会让后续全量刷新重跑一次 `git log` 与仓库信息批。
  *
  * @param repo - 发生写入的仓库路径。
  * @returns 无。
@@ -454,7 +454,7 @@ export function invalidateOnWrite(repo: string, surface: WriteSurface = 'history
 /*
  * 每次仓库写命令结束后按仓库作废：写命令会改变引用、提交历史、工作区或仓库配置。
  *
- * 不作废全部缓存：别的仓库的数据不受这次写入影响，清表会让同时打开多个仓库的面板各自
+ * 不作废全部缓存：别的仓库的数据不受该次写入影响，清表会让同时打开多个仓库的面板各自
  * 重取一遍（一次自动抓取就能触发多个面板的全量刷新）。
  *
  * 同一仓库的主工作树与链接工作树是两个不同路径，但共享同一 git 公共目录，

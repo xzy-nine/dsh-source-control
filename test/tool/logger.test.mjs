@@ -13,11 +13,11 @@ import { dirname, join } from 'node:path';
 /** 本进程启动时 setup.mjs 注入的隔离根；文件结束时还原回它。 */
 const ISOLATED_HOME = process.env.DSH_SOURCE_CONTROL_HOME;
 
-/** 本文件创建的临时 home；文件级 after 统一删除。 */
+/** 本文件创建的隔离 home；文件级 after 统一删除。 */
 const homes = [];
 test.after(async () => {
 	/*
-	 * 先重置日志状态再删目录：日志模块在进程退出时会 flush，而 flush 会按记录的文件路径
+	 * 删目录前先重置日志状态：日志模块在进程退出时会 flush，而 flush 会按记录的文件路径
 	 * 重建目录——顺序反过来会把刚删掉的目录又建出来。
 	 */
 	const module = await import('../../lib/src/source-control/logger.js');

@@ -1,7 +1,7 @@
 /**
  * AI 提交请求的组装：被合并入的提交、二进制清单与 diff 三段的拼接与丢弃说明。
  *
- * 纯函数，不读 git、不碰文件系统，因此可以直接单测。
+ * 纯函数，不读 git、不碰文件系统。
  */
 import { AI_COMMIT_PROMPTS, fillPrompt } from './ai-commit-prompts.js';
 import type { CollectedDiff, DroppedFile } from './commit-diff.js';

@@ -1,7 +1,7 @@
 /**
  * 宿主 hunk 解析的测试：用真实 git 输出校验逐块切分与行号区间。
  *
- * 重点：改动量大时不再退化成整文件「全删全加」——逐块内容必须由 git 给出；
+ * 重点：改动量大时也不会退化成整文件「全删全加」——逐块内容必须由 git 给出；
  * 输出形状与 DSH 的 WorkspaceDiffHunk 一致，供复制来的 FileDiff 直接使用。
  */
 import test from 'node:test';
@@ -12,12 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from '../lib-import.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const mod = await importHostModule('source-control/diff-hunks.js');
 const { parseUnifiedDiffHunks } = mod;
 
-/** 建一个临时仓库并在其中执行 git。 */
+/** 建一个隔离仓库并在其中执行 git。 */
 function makeRepo() {
 	const repo = mkdtempSync(join(tmpdir(), 'gg-hunk-'));
 	const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });

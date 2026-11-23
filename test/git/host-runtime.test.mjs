@@ -1,8 +1,8 @@
 /**
- * 宿主能力面：子进程、文件读取与目录监视的 seam 契约。
+ * 宿主能力面：子进程、文件读取与目录监视的接入契约。
  *
  * 判据取自两类回归：能力面只在真实宿主里跑到，测试里若从不装假服务就一行都验不到。这里用
- * 假服务把契约钉住：argv、stdio、graceMs、退出码、截断与终止按 seam 的要求给出，读取与监视
+ * 假服务把契约钉住：argv、stdio、graceMs、退出码、截断与终止按宿主能力接口的要求给出，读取与监视
  * 都落到 `ctx.fs`，缺服务时装载即失败。
  *
  * 本文件的用例必须串行：宿主能力是模块级单例，用例之间不得互相看见对方装的服务。
@@ -129,10 +129,10 @@ serial('两项都装好后按 seam 契约下发 spawn', async () => {
 		assert.equal(result.stdout, 'graph');
 		assert.equal(calls.length, 1);
 		const spec = calls[0];
-		// argv[0] 是可执行文件本身，参数按原样跟在后面：seam 不做 shell 解释。
+		// argv[0] 是可执行文件本身，参数按原样跟在后面：宿主子进程接口不做 shell 解释。
 		assert.deepEqual(spec.argv, ['git', 'log', '--oneline']);
 		assert.equal(spec.cwd, 'C:/repo');
-		// 每条 stdio 都显式给出：seam 不提供默认值。
+		// 每条 stdio 都显式给出：宿主子进程接口不提供默认值。
 		assert.deepEqual(spec.stdio.stdin, { data: 'piped' });
 		assert.ok(typeof spec.stdio.stdout === 'object' && spec.stdio.stdout !== null);
 		assert.ok(typeof spec.stdio.stderr === 'object' && spec.stdio.stderr !== null);

@@ -58,7 +58,7 @@ interface NulCursor {
  * 建立 NUL 分隔记录的游标。
  *
  * 逐条扫描而不把整段输出切成数组：几十万条记录的仓库上，整段切分会一次性造出同等数量的
- * 临时字符串，解析本身因此成为内存负担。
+ * 未截断的字符串，解析本身因此成为内存负担。
  *
  * @param text - git 的标准输出。
  * @returns 游标。
@@ -164,7 +164,7 @@ export function parseStatus(stdout: string, limit = STATUS_LIMIT): WorkingTreeEn
 export interface WorkingTreeSnapshot {
 	/** 工作区变更条目，按路径升序。 */
 	readonly entries: WorkingTreeEntry[];
-	/** 本次读取时的 HEAD 提交哈希；尚无提交时为 null。 */
+	/** 读快照时的 HEAD 提交哈希；尚无提交时为 null。 */
 	readonly head: string | null;
 	/** 当前分支短名；分离头指针时为 null。 */
 	readonly branch: string | null;
@@ -208,7 +208,7 @@ export function parseStatusSnapshot(stdout: string, limit = STATUS_LIMIT): Worki
 	let upstream = '';
 	let ab: { ahead: number; behind: number } | null = null;
 	/*
-	 * 记录先全部收下、解析完再按深度取：上限要按完整深度决定保留哪一层，
+	 * 记录全部解析完后再按深度截取：上限要按完整深度决定保留哪一层，
 	 * 边读边截会在某一层中途停下，得到的是一棵被切开的树。
 	 */
 	const collect = (entry: WorkingTreeEntry): void => { entries.push(entry); };

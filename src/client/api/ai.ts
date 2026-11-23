@@ -40,8 +40,7 @@ export interface CommitMessageHandlers {
 /**
  * 翻译是否可用。
  *
- * 翻译服务由 cot-translation bundle 可选装载，未装载时调用方不显示翻译入口，
- * 而不是等用户点击后才失败。
+ * 翻译服务由 cot-translation bundle 可选装载；未装载时本函数返回 false，调用方据此隐藏翻译入口。
  *
  * @param cwd - 会话工作区路径。
  * @returns 可用时为 true。

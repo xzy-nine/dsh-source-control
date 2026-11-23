@@ -311,7 +311,7 @@ export function useRemoteSync(deps: RemoteSyncDeps): RemoteSync {
 		if (busyFlags.network || workingTreePath === null || currentSync === undefined || currentSync.branch === null) return;
 		const branch = currentSync.branch;
 		const path = workingTreePath;
-		// 推送钩子激活且取消勾选时本次跳过；推送完成后回到默认勾选。
+		// 推送钩子激活且取消勾选时该次跳过；推送完成后回到默认勾选。
 		const skipHooks = pushHookActive && !runHooks;
 		const publishDone = (): void => { setRunHooks(true); };
 		void (async () => {

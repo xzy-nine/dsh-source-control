@@ -129,7 +129,7 @@ async function handleApiInScope(req: http.IncomingMessage, res: http.ServerRespo
 		}
 	}
 
-	/** 本轮结果的落定函数；非合并命令为 null。 */
+	/** 该请求结果的落定函数；非合并命令为 null。 */
 	let settleShared: ((payload: Record<string, unknown>) => void) | null = null;
 	if (coalesceKey !== null) {
 		let resolveShared: (payload: Record<string, unknown>) => void = () => { /* 先占位，随后覆盖 */ };

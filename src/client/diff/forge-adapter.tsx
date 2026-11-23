@@ -3,8 +3,8 @@
  * `DiffFile` 所需的 props，并把它的行评论接到对话输入框。
  *
  * `DiffFile` 是 forge 变更视图里的“一个文件段”，不是通用差异组件：它同时承担
- * 文件头、hunk 渲染、未变更行折叠与行评论。本适配层负责补齐它要求的入参，并把
- * 评论的终点是「插进对话输入框的定位引用」。
+ * 文件头、hunk 渲染、未变更行折叠与行评论。本适配层负责补齐它要求的入参，并把行评论
+ * 接到「插进对话输入框的定位引用」这一终点。
  */
 
 import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -80,9 +80,9 @@ export function statusOf(content: FileDiffContent): ForgeDiffFile['status'] {
 /**
  * 组装 `DiffFile` 要求的文件记录。
  *
- * `layer` 与 `digest` 是 forge 用来做分层透镜与已审阅标记的身份字段；本插件没有
- * 这两套机制，因此给固定值。`DiffFile` 只在画分层与已审阅状态时读它们，本适配层
- * 不注册分层透镜、也不提供评审数据，故不影响绘制。
+ * `layer` 与 `digest` 是 forge 用来做分层透镜与已查看状态（`viewed`）的身份字段；本插件
+ * 不注册分层透镜，也禁用已查看状态（`viewedDisabled: true`），因此给固定值；`DiffFile` 只在
+ * 绘制这两类状态时读取它们。
  *
  * @param path - 文件路径。
  * @param content - 宿主算出的差异内容。
@@ -124,8 +124,8 @@ export interface DiffFileStateHandlers {
 /**
  * 为单个文件构造 `DiffFile` 需要的 handler 与状态。
  *
- * 本插件的差异页一次只显示一个文件，因此没有文件列表级的跳转、没有“下一条评审
- * 讨论”，也没有跨文件动作。这些能力留成空实现；文件菜单只在 `visible` 为真时才
+ * 本插件的差异页一次只显示一个文件，因此没有文件列表级的跳转、没有下一条讨论线程
+ * （`nextThread`），也没有跨文件动作。这些能力留成空实现；文件菜单只在 `visible` 为真时才
  * 渲染，而适配层传 false，所以用户不会看到点了没反应的控件。
  *
  * @param state - 当前状态。
@@ -142,10 +142,10 @@ export function createDiffFileHandlers(
 		toggle: () => { setState({ ...state, expanded: !state.expanded }); },
 		reveal: () => { setState({ ...state, revealed: true }); },
 		expand: (_file, index) => { setState({ ...state, open: new Set([...state.open, index]) }); },
-		view: () => { /* 本插件不持久化已审阅标记 */ },
+		view: () => { /* 本插件不持久化已查看状态 */ },
 		actions: () => [],
 		section: () => { /* 单文件页不需要定位文件段 */ },
-		nextThread: () => { /* 本插件没有评审讨论 */ },
+		nextThread: () => { /* 单文件页没有下一条讨论线程 */ },
 		reach,
 	};
 	return { handlers, state };
@@ -243,7 +243,7 @@ export function ForgeDiffView(props: ForgeDiffViewProps): ReactNode {
 			const list = rows();
 			const index = list.indexOf(row);
 			if (index < 0) return;
-			// 让浏览器不把这次拖动当成文字选区。
+			// 让浏览器不把拖动当成文字选区。
 			event.preventDefault();
 			anchor.current = index;
 			head.current = index;

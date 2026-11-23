@@ -124,7 +124,7 @@ serial('不支持递归时给工作区的每个直接子目录补挂句柄', asy
 });
 
 serial('在已存在的子目录里新建仓库会报告该工作区', async () => {
-	// 这一条正是递归降级后失效的场景：一次性建两层能收到第一层，先建目录再建仓库则收不到。
+	// 这一条正是递归降级后失效的场景：一次性建两层能收到第一层，按建目录、建仓库的顺序分别建则收不到。
 	const { service } = singleLevelFs();
 	installHostCapabilities(hostWith(service));
 	const root = mkdtempSync(join(tmpdir(), 'gg-ws-nested-'));

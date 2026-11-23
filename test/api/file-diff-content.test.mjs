@@ -13,12 +13,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
-/** 临时仓库登记表。 */
+/** 隔离仓库登记表。 */
 const temps = [];
 
 /** 记录被启动的 git 参数数组。 */
@@ -36,7 +36,7 @@ test.after(() => {
 	syncBuiltinESMExports();
 });
 
-/** 建一个临时仓库。 */
+/** 建一个隔离仓库。 */
 function makeRepo(prefix) {
 	const repo = mkdtempSync(join(tmpdir(), prefix));
 	temps.push(repo);

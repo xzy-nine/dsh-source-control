@@ -231,7 +231,7 @@ export const BUILDERS: MenuBuilders = {
 		/*
 		 * 提交行右键只列以该提交为尖端的本地与远程分支：包含该提交的分支（在其之上的分支）
 		 * 删除后不影响此提交，列入会让「删除分支」指向与所选提交无关的分支。
-		 * 远程分支名自带远程名前缀，不再另加后缀。
+		 * 远程分支名自带远程名前缀，无需另加后缀。
 		 */
 		const localTips = ctx.tipBranches.filter((name) => name !== deps.head);
 		return tipBranchMenu(meta, localTips, ctx.tipRemoteBranches, (name, isRemote) => (isRemote

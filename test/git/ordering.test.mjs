@@ -4,7 +4,7 @@
  * 背景：初版把 commitOrdering 硬编码为 'date'，导致面板与 topo 视图顺序不一致、
  * 泳道分布完全不同。此测试钉住「参数确实生效」。
  *
- * 现实中的线性仓库两种排序结果相同，因此这里自建一个带分叉与合并的临时仓库，
+ * 现实中的线性仓库两种排序结果相同，因此这里自建一个带分叉与合并的隔离仓库，
  * 只有这种历史才能区分 date 与 topo。
  */
 import test from 'node:test';
@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 /** 用与宿主相同的形式构造 git 参数。 */
 function logWithOrdering(repo, ordering, limit = 20) {

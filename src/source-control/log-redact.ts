@@ -143,7 +143,7 @@ export const REDACT_TEXT = {
 } as const;
 
 /**
- * 脱敏摘要，写进反馈正文，告知收件方本次屏蔽了什么。
+ * 脱敏摘要，写进反馈正文，告知收件方屏蔽了什么。
  *
  * @param counts - 替换次数。
  * @returns 摘要文本；没有任何替换时为空串。

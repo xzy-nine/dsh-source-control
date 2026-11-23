@@ -2,7 +2,7 @@
  * 引用筛选的宿主侧取数：全部引用摘要与当前分支的分叉来源。
  *
  * 分叉来源的取值顺序与 VS Code 图形视图的 base 引用一致：配置、分支 reflog 的创建来源、
- * 默认远程的默认分支。用真实临时仓库覆盖三种来源与分离头指针。
+ * 默认远程的默认分支。用真实隔离仓库覆盖三种来源与分离头指针。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,11 +13,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importHostModule } from '../lib-import.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const { getBranchBase, getRefSummaries } = await importHostModule('source-control/git-query.js');
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 隔离目录登记表；文件级 after 统一删除。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });

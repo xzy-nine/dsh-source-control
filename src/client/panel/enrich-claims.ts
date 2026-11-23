@@ -5,7 +5,7 @@
  * 释放在途占用，否则该路径此后既不会被下发、也不在已完成集合里，工作树与子模块永久不出现。
  *
  * 空结果与失败会触发重试；重试按路径计数，连续失败达到上限后把该路径当作「没有工作树与子模块」
- * 记入已完成，不再重试。上限是兜底：宿主判据与发现层不一致（例如链接工作树的 `.git` 是文件）
+ * 记入已完成并停止重试。上限是兜底：宿主判据与发现层不一致（例如链接工作树的 `.git` 是文件）
  * 时，路径会一直留在树上而宿主一直返回空，没有上限即形成无休止的请求。
  *
  * 纯数据结构，无 React 依赖，可直接单测。
@@ -32,7 +32,7 @@ export interface EnrichClaims {
 	/**
 	 * 一批路径得到空结果或失败：累计连续失败次数。
 	 *
-	 * 达到 {@link ENRICH_FAILURE_LIMIT} 的路径转入已完成（不再下发、不再重试）。
+	 * 达到 {@link ENRICH_FAILURE_LIMIT} 的路径转入已完成，停止下发与重试。
 	 *
 	 * @param paths - 本批路径。
 	 * @returns 是否还有路径需要重试。
@@ -86,7 +86,7 @@ export function createEnrichClaims(): EnrichClaims {
 				inFlight.delete(path);
 				const count = (failures.get(path) ?? 0) + 1;
 				if (count >= ENRICH_FAILURE_LIMIT) {
-					// 到上限：按「没有工作树与子模块」处理，此后不再下发。
+					// 到上限：按「没有工作树与子模块」处理，此后停止下发。
 					failures.delete(path);
 					settled.add(path);
 					continue;

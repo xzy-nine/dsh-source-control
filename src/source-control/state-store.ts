@@ -5,11 +5,11 @@
  * 不是对话：\`workspaces[normCwd]\` 一个键承载该工作区根的选中仓库、展开集合、已知仓库位置与
  * 更新时刻，同一工作区下的多个会话共享同一份树状态。浏览器端不承担持久化。
  *
- * 内存文档是权威读面：域打开时由域载入，每次写先落内存再交给域；域不可用（profile 未挂载
- * \`storageDomain\`）时回退到旧版 \`$DSH_HOME/dsh-source-control/state.json\`。
+ * 内存文档是权威读面：域打开时由域载入，写入同时更新内存与域。域不可用（profile 未挂载
+ * \`storageDomain\`）时读写回退文件 \`$DSH_HOME/dsh-source-control/state.json\`。
  *
- * 旧格式只作为导入来源读取一次：v1（平铺 entries + 顶层 repos）与 v3（\`schemaVersion: 3\`）
- * 都经同一分类器还原成当前文档，随后写进域。文件本身不改不删，便于回滚。
+ * v1（平铺 entries + 顶层 repos）与 v3（\`schemaVersion: 3\`）文件仅作导入来源，经同一分类器
+ * 还原成当前文档后写进域，源文件不修改也不删除。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { errorText } from '../shared/error-text.js';
@@ -63,7 +63,7 @@ interface StateDocument extends DocumentParts {
 	readonly writtenAt: number;
 }
 
-/** 旧版文件文档的结构版本；只用于识别导入来源。 */
+/** 迁移来源文件的结构版本；只用于识别导入来源。 */
 const LEGACY_SCHEMA_VERSION = 3 as const;
 
 /** storage domain 的单元名。 */
@@ -117,7 +117,7 @@ let domainFailure: string | null = null;
 /** 内存态文档；首次读取时从域或旧文件载入。 */
 let stateDoc: StateDocument | null = null;
 
-/** 旧版状态文档的绝对路径；只在导入时读。 */
+/** 迁移来源状态文档的绝对路径；只在导入时读。 */
 let legacyPath: string | null = null;
 
 /** 已存会话的工作区根表；接域时从会话持久化服务读一次，迁移按会话 id 查。 */
@@ -158,8 +158,8 @@ function emptyDocument(): StateDocument {
 /**
  * 打开 storage domain 并载入文档。
  *
- * 域不可用（profile 未挂载 `storageDomain`、打开失败）时回退到旧版文件，数据仍可读写，只是
- * 不再享有域的结构校验与原子发布。调用方在宿主 `apply` 里等待本函数，之后访问器即可同步读。
+ * 域不可用（profile 未挂载 `storageDomain`、打开失败）时读写 `$DSH_HOME` 下的回退文件；
+ * 该路径不提供域的结构校验与原子发布。调用方在宿主 `apply` 里等待本函数，之后访问器即可同步读。
  *
  * @param storageDomain - `ctx.storageDomain`；缺失时为 undefined。
  * @param readSessionPersistence - 取 `ctx.sessionPersistence`；未装载时给 undefined。
@@ -176,7 +176,7 @@ export async function openStateStore(storageDomain: unknown, readSessionPersiste
 		const domain = await facility.open(DOMAIN_SPEC);
 		const global = domain.global as unknown as { get(): StateDocument; set(value: StateDocument): Promise<void> };
 		const stored = coerceDocument(global.get());
-		// 域里从未写入过（writtenAt 为 0）时先导入旧版文件：升级用户的数据在这里接过来。
+		// 域里从未写入过（writtenAt 为 0）时导入迁移来源文件，接过来历次版本的数据。
 		if (stored.writtenAt === 0) sessionCwds = await readSessionCwdMap(sessionHeaderReader(readSessionPersistence?.()));
 		const imported = stored.writtenAt === 0 ? importLegacyFile() : null;
 		domainGlobal = global;
@@ -197,9 +197,9 @@ export async function openStateStore(storageDomain: unknown, readSessionPersiste
 }
 
 /**
- * 读文档：优先域，其次旧版文件，都没有时给空文档。
+ * 读文档：优先域，其次迁移来源文件，都没有时给空文档。
  *
- * 旧版文件在这里一次性迁移到当前结构并写进域；文件本身不改不删，便于回滚。
+ * v1/v2/v3 格式文件在此导入当前结构并写进域；源文件不改不删。
  *
  * @returns 文档。
  */
@@ -214,7 +214,7 @@ function load(): StateDocument {
 }
 
 /**
- * 从旧版文件导入文档。
+ * 从迁移来源文件导入文档。
  *
  * 支持三种来源：v1（平铺 entries + 顶层 repos）、v2（按会话分区）、v3（`schemaVersion: 3`）。
  * 文件缺失、JSON 非法或结构不符时给空文档。
@@ -260,9 +260,9 @@ function coerceDocument(value: unknown): StateDocument {
 }
 
 /**
- * 把旧版 v3 文件（`schemaVersion: 3`）的各分区收敛成文档内容。
+ * 把 v3 迁移来源文件（`schemaVersion: 3`）的各分区收敛成文档内容。
  *
- * @param raw - 旧版文件原始对象。
+ * @param raw - v3 迁移来源文件的原始对象。
  * @returns 分区内容。
  */
 function coerceLegacyV3(raw: Record<string, unknown>): DocumentParts {
@@ -361,10 +361,10 @@ function idsOf(value: unknown): string[] {
 }
 
 /**
- * 取一个引用短名在旧版按名字保存下的完整 id。
+ * 取一个引用短名在迁移来源里按名字保存下的完整 id。
  *
- * 与客户端 refs.ts 的 refIdOf 一致：含 \`/\` 推断为远程分支，否则本地分支。旧版不区分标签，
- * 迁移后由手选校验丢弃或回退。
+ * 与客户端 refs.ts 的 refIdOf 一致：含 \`/\` 推断为远程分支，否则本地分支。迁移来源不区分标签，
+ * 导入后由手选校验丢弃或回退。
  *
  * @param name - 引用短名。
  * @returns 完整引用名。
@@ -376,9 +376,9 @@ function refIdOf(name: string): string {
 }
 
 /**
- * 把旧版按仓库键的 \`{ mode, selected }\` 折合成持久化形态。
+ * 把迁移来源按仓库键的 \`{ mode, selected }\` 折合成持久化形态。
  *
- * @param value - 旧版持久化值。
+ * @param value - 迁移来源里的持久化值。
  * @returns \`'all'\` 或手选 id 列表；自动模式或不可识别时为 null（不落盘）。
  */
 function legacyRefFilterStored(value: unknown): 'all' | string[] | null {
@@ -511,7 +511,7 @@ function assembleWorkspaces(
 	return out;
 }
 
-/** 旧版 entries 里的键前缀。 */
+/** 迁移来源 entries 里的键前缀。 */
 const V1_SELECTION_PREFIX = 'dsh-source-control-selection:';
 const V1_EXPANDED_PREFIX = 'dsh-source-control-expanded:';
 const V1_REF_FILTER_KEY = 'dsh-source-control-ref-filter';
@@ -535,7 +535,7 @@ interface ClassifiedEntries {
 /**
  * 把平铺 entries 按类型分类。
  *
- * 纯函数，供文档迁移与浏览器旧键合并共用。expanded 统一成 string[]（数组直接用、字符串
+ * 纯函数，供文档迁移与浏览器来源键合并共用。expanded 统一成 string[]（数组直接用、字符串
  * JSON.parse 失败给空）；ref-filter 全局表与旧按仓库键合并（全局表优先）；路径键过 normalizePath；
  * 草稿只留非空。layout 在 entries 无任何布局键时为 null。
  *
@@ -553,7 +553,7 @@ function classifyEntries(entries: Record<string, unknown>, fallbackUpdatedAt: nu
 		repoHeight: typeof entries[V1_REPO_HEIGHT_KEY] === 'number' ? entries[V1_REPO_HEIGHT_KEY] : DEFAULT_LAYOUT.repoHeight,
 	} : null;
 
-	// ref-filter：先折合旧按仓库键，再叠加全局表（全局表优先）。
+	// ref-filter：按仓库键折合取值，叠加全局表时以全局表优先。
 	const refFilters: RefFilterMap = {};
 	for (const [key, value] of Object.entries(entries)) {
 		if (!key.startsWith(V1_REF_FILTER_PREFIX)) continue;
@@ -706,8 +706,8 @@ export function migrateV2ToV3(raw: Record<string, unknown>, resolveCwd: SessionC
 /**
  * 把一组平铺 entries 合并到当前文档。
  *
- * 浏览器旧键迁移用：客户端把 localStorage / sessionStorage 里的旧键原样收集后一次性发给宿主，
- * 由宿主分类并合并到对应分区。已有值保留，旧键分类出的值覆盖（浏览器是更近的数据源）。旧键里
+ * 浏览器来源键迁移用：客户端把 localStorage / sessionStorage 里的来源键原样收集后一次性发给宿主，
+ * 由宿主分类并合并到对应分区。已有值保留，来源键分类出的值覆盖（浏览器是更近的数据源）。这些键里
  * 按会话的选中与展开经 resolveCwd 折进工作区；无法还原工作区的条目丢弃。
  *
  * @param entries - 平铺 entries。
@@ -745,10 +745,8 @@ function mergeDrafts(base: { readonly commitMessages: Record<string, string> } |
 }
 
 /**
- * 写回文档：先更新内存态，再交给 storage domain 落盘。
- *
- * 内存态是权威读面：域写入失败时保留内存值，面板照常工作，只留一条记录。域尚未打开时
- * 登记一次待补写，打开完成后统一落一次。
+ * 更新内存文档并交给 storage domain 落盘。内存态是权威读面：域写入失败时保留内存值，
+ * 面板照常工作，只留一条记录。域打开前的写入进入队列，域就绪后统一落盘。
  *
  * @param next - 新文档。
  * @returns 无。
@@ -756,7 +754,7 @@ function mergeDrafts(base: { readonly commitMessages: Record<string, string> } |
 function save(next: StateDocument): void {
 	stateDoc = { ...next, writtenAt: Date.now() };
 	if (domainGlobal === null) {
-		// 域还没打开：记一次待补写，打开后统一落盘；同时按旧版文件写一份，避免进程提前退出丢改动。
+		// 域未就绪：写入进入队列，同时写一份回退文件，防止进程退出丢失改动。
 		if (pendingWrites.length === 0) pendingWrites.push(() => { void persist(); });
 		writeLegacyFile(stateDoc);
 		return;
@@ -781,10 +779,10 @@ async function persist(): Promise<void> {
 }
 
 /**
- * 把文档写进旧版文件。
+ * 把文档写进迁移来源格式的回退文件。
  *
- * 只在域不可用时使用，使回退路径与旧版行为一致；域可用时不写这个文件。写盘是同步的：
- * 回退路径与旧版行为一致，调用方紧接着读回同一份文件时不必等一轮事件循环。
+ * 回退文件在域不可用时写，域就绪时不写。写盘同步完成，调用方立即读回同一份文件时
+ * 不必等一轮事件循环。
  *
  * @param doc - 文档。
  * @returns 无。
@@ -794,7 +792,7 @@ function writeLegacyFile(doc: StateDocument): void {
 	try {
 		mkdirSync(dirname(path), { recursive: true });
 		const tmp = path + '.tmp';
-		// 带上结构版本：回退文件与旧版 v3 同形，旧版插件读它仍能正常工作。
+		// 回退文件带 v3 结构版本，供兼容该版本的读取方使用。
 		writeFileSync(tmp, JSON.stringify({ schemaVersion: LEGACY_SCHEMA_VERSION, ...doc }, null, 2), 'utf8');
 		renameSync(tmp, path);
 	} catch (error) {
@@ -805,7 +803,7 @@ function writeLegacyFile(doc: StateDocument): void {
 /**
  * 域是否已接上。
  *
- * @returns 接上时为 true；回退到旧版文件时为 false。
+ * @returns 接上时为 true；回退到迁移来源格式的回退文件时为 false。
  */
 export function stateDomainReady(): boolean {
 	return domainGlobal !== null;

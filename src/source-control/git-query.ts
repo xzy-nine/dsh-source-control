@@ -199,7 +199,7 @@ export async function getCommits(
 	const { stashes, skip, num, remotes, hideRemotes, includeTags, includeRemotes } = query;
 	try {
 		/*
-		 * 引用标记来自 `git log` 的装饰（`--decorate=full` 的 `%D`），不再单独枚举引用：
+		 * 引用标记来自 `git log` 的装饰（`--decorate=full` 的 `%D`），不单独枚举引用：
 		 * 同一次日志已经带出窗口内提交上的全部分支、标签与远程分支。
 		 *
 		 * 远程名可能与仓库信息同批取，标注要用它，因此这里才等它落地；日志与它并行。
@@ -612,7 +612,7 @@ async function readRefsRaw(args: readonly string[], repo: string): Promise<{ std
  * 一次枚举读取引用集合与分支列表。
  *
  * 提交图与仓库信息读的是同一批引用，只是取值不同；一次 `for-each-ref` 同时得到两者，首屏因此
- * 少起一个子进程。`head` 不在本次输出里，由 `HEAD` 文件补入，不起 `git rev-parse`。
+ * 少起一个子进程。`head` 不在这份输出里，由 `HEAD` 文件补入，不起 `git rev-parse`。
  *
  * @param repo - 仓库路径。
  * @param showRemoteBranches - 是否包含远程分支。
@@ -678,9 +678,9 @@ async function getLog(repo: string, query: LogQuery): Promise<LogRecord[]> {
 /**
  * 由引用集合与 `HEAD` 文件内容得出 HEAD 指向的提交哈希。
  *
- * `HEAD` 指向分支时该分支必然出现在本次引用集合里；取不到时返回 null，与读不到 HEAD 同一处理。
+ * `HEAD` 指向分支时该分支必然出现在这份引用集合里；取不到时返回 null，与读不到 HEAD 同一处理。
  *
- * @param refs - 本次读到的引用集合。
+ * @param refs - 读到的引用集合。
  * @param headRef - `HEAD` 文件的解析结果；读不到时为 null。
  * @returns 提交哈希；无法确定时为 null。
  */
@@ -764,7 +764,7 @@ const BASE_REF_FORMAT = ['%(refname)', '%(refname:short)', '%(upstream:short)', 
 /**
  * 读取仓库的全部引用，供引用筛选列表与手选校验使用。
  *
- * 与提交图取数分离：只有打开筛选弹窗或需要校验手选引用时才读，刷新路径不起这次 `for-each-ref`。
+ * 与提交图取数分离：只有打开筛选弹窗或需要校验手选引用时才读，刷新路径不起 `for-each-ref`。
  *
  * @param repo - 仓库路径。
  * @param showRemoteBranches - 是否包含远程分支。
@@ -851,7 +851,7 @@ async function resolveRefName(repo: string, candidate: string): Promise<{ short:
 		const [refname, short, upstreamName, upstreamTrack, upstreamRef] = line.split('\0');
 		if (refname.startsWith('refs/heads/')) {
 			local = { short, ref: refname };
-			// 上游已消失时退回本地分支；上游的完整引用由 git 给出，不再按短名拼。
+			// 上游已消失时退回本地分支；上游的完整引用由 git 给出，不按短名拼。
 			gone = upstreamTrack.trim() === 'gone';
 			// 无上游时上游短名与完整引用都为空串。
 			upstream = upstreamName === '' || upstreamRef === '' ? null : { short: upstreamName, ref: upstreamRef };

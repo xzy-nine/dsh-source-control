@@ -11,9 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXPECTED_MIN_LINES, MIN_LINES, scanClones } from '../../scripts/duplication-scan.mjs';
 
-/* 本文件串行：每个用例建临时目录并起一次 jscpd 扫描。 */
+/* 本文件串行：每个用例建隔离目录并起一次 jscpd 扫描。 */
 
-/** 临时目录登记表。 */
+/** 隔离目录登记表。 */
 const temps = [];
 
 test.after(() => {

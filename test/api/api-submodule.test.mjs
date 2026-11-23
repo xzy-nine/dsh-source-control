@@ -13,7 +13,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tempPath } from '../harness.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
@@ -210,7 +210,7 @@ test('丢弃子模块条目：只移动其指向的提交，不清理内部改�
 		assert.equal(subHead(), recorded, '前置条件：HEAD 已与索引一致');
 		assert.equal(blocked.submodules[0].status, 'unchanged');
 		assert.equal(blocked.submodules[0].dirty, true);
-		// 先清掉本地改动再退到旧提交，随后在旧提交上制造会被覆盖的改动。
+		// 清掉本地改动并退到前一提交，随后在该提交上制造会被覆盖的改动。
 		gitIn(sub, 'checkout', '-q', '--', '.');
 		gitIn(sub, 'checkout', '-q', older);
 		writeFileSync(join(sub, 'dep.txt'), 'conflict');

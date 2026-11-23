@@ -60,9 +60,9 @@ export function saveRepoLocations(cwd: string, repos: readonly CachedRepoLocatio
 }
 
 /**
- * 把宿主本次返回的仓库位置收进内存缓存。
+ * 把宿主返回的仓库位置收进内存缓存。
  *
- * 首屏直接采用宿主按持久化位置取回的树，位置已由宿主持有，因此只更新内存镜像、不再落盘一次。
+ * 首屏直接采用宿主按持久化位置取回的树，位置已由宿主持有，因此只更新内存镜像、无需落盘一次。
  *
  * @param cwd - 工作区根路径。
  * @param repos - 顶层仓库位置。

@@ -39,7 +39,7 @@ export interface ChangesSectionProps extends ChangeActions, SectionEmptyFields {
 	 * 提交钩子与推送钩子任一存在即显示：同一个勾选项同时决定提交与推送是否带 `--no-verify`。
 	 */
 	readonly hooksActive: boolean;
-	/** 本次提交与推送是否运行钩子。 */
+	/** 该提交与推送是否运行钩子。 */
 	readonly runHooks: boolean;
 	readonly onToggleRunHooks: (checked: boolean) => void;
 	/** 把当前改动存入贮藏。 */
@@ -58,7 +58,7 @@ export interface ChangesSectionProps extends ChangeActions, SectionEmptyFields {
 	readonly syncBehind: number;
 	readonly syncAhead: number;
 	readonly onSync: () => void;
-	/** 当前分支是纯本地分支（无上游）且无改动时，提交按钮改为发布。 */
+	/** 当前分支是纯本地分支（无上游）且无改动时，提交按钮显示为发布。 */
 	readonly showPublishButton: boolean;
 	readonly onPublish: () => void;
 	/** 提交按钮是否可用：有暂存改动，或勾选修补（此时可只改提交信息）。 */

@@ -18,7 +18,7 @@ const shape = (rows) => rows.map((row) => (row.kind === 'folder' ? `▸${row.pat
 /** 本文件的用例之间无共享进程级状态，因此并发执行；并发前提见 test/harness.mjs。 */
 parallel('变更树', (t) => {
 	t.test('单链合并为一行，不再逐级展开', () => {
-		// 旧行为会输出 ▸src ▸src/client ▸src/client/panel 三行，再是文件。
+		// 单链合并为一行，不会输出 ▸src ▸src/client ▸src/client/panel 三行后才是文件。
 		const rows = changeRowsOf([entry('src/client/panel/a.ts'), entry('src/client/panel/b.ts')], new Set());
 		assert.deepEqual(shape(rows), ['▸src/client/panel', 'src/client/panel/a.ts', 'src/client/panel/b.ts']);
 		assert.equal(rows[0].name, 'src/client/panel', '合并行显示整条链');
@@ -92,7 +92,7 @@ parallel('变更树', (t) => {
 		assert.equal(absolutePathOf('E:\\repo', 'E:\\repo\\.git\\info\\exclude'), 'E:\\repo\\.git\\info\\exclude');
 		assert.equal(absolutePathOf('E:/repo', 'D:/other/a.ts'), 'D:/other/a.ts', '跨盘符原样');
 		assert.equal(absolutePathOf('/home/me/repo', '/etc/hosts'), '/etc/hosts');
-		// UNC 路径（双反斜杠开头）原样返回，不再拼一次仓库根。
+		// UNC 路径（双反斜杠开头）原样返回，不会拼上仓库根。
 		assert.equal(absolutePathOf('E:\\repo', '\\\\server\\share\\a.ts'), '\\\\server\\share\\a.ts');
 		assert.equal(absolutePathOf('/home/me/repo', '\\\\server\\share'), '\\\\server\\share');
 		// 仓库根未知时无从拼接，原样给出。

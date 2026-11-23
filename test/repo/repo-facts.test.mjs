@@ -1,7 +1,7 @@
 /**
  * 仓库事实层契约：布局缓存的有效期、祖先与后代失效、打包引用的整读次数与守卫。
  *
- * 断言以真实临时仓库为对象，并在导入被测模块之前包裹 `readFile` / `stat`，按路径统计读取次数。
+ * 断言以真实隔离仓库为对象，并在导入被测模块之前包裹 `readFile` / `stat`，按路径统计读取次数。
  * 宿主模块带内部 `.js` 相对导入，一律从 `lib/` 产物导入，`pretest` 会先重建产物。
  */
 import test from 'node:test';
@@ -28,7 +28,7 @@ syncBuiltinESMExports();
 const facts = await importHostModule('source-control/repo-facts.js');
 const { runGit } = await importHostModule('source-control/working-tree.js');
 
-/** 临时目录登记表；文件级 after 统一删除并还原 fs 桩。 */
+/** 隔离目录登记表；文件级 after 统一删除并还原 fs 桩。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
@@ -56,7 +56,7 @@ function countOf(list, suffix) {
 }
 
 /**
- * 建一个已提交的临时仓库。
+ * 建一个已提交的隔离仓库。
  *
  * @param prefix - 目录名前缀。
  * @returns 仓库路径与执行 git 的辅助函数。
@@ -96,7 +96,7 @@ test('repoHeadHash 与 git rev-parse 一致，打包引用只整读一次', asyn
 	assert.equal(await facts.repoHeadHash(repo), expected);
 	assert.equal(countOf(readPaths, 'packed-refs'), 1, '首次读整份打包引用');
 
-	// 二次调用命中 mtime 与大小守卫：只 stat 一次，不再整读。
+	// 二次调用命中 mtime 与大小守卫：只 stat 一次，不整读。
 	resetCounts();
 	assert.equal(await facts.repoHeadHash(repo), expected);
 	assert.equal(countOf(readPaths, 'packed-refs'), 0, '二次调用不整读打包引用');
@@ -126,7 +126,7 @@ test('提交走执行层后布局缓存被作废', async () => {
 	facts.setRepoFactsTtlForTest(10_000);
 	assert.notEqual(await facts.repoLayout(repo), null);
 
-	// 命中缓存：不再逐级 stat `.git`。
+	// 命中缓存：跳过逐级 stat `.git`。
 	resetCounts();
 	assert.notEqual(await facts.repoLayout(repo), null);
 	assert.equal(countOf(statPaths, '.git'), 0, '命中布局缓存');

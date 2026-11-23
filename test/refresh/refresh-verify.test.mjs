@@ -22,8 +22,8 @@ const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 /**
  * 提交图取数参数：调用方未给出远程与贮藏，由宿主自行读取。
  *
- * 不带 `stashes` 与 `remotes`：首屏由宿主自行枚举，客户端不再先取一次仓库信息。给出空列表与
- * 「未提供」语义不同 —— 空列表表示仓库确实没有远程或贮藏，宿主据此不再读取。
+ * 不带 `stashes` 与 `remotes`：首屏由宿主自行枚举，客户端不会先取一次仓库信息。给出空列表与
+ * 「未提供」语义不同 —— 空列表表示仓库确实没有远程或贮藏，宿主据此跳过读取。
  */
 const COMMITS_MESSAGE = {
 	command: 'loadCommits', branches: null, limit: 200, skip: 0, showTags: true, showRemoteBranches: true,
@@ -32,7 +32,7 @@ const COMMITS_MESSAGE = {
 };
 
 /**
- * 删除临时目录，容忍 Windows 上的瞬时文件锁。
+ * 删除隔离目录，容忍 Windows 上的瞬时文件锁。
  *
  * 测试里的 git 子进程刚退出时目录可能仍被短暂占用，`rmSync` 会抛 EPERM。重试若干次即可，
  * 全部失败才抛错（真删除失败仍应暴露）。
@@ -54,7 +54,7 @@ function removeTemp(dir) {
 	}
 }
 
-/** 建一个已配置身份的临时仓库。 */
+/** 建一个已配置身份的隔离仓库。 */
 function makeRepo() {
 	const repo = mkdtempSync(join(tmpdir(), 'gg-refresh-'));
 	const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -184,7 +184,7 @@ test('提交集合与顺序由 git log 独立推导，标记与伪提交符合�
 		const head = git('rev-parse', 'HEAD').trim();
 		assert.equal(data.head, head);
 
-		// 1) 宿主不再插入未提交伪提交：该行由客户端按工作区快照补出。
+		// 1) 宿主不插入未提交伪提交：该行由客户端按工作区快照补出。
 		assert.equal(commits.some((commit) => commit.hash === '*'), false, '宿主提交图不含未提交伪提交');
 		assert.ok(commits.some((commit) => commit.hash === head), 'HEAD 提交应在列表中');
 
@@ -262,7 +262,7 @@ const savedSessionStorage = new Map();
 /** 本文件经 tempPath 建的目录；文件级 after 统一删除。 */
 const tempDirs = [];
 
-/** 文件级还原：sessionStorage 恢复成启动时的样子，并清掉临时目录。 */
+/** 文件级还原：sessionStorage 恢复成启动时的样子，并清掉隔离目录。 */
 test.after(() => {
 	const descriptor = savedSessionStorage.get('descriptor');
 	if (descriptor === undefined) delete globalThis.sessionStorage;
@@ -395,7 +395,7 @@ test('草稿不落宿主：宿主 entries 不出现 ggg-commit-msg:* 新写入',
 			'取回不应发起写请求',
 		);
 
-		// 草稿落到会话存储后由调用方删除宿主旧键；删除是一次显式 clearDraft。
+		// 草稿落到会话存储后由调用方删除宿主端原有键；删除是一次显式 clearDraft。
 		storage.saveSessionValue(keyA, first);
 		const writeCountBefore = fetchStub.calls.length;
 		await state.clearPersistedDraft(cwd, repoA);

@@ -136,7 +136,7 @@ export async function initRepository(cwd: string): Promise<void> {
 /** 工作区快照：变更条目与仓库同步状态。 */
 export interface WorkingTreeSnapshot {
 	readonly entries: WorkingTreeEntry[];
-	/** 本次读取时的 HEAD 提交哈希；尚无提交时为 null。 */
+	/** 读取时的 HEAD 提交哈希；尚无提交时为 null。 */
 	readonly head: string | null;
 	readonly branch: string | null;
 	readonly upstream: string | null;
@@ -157,7 +157,7 @@ export interface WorkingTreeSnapshot {
  * @param signal - 取消信号。
  * @param noCache - 跳过宿主快照缓存，强制读当前值；兜底轮询用它，否则命中缓存会让签名
  *   永远不变，外部改动再也发现不了。
- * @param refreshId - 本轮刷新的编号；宿主按它把同轮命令归成一组记耗时。
+ * @param refreshId - 刷新编号；宿主按它把同一轮命令归成一组记耗时。
  * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
 export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false, refreshId?: number): Promise<WorkingTreeSnapshot> {
@@ -200,7 +200,7 @@ export interface GraphData {
 	/** 被别的工作树检出的本地分支：照常显示，但不可在本工作树检出、删除或重命名。 */
 	readonly foreignBranches: string[];
 	/**
-	 * 本次响应是否确实带回了仓库信息且读取成功。
+	 * 响应是否确实带回了仓库信息且读取成功。
 	 *
 	 * 仅在为真时才把远程与贮藏记为已知值：读取失败时记下会把失败当事实固化到下一次写操作。
 	 */
@@ -227,7 +227,7 @@ export interface LoadGraphOptions {
 	readonly withRepoInfo?: boolean;
 	/** 已知远程列表；给出时随请求传给宿主，宿主按它标注远程分支。 */
 	readonly remotes?: readonly Remote[];
-	/** 已知贮藏列表；给出时以它为准，宿主不再枚举贮藏。 */
+	/** 已知贮藏列表；给出时以它为准，宿主跳过枚举。 */
 	readonly stashes?: readonly GraphStash[];
 	/** 已知当前分支名；未取仓库信息时用它填充 `head`。 */
 	readonly branch?: string | null;
@@ -237,7 +237,7 @@ export interface LoadGraphOptions {
 	 * 引用筛选在这里落地：`git log` 只遍历这些引用的历史，分页与窗口因此随筛选变化。
 	 */
 	readonly branches?: readonly string[] | null;
-	/** 本轮刷新的编号；宿主按它把同轮命令归成一组记耗时。 */
+	/** 刷新编号；宿主按它把同一轮命令归成一组记耗时。 */
 	readonly refreshId?: number;
 	readonly signal?: AbortSignal;
 }
@@ -261,7 +261,7 @@ export async function invalidateHostCache(cwd: string, signal?: AbortSignal): Pr
  *
  * `withRepoInfo` 为 true 时宿主随本批取回仓库信息、引用集合与贮藏，这里不先发仓库信息请求：
  * 两次请求会各起一组 git 子进程并串行等待。为 false 时由调用方传入已知的 `remotes` 与
- * `stashes`，本函数直接用它们组装结果，不再补取仓库信息；两者都未给出时才回退一次
+ * `stashes`，本函数用它们组装结果，无需补取仓库信息；两者都未给出时才回退一次
  * `loadRepoInfo`（该请求本身带仓库信息，代价与取数相同）。
  *
  * @param cwd - 会话工作区路径。
@@ -288,7 +288,7 @@ export async function loadGraph(cwd: string, {
 	const batch = commitsPayload.repoInfo;
 	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;
 	/*
-	 * 已知远程与贮藏都给出时不再补取仓库信息：本批响应已足够组装结果，补取只会多起一组子进程。
+	 * 已知远程与贮藏都给出时无需补取仓库信息：本批响应已足够组装结果，补取只会多起一组子进程。
 	 */
 	const repoInfo = fetched ?? (givenRemotes !== undefined && givenStashes !== undefined
 		? null
@@ -323,7 +323,7 @@ const REF_KIND: Record<'branch' | 'remote' | 'tag', string> = { branch: '分支'
 /**
  * 读取仓库的全部引用，供引用筛选弹窗与手选校验使用。
  *
- * 与提交图取数分开：只在打开弹窗或需要校验手选引用时请求，刷新路径不起这次 `for-each-ref`。
+ * 与提交图取数分开：只在打开弹窗或需要校验手选引用时请求，刷新路径不执行 `for-each-ref`。
  *
  * @param cwd - 仓库路径。
  * @param showRemoteBranches - 是否包含远程分支。

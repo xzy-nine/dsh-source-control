@@ -20,7 +20,7 @@ export interface UseGraphPollingOptions {
 	readonly workingTreePath: string | null;
 	/** 当前设置；只读取自动刷新开关与两档间隔。 */
 	readonly settings: Settings;
-	/** 进行中的操作记录：面板正忙时跳过本轮。 */
+	/** 进行中的操作记录：面板正忙时跳过该轮。 */
 	readonly busyRef: React.MutableRefObject<readonly BusyEntry[]>;
 	/** 面板状态写入器。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
@@ -99,7 +99,7 @@ export function useGraphPolling({
 					 * 因此这里显式请宿主作废该仓库的缓存。宿主缓存键已含 HEAD，作废是为覆盖
 					 * 「HEAD 未动但引用变了」的情形（fetch、打标签等）。
 					 *
-					 * 只重取提交图：本轮快照已经在手，再走一次全量刷新会把它重读一遍。
+					 * 只重取提交图：该轮快照已在手，再走一次全量刷新会把它重读一遍。
 					 *
 					 * 纯文件改动只更新变更区：一律作废缓存会让每次保存都重取整页提交
 					 * （大仓库数百毫秒），并让图形区整体重渲染。

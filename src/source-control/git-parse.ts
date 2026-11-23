@@ -3,7 +3,7 @@
  *
  * 全部函数不依赖 node 内置模块之外的任何模块，可被测试直接导入。
  * 分隔约定：多记录命令用 `-z` 让 git 以 NUL 终止每条记录，记录内的字段另用 `%x00` 分隔，
- * 因此字段数固定，按固定字段数切分即可；路径与提交信息里的换行不再需要转义。
+ * 字段数因而固定，按固定字段数切分即可；路径与提交信息里的换行不需要转义。
  */
 import type {
 	CommitGraph, CommitNode, CommitSignatureFields, CommitStash, FileChange, FileStatus, Signature, SignatureStatus, StashEntry,
@@ -241,7 +241,7 @@ function nonEmptyRecords(stdout: string): string[] {
 /**
  * 按固定字段数把 `-z` 输出切成记录。
  *
- * `-z` 会在每条记录后补一个 NUL，因此先去掉末尾空串，再按字段数分组；
+ * `-z` 会在每条记录后补一个 NUL，切分前去掉末尾空串，再按字段数分组；
  * 字段数不整除的尾部残片丢弃。
  *
  * @param stdout - git 的标准输出。

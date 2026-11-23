@@ -5,7 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
   workflow_dispatch:
-  # 发布前复用同一套检查，避免发版流程另跑一份。
+  # 供发布工作流复用同一套检查。
   workflow_call:
 
 permissions:

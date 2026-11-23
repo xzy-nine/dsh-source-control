@@ -1,5 +1,5 @@
 /**
- * 工作区快照命令 `loadWorkingTreeSnapshot` 的契约回归：经真实路由 handler 发请求，用临时仓库校验。
+ * 工作区快照命令 `loadWorkingTreeSnapshot` 的契约回归：经真实路由 handler 发请求，用隔离仓库校验。
  *
  * 被测模块有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入。
  */
@@ -11,13 +11,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
 /**
- * 建一个已配置身份的临时仓库。
+ * 建一个已配置身份的隔离仓库。
  *
  * @returns 仓库路径与 git / 写文件辅助函数。
  */
@@ -334,7 +334,7 @@ test('非仓库：不起子进程，直接回空快照', async () => {
 	const snap = await snapshot(await makeCaller(absent));
 	assert.equal(snap.command, 'loadWorkingTreeSnapshot');
 	/*
-	 * 非仓库路径不再让每条 git 命令各自失败一遍：工作区根常常只是一层目录，那样一轮刷新会起
+	 * 非仓库路径不会让每条 git 命令各自失败一遍：工作区根常常只是一层目录，那样一轮刷新会起
 	 * 五六个必定失败的子进程。判据是文件系统，命中即回空快照，error 保持 null。
 	 */
 	assert.equal(snap.error, null, '非仓库不是错误状态');

@@ -73,7 +73,7 @@ export interface SubmitAvailabilityInput {
  * 提交是否可用。
  *
  * 有暂存改动、勾选修补、或处于未完成的合并即可提交。待合并状态下索引可能与 HEAD 无差异
- * （冲突已按目标内容解决、或无冲突合并），这次提交仍然必须成立：它是结束合并的唯一动作。
+ * （冲突已按目标内容解决、或无冲突合并），该提交仍必须成立：它是结束合并的唯一动作。
  * 但只要还有未解决的冲突就不能提交：git 会以 unmerged files 拒绝，提前禁用比让它失败更清楚。
  *
  * @param input - 见 {@link SubmitAvailabilityInput}。

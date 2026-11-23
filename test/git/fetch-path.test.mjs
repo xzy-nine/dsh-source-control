@@ -28,7 +28,7 @@ cp.spawn = (command, args, options) => {
 };
 syncBuiltinESMExports();
 
-/** 临时目录登记表；文件级 after 统一删除并还原 spawn 桩。 */
+/** 隔离目录登记表；文件级 after 统一删除并还原 spawn 桩。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
@@ -61,7 +61,7 @@ function countAllGit() {
 const cooldown = () => new Promise((resolve) => setTimeout(resolve, 350));
 
 /**
- * 建一个已提交的临时仓库。
+ * 建一个已提交的隔离仓库。
  *
  * @param prefix - 目录名前缀。
  * @returns 仓库路径与执行 git 的辅助函数。
@@ -205,7 +205,7 @@ test('空信息仓库二次刷新不再起 config --list 与 remote', async () =
 	await cooldown();
 	await call({ command: 'invalidateCache' });
 
-	// 客户端记下空远程与空贮藏后，刷新按已知值回传，宿主不再取仓库信息。
+	// 客户端记下空远程与空贮藏后，刷新按已知值回传，宿主不会取仓库信息。
 	resetSpawns();
 	const second = await call(REFRESH);
 	assert.equal(second.error, null);
@@ -311,7 +311,7 @@ test('耗时汇总的 git 子进程数与实际 spawn 一致', async () => {
 	await cooldown();
 	await call({ command: 'invalidateCache' });
 
-	// 一次只有一条命令的刷新：旧实现在「首条命令完成后」才取基线，差值为零，会记成 0 个。
+	// 一次只有一条命令的刷新：基线若在「首条命令完成后」才取，差值为零，会记成 0 个。
 	resetSpawns();
 	await call({ command: 'loadWorkingTreeSnapshot', refreshId: 987654321 });
 	const spawned = countAllGit();
@@ -319,7 +319,7 @@ test('耗时汇总的 git 子进程数与实际 spawn 一致', async () => {
 
 	/*
 	 * 汇总是异步冲刷（空闲 3 秒后写出）：先 flush 日志模块，让缓冲落盘，再读这一轮的 perf 行。
-	 * 日志根由 test/setup.mjs 隔离到临时目录，因此这里读的是本次测试自己的文件。
+	 * 日志根由 test/setup.mjs 隔离到隔离目录，因此这里读的是当前用例自己的文件。
 	 */
 	const { flushSync, currentLogFile } = await import(pathToFileURL(join(root, 'lib', 'src', 'source-control', 'logger.js')).href);
 	await new Promise((resolve) => setTimeout(resolve, 3300));

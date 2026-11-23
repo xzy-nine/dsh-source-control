@@ -28,7 +28,7 @@ const RECORDS = [
 
 /* --- git 目录定位：与 git 的向上查找同语义 --- */
 
-/** 建一个临时目录树并执行 git。 */
+/** 建一个隔离目录树并执行 git。 */
 function makeGitFixture() {
 	const root = mkdtempSync(join(tmpdir(), 'gg-gitdir-'));
 	const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();

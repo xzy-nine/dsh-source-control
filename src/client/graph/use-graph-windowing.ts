@@ -252,7 +252,7 @@ export function useGraphWindowing({
 	React.useEffect(() => {
 		if (commits === requestedForRef.current) return;
 		requestedForRef.current = commits;
-		// 成功取回：保留「上次触发位置」，让惯性滚动的后续事件不再触发一页。
+		// 成功取回：保留「上次触发位置」，使惯性滚动的后续事件不会再多取一页。
 		releasePending(false);
 		maybeLoadMore(true);
 	}, [commits, moreCommitsAvailable, releasePending, maybeLoadMore]);

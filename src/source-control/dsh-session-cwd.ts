@@ -1,7 +1,7 @@
 /**
  * 会话工作区根：按 sessionId 从 DSH 会话持久化服务取会话 header 的 `cwd`。
  *
- * 迁移旧版按会话分区的状态时用：会话的工作区根就是 `SessionHeader.cwd`，宿主侧经
+ * 迁移按会话分区的状态时用：会话的工作区根就是 `SessionHeader.cwd`，宿主侧经
  * `ctx.sessionPersistence.list()` 读出已存会话的 header。
  */
 

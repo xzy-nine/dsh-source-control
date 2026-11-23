@@ -1,17 +1,17 @@
 /**
  * 宿主能力面：子进程、文件系统读取与目录监视。
  *
- * 三项能力都走宿主 seam（`ctx.subprocess` / `ctx.fs`）：子进程进受管范围，读取与监视尊重
- * 后端的执行世界与沙箱。宿主未装载对应服务时插件无法工作，装载期即报错，不做原生回退——
- * 回退会绕开受管范围与沙箱，让「哪一半在用」取决于部署，两条路径都可能单独坏掉。
+ * 三项能力均经宿主服务 `ctx.subprocess` 与 `ctx.fs` 提供：子进程进受管范围，读取与监视尊重
+ * 后端的执行世界与沙箱。宿主未装载对应服务时装载期即报错，不做原生回退——回退会绕开受管
+ * 范围与沙箱，使实际路径取决于部署。
  *
- * 不覆盖插件自身的持久化与日志：那些写在插件数据目录下，位于沙箱可写根之外，走 seam 会被
+ * 插件自身的持久化与日志写在插件数据目录下，位于沙箱可写根之外，经 `ctx.fs` 会被
  * `FS_SANDBOX_DENIED` 拒绝，因此仍用 `node:fs`。
  */
 import { logDebug } from './logger.js';
 import { errorText } from '../shared/error-text.js';
 
-/** 子进程收集输出的默认内存上限（字节）；超出时按 seam 约定保留尾部并标记截断。 */
+/** 子进程收集输出的默认内存上限（字节）；超出时按宿主约定保留尾部并标记截断。 */
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /** 终止受管进程范围前留给它的宽限毫秒数。 */
@@ -93,7 +93,7 @@ const cancellable = new Map<string, Set<{ terminate(): void }>>();
 /**
  * 终止某个停止键下的全部子进程。
  *
- * 一次操作可能起多个子进程（例如抓取后跟随的子模块抓取各起一个）；用户停止的是这次操作，
+ * 一次操作可能起多个子进程（例如抓取后跟随的子模块抓取各起一个）；停止请求面向整个操作，
  * 因此按键整组终止。
  *
  * @param key - 停止键。
@@ -209,7 +209,7 @@ export interface CollectSpec {
 	/**
 	 * 可停止的登记键。
 	 *
-	 * 给出时把本次子进程登记到一个可停止的集合里，用户据此终止某次操作；省略时不登记，
+	 * 给出时把子进程登记到一个可停止的集合里，用户据此终止某个操作；省略时不登记，
 	 * 只能由宿主退出统一终止。
 	 */
 	readonly cancelKey?: string | undefined;
@@ -257,7 +257,7 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 	const collect = (): { maxBytes: number } => ({ maxBytes: DEFAULT_MAX_OUTPUT_BYTES });
 	const controller = new AbortController();
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	/* 超时后由中止信号结束受管范围；结果按 seam 的退出事实给出，文案在下面按中止原因替换。 */
+	/* 超时后由中止信号结束受管范围；结果按子进程实际退出状态给出，文案在下面按中止原因替换。 */
 	const timeout = { fired: false };
 	if (spec.timeoutMs !== undefined) {
 		timer = setTimeout(() => {
@@ -325,7 +325,7 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 	}
 }
 
-/* 宿主退出时收尾：受管范围由 seam 终止。 */
+/* 宿主退出时收尾：受管范围由宿主终止。 */
 process.once('exit', terminateAllChildren);
 
 /** 一个路径的探测结果。 */
@@ -385,8 +385,8 @@ export async function listDirAt(path: string): Promise<readonly { readonly name:
  * 一次目录变化回调。
  *
  * @param error - 监视句柄的错误。
- * @param name - 变化的文件名；seam 的监视不提供名字时为 null。
- * @param kind - 事件类型；seam 的监视不提供类型时为 null。
+ * @param name - 变化的文件名；宿主监视不提供名字时为 null。
+ * @param kind - 事件类型；宿主监视不提供类型时为 null。
  */
 export type DirChangeListener = (error?: Error, name?: string | null, kind?: string | null) => void;
 

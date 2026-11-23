@@ -24,8 +24,7 @@ export const LOG_FILE_CHAR_LIMIT = 60000;
 /**
  * 反馈暂存目录名：落在日志根目录下，启动时整目录清空。
  *
- * 目录里只有一次性的取用物——提交 issue 与评论时 `--body-file` 的载体文件。
- * 它们在写完之后已经没有价值，内容都已进了 issue。
+ * 目录中存放提交 issue 与评论时 `--body-file` 的载体文件，内容已提交进 issue。
  */
 export const OUTBOX_FOLDER = 'outbox';
 

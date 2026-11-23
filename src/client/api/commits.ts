@@ -86,8 +86,8 @@ export interface CommitStatsAndMessage {
 /**
  * 读取某个提交的改动文件与完整提交信息。
  *
- * 两者都由宿主的 `commitDetails` 一并给出，因此一次悬停只发一趟往返。分开取会把同一份
- * 提交详情读两次。
+ * 两者都由宿主的 `commitDetails` 一并给出，因此一次悬停只发一趟往返；若分开读取同一份
+ * 提交详情则会多发一趟往返。
  *
  * @param cwd - 会话工作区路径。
  * @param hash - 提交哈希，`*` 表示工作区未提交变更。

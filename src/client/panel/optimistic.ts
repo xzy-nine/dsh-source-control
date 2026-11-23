@@ -115,7 +115,7 @@ export function stageEntries(entries: readonly WorkingTreeEntry[], paths: readon
 /**
  * 取消暂存路径：把索引列的状态退回工作区。
  *
- * - 新增（`A `）退回为未跟踪（`??`）：该文件此前不在版本控制中。
+ * - 新增（`A `）退回为未跟踪（`??`）：该文件尚未纳入版本控制。
  * - 其余把索引列的状态移到工作区列（`M ` → ` M`、`D ` → ` D`）。
  *
  * @param entries - 当前条目。

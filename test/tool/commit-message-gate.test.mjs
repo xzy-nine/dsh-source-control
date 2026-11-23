@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/* 本文件的用例串行执行：每个用例起 git 或 shell 子进程与临时目录 */
+/* 本文件的用例串行执行：每个用例起 git 或 shell 子进程与隔离目录 */
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
@@ -62,7 +62,7 @@ function runHook(title) {
 }
 
 /**
- * 建一个临时仓库，先放一条合规的基准提交。
+ * 建一个隔离仓库，先放一条合规的基准提交。
  *
  * @returns 仓库路径、提交函数与基准提交哈希。
  */
@@ -142,7 +142,7 @@ test('推送时：合规标题放行，范围外的旧提交不参与校验', ()
 	try {
 		const bad = commit('feat:! 旧的坏提交');
 		const good = commit('fix: 新的好提交');
-		// 坏提交已在远端，本次范围只含最后一条。
+		// 坏提交已在远端，检查范围只含最后一条。
 		assert.equal(runGate(repo, bad, good).code, 0);
 		assert.equal(runGate(repo, base, good).code, 1, '范围含坏提交时应拒绝');
 	} finally {

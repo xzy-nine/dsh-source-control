@@ -30,7 +30,7 @@ export interface FeedbackFacts {
 	readonly platform: string;
 	/** Node 版本。 */
 	readonly node: string;
-	/** 随本次反馈提交的日志文件名；未附带日志时为空数组。 */
+	/** 随反馈提交的日志文件名；未附带日志时为空数组。 */
 	readonly logFiles: readonly string[];
 	/** 日志占用的评论条数；未附带日志时为 0。 */
 	readonly logCommentCount: number;

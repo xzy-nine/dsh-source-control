@@ -86,7 +86,7 @@ export async function linkedWorktreePresence(repo: string): Promise<'none' | 'so
 /**
  * 枚举指定仓库下在 `.gitmodules` 中声明的子模块（实际打开/检出）。
  *
- * 子模块仅作为叶子节点列出，不再下钻内部结构。
+ * 子模块作为叶子节点列出，其内部不枚举。
  *
  * @param dir - 仓库根或工作树根。
  * @param submoduleIds - 收集到的子模块路径标识，供递归跳过。

@@ -1,5 +1,5 @@
 /**
- * 工作区快照命令 `loadWorkingTreeSnapshot` 的契约回归：经真实路由 handler 发请求，用临时仓库校验。
+ * 工作区快照命令 `loadWorkingTreeSnapshot` 的契约回归：经真实路由 handler 发请求，用隔离仓库校验。
  *
  * 被测模块有内部 `.js` 相对导入，无法由 `src/` 直连 `.ts`，因此从 `lib/` 产物导入。
  */
@@ -11,13 +11,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 
 /**
- * 建一个已配置身份的临时仓库。
+ * 建一个已配置身份的隔离仓库。
  *
  * @returns 仓库路径与 git / 写文件辅助函数。
  */
@@ -185,7 +185,7 @@ test('刷新契约：不带 withRepoInfo 时响应 repoInfo 为 null，即使仓
 		git('stash', 'push', '-q', '-m', 'wip');
 
 		const call = await makeCaller(repo);
-		/* skip 为 0 不再是「取仓库信息」的判据：刷新同样以 skip 0 请求。 */
+		/* skip 为 0 不能作为「取仓库信息」的判据：刷新同样以 skip 0 请求。 */
 		const page = await call({ command: 'loadCommits', limit: 200, skip: 0, showStashes: true, showRemoteBranches: true, hideRemotes: [], remotes: [] });
 		assert.equal(page.error, null);
 		assert.equal(page.repoInfo, null, '未要求仓库信息时不随响应取回');
@@ -224,7 +224,7 @@ test('刷新契约：调用方给出远程与贮藏时提交图与首屏批逐�
 		assert.equal(first.repoInfo.stashes.length, 1);
 		/*
 		 * 远程标识参与缓存键：刷新带的是真实远程名，首屏带的是空列表，两者落到不同窗口，
-		 * 因此本次刷新重新取数，结果仍应与首屏逐条一致。
+		 * 因此该次刷新重新取数，结果仍应与首屏逐条一致。
 		 */
 		assert.deepEqual(refresh.commits, first.commits, '给出已知远程与贮藏时提交图应与首屏批逐条一致');
 		assert.deepEqual(refresh.tags, first.tags);

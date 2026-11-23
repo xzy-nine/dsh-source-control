@@ -32,7 +32,7 @@ parallel('git 失败文本', (t) => {
 	});
 
 	t.test('未指明操作种类的覆盖提示同样给出说明', () => {
-		// 第二条模式兜住 git 未点明是检出、合并还是变基的措辞（如某些子命令与旧版本）。
+		// 第二条模式兜住 git 未点明是检出、合并还是变基的措辞（如某些子命令与其他版本）。
 		const actual = 'error: Your local changes to the following files would be overwritten by cherry-pick:\n\ta.txt';
 		assert.equal(checkoutFailureText(actual), textOf(1));
 	});

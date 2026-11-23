@@ -79,7 +79,7 @@ export function subscribeGeneration(repo: string, listener: () => void): () => v
 	const entry = entryOf(key);
 	entry.subscribers += 1;
 	const unsubscribe = entry.store.subscribe(listener);
-	/** 取消订阅只结算一次：重复调用不再扣减订阅者数。 */
+	/** 取消订阅只结算一次：重复调用不重复扣减订阅者数。 */
 	let released = false;
 	return () => {
 		if (released) return;

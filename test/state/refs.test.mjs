@@ -126,7 +126,7 @@ parallel('引用筛选状态', (t) => {
 	});
 
 	t.test('取数起点：当前分支与上游同名时两者都取', () => {
-		// 本地分支名形如远程分支短名时它不再是上游的去重对象：两个尖端都要进窗口。
+		// 本地分支名形如远程分支短名时它不作为上游的去重对象：两个尖端都要进窗口。
 		assert.deepEqual(
 			filterBranchesOf({ mode: 'auto', ids: [] }, {
 				head: 'other/main', headHash: 'h1',

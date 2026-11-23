@@ -2,9 +2,8 @@
  * forge 变更视图的文案适配：把它的 `t` 契约接到它的字典上。
  *
  * `DiffFile` 要求一个 `t(key, params?)`，键是 `forgePanel` 命名空间的
- * `ForgePanelKey`。本插件不复用 forge 面板的 slot 席位，因此拿不到 slot 注入的
- * `t`，改为直接绑它发布的字典；这样文案与 forge 面板本身完全一致，也不会因为
- * 对键改名而在本插件里漂移。
+ * `ForgePanelKey`。本插件不复用 forge 面板的 slot 席位，因此直接绑定 forge 发布的字典：
+ * 文案与 forge 面板本身完全一致，键名也随 forge 字典唯一确定。
  */
 
 import { zh, type ForgePanelKey } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/locales.ts';

@@ -18,14 +18,14 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRepoFixture } from '../helpers/repo-fixture.mjs';
 
-/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
+/* 本文件的用例必须串行执行：每个用例起真实 git 子进程与隔离仓库，串行便于定位失败 */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const discoveryPath = join(root, 'lib', 'src', 'source-control', 'repo-discovery.js');
 const routesPath = join(root, 'lib', 'src', 'source-control', 'routes.js');
 const statePath = join(root, 'lib', 'src', 'source-control', 'state-store.js');
 
-/** 临时目录登记表；文件级 after 统一删除。 */
+/** 隔离目录登记表；文件级 after 统一删除。 */
 const temps = [];
 test.after(() => {
 	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
@@ -38,7 +38,7 @@ test.after(() => {
 /** 本进程启动时 setup.mjs 注入的隔离根。 */
 const ISOLATED_HOME = process.env.DSH_SOURCE_CONTROL_HOME;
 
-/* 状态文档隔离：本文件的 discoverWorkspace 会写宿主持久化，落到临时目录，避免动到真实 state.json。 */
+/* 状态文档隔离：本文件的 discoverWorkspace 会写宿主持久化，落到隔离目录，避免动到真实 state.json。 */
 const stateHome = mkdtempSync(join(tmpdir(), 'gg-disc-home-'));
 temps.push(stateHome);
 process.env.DSH_SOURCE_CONTROL_HOME = stateHome;

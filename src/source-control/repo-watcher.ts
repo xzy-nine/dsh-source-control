@@ -435,7 +435,7 @@ function schedule(key: string): void {
 	scheduleTimer(pending, key, COALESCE_MS, () => {
 		const repo = repoOfCommon.get(key);
 		if (repo === undefined) return;
-		// 先补挂再通知：接收方重新枚举期间产生的事件也要能落到句柄上。
+		// 补挂完成后再通知：接收方重新枚举期间产生的事件也由新句柄接收。
 		sync(key);
 		notify(repo);
 	});
@@ -479,8 +479,8 @@ export async function isRepositorySetChange(
 	if (target === null) {
 		if (scope !== null) return await repositorySetChangedUnder(scope);
 		/*
-		 * 已知仓库不再有 git 目录时把它移出已知集合：仓库已消失，留在集合里会让此后每一条
-		 * 名字缺失的事件都判定为变化，反复触发重新枚举。
+		 * 已知仓库的 git 目录消失时把它移出已知集合：留在集合里会让此后的名字缺失事件
+		 * 反复判定为变化并触发重新枚举。
 		 */
 		let changed = false;
 		for (const repo of [...known]) {
@@ -618,7 +618,7 @@ function notify(repo: string): void {
 /**
  * 监视一个工作区的仓库集合变化。
  *
- * 递归监视工作区根：新建的仓库与工作树此前没有任何句柄，仓库级监视发现不了它们。已知仓库
+ * 递归监视工作区根：新建的仓库与工作树在仓库级监视里没有句柄，只能由这里发现。已知仓库
  * 内部的结构变化由仓库级监视负责，这里只按 {@link isRepositorySetChange} 判定，普通 git 操作
  * 与文件读写都不触发。
  *

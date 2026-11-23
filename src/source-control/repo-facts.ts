@@ -174,7 +174,7 @@ export async function readPackedRef(commonDir: string, refName: string): Promise
 }
 
 /**
- * 读一个引用的提交哈希：先找松散引用，再查打包引用。
+ * 读一个引用的提交哈希：松散引用优先，未命中时查打包引用。
  *
  * @param commonDir - git 公共目录。
  * @param refName - 完整引用名。

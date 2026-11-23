@@ -1,8 +1,8 @@
 /**
- * 仓库发现测试共用的临时仓库夹具。
+ * 仓库发现测试共用的隔离仓库夹具。
  *
- * 7 个 repo-discovery 系列文件原本各自维护同一套 helper；抽取后由本模块提供，
- * 各文件只需传入自己的临时目录登记表与状态文档路径，清理与隔离归属仍在调用方。
+ * 7 个 repo-discovery 系列文件共用本模块提供的 helper：各文件只需传入自己的隔离目录登记表
+ * 与状态文档路径，清理与隔离归属仍在调用方。
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -13,12 +13,12 @@ import { pathToFileURL } from 'node:url';
 /**
  * 建立一组仓库发现夹具。
  *
- * @param temps - 调用方的临时目录登记表；makeTemp 建出的目录登记其中，由调用方的 after 统一删除。
+ * @param temps - 调用方的隔离目录登记表；makeTemp 建出的目录登记其中，由调用方的 after 统一删除。
  * @param statePath - 状态文档产物的绝对路径，供 resetState 清内存镜像。
  * @returns 夹具函数集合。
  */
 export function createRepoFixture(temps, statePath) {
-	/** 建一个临时目录并登记清理。 */
+	/** 建一个隔离目录并登记清理。 */
 	function makeTemp(prefix) {
 		const dir = mkdtempSync(join(tmpdir(), prefix));
 		temps.push(dir);

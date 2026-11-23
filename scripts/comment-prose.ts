@@ -114,8 +114,8 @@ export const PROSE_RULES: readonly ProseRule[] = [
  * 标准 JSDoc 取值标签所在的行：`@param`、`@returns`、`@return`、`@yields`、`@yield`、
  * `@throws`、`@exception`。
  *
- * 这些标签的参数名与说明属于公开签名文档，`本次`、`本轮` 在其中指代调用点。其余标签
- * 与标签外的注释照常扫描。
+ * 这些标签的参数名与说明属于公开签名文档，其中指代当前调用点的词形照常放行。
+ * 其余标签与标签外的注释照常扫描。
  */
 const JSDOC_VALUE_TAG = /^\s*\*?\s*@(?:param|arg|argument|returns?|yields?|throws?|exception)(?:\s|\{|$)/i
 
@@ -317,7 +317,7 @@ export function baselineEntryOf(violation: Violation): BaselineEntry {
 /**
  * 逐条核销基线，返回基线未覆盖的命中。
  *
- * 同一条记录在基线与本次结果中各出现 N 次时按次数核销：注释被复制到别处会产生
+ * 同一条记录在基线与当前扫描结果中各出现 N 次时按次数核销：注释被复制到别处会产生
  * 第二次命中，只比对记录是否存在会让基线随单处命中的份数失效。
  *
  * @param violations - 本次扫描的全部命中。

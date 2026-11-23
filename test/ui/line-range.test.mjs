@@ -84,7 +84,7 @@ test('反向拖动与正向拖动结果一致', () => {
 
 test('只有旧侧行号时退回旧侧', () => {
 	const host = buildHost(dom.window.document);
-	// 把最后两行改成只有旧侧行号。
+	// 把最后两行的新侧行号移除，只保留旧侧行号。
 	for (const element of host.querySelectorAll('[data-new-line]')) element.removeAttribute('data-new-line');
 	const rows = range.selectableRows(host);
 	const picked = range.rangeBetween(rows, 0, 1);

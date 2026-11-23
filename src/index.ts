@@ -31,8 +31,8 @@ const DOMAIN_WAIT_INTERVAL_MS = 100;
 /**
  * 等 storageDomain 就位后再打开状态文档。
  *
- * 插件加载顺序不保证 `storageDomain` 在本次 `apply` 里已就位；有界重试后仍取不到时按「未装载」
- * 处理，状态文档回退到旧版文件。
+ * 插件加载顺序不保证 `storageDomain` 在当前 `apply` 调用里已就位；有界重试后仍取不到时按「未装载」
+ * 处理，状态文档回退到基于文件的 state.json。
  *
  * @param read - 取 `ctx.storageDomain`。
  * @param readSessionPersistence - 取 `ctx.sessionPersistence`；迁移旧会话键时读会话 header。
@@ -61,12 +61,12 @@ export function apply(ctx: Context, config: Partial<DevGitGraphPluginConfig> = {
 	ctx.inject(['webServer'], (host) => {
 		const webServer = (host as unknown as { webServer: GgRouteContext }).webServer;
 		/*
-		 * 宿主能力：子进程、文件读取与目录监视都经 seam。缺一项即抛错让装载失败——插件没有原生
+		 * 宿主能力：子进程、文件读取与目录监视均由宿主能力注入接口提供。缺一项即抛错让装载失败——插件没有原生
 		 * 回退，读不到仓库或跑不了 git 时早失败比晚失败好定位。
 		 */
 		installHostCapabilities((name) => (ctx as unknown as { get(key: string): unknown }).get(name));
 		/*
-		 * 状态文档接进 DSH 的 storage domain；未装载时回退到旧版 state.json，路由照常可用。
+		 * 状态文档接进 DSH 的 storage domain；域未就位时回退到基于文件的 state.json，路由照常可用。
 		 *
 		 * 域打开是异步的；预扫与清理要读已持久化的工作区根，串在同一个异步链上。
 		 */
