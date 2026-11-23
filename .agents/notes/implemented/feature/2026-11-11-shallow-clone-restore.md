@@ -54,4 +54,4 @@ Status: implemented
 
 ## Testing
 
-- `test/shallow-clone.test.mjs`：仓库树标出浅克隆、完整克隆不标；链接工作树沿用所属仓库的状态；`unshallow` 命令补全历史并把 refspec 与 `tagopt` 还原；在完整仓库上重复调用不报错；没有远程时回投可读失败且保持浅克隆；非仓库路径直接回未变化，不起 git 子进程。
+- `test/repo/shallow-clone.test.mjs`：仓库树标出浅克隆、完整克隆不标；链接工作树沿用所属仓库的状态；`unshallow` 命令补全历史并把 refspec 与 `tagopt` 还原；在完整仓库上重复调用不报错；没有远程时回投可读失败且保持浅克隆；非仓库路径直接回未变化，不起 git 子进程。

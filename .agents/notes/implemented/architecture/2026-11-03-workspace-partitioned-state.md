@@ -45,7 +45,7 @@ Status: implemented
 
 ## Consequences
 
-状态文档的分区维度统一为工作区与仓库，`sessions` 与 `repoLocations` 两个分区合并为 `workspaces`。同一工作区下的多个对话共享选中与展开，不再各记一份。旧记录经 DSH 会话存储一次性还原，无法还原的丢弃。`schemaVersion` 从 2 升到 3，`load()` 对 v1 与 v2 文档分别自动迁移并落盘。新增 `dsh-session-cwd.ts` 读取 DSH 会话存储，是插件唯一依赖 DSH 内部存储格式的地方。`test/state-store.test.mjs` 覆盖两版迁移、工作区合并与清理、仓库位置访问器。
+状态文档的分区维度统一为工作区与仓库，`sessions` 与 `repoLocations` 两个分区合并为 `workspaces`。同一工作区下的多个对话共享选中与展开，不再各记一份。旧记录经 DSH 会话存储一次性还原，无法还原的丢弃。`schemaVersion` 从 2 升到 3，`load()` 对 v1 与 v2 文档分别自动迁移并落盘。新增 `dsh-session-cwd.ts` 读取 DSH 会话存储，是插件唯一依赖 DSH 内部存储格式的地方。`test/state/state-store.test.mjs` 覆盖两版迁移、工作区合并与清理、仓库位置访问器。
 
 ## Related
 

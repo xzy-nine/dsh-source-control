@@ -58,13 +58,13 @@ Status: implemented
 **代价**：
 
 - 提示词 JSON 多两段模板（`merged` / `binary`），`data-sources.test.mjs` 的形状校验随之覆盖。
-- `collectDiff` 的返回类型改变，调用方必须按字段取用；`test/ai-commit-diff.test.mjs` 全部断言改为读 `collected.diff`。
+- `collectDiff` 的返回类型改变，调用方必须按字段取用；`test/diff/ai-commit-diff.test.mjs` 全部断言改为读 `collected.diff`。
 - 二进制判定对未跟踪文件要读文件头部，未跟踪文件很多时会多出等量读取；沿用既有逐文件构造 patch 的代价。
 - 文档扩展名是白名单，新增文档格式需要同时改这里。
 - 这条契约的正家是 `Docs/功能/AI提交信息.md`，`Docs/实现/代码结构.md` 只列举两个模块与指向该页的链接；改判定或上限时两者要一起看。
 
 ## Testing
 
-- `test/ai-commit-diff.test.mjs`：二进制只留文件名（含未跟踪二进制）、代码排在文档之前、超预算时文档记 `document` 而代码记 `budget`、`MERGE_HEAD` 与第二父提交两种合并来源、非合并提交不产生合并段、文档扩展名与二进制判定的纯函数用例。超长删除压缩为路径标记、未超限删除保留原补丁、超长修改仍走截断，以及 `collectDiff` 走真实 git 的删除压缩各有用例。把 `fillBudget` 的代码/文档两段合并、让二进制重新进入填充、把 `document` 原因改成 `budget`、去掉 `MERGE_HEAD` 分支，四处各让对应用例变红。
-- `test/ai-commit-request.test.mjs`：三段顺序、多个被合并入提交逐条列出、二进制清单排在 diff 之前、修补模板、丢弃说明的列举上限与总数。
-- 既有 `test/data-sources.test.mjs` 校验提示词各段非空且占位符可用。
+- `test/diff/ai-commit-diff.test.mjs`：二进制只留文件名（含未跟踪二进制）、代码排在文档之前、超预算时文档记 `document` 而代码记 `budget`、`MERGE_HEAD` 与第二父提交两种合并来源、非合并提交不产生合并段、文档扩展名与二进制判定的纯函数用例。超长删除压缩为路径标记、未超限删除保留原补丁、超长修改仍走截断，以及 `collectDiff` 走真实 git 的删除压缩各有用例。把 `fillBudget` 的代码/文档两段合并、让二进制重新进入填充、把 `document` 原因改成 `budget`、去掉 `MERGE_HEAD` 分支，四处各让对应用例变红。
+- `test/diff/ai-commit-request.test.mjs`：三段顺序、多个被合并入提交逐条列出、二进制清单排在 diff 之前、修补模板、丢弃说明的列举上限与总数。
+- 既有 `test/ui/data-sources.test.mjs` 校验提示词各段非空且占位符可用。

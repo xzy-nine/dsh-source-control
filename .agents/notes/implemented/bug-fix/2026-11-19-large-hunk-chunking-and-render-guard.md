@@ -36,4 +36,4 @@ Status: implemented
 
 ## Verification
 
-`test/hunk-chunking.test.mjs` 覆盖切分的行号连续性、两侧行号一致性、标记行归属与上限边界；`test/forge-adapter.test.mjs` 断言 12000 行的块经 `toForgeHunks` 后每块不超上限且末行号不偏移。移除切分会让后一条断言变红，据此确认它盯住了这个行为。
+`test/diff/hunk-chunking.test.mjs` 覆盖切分的行号连续性、两侧行号一致性、标记行归属与上限边界；`test/diff/forge-adapter.test.mjs` 断言 12000 行的块经 `toForgeHunks` 后每块不超上限且末行号不偏移。移除切分会让后一条断言变红，据此确认它盯住了这个行为。

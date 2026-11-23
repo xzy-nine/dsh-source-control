@@ -1,0 +1,512 @@
+/**
+ * 仓库树预加载的契约回归：活跃会话工作区判定、四步取数、快照发布、在途去重与取消。
+ *
+ * `repo-preload.ts` 经 `../api/index.ts` 取数，这里以替换 `globalThis.fetch` 的方式提供宿主响应，
+ * 因此覆盖的是真实命令序列与真实解析层。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+/* 本文件的用例必须串行执行：用例逐个替换 globalThis.fetch */
+import {
+	activeWorkspaceOf, chunkPaths, dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace,
+	retryDelayMs, setRetryDelay,
+} from '../../src/client/panel/repo-preload.ts';
+
+/** 一个仓库节点。 */
+function repoNode(path, children = []) {
+	return {
+		id: path.toLowerCase(), path, name: path.split('/').pop() ?? path, kind: 'repo',
+		depth: 0, branch: 'main', head: null, available: true, children,
+	};
+}
+
+/** 一个工作树节点。 */
+function worktreeNode(path) {
+	return {
+		id: path.toLowerCase(), path, name: path.split('/').pop() ?? path, kind: 'worktree',
+		depth: 1, branch: 'linked', head: null, available: true, children: [],
+	};
+}
+
+/**
+ * 按命令名返回响应的 fetch 替身。
+ *
+ * @param handlers - 命令名 -> 响应载荷。
+ * @returns { restore, calls }：还原函数与收到的命令序列。
+ */
+function stubFetch(handlers) {
+	const original = globalThis.fetch;
+	const calls = [];
+	globalThis.fetch = async (_url, init) => {
+		const body = JSON.parse(init.body);
+		calls.push(body);
+		const handler = handlers[body.command];
+		const payload = handler === undefined ? { error: `未知命令: ${body.command}` } : handler(body);
+		return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+	};
+	return { restore: () => { globalThis.fetch = original; }, calls };
+}
+
+/**
+ * 等到条件成立。
+ *
+ * @param predicate - 判定函数。
+ * @returns 条件成立时为 true；超时为 false。
+ */
+async function waitFor(predicate) {
+	const deadline = Date.now() + 3000;
+	while (Date.now() < deadline) {
+		if (predicate()) return true;
+		await new Promise((done) => setTimeout(done, 5));
+	}
+	return false;
+}
+
+test('chunkPaths：按上限切分且不丢路径、不改顺序', () => {
+	assert.deepEqual(chunkPaths(['a', 'b', 'c'], 2), [['a', 'b'], ['c']]);
+	assert.deepEqual(chunkPaths(['a', 'b'], 2), [['a', 'b']]);
+	assert.deepEqual(chunkPaths(['a'], 8), [['a']]);
+	assert.deepEqual(chunkPaths([], 8), [], '空入参不产生空批次');
+	// 上限非法时按 1 处理，仍然逐条下发而不是整体丢弃。
+	assert.deepEqual(chunkPaths(['a', 'b'], 0), [['a'], ['b']]);
+	assert.deepEqual(chunkPaths(['a', 'b'], Number.NaN), [['a'], ['b']]);
+});
+
+test('预加载：补齐按批下发，每批不超过上限', async () => {
+	const root = '/work/preload-batches';
+	const repos = Array.from({ length: 20 }, (_, index) => `${root}/r${index}`);
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: repos.map((path) => repoNode(path)), truncated: false, usedCache: false }),
+		enrichRepositories: (body) => ({
+			command: 'enrichRepositories',
+			nodes: body.repos.map((path) => repoNode(path, [])),
+		}),
+		loadReposSync: (body) => ({ command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) }),
+	});
+	preloadWorkspace(root);
+	try {
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) >= repos.length);
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+
+	const enrichCalls = stubbed.calls.filter((call) => call.command === 'enrichRepositories');
+	assert.ok(enrichCalls.length > 1, '20 个仓库应分成多批');
+	for (const call of enrichCalls) assert.ok(call.repos.length <= 8, '每批不超过 8 个仓库');
+	const covered = enrichCalls.flatMap((call) => call.repos);
+	assert.equal(covered.length, repos.length, '全部仓库都下发一次');
+	assert.equal(new Set(covered).size, repos.length, '没有重复下发');
+});
+
+test('activeWorkspaceOf：只取主视图当前会话的那一个工作区', () => {
+	const infos = [
+		{ id: 's1', cwd: '/work/a' },
+		{ id: 's2', cwd: '/work/b', retain: { retainedBy: { mainView: 1 } } },
+		{ id: 's3', cwd: '/work/c' },
+		{ id: 's4', cwd: '/work/d', retain: { retainedBy: { mainView: 1 } }, origin: 'subagent' },
+	];
+	assert.deepEqual(
+		activeWorkspaceOf(infos),
+		{ sessionId: 's2', cwd: '/work/b' },
+		'只返回主视图会话的工作区，其它会话的工作区不参与',
+	);
+
+	assert.deepEqual(activeWorkspaceOf([{ id: 's1', cwd: '/work/a' }]), null, '没有正在显示的会话时为空');
+	assert.deepEqual(
+		activeWorkspaceOf([{ id: 's1', cwd: '/work/a', retain: { retainedBy: { mainView: 1 } } }]),
+		{ sessionId: 's1', cwd: '/work/a' },
+		'被主视图持有的会话即为活跃会话',
+	);
+	assert.deepEqual(
+		activeWorkspaceOf([{ id: 's1', retain: { retainedBy: { mainView: 1 } } }]),
+		null,
+		'缺 cwd 的会话不产生工作区',
+	);
+	assert.deepEqual(activeWorkspaceOf(null), null, '缺失输入返回 null');
+});
+
+test('预加载：按发现、纠正、补齐、同步的顺序取数并逐阶段发布', async () => {
+	const root = '/work/preload-a';
+	const repoA = '/work/preload-a/alpha';
+	const repoB = '/work/preload-a/beta';
+	const stubbed = stubFetch({
+		discoverRepositories: (body) => ({
+			command: 'discoverRepositories',
+			nodes: [repoNode(repoA), repoNode(repoB)],
+			truncated: false,
+			// 首轮命中持久化位置：驱动一次位置纠正。
+			usedCache: body.fullScan !== true,
+		}),
+		enrichRepositories: (body) => ({
+			command: 'enrichRepositories',
+			nodes: body.repos.map((path) => repoNode(path, [worktreeNode(`${path}-wt`)])),
+		}),
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: 'origin/main', ahead: 2, behind: 1 })),
+		}),
+	});
+	const seen = [];
+	preloadWorkspace(root);
+	const unsubscribe = subscribeWorkspace(root, () => {
+		const snapshot = getWorkspaceSnapshot(root);
+		if (snapshot !== null) seen.push(snapshot);
+	});
+	try {
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) >= 4);
+	} finally {
+		unsubscribe();
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+
+	const commands = stubbed.calls.map((call) => call.command);
+	assert.deepEqual(commands, [
+		'discoverRepositories', 'discoverRepositories', 'enrichRepositories', 'loadReposSync',
+	], '浅层发现 -> 位置纠正 -> 补齐 -> 领先/落后');
+	assert.equal(stubbed.calls[0].shallow, true);
+	assert.equal(stubbed.calls[1].fullScan, true, '位置纠正绕开持久化位置');
+	assert.deepEqual(stubbed.calls[2].repos, [repoA, repoB], '一次下发全部仓库，不按批切分');
+	assert.deepEqual(
+		stubbed.calls[3].repos,
+		[repoA, `${repoA}-wt`, repoB, `${repoB}-wt`],
+		'领先/落后覆盖全部节点',
+	);
+
+	assert.ok(seen.length >= 3, '发现、补齐、同步各发布一次');
+	const last = seen.at(-1);
+	assert.equal(last.status, 'ready');
+	assert.equal(last.nodes.length, 2);
+	assert.equal(last.nodes[0].children.length, 1, '补齐出的工作树挂回仓库节点');
+	assert.equal(last.discoveryRevision, 2, '发现与位置纠正各递增一次代次');
+	assert.equal(last.syncById.get(last.nodes[0].id).ahead, 2);
+	assert.equal(last.syncById.get(last.nodes[0].children[0].id).upstream, 'origin/main', '工作树节点也写回领先/落后');
+});
+
+test('预加载：同一工作区在途只发一份请求，force 受冷却约束', async () => {
+	const root = '/work/preload-b';
+	let discovers = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => {
+			discovers += 1;
+			return { command: 'discoverRepositories', nodes: [], truncated: false, usedCache: false };
+		},
+		loadReposSync: () => ({ command: 'loadReposSync', results: [] }),
+	});
+	try {
+		preloadWorkspace(root);
+		preloadWorkspace(root);
+		preloadWorkspace(root);
+		assert.ok(
+			await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'),
+			'首次预加载应完成',
+		);
+		assert.equal(discovers, 1, '在途期间重复调用只发一份请求');
+
+		/*
+		 * 同一工作区的多个会话面板各自挂载时都会请求一次重取；冷却期内不再重做全目录扫描，
+		 * 否则每挂一个面板就把上一份在途取数中止重来。
+		 */
+		preloadWorkspace(root, { force: true });
+		assert.equal(discovers, 1, '冷却期内 force 不重取');
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+});
+
+test('预加载：发现失败时状态为 error 且错误文本透出', async () => {
+	const root = '/work/preload-c';
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', error: 'git 不可用' }),
+	});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => getWorkspaceSnapshot(root)?.status === 'error');
+	} finally {
+		stubbed.restore();
+	}
+	const snapshot = getWorkspaceSnapshot(root);
+	assert.equal(snapshot.status, 'error');
+	assert.equal(snapshot.error, 'git 不可用');
+	dropWorkspace(root);
+});
+
+test('dropWorkspace：保留条目与订阅者，发布空 loading 快照，重新预加载重新取数', async () => {
+	const root = '/work/preload-d';
+	let discovers = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => {
+			discovers += 1;
+			return { command: 'discoverRepositories', nodes: [repoNode(`${root}/r`)], truncated: false, usedCache: false };
+		},
+		enrichRepositories: (body) => ({ command: 'enrichRepositories', nodes: body.repos.map((path) => repoNode(path)) }),
+		loadReposSync: (body) => ({ command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) }),
+	});
+	try {
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+		const before = getWorkspaceSnapshot(root);
+		assert.equal(before.nodes.length, 1);
+
+		// 订阅者在重置后仍然有效：重置会向它们发布一份空快照。
+		let notified = 0;
+		const unsubscribe = subscribeWorkspace(root, () => { notified += 1; });
+		try {
+			dropWorkspace(root);
+			const dropped = getWorkspaceSnapshot(root);
+			assert.notEqual(dropped, null, '条目保留，快照仍可取到');
+			assert.equal(dropped.nodes.length, 0, '节点清空');
+			assert.equal(dropped.status, 'loading', '回到取数中');
+			assert.equal(dropped.error, null);
+			assert.equal(dropped.syncById.size, 0);
+			assert.equal(dropped.discoveryRevision, before.discoveryRevision + 1, '重置递增发现代次');
+			assert.ok(notified >= 1, '订阅者收到发布');
+		} finally {
+			unsubscribe();
+		}
+
+		// 冷却不再挡住下一次取数：在途状态已清空、最近取数时刻已复位。
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => discovers >= 2), '重新预加载重新取数');
+		assert.equal(discovers, 2, '只重取一次');
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '重新取数后回到 ready');
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+});
+
+test('预加载：补齐空结果按路径重试，连续失败到上限后停止', async () => {
+	const root = '/work/preload-e';
+	const repo = `${root}/only`;
+	let enrichCalls = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: () => {
+			enrichCalls += 1;
+			return { command: 'enrichRepositories', nodes: [] };
+		},
+		loadReposSync: (body) => ({ command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) }),
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => enrichCalls > 1);
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+	assert.ok(enrichCalls > 1, '空结果驱动重试');
+	assert.ok(enrichCalls <= 6, '连续失败到上限后停止下发');
+});
+
+test('预加载：节点未变时不重复取领先/落后', async () => {
+	const root = '/work/preload-sync';
+	const repo = `${root}/only`;
+	let syncCalls = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: (body) => ({ command: 'enrichRepositories', nodes: body.repos.map((path) => repoNode(path, [])) }),
+		loadReposSync: (body) => {
+			syncCalls += 1;
+			return { command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) };
+		},
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => syncCalls >= 1);
+		assert.equal(syncCalls, 1, '首轮取一次');
+		// 结构事件后的重取：节点集合没变，已取过的领先/落后沿用，不再下发。
+		refreshWorkspace(root);
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) > 0 && getWorkspaceSnapshot(root)?.status === 'ready');
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+	assert.equal(syncCalls, 1, '节点集合未变时不再重取领先/落后');
+});
+
+test('子模块从「未检出」变成「已检出」时重新取领先/落后', async () => {
+	/*
+	 * 未检出的子模块没有可读的领先/落后，读到的是空值。检出后节点 id 不变，若只按 id 判「已取过」，
+	 * 那一行会一直显示空分支。
+	 */
+	const root = '/work/preload-sub-avail';
+	const repo = `${root}/parent`;
+	const sub = `${repo}/lib/dep`;
+	/** 子模块在磁盘上是否存在；用例中途改写。 */
+	const state = { available: false };
+	const synced = [];
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: () => ({
+			command: 'enrichRepositories',
+			nodes: [repoNode(repo, [{
+				id: sub.toLowerCase(), path: sub, name: 'dep', kind: 'submodule', depth: 1,
+				branch: null, head: null, available: state.available, children: [],
+			}])],
+		}),
+		loadReposSync: (body) => {
+			synced.push(...body.repos);
+			return { command: 'loadReposSync', results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })) };
+		},
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		await waitFor(() => (getWorkspaceSnapshot(root)?.syncById.size ?? 0) >= 2);
+		assert.deepEqual(synced, [repo, sub], '首轮两个节点各取一次');
+
+		// 检出后按最新结构重取：节点 id 未变，仍要重新取子模块的领先/落后。
+		state.available = true;
+		synced.length = 0;
+		refreshWorkspace(root);
+		await waitFor(() => synced.includes(sub));
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+	assert.deepEqual(synced, [sub], '只有可用性变化的子模块重取，仓库本身沿用旧值');
+});
+
+test('重试退避：按轮次递增且封顶', () => {
+	assert.equal(retryDelayMs(0), 200, '首轮几乎立即重试');
+	assert.equal(retryDelayMs(1), 400);
+	assert.equal(retryDelayMs(2), 800);
+	assert.ok(retryDelayMs(10) <= 5000, '退避必须封顶');
+	// 非法输入不得产生 NaN：NaN 会让等待永不结束，补齐永久停摆。
+	assert.ok(Number.isFinite(retryDelayMs(-1)), '负轮次应收敛');
+	assert.ok(Number.isFinite(retryDelayMs(Number.NaN)), '非数应收敛');
+});
+
+test('refreshWorkspace：不清空已发布的树', async () => {
+	const root = '/work/preload-f';
+	const fresh = '/work/preload-g';
+	const repo = `${root}/r`;
+	const stubbed = stubFetch({
+		discoverRepositories: (body) => {
+			if (body.repo === fresh) return { command: 'discoverRepositories', nodes: [repoNode(`${fresh}/r`)], truncated: false, usedCache: false };
+			return { command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false };
+		},
+		enrichRepositories: (body) => ({
+			command: 'enrichRepositories',
+			nodes: body.repos.map((path) => repoNode(path, [worktreeNode(`${path}-wt`)])),
+		}),
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })),
+		}),
+	});
+	const published = [];
+	try {
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+		const unsubscribe = subscribeWorkspace(root, () => {
+			const snapshot = getWorkspaceSnapshot(root);
+			if (snapshot !== null) published.push(snapshot);
+		});
+		try {
+			assert.ok((getWorkspaceSnapshot(root)?.nodes.length ?? 0) > 0, '已有节点');
+			published.length = 0;
+
+			/*
+			 * 结构事件驱动的重取不得清空已发布的树：`dropWorkspace` 会发布空树，
+			 * 连续的结构事件因此让仓库区反复闪回占位。
+			 */
+			refreshWorkspace(root);
+			const during = getWorkspaceSnapshot(root);
+			assert.ok(during.nodes.length > 0, '重取开始时不清空已发布的树');
+			assert.ok(
+				published.every((snapshot) => snapshot.nodes.length > 0),
+				'重取期间不发布空树',
+			);
+
+			// 尚未登记的工作区：退回一次普通预加载。
+			refreshWorkspace(fresh);
+			assert.ok(await waitFor(() => getWorkspaceSnapshot(fresh)?.status === 'ready'), '未登记的工作区由普通预加载取数');
+			assert.ok((getWorkspaceSnapshot(fresh)?.nodes.length ?? 0) > 0, '取到节点');
+		} finally {
+			unsubscribe();
+		}
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+		dropWorkspace(fresh);
+	}
+});
+
+test('refreshWorkspace：不受冷却约束，创建后立刻移除也反映', async () => {
+	const root = '/work/preload-h';
+	const repo = `${root}/r`;
+	/** 当前是否声明了工作树；模拟目录被创建后又移除。 */
+	const state = { linked: false };
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: (body) => ({
+			command: 'enrichRepositories',
+			nodes: body.repos.map((path) => repoNode(path, state.linked ? [worktreeNode(`${path}-wt`)] : [])),
+		}),
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })),
+		}),
+	});
+	const childCount = () => getWorkspaceSnapshot(root)?.nodes[0]?.children.length ?? 0;
+	try {
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+
+		// 创建：结构事件到达后立刻反映。
+		state.linked = true;
+		refreshWorkspace(root);
+		assert.ok(await waitFor(() => childCount() > 0), '创建工作树后节点出现');
+
+		/*
+		 * 立刻移除：创建触发的重取刚才完成。冷却若丢弃该请求，已移除的工作树会一直留在树上，
+		 * 点击它还会因目录不存在而 `spawn git ENOENT`。
+		 */
+		state.linked = false;
+		refreshWorkspace(root);
+		assert.ok(await waitFor(() => childCount() === 0), '移除工作树后节点消失');
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+});
+
+test('refreshWorkspace：在途期间的多次请求合并成一次后续重取', async () => {
+	const root = '/work/preload-i';
+	const repo = `${root}/r`;
+	let enrichCalls = 0;
+	const stubbed = stubFetch({
+		discoverRepositories: () => ({ command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false }),
+		enrichRepositories: (body) => {
+			enrichCalls += 1;
+			return { command: 'enrichRepositories', nodes: body.repos.map((path) => repoNode(path)) };
+		},
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })),
+		}),
+	});
+	try {
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+		refreshWorkspace(root);
+		refreshWorkspace(root);
+		refreshWorkspace(root);
+		assert.ok(await waitFor(() => enrichCalls > 0), '在途期间登记的请求会再取一次');
+		await new Promise((done) => setTimeout(done, 250));
+		assert.ok(enrichCalls <= 4, '并发请求合并，不逐个重取');
+	} finally {
+		stubbed.restore();
+		dropWorkspace(root);
+	}
+});

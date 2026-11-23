@@ -33,7 +33,7 @@ Status: proposed
 - `src/client/panel/sections.ts`：`ChangesSection` 渲染新分组，传 `merging`。
 - 宿主新增命令 `resolveConflict`（`git checkout --ours/--theirs <path>`）与 `markConflictResolved`（`git add <path>`），落在 `src/source-control/git-actions.ts`，路由加两条 case，客户端加 `src/client/api/conflicts.ts`。
 - 提交框在 `merging` 且仍有未合并条目时禁用提交（当前只判 `merging`，不判是否还有冲突）。
-- 测试：`test/conflict-groups.test.mjs` 覆盖分组纯函数（`UU` 只进冲突组、`MM` 不进、混合列表的拆分）；`test/status-snapshot.test.mjs` 补 `u` 记录的未合并标记。
+- 测试：`test/conflict-groups.test.mjs` 覆盖分组纯函数（`UU` 只进冲突组、`MM` 不进、混合列表的拆分）；`test/state/status-snapshot.test.mjs` 补 `u` 记录的未合并标记。
 
 ### 二、提交选项对齐 VS Code CommitOptions
 
@@ -46,7 +46,7 @@ Status: proposed
 - `src/client/api/working-tree.ts` 的 `commitStaged` 同步扩参。
 - `src/client/panel/index.ts` 的 `submit`：从设置读取新选项并传入；`runHooks` 语义不变。
 - `src/client/panel/settings.ts` 与 `src/client/shared/types.ts` 的 `Settings` 增加 `commitSignOff`、`commitSign`（三态：`default` / `always` / `never`）、`commitAllowEmpty`，默认全部关闭，落在「全局设置」页。
-- 测试：`test/api-commands.test.mjs` 补一条：带 `signoff` 的 `commitStaged` 产生含 `Signed-off-by` 的提交；`allowEmpty` 在无暂存改动时成功。
+- 测试：`test/api/api-commands.test.mjs` 补一条：带 `signoff` 的 `commitStaged` 产生含 `Signed-off-by` 的提交；`allowEmpty` 在无暂存改动时成功。
 
 ### 三、推送模式
 
@@ -57,7 +57,7 @@ Status: proposed
 - `src/client/api/remotes.ts`：两个函数增加 `mode: PushMode = ''` 参数并透传。`PushMode` 在 `src/client/shared/types.ts` 声明（与宿主同名同取值）。
 - `src/client/panel/index.ts` 的 `pushCurrentBranch` 增加 `mode` 入参；`handleSync`、`handlePublish`、仓库行菜单的「推送」在推送前弹出一次模式选择（`showSelect`：普通推送 / 强制推送 / 强制带租约推送），`force-with-lease` 为推荐项。
 - 推送被拒绝且错误文本匹配 `non-fast-forward` / `fetch first` 时，提示里直接给出「可用强制带租约推送重试」的引导（不做自动重试）。
-- 测试：`test/api-client.test.mjs` 断言 `pushBranch` / `pushUpstream` 的 `mode` 透传；`test/api-commands.test.mjs` 经真实 handler 断言 `--force-with-lease` 出现在参数里。
+- 测试：`test/api/api-client.test.mjs` 断言 `pushBranch` / `pushUpstream` 的 `mode` 透传；`test/api/api-commands.test.mjs` 经真实 handler 断言 `--force-with-lease` 出现在参数里。
 
 ### 四、变基与拣选停下后的恢复
 
@@ -70,7 +70,7 @@ Status: proposed
 - `WorkingTreeSnapshot` 增加 `rebasing` / `cherryPicking`；客户端类型同步。
 - `src/client/panel/sections.ts` 的提交框动作区：按状态显示「继续变基」「中止变基」「继续拣选」「中止拣选」，与既有「取消合并」同一组、同一禁用规则。
 - 提交框提示文案按状态切换（当前只有 `merging` 一条）。
-- 测试：`test/snapshot.test.mjs` 补三种进行中状态的快照契约；`test/submit-state.test.mjs` 补「变基进行中主按钮固定为提交 / 继续」。
+- 测试：`test/snapshot/snapshot.test.mjs` 补三种进行中状态的快照契约；`test/tool/submit-state.test.mjs` 补「变基进行中主按钮固定为提交 / 继续」。
 
 ### 五、链接工作树创建
 
@@ -83,7 +83,7 @@ Status: proposed
 - 仓库行右键菜单（`panel/index.ts:1359` 的 `handleRepoMoreActions`）新增「新建工作树…」：表单三步（起点分支 / 提交、新分支名或直接分离、目标路径，默认 `<仓库父目录>/<仓库名>.worktrees/<分支名>`），与克隆一样经 `showForm`。
 - 创建成功后 `rescan()`，与移除工作树同一套收尾。
 - 忙碌记 `history` 影响面。
-- 测试：`test/api-commands.test.mjs` 经真实 handler 断言 `worktree add` 参数与越界拒绝；仓库树发现已有用例覆盖新增节点挂载。
+- 测试：`test/api/api-commands.test.mjs` 经真实 handler 断言 `worktree add` 参数与越界拒绝；仓库树发现已有用例覆盖新增节点挂载。
 
 ### 六、顺带对齐的小项
 
