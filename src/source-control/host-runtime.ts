@@ -232,15 +232,6 @@ export function terminateAllChildren(): void {
 }
 
 /**
- * 运行一次子进程并收集输出。
- *
- * 走受管范围：终止按整棵树生效，输出按 seam 的上限收集并在截断时报告。子进程无法启动、
- * 超时、输出被截断与提供方失败都收敛成退出码 -1，调用方的失败处理与 git 自身失败走同一条路径。
- *
- * @param spec - 见 {@link CollectSpec}。
- * @returns 退出码与输出。
- */
-/**
  * 子进程无法启动或中途失败时的结果。
  *
  * 两种情况对外都是「没有输出 + 退出码 -1 + 失败文本」，调用方按同一条路径处理。
@@ -252,6 +243,15 @@ function failedResult(error: unknown): CollectResult {
 	return { code: -1, stdout: '', stderr: errorText(error) };
 }
 
+/**
+ * 运行一次子进程并收集输出。
+ *
+ * 走受管范围：终止按整棵树生效，输出按收集上限收集并在截断时报告。子进程无法启动、
+ * 超时、输出被截断与提供方失败都收敛成退出码 -1，调用方的失败处理与 git 自身失败走同一条路径。
+ *
+ * @param spec - 见 {@link CollectSpec}。
+ * @returns 退出码与输出。
+ */
 export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 	const subprocess = requireSubprocess();
 	const collect = (): { maxBytes: number } => ({ maxBytes: DEFAULT_MAX_OUTPUT_BYTES });

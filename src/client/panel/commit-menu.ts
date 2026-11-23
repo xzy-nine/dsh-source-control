@@ -185,13 +185,6 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 }
 
 /**
- * 提交行右键菜单。
- *
- * @param deps - 见 {@link GraphMenuDeps}。
- * @param args - 目标提交、当前分支可达的提交集合与触发事件。
- * @returns 无。
- */
-/**
  * 按判据从操作注册表里收集菜单项。
  *
  * 提交菜单的标签分组与引用菜单各按自己的判据过滤同注册表，构建与去空只写这一处。
@@ -270,6 +263,13 @@ interface MenuOpenTarget {
 /** 菜单分隔线；同一份字面量在多处分组之间使用。 */
 const DIVIDER: ContextMenuItem = { type: 'divider' };
 
+/**
+ * 提交行右键菜单。
+ *
+ * @param deps - 见 {@link GraphMenuDeps}。
+ * @param args - 目标提交、当前分支可达的提交集合与触发事件。
+ * @returns 无。
+ */
 export function openCommitMenu(
 	deps: GraphMenuDeps,
 	{ commit, event, currentHashes }: MenuOpenTarget,

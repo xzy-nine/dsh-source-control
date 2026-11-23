@@ -56,12 +56,6 @@ export function filterKeyOf(repoPath: string): string {
 }
 
 /**
- * 把任意值收敛成引用 id 列表。
- *
- * @param value - 待收敛的值。
- * @returns 非空字符串组成的数组。
- */
-/**
  * 从一个仓库的持久化项读出筛选状态。
  *
  * @param registry - 宿主状态里的筛选表（任意值）。

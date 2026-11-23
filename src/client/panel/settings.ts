@@ -74,6 +74,9 @@ export interface SettingsPanelProps extends ExternalOpenHandlers {
 	readonly scrollSerial?: number;
 }
 
+/** 「AI 提交信息」分区的锚点 id：生成入口据此把设置面板滚动到该分区。 */
+export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit';
+
 /**
  * 源代码管理设置面板。
  *
@@ -83,9 +86,6 @@ export interface SettingsPanelProps extends ExternalOpenHandlers {
  * @param props - 见 {@link SettingsPanelProps}。
  * @returns 面板元素，未展开时返回 null。
  */
-/** 「AI 提交信息」分区的锚点 id：生成入口据此把设置面板滚动到该分区。 */
-export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit';
-
 export function SettingsPanel({
 	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, onCheckSsh,
 	userDetails, onEditUserDetails, onDeleteUserDetails, cwd = null, pluginVersion = '', initialTab = 'repo',

@@ -99,7 +99,7 @@ export interface LaneRow {
 /**
  * 泳道状态：某个边界处的泳道占用。
  *
- * null 表示空位；位置有意义（泳道下标即横向位置），因此不能压缩掉。
+ * null 表示空位。下标即横向位置，重启布局时按原样接续才能续上未结束的泳道。
  */
 export type LaneSeed = ReadonlyArray<{ readonly hash: string | null; readonly colour: string } | null>;
 
@@ -146,8 +146,9 @@ interface Lane {
 /**
  * 计算提交序列的泳道布局。
  *
- * 泳道位置一次分配后保持稳定：本行提交所在泳道原位让给第一父提交，其余泳道原样延续，
- * 合并的其余父提交追加到最右侧新泳道。行间不重排、不左移压实。
+ * 泳道每行压实：本行提交所在泳道原位让给第一父提交，其余等待本提交的泳道汇入后释放，
+ * 本行结束时已无归属的泳道从表中移除，其右侧泳道在一次行内平移中左移一格。
+ * 未结束的泳道不换位，行内只出一次 S 形平移。
  *
  * 领先/落后以虚拟行插入：云端领先插在远端尖端之前，本地领先插在 HEAD 之前，
  * 原有行依次下移。
@@ -244,37 +245,52 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 			forkLanes.push({ lane, colour });
 		}
 
+		// 压实：本行释放出的空位就地移除，其右侧泳道在行底左移。行宽因此随分支结束回落，
+		// 提交信息列不会停在历史最宽处。
+		const compacted: Lane[] = [];
+		const bottomLane = new Map<number, number>();
+		for (const [index, lane] of output.entries()) {
+			// hash 为 null 的占位泳道没有等待中的提交：无父提交的节点留下它之后即失效。
+			if (lane === null || lane.hash === null) continue;
+			bottomLane.set(index, compacted.length);
+			compacted.push(lane);
+		}
+		/** 行顶下标转换为压实后的行底下标。 */
+		const bottomOf = (lane: number): number => bottomLane.get(lane) ?? lane;
+
 		// 节点颜色：本提交的引用色优先，否则取所在泳道的颜色。
 		const nodeColour = commitColour ?? (inbound ? input[nodeLane]?.colour : output[nodeLane]?.colour) ?? poolColour();
-		// 线段：泳道下标即横向位置，不因泳道消亡而左移。
+		// 线段：行顶下标即本行输入位置，行底下标取压实后的落点；两者不同即为平移段。
 		const segments: LaneSegment[] = [];
 		for (const [index, lane] of input.entries()) {
 			if (lane === null || index === nodeLane) continue;
-			// 其余等待本提交的泳道汇入节点后释放。
+			// 其余等待本提交的泳道汇入节点后释放，终点是节点本身，不参与行底位移。
 			if (lane.hash === commit.hash) {
 				segments.push({ lane: index, toLane: nodeLane, fromTop: true, toBottom: false, colour: lane.colour });
 			} else if (lane.hash !== null) {
-				segments.push({ lane: index, toLane: index, fromTop: true, toBottom: true, colour: lane.colour });
+				segments.push({ lane: index, toLane: bottomOf(index), fromTop: true, toBottom: true, colour: lane.colour });
 			}
 		}
-		// 节点泳道：入线自行顶到节点，出线自节点到行底；两者并存时合成贯穿线。
+		// 节点泳道：入线自行顶到节点，出线自节点到压实后的行底；两者并存且不位移时合成贯穿线。
+		const outboundLane = bottomOf(nodeLane);
 		const outboundColour = output[nodeLane]?.colour ?? nodeColour;
 		const hasOutbound = parentIds.length > 0;
-		if (inbound && hasOutbound) {
+		if (inbound && hasOutbound && outboundLane === nodeLane) {
 			segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: true, colour: nodeColour });
 		} else {
 			if (inbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: false, colour: nodeColour });
-			if (hasOutbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: false, toBottom: true, colour: outboundColour });
+			if (hasOutbound) segments.push({ lane: nodeLane, toLane: outboundLane, fromTop: false, toBottom: true, colour: outboundColour });
 		}
 		for (const fork of forkLanes) {
+			// 重复父提交会落回节点自己所在的泳道，出线已由节点那一条覆盖。
 			if (fork.lane === nodeLane) continue;
-			segments.push({ lane: nodeLane, toLane: fork.lane, fromTop: false, toBottom: true, colour: fork.colour });
+			segments.push({ lane: nodeLane, toLane: bottomOf(fork.lane), fromTop: false, toBottom: true, colour: fork.colour });
 		}
 
-		const width = Math.max(input.length, output.length, nodeLane + 1, 1);
+		const width = Math.max(input.length, compacted.length, nodeLane + 1, 1);
 		laneCount = Math.max(laneCount, width);
 		baseRows.push({ lane: nodeLane, colour: nodeColour, segments, width, hash: commit.hash });
-		lanes = output;
+		lanes = compacted;
 	}
 
 	// 领先/落后：以虚拟行插入，原有行下移。
@@ -507,16 +523,24 @@ function sCurve(x1: number, x2: number, bend: number, radius: number, lowerSweep
 		+ ` H ${towards} A ${radius} ${radius} 0 0 ${lowerSweep} ${x2} ${ROW_HALF + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
 }
 /**
- * 泳道整行平移的 S 形路径：两段半径 S_CURVE_RADIUS 的四分之一圆接住行顶与行底的
- * 竖直切向，中间的水平段吃掉横向位移。
+ * 泳道整行平移的 S 形路径：两段四分之一圆接住行顶与行底的竖直切向，中间的水平段
+ * 吃掉横向位移。
+ *
+ * 左移一条泳道时半径取 S_CURVE_RADIUS，水平段保留既有形状；一次压实移除多个槽位、
+ * 相邻泳道各左移多条时，半径增大到行半高，把水平段收成一个点，使相邻路径在行中线
+ * 不共享横向区间。半径封顶在行半高，保证第二段圆弧落在行底、竖直段不入上一行。
  *
  * @param x1 - 行顶的泳道中心线。
  * @param x2 - 行底的泳道中心线。
  * @returns SVG 路径描述。
  */
 function shiftPath(x1: number, x2: number): string {
+	const leftwards = x2 < x1;
+	const slots = Math.abs(x1 - x2) / LANE_WIDTH;
+	// 只有左移参与压实；右移保持原半径。
+	const radius = leftwards && slots > 1 ? ROW_HALF : S_CURVE_RADIUS;
 	// 向左平移时两段圆弧的 sweep 相反（先 1 后 0），向右时先 0 后 1。
-	return sCurve(x1, x2, ROW_HALF - S_CURVE_RADIUS, S_CURVE_RADIUS, x2 < x1 ? 0 : 1);
+	return sCurve(x1, x2, ROW_HALF - radius, radius, leftwards ? 0 : 1);
 }
 
 /**

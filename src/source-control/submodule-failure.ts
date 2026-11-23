@@ -2,31 +2,37 @@
  * 损坏子模块登记的识别与降级参数：工作区某个子模块的模块目录缺失或残缺时，git 会把整条
  * `status` / `diff` 判成失败。
  *
- * 判据是 git 的失败文本：`fatal: not a git repository: <被指向的 gitdir>`，其中的 gitdir
- * 落在 `.git/modules/` 下即说明该子模块的模块目录还在、但不是可用的仓库。这类失败与仓库
- * 本身是否可用无关，降级后其余改动照常可读。
+ * 判据是 git 的失败文本，随平台有两种形态：Windows 报 `fatal: not a git repository:
+ * <被指向的 gitdir>`，gitdir 落在 `.git/modules/` 下；Linux 报 `fatal: gitfile does not
+ * point to a valid repository: <子模块>/.git`。两者都表示子模块的 gitfile 指向的模块目录
+ * 不可用，与仓库本身是否可用无关，降级后其余改动照常可读。
  *
  * 纯字符串与数组处理，不调用 git、不读文件系统，可直接单测。
  */
 
 /**
- * 子模块模块目录缺失时 git 给出的失败文本形态。
+ * 子模块模块目录不可用时的 git 失败文本形态。
  *
- * 路径分隔符在 Windows 上仍是 `/`：git 自己拼接 gitdir 时统一用正斜杠。
+ * Windows 报 `not a git repository: <gitdir>`，gitdir 落在 `.git/modules/` 下；Linux 报
+ * `gitfile does not point to a valid repository: <子模块>/.git`，指向子模块工作树的 gitfile。
+ * git 拼接路径时用正斜杠，判据同时接受反斜杠以兼容宿主改写过的路径。
  */
-const MODULE_GITDIR_FAILURE = /not a git repository:.*\.git\/modules\//i;
+const BROKEN_MODULE_PATTERNS: readonly RegExp[] = [
+	/not a git repository:.*\.git\/modules\//i,
+	/gitfile does not point to a valid repository:[^\r\n]*[\\/]\.git(?:[\\/\r\n]|$)/i,
+];
 
 /**
  * 判定一条 git 失败是否为「子模块的模块目录不可用」。
  *
- * 只看 git 自己的这句诊断：不带路径的 `not a git repository` 属于别的问题（工作目录不在
+ * 只认带路径的两种诊断：不带路径的 `not a git repository` 属于别的问题（工作目录不在
  * 仓库里、`.git` 被整体删除），降级对它没有帮助。
  *
  * @param stderr - git 的标准错误。
- * @returns 命中该形态时为 true。
+ * @returns 命中任一形态时为 true。
  */
 export function isBrokenSubmoduleFailure(stderr: string): boolean {
-	return MODULE_GITDIR_FAILURE.test(stderr);
+	return BROKEN_MODULE_PATTERNS.some((pattern) => pattern.test(stderr));
 }
 
 /**

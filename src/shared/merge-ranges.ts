@@ -32,24 +32,16 @@ const LCS_BUDGET = 4_000_000;
 /**
  * 把文本切成行。
  *
+ * 只弹掉「末尾换行」带来的那一个空串，正文自身的空行原样保留：合并结果按行数组写回文件，
+ * 多弹一个空行就改动文件内容。
+ *
  * @param text - 全文。
  * @returns 行数组；末尾换行不产生额外空行。
  */
 export function linesOf(text: string): string[] {
 	if (text === '') return [];
-	return removeTrailingBlankLines(text.split('\n'));
-}
-
-/**
- * 去掉数组末尾的空行。
- *
- * git 的 `-z` 输出与文本切分都会在末尾留下空串，读行之前统一剔掉。
- *
- * @param lines - 行数组。
- * @returns 同一个数组。
- */
-export function removeTrailingBlankLines<T extends string>(lines: T[]): T[] {
-	while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+	const lines = text.split('\n');
+	if (lines[lines.length - 1] === '') lines.pop();
 	return lines;
 }
 

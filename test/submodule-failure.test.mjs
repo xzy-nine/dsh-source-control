@@ -32,6 +32,14 @@ function git(repo, ...args) {
 }
 
 /**
+ * 损坏子模块时 git 的诊断文案，Windows 与 Linux 不同。
+ *
+ * Windows 报 `not a git repository: <gitdir>`，Linux 报 `gitfile does not point to a
+ * valid repository: <子模块>/.git`。夹具的前置断言按平台接受对应形态。
+ */
+const BROKEN_MODULE_ERROR = /not a git repository|gitfile does not point to a valid repository/;
+
+/**
  * 建一个带子模块的父仓库，并把子模块的模块目录改成损坏状态。
  *
  * 损坏形态取自实测：模块目录里只剩 config 与 objects，HEAD、refs 与 index 都不在，
@@ -120,6 +128,8 @@ test('识别 git 的损坏子模块失败文本', () => {
 	assert.equal(isBrokenSubmoduleFailure('fatal: not a git repository: ../.git/modules/sub'), true);
 	assert.equal(isBrokenSubmoduleFailure('fatal: not a git repository (or any of the parent directories): .git'), false);
 	assert.equal(isBrokenSubmoduleFailure('fatal: not a git repository: /somewhere/else'), false);
+	assert.equal(isBrokenSubmoduleFailure('fatal: gitfile does not point to a valid repository: googletest/.git'), true);
+	assert.equal(isBrokenSubmoduleFailure('fatal: gitfile does not point to a valid repository: lib/sub/.git'), true);
 	assert.equal(isBrokenSubmoduleFailure('fatal: unable to access remote'), false);
 	assert.equal(isBrokenSubmoduleFailure(''), false);
 });
@@ -143,7 +153,7 @@ test('降级参数落在 -- 之前，已有口径时不重复追加', () => {
 test('损坏的子模块下工作区快照仍能读出本仓库的改动', async () => {
 	const repo = makeBrokenSubmoduleRepo('gg-submodule-broken-');
 	// 先确认这个仓库确实处于损坏状态：不加任何口径时 git 直接失败。
-	assert.throws(() => git(repo, 'status', '--porcelain'), /not a git repository/);
+	assert.throws(() => git(repo, 'status', '--porcelain'), BROKEN_MODULE_ERROR);
 	const call = await makeCaller(repo);
 	const result = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
 	assert.equal(result.error ?? null, null, '降级之后不应再报错');
@@ -158,7 +168,7 @@ test('降级不会把子模块内部已提交的 gitlink 移动吞掉', async ()
 	// 先确认前提：那里确实有一条正常的子模块改动，而普通 status 因另一个子模块损坏整体失败。
 	const degradedStatus = git(repo, 'status', '--porcelain', '--ignore-submodules=dirty');
 	assert.ok(degradedStatus.split('\n').includes(' M goodlib'), '降级口径下应报出子模块改动，实际：' + JSON.stringify(degradedStatus));
-	assert.throws(() => git(repo, 'status', '--porcelain'), /not a git repository/);
+	assert.throws(() => git(repo, 'status', '--porcelain'), BROKEN_MODULE_ERROR);
 	const call = await makeCaller(repo);
 	const before = await call({ command: 'loadWorkingTreeSnapshot', noCache: true });
 	assert.equal(before.error ?? null, null);

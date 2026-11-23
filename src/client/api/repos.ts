@@ -7,22 +7,12 @@ import { recordListOf } from '../../shared/record-list.ts';
 import { callApi, commandError } from './http.ts';
 
 /**
- * 刷新编号的请求字段；未给出时为空表。
- *
- * 编号只用于宿主按轮归组记耗时，不影响取数结果，因此沿用「未给出即不传」的写法。
- *
- * @param refreshId - 刷新编号；省略时不带该字段。
- * @returns 可直接展开进请求体的字段表。
- */
-function refreshIdOf(refreshId: number | undefined): { refreshId?: number } {
-	return refreshId === undefined ? {} : { refreshId };
-}
-
-/**
  * 给一条请求体附上刷新编号。
  *
+ * 编号只用于宿主按轮归组记耗时，不影响取数结果，因此未给出时原样返回请求体、不带该字段。
+ *
  * @param message - 请求体。
- * @param refreshId - 刷新编号；省略时原样返回。
+ * @param refreshId - 刷新编号；省略时不带该字段。
  * @returns 带编号的请求体。
  */
 function withRefreshId(message: Record<string, unknown>, refreshId: number | undefined): Record<string, unknown> {
@@ -285,7 +275,7 @@ export async function loadGraph(cwd: string, {
 	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, branches = null, refreshId, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
-	const commitsPayload = await callApi(cwd, {
+	const commitsPayload = await callApi(cwd, withRefreshId({
 		// 偏移分页：skip 是已加载条数，正反向都用它。
 		command: 'loadCommits', branches, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, showStashes,
@@ -294,8 +284,7 @@ export async function loadGraph(cwd: string, {
 		...(givenRemotes === undefined ? {} : { remotes: givenRemotes }),
 		...(givenStashes === undefined ? {} : { stashes: givenStashes }),
 		hideRemotes: [],
-		...refreshIdOf(refreshId),
-	}, signal);
+	}, refreshId), signal);
 	const batch = commitsPayload.repoInfo;
 	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;
 	/*

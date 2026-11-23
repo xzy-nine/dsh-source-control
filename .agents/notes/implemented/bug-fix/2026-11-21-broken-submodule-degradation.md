@@ -4,10 +4,13 @@ Status: implemented
 
 ## Problem
 
-某个子仓库的模块目录（`.git/modules/<名>`）缺失或残缺时（只剩 `config` 与 `objects`，`HEAD`、`refs`、`index` 都不在），git 把整条 `status` 与 `diff` 判成失败：
+某个子仓库的模块目录（`.git/modules/<名>`）缺失或残缺时（只剩 `config` 与 `objects`，`HEAD`、`refs`、`index` 都不在），git 把整条 `status` 与 `diff` 判成失败。诊断文案随平台不同：
 
 ```
+# Windows
 fatal: not a git repository: lib/googletest/../../.git/modules/lib/googletest
+# Linux
+fatal: gitfile does not point to a valid repository: googletest/.git
 ```
 
 退出码 128。受影响的不只是一条提示：`getWorkingTreeSnapshot`、`loadWorkingTree`、`getStatus`、`diffHunksOf` 与 `loadMergeContents` 等取数路径全部失败，更改区因此读不出任何改动，差异页也打不开——而仓库本身完全可用，`git log`、`for-each-ref`、`rev-parse` 都正常。
@@ -18,7 +21,7 @@ fatal: not a git repository: lib/googletest/../../.git/modules/lib/googletest
 
 降级只发生在这一种失败上，正常仓库的取数口径不变。
 
-`submodule-failure.ts` 提供判据与参数改写：`isBrokenSubmoduleFailure` 只认 `fatal: not a git repository:` 且路径落在 `.git/modules/` 下这一形态；不带路径的同类诊断属于别的问题（工作目录不在仓库里），降级对它无效，因此不命中。`withIgnoredSubmoduleDirt` 把 `--ignore-submodules=dirty` 插在路径分隔符 `--` 的紧前位置，已有该口径时原样保留。
+`submodule-failure.ts` 提供判据与参数改写：`isBrokenSubmoduleFailure` 认两种带路径的诊断——Windows 的 `fatal: not a git repository:` 且路径落在 `.git/modules/` 下，Linux 的 `fatal: gitfile does not point to a valid repository:` 且路径指向子模块的 `.git`；不带路径的同类诊断属于别的问题（工作目录不在仓库里），降级对它无效，因此不命中。`withIgnoredSubmoduleDirt` 把 `--ignore-submodules=dirty` 插在路径分隔符 `--` 的紧前位置，已有该口径时原样保留。
 
 `git-exec.ts` 的 `gitOrThrow` 是唯一的降级点：失败命中该形态时按改写后的参数重跑一次，成功则记一条告警并返回其输出，失败仍抛原始错误。所有 `status` / `diff` 取数都经它，因此不需要在每个调用点各写一遍。
 

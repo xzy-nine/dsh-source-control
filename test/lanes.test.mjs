@@ -146,9 +146,9 @@ parallel('泳道布局', (t) => {
 		}
 	});
 
-	t.test('泳道位置保持稳定不左移', () => {
-		// 泳道一次分配后原位延续：中间泳道消亡时，其右侧泳道不左移填补，
-		// 因此不产生 S 形平移段。
+	t.test('泳道释放后右侧泳道左移一格', () => {
+		// 中间泳道结束即从泳道表移除，其右侧泳道在一次行内平移中左移一格；
+		// 贯穿段的起点与终点因此不同，几何上是一段 S 形平移。
 		const layout = layoutCommits([
 			commit('m', 'a', 'b', 'd'),
 			commit('a', 'r'),
@@ -159,13 +159,32 @@ parallel('泳道布局', (t) => {
 		const shifted = layout.rows.flatMap((row) => row.segments).filter(
 			(segment) => segment.fromTop && segment.toBottom && segment.lane !== segment.toLane,
 		);
-		assert.equal(shifted.length, 0, '泳道不应随压实平移');
-		// 贯穿段始终留在原泳道。
+		assert.ok(shifted.length > 0, '泳道消亡后应出现左移的平移段');
+		for (const segment of shifted) {
+			assert.ok(segment.toLane < segment.lane, `平移段只向左：${segment.lane} -> ${segment.toLane}`);
+		}
+		// 同一行内的多条平移段互不交叉：落点顺序与起点顺序一致。
 		for (const row of layout.rows) {
-			for (const segment of row.segments) {
-				if (segment.fromTop && segment.toBottom) assert.equal(segment.lane, segment.toLane, '贯穿段不改变泳道');
+			const moving = row.segments.filter((segment) => segment.fromTop && segment.toBottom);
+			const sortedByLane = [...moving].sort((left, right) => left.lane - right.lane);
+			for (let index = 1; index < sortedByLane.length; index++) {
+				assert.ok(sortedByLane[index - 1].toLane < sortedByLane[index].toLane, '同行平移段不得交叉');
 			}
 		}
+	});
+
+	t.test('分支结束后行宽回落到实际并发泳道数', () => {
+		// 提交信息列按行宽排布：分支不结束则行宽只增不减，消息因此逐行右移。
+		const layout = layoutCommits([
+			commit('m', 'a', 'b'),
+			commit('b', 'r'),
+			commit('r'),
+			commit('a'),
+		]);
+		const widths = layout.rows.map((row) => row.width);
+		assert.equal(widths[0], 2, '合并提交要放下两条并行泳道');
+		assert.equal(widths[widths.length - 1], 1, '两条分支都结束后行宽回到一条泳道');
+		assert.ok(widths[widths.length - 1] < widths[0], '行宽随分支结束回落');
 	});
 
 	t.test('分页加载后已加载部分的行不变', () => {
@@ -333,17 +352,35 @@ parallel('泳道布局', (t) => {
 			'水平引出后圆弧落到行底，再越界重叠');
 	});
 
-	t.test('泳道平移走 S 形曲线', () => {
-		const geometry = segmentGeometry({ lane: 2, toLane: 0, fromTop: true, toBottom: true });
+	t.test('单槽位左移保留 S 形曲线形状', () => {
+		// 只移除一个槽位时，平移段仍走两段小圆弧加中间水平段，形状与既有观感一致。
+		const geometry = segmentGeometry({ lane: 2, toLane: 1, fromTop: true, toBottom: true });
 		assert.equal(geometry.kind, 'path');
 		// 两段半径 S_CURVE_RADIUS 的四分之一圆 + 中间水平段，两端越界重叠消除接缝。
 		const bend = ROW_HEIGHT / 2 - S_CURVE_RADIUS;
 		assert.match(
 			geometry.d,
 			new RegExp(`^M ${laneCentre(2)} ${-ROW_OVERLAP} V ${bend} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 1 ${laneCentre(2) - S_CURVE_RADIUS} ${ROW_HEIGHT / 2}`
-				+ ` H ${laneCentre(0) + S_CURVE_RADIUS} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 0 ${laneCentre(0)} ${ROW_HEIGHT / 2 + S_CURVE_RADIUS} V ${ROW_HEIGHT + ROW_OVERLAP}$`),
+				+ ` H ${laneCentre(1) + S_CURVE_RADIUS} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 0 ${laneCentre(1)} ${ROW_HEIGHT / 2 + S_CURVE_RADIUS} V ${ROW_HEIGHT + ROW_OVERLAP}$`),
 			`实际的 S 曲线：${geometry.d}`,
 		);
+	});
+
+	t.test('多槽位压实后相邻平移段在行中线不共享横向区间', () => {
+		// 同一行移除多个槽位时，相邻泳道可能各左移多条；若水平段都停在行中线，
+		// 两条路径会在该高度重叠。这里用真实布局找出的 3->1 与 4->2 相邻平移验证。
+		const a = segmentGeometry({ lane: 3, toLane: 1, fromTop: true, toBottom: true });
+		const b = segmentGeometry({ lane: 4, toLane: 2, fromTop: true, toBottom: true });
+		assert.equal(a.kind, 'path');
+		assert.equal(b.kind, 'path');
+		// 大半径吃掉横向位移，水平段收成一个点；半径封顶在行半高，圆弧终点落在行底。
+		const half = ROW_HEIGHT / 2;
+		assert.match(a.d, new RegExp(` H ${laneCentre(1) + half} A ${half} ${half} `));
+		assert.match(b.d, new RegExp(` H ${laneCentre(2) + half} A ${half} ${half} `));
+		assert.ok(!a.d.includes(`A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS}`), '多槽位平移不应再用小半径');
+		assert.ok(!b.d.includes(`A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS}`), '多槽位平移不应再用小半径');
+		// 水平段落点等于各自行底落点加半高，按落点顺序排开，彼此不共享区间。
+		assert.ok(laneCentre(1) + half < laneCentre(2) + half, '相邻平移的水平段落点应按落点顺序排开');
 	});
 
 	t.test('曲线一律不含贝塞尔命令', () => {

@@ -164,6 +164,7 @@ function statefulDialog<T, S>(
 		return build(finish, value, setValue);
 	});
 }
+
 /**
  * 取消与关闭同义的弹窗：两者都返回 null。
  *
@@ -172,6 +173,7 @@ function statefulDialog<T, S>(
  * @param body - 主体节点。
  * @param onConfirm - 确认回调。
  * @param confirmLabel - 确认按钮文案。
+ * @param confirmDisabled - 确认按钮是否禁用。
  * @returns 弹窗元素。
  */
 function cancelableModal(
@@ -180,8 +182,9 @@ function cancelableModal(
 	body: React.ReactNode,
 	onConfirm: () => void,
 	confirmLabel: string,
+	confirmDisabled = false,
 ): React.ReactElement {
-	return dialogModal(title, () => { finish(null); }, body, confirmFooter(() => { finish(null); }, onConfirm, confirmLabel));
+	return dialogModal(title, () => { finish(null); }, body, confirmFooter(() => { finish(null); }, onConfirm, confirmLabel, '取消', confirmDisabled));
 }
 
 /** 带确认与取消的弹窗选项。 */
@@ -224,9 +227,9 @@ function closedDialog<T>(
  */
 export function showConfirmation({ title, message, confirmLabel = '确认', cancelLabel = '取消', danger = false }: ConfirmationOptions): Promise<boolean> {
 	return dialogContent<boolean>((finish) => {
-	return closedDialog(title, finish, false,
-		React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, messageText(message)),
-		confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger));
+		return closedDialog(title, finish, false,
+			React.createElement('div', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.6 } }, messageText(message)),
+			confirmFooter(() => { finish(false); }, () => { finish(true); }, confirmLabel, cancelLabel, false, danger));
 	});
 }
 
@@ -248,9 +251,9 @@ export interface MessageOptions {
  */
 export function showMessage({ title, message, closeLabel = '知道了' }: MessageOptions): Promise<void> {
 	return dialogContent<undefined>((finish) => {
-	return closedDialog(title, finish, undefined,
-		React.createElement('div', { className: css.dialogHint }, messageText(message)),
-		primaryButton({ label: closeLabel, onClick: () => { finish(undefined); } }));
+		return closedDialog(title, finish, undefined,
+			React.createElement('div', { className: css.dialogHint }, messageText(message)),
+			primaryButton({ label: closeLabel, onClick: () => { finish(undefined); } }));
 	});
 }
 
@@ -291,24 +294,24 @@ export interface MessageLinksOptions {
  */
 export function showMessageWithLinks({ title, message, links = [], checkboxLabel, checked = true, closeLabel = '知道了' }: MessageLinksOptions): Promise<boolean> {
 	return statefulDialog<boolean, boolean>(checked, (finish, on, setOn) => {
-	const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
-	return dialogModal(
-		title,
-		close,
-		dialogBody(
-			message,
-			links.length > 0 && React.createElement(
-				'div',
-				{ className: css.dialogLinks },
-				...links.map((link) => React.createElement('button', {
-					key: link.label, type: 'button', className: css.dialogLink,
-					onClick: link.onClick,
-				}, link.label)),
+		const close = (): void => { finish(checkboxLabel === undefined ? false : on); };
+		return dialogModal(
+			title,
+			close,
+			dialogBody(
+				message,
+				links.length > 0 && React.createElement(
+					'div',
+					{ className: css.dialogLinks },
+					...links.map((link) => React.createElement('button', {
+						key: link.label, type: 'button', className: css.dialogLink,
+						onClick: link.onClick,
+					}, link.label)),
+				),
+				checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
 			),
-			checkboxLabel !== undefined && React.createElement(Checkbox, { checked: on, label: checkboxLabel, onChange: setOn }),
-		),
-		primaryButton({ label: closeLabel, onClick: close }),
-	);
+			primaryButton({ label: closeLabel, onClick: close }),
+		);
 	});
 }
 
@@ -320,25 +323,25 @@ export function showMessageWithLinks({ title, message, links = [], checkboxLabel
  */
 export function showError(message: string): Promise<void> {
 	return statefulDialog<undefined, boolean>(false, (finish, copied, setCopied) => {
-	/** 复制正文；写入失败时按钮文案保持「复制」。 */
-	const copy = async (): Promise<void> => {
-		try {
-			if (await writeClipboard(message)) setCopied(true);
-		} catch {
-			/* 写入失败：按钮文案不变 */
-		}
-	};
-	return dialogModal(
-		'操作失败',
-		() => { finish(undefined); },
-		React.createElement(
-			'div',
-			{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
-			messageText(message),
-		),
-		// 取消位承担复制，确认位承担关闭。
-		confirmFooter(() => { void copy(); }, () => { finish(undefined); }, '知道了', copied ? '已复制' : '复制'),
-	);
+		/** 复制正文；写入失败时按钮文案保持「复制」。 */
+		const copy = async (): Promise<void> => {
+			try {
+				if (await writeClipboard(message)) setCopied(true);
+			} catch {
+				/* 写入失败：按钮文案不变 */
+			}
+		};
+		return dialogModal(
+			'操作失败',
+			() => { finish(undefined); },
+			React.createElement(
+				'div',
+				{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 240, overflow: 'auto' } },
+				messageText(message),
+			),
+			// 取消位承担复制，确认位承担关闭。
+			confirmFooter(() => { void copy(); }, () => { finish(undefined); }, '知道了', copied ? '已复制' : '复制'),
+		);
 	});
 }
 
@@ -355,19 +358,19 @@ export interface CheckboxOptions extends ConfirmOptions {
  */
 export function showCheckbox({ title, message, checkboxLabel, confirmLabel = '确认', cancelLabel = '取消' }: CheckboxOptions): Promise<boolean> {
 	return statefulDialog<boolean, boolean>(false, (finish, acknowledged, setAcknowledged) => {
-	return React.createElement(RiskConfirmation, {
-		open: true,
-		title,
-		description: message,
-		closeLabel: '关闭',
-		cancelLabel,
-		confirmLabel,
-		acknowledged,
-		acknowledgeLabel: checkboxLabel,
-		onAcknowledgedChange: setAcknowledged,
-		onCancel: () => { finish(false); },
-		onConfirm: () => { finish(true); },
-	});
+		return React.createElement(RiskConfirmation, {
+			open: true,
+			title,
+			description: message,
+			closeLabel: '关闭',
+			cancelLabel,
+			confirmLabel,
+			acknowledged,
+			acknowledgeLabel: checkboxLabel,
+			onAcknowledgedChange: setAcknowledged,
+			onCancel: () => { finish(false); },
+			onConfirm: () => { finish(true); },
+		});
 	});
 }
 
@@ -389,21 +392,21 @@ export interface TextOptions {
  */
 export function showText({ title, message = '', label = '', value = '', placeholder = '', confirmLabel = '确定' }: TextOptions): Promise<string | null> {
 	return statefulDialog<string | null, string>(value, (finish, text, setText) => {
-	const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
-	return cancelableModal(title, finish, dialogBody(
-		message,
-		label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
-		React.createElement(Input, {
-			id: 'ggg-text-input',
-			value: text,
-			placeholder,
-			onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
-			// 单行输入框里回车即确认。
-			onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
-				if (event.key === 'Enter') { event.preventDefault(); submit(); }
-			},
-		}),
-	), submit, confirmLabel);
+		const submit = (): void => { if (text.trim() !== '') finish(text.trim()); };
+		return cancelableModal(title, finish, dialogBody(
+			message,
+			label !== '' && React.createElement('label', { className: css.fieldLabel, htmlFor: 'ggg-text-input' }, label),
+			React.createElement(Input, {
+				id: 'ggg-text-input',
+				value: text,
+				placeholder,
+				onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setText(event.target.value); },
+				// 单行输入框里回车即确认。
+				onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+					if (event.key === 'Enter') { event.preventDefault(); submit(); }
+				},
+			}),
+		), submit, confirmLabel, text.trim() === '');
 	});
 }
 
@@ -429,19 +432,19 @@ export interface SelectOptions {
  */
 export function showSelect({ title, message = '', options, value, confirmLabel = '确定' }: SelectOptions): Promise<string | null> {
 	return statefulDialog<string | null, string>(value ?? options.at(0)?.value ?? '', (finish, selected, setSelected) => {
-	const detail = options.find((option) => option.value === selected)?.description;
-	return cancelableModal(title, finish, dialogBody(
-		message,
-		React.createElement(SegmentedControl, {
-			id: 'ggg-select',
-			label: title,
-			value: selected,
-			onChange: setSelected,
-			className: css.selectControl,
-			options: options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
-		}),
-		detail !== undefined && detail !== '' && React.createElement('div', { className: css.selectDescription }, detail),
-	), () => { finish(selected); }, confirmLabel);
+		const detail = options.find((option) => option.value === selected)?.description;
+		return cancelableModal(title, finish, dialogBody(
+			message,
+			React.createElement(SegmentedControl, {
+				id: 'ggg-select',
+				label: title,
+				value: selected,
+				onChange: setSelected,
+				className: css.selectControl,
+				options: options.map((option) => ({ value: option.value, label: option.label, title: option.title ?? option.label })),
+			}),
+			detail !== undefined && detail !== '' && React.createElement('div', { className: css.selectDescription }, detail),
+		), () => { finish(selected); }, confirmLabel);
 	});
 }
 
@@ -538,15 +541,15 @@ export function showForm({ title, message = '', fields, confirmLabel = '确定' 
 	return statefulDialog<Record<string, unknown> | null, Record<string, unknown>>(
 		() => initialValues(fields),
 		(finish, values, setValues) => {
-		const setField = fieldWriter(setValues, (previous, name, value) => ({ ...previous, [name]: value }));
-		const submit = (): void => { finish(values); };
-		return cancelableModal(
-			title,
-			finish,
-			dialogBody(message, ...fields.map((field) => buildField(field, values, setField, submit))),
-			submit,
-			confirmLabel,
-		);
+			const setField = fieldWriter(setValues, (previous, name, value) => ({ ...previous, [name]: value }));
+			const submit = (): void => { finish(values); };
+			return cancelableModal(
+				title,
+				finish,
+				dialogBody(message, ...fields.map((field) => buildField(field, values, setField, submit))),
+				submit,
+				confirmLabel,
+			);
 		},
 	);
 }
@@ -587,32 +590,32 @@ export function showTabbedForm({ title, pages, confirmLabel = '确定' }: Tabbed
 	return statefulDialog<Record<string, unknown> | null, Record<string, Record<string, unknown>>>(
 		initial,
 		(finish, values, setValues) => {
-		const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
-		const active = pages.find((page) => page.value === activeValue) ?? pages[0];
-		const activeValues = values[active.value] ?? {};
-		// 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
-		const setField = fieldWriter(setValues, (previous, name, value) => ({
-			...previous, [active.value]: { ...(previous[active.value] ?? {}), [name]: value },
-		}));
-		// SegmentedTabs 要求非空元组：首项单独取，其余展开。
-		const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
-			{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
-			...pages.slice(1).map((page) => ({
-				value: page.value, label: page.label,
-				id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
-			})),
-		];
-		const submit = (): void => { finish({ page: active.value, ...activeValues }); };
-		return cancelableModal(title, finish, dialogNodes(
-			pages.length > 1 && React.createElement(SegmentedTabs, {
-				label: title,
-				value: active.value,
-				onChange: setActiveValue,
-				items: tabItems,
-			}),
-			hintNode(active.message ?? ''),
-			...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
-		), submit, confirmLabel);
+			const [activeValue, setActiveValue] = React.useState<string>(pages[0].value);
+			const active = pages.find((page) => page.value === activeValue) ?? pages[0];
+			const activeValues = values[active.value] ?? {};
+			// 每页一份值对象，写入只动当前页那一层，同名不跨页覆盖。
+			const setField = fieldWriter(setValues, (previous, name, value) => ({
+				...previous, [active.value]: { ...(previous[active.value] ?? {}), [name]: value },
+			}));
+			// SegmentedTabs 要求非空元组：首项单独取，其余展开。
+			const tabItems: [SegmentedTab, ...SegmentedTab[]] = [
+				{ value: pages[0].value, label: pages[0].label, id: `ggg-tab-${pages[0].value}`, panelId: `ggg-panel-${pages[0].value}` },
+				...pages.slice(1).map((page) => ({
+					value: page.value, label: page.label,
+					id: `ggg-tab-${page.value}`, panelId: `ggg-panel-${page.value}`,
+				})),
+			];
+			const submit = (): void => { finish({ page: active.value, ...activeValues }); };
+			return cancelableModal(title, finish, dialogNodes(
+				pages.length > 1 && React.createElement(SegmentedTabs, {
+					label: title,
+					value: active.value,
+					onChange: setActiveValue,
+					items: tabItems,
+				}),
+				hintNode(active.message ?? ''),
+				...active.fields.map((field) => buildField(field, activeValues, setField, submit)),
+			), submit, confirmLabel);
 		},
 	);
 }

@@ -49,16 +49,6 @@ const LOG_DAY_OPTIONS = [
 	{ value: '15', label: '15 天' },
 ];
 
-/**
- * 最近 n 天（含今天）的日文件夹名下界。
- *
- * 与 `log-retention.ts` 的 `dayFolderName` 同形，比较用字符串：`YYYY-MM-DD` 定宽，
- * 字典序即时间序。
- *
- * @param now - 当前时间。
- * @param days - 天数。
- * @returns `YYYY-MM-DD` 形态的下界。
- */
 /** 日志文件的树条目：路径是 `日期/文件名`，真实路径另存。 */
 interface LogTreeEntry {
 	readonly path: string;
@@ -75,12 +65,6 @@ const FAILURE_HINT: Readonly<Record<string, string>> = {
 	invalid: '请检查标题与描述后重试。',
 };
 
-/**
- * 反馈页签。
- *
- * @param props - 见 {@link FeedbackTabProps}。
- * @returns 页签元素。
- */
 /**
  * 带标题的一格反馈表单。
  *
@@ -123,6 +107,12 @@ function fbLabelNode(label: string): React.ReactElement {
 function feedbackNote(text: string): React.ReactElement {
 	return React.createElement('div', { className: css.fbNote }, text);
 }
+/**
+ * 反馈页签。
+ *
+ * @param props - 见 {@link FeedbackTabProps}。
+ * @returns 页签元素。
+ */
 export function FeedbackTab({ cwd, pluginVersion, onOpenExternal = openExternal, onOpenFile, onRevealPath }: FeedbackTabProps): React.ReactElement {
 	const [type, setType] = React.useState<FeedbackType>('bug');
 	const [title, setTitle] = React.useState('');

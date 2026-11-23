@@ -493,14 +493,6 @@ function idsAtPath(nodes: readonly RepoNode[], path: string): string[] {
 }
 
 /**
- * 取一个路径的领先/落后并写回快照。
- *
- * @param entry - 预加载状态。
- * @param path - 仓库路径。
- * @param ids - 该路径上的节点 id。
- * @returns 无。
- */
-/**
  * 批量取数结果里仓库节点要的同步字段。
  *
  * 批量响应的字段与 {@link RepoSync} 只差取值形态：`upstreamRef` 可能缺省，这里补成 null。
@@ -515,6 +507,14 @@ function repoNodeSync(result: Awaited<ReturnType<typeof loadReposSync>>[number])
 	};
 }
 
+/**
+ * 取一个路径的领先/落后并写回快照。
+ *
+ * @param entry - 预加载状态。
+ * @param path - 仓库路径。
+ * @param ids - 该路径上的节点 id。
+ * @returns 无。
+ */
 async function syncPath(entry: WorkspaceEntry, path: string, ids: readonly string[]): Promise<void> {
 	const results = await loadReposSync(entry.root, [path]);
 	if (results.length === 0) return;
@@ -528,6 +528,7 @@ async function syncPath(entry: WorkspaceEntry, path: string, ids: readonly strin
 	}
 	publish(entry, { syncById: next });
 }
+
 /**
  * 启动一个工作区的取数。
  *
@@ -593,6 +594,16 @@ function start(entry: WorkspaceEntry): void {
 }
 
 /**
+ * 取一个工作区已有的预加载状态。
+ *
+ * @param root - 工作区根路径。
+ * @returns 预加载状态；该工作区尚未登记时为 null。
+ */
+function existingEntryOf(root: string): WorkspaceEntry | null {
+	return entries.get(rootKey(root)) ?? null;
+}
+
+/**
  * 预加载一个工作区的仓库树。
  *
  * 同一工作区可能同时挂着多个会话面板：在途时一律复用，`force` 也受重取冷却约束，
@@ -602,15 +613,6 @@ function start(entry: WorkspaceEntry): void {
  * @param options - 见 {@link PreloadOptions}。
  * @returns 无。
  */
-/**
- * 取一个工作区已有的预加载状态。
- *
- * @param root - 工作区根路径。
- * @returns 预加载状态；该工作区尚未登记时为 null。
- */
-function existingEntryOf(root: string): WorkspaceEntry | null {
-	return entries.get(rootKey(root)) ?? null;
-}
 export function preloadWorkspace(root: string, options: PreloadOptions = {}): void {
 	if (root === '') return;
 	const key = rootKey(root);

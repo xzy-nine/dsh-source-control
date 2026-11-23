@@ -157,7 +157,7 @@ function remoteNamesFromConfig(configs: Record<string, string>): string[] | null
 interface LogQuery {
 	/** 要显示的提交起点；null 表示全部（`--branches` 等）。 */
 	readonly branches: readonly string[] | null;
-	/** 取回的提交数；`getCommits` 传上限加一用来判定是否还有更多。 */
+	/** 本页要显示的提交数上限。 */
 	readonly num: number;
 	/** 是否包含仅被标签引用的提交。 */
 	readonly includeTags: boolean;
@@ -182,8 +182,9 @@ interface LogQuery {
 /**
  * 读取提交图。
  *
- * 提交取 `num` 条以判定是否还有更多；未提交变更以哈希为 `*` 的伪提交排在最前；
- * 贮藏插入到其基提交之前。
+ * 日志按 `num + 1` 条取回：多出的一条是「是否还有更多」的哨兵，由 {@link assembleCommits}
+ * 丢弃并置 `moreCommitsAvailable`。未提交变更以哈希为 `*` 的伪提交排在最前；贮藏插入到
+ * 其基提交之前。
  *
  * @param repo - 仓库路径。
  * @param query - 取数参数。
@@ -203,7 +204,8 @@ export async function getCommits(
 		 *
 		 * 远程名可能与仓库信息同批取，标注要用它，因此这里才等它落地；日志与它并行。
 		 */
-		const logSource = getLog(repo, query);
+		// 多取一条作哨兵：够不够一页由它决定是否还有更多。
+		const logSource = getLog(repo, { ...query, num: num + 1 });
 		const [records, remoteNames] = await Promise.all([logSource, remotes]);
 		const refs: RefData = { ...refsFromDecorations(records, hideRemotes, includeRemotes), head };
 		return { ...assembleCommits(records, refs, stashes, remoteNames, includeTags, num, skip), error: null };
@@ -886,15 +888,6 @@ async function defaultRemoteBranch(repo: string): Promise<{ short: string; ref: 
 }
 
 /**
- * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
- *
- * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
- * 只读，不把推断结果写回仓库配置。
- *
- * @param repo - 仓库路径。
- * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
- */
-/**
  * 把候选来源名解析成分叉来源。
  *
  * 名字为空、或解析不到对应引用时返回 null，由调用方继续试下一个候选。
@@ -910,6 +903,15 @@ async function baseOfName(repo: string, branch: string, name: string | null): Pr
 	return resolved === null ? null : { branch, base: resolved.short, baseRef: resolved.ref };
 }
 
+/**
+ * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
+ *
+ * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
+ * 只读，不把推断结果写回仓库配置。
+ *
+ * @param repo - 仓库路径。
+ * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
+ */
 export async function getBranchBase(repo: string): Promise<BranchBase> {
 	const head = await repoHead(repo);
 	const branch = head?.branch ?? null;

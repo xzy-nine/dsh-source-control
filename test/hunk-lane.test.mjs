@@ -7,6 +7,11 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const { JSDOM } = await import('jsdom');
 const { hunkLineText, hunkSlots, markHunkRows, sameSlots, scrollToHunk } = await import('../src/client/diff/hunk-lane.ts');
@@ -166,6 +171,25 @@ test('显示侧决定标题，且可在两侧之间来回切', () => {
 	setShownSide(address, true);
 	assert.deepEqual(titleScopeOf(address, commitScope), commitScope, '提交作用域不跟随显示侧');
 	setShownSide(address, null);
+});
+
+test('轨道宽度与正文让出的空隙相等', () => {
+	// 轨道叠在两栏正文的中间缝上：让出的 column-gap 必须与轨道同宽，窄了按钮压到代码上，
+	// 宽了正文中间留出空白。两个数字分属两个 CSS 模块，只能靠这条断言保持一致。
+	const lane = readFileSync(join(root, 'src', 'client', 'css', 'hunk-bar.module.css'), 'utf8');
+	const width = Number(/^\.lane\{[^}]*width:(\d+)px/m.exec(lane)?.[1]);
+	assert.ok(Number.isFinite(width) && width > 0, '轨道应有像素宽度');
+	// 按钮是方形，且必须放得进轨道。
+	const button = /^\.button\{([^}]*)\}/m.exec(lane)?.[1] ?? '';
+	assert.equal(Number(/width:(\d+)px/.exec(button)?.[1]), Number(/height:(\d+)px/.exec(button)?.[1]), '按钮应为正方形');
+	assert.ok(Number(/width:(\d+)px/.exec(button)?.[1]) <= width, '按钮不得宽于轨道');
+	// 轨道以中线居中：负一半的外边距。
+	assert.equal(Number(/margin-left:(-\d+)px/.exec(lane)?.[1]), -width / 2, '轨道按其宽度的一半居中');
+
+	const page = readFileSync(join(root, 'src', 'client', 'css', 'index.module.css'), 'utf8');
+	const gaps = [...page.matchAll(/\[data-sc-lane\][^{]*\{column-gap:(\d+)px\}/g)].map((match) => Number(match[1]));
+	assert.ok(gaps.length > 0, '应存在分段列的让宽规则');
+	for (const gap of gaps) assert.equal(gap, width, '让出的宽度必须等于轨道宽度');
 });
 
 test('落位等价判断挡住重复写入', () => {

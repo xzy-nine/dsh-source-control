@@ -63,13 +63,6 @@ function bodyTranslator(
 }
 
 /**
- * 从一份按哈希索引的缓存中丢弃给定条目。
- *
- * @param previous - 现有缓存。
- * @param hashes - 要丢弃的哈希。
- * @returns 新缓存。
- */
-/**
  * 把「按 hashes 清理一个 map」包成 setState 需要的 drop 回调。
  *
  * 三处缓存清理都只做这一件事，差别只在写回哪个 map。
@@ -81,6 +74,13 @@ function dropFrom<T>(setter: React.Dispatch<React.SetStateAction<Map<string, T>>
 	return (hashes) => { setter((previous) => dropHashes(previous, hashes)); };
 }
 
+/**
+ * 从一份按哈希索引的缓存中丢弃给定条目。
+ *
+ * @param previous - 现有缓存。
+ * @param hashes - 要丢弃的哈希。
+ * @returns 新缓存。
+ */
 function dropHashes<T>(previous: Map<string, T>, hashes: Iterable<string>): Map<string, T> {
 	const next = new Map(previous);
 	for (const hash of hashes) next.delete(hash);
