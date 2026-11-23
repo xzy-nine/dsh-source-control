@@ -5,12 +5,9 @@
  * 分隔约定：多记录命令用 `-z` 让 git 以 NUL 终止每条记录，记录内的字段另用 `%x00` 分隔，
  * 因此字段数固定，按固定字段数切分即可；路径与提交信息里的换行不再需要转义。
  */
-import { removeTrailingBlankLines } from '../shared/merge-ranges.js';
 import type {
 	CommitGraph, CommitNode, CommitSignatureFields, CommitStash, FileChange, FileStatus, Signature, SignatureStatus, StashEntry,
 } from './git-types.js';
-
-export { removeTrailingBlankLines };
 
 /** 日志类命令的字段分隔符（即 `--format` 中的 `%x00`）。 */
 const FIELD = '\0';
@@ -262,7 +259,19 @@ export function splitRecords(stdout: string, fieldCount: number): string[][] {
 	return records;
 }
 
-
+/**
+ * 去掉数组末尾的空行。
+ *
+ * git 的 `-z` 输出会在末尾留下空串，读正文行之前统一剔掉。它与合并视图的
+ * `linesOf` 不同：合并结果要按原样写回文件，那里只弹掉末尾换行带来的那一个空串。
+ *
+ * @param lines - 行数组。
+ * @returns 同一个数组。
+ */
+export function removeTrailingBlankLines(lines: string[]): string[] {
+	while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+	return lines;
+}
 
 /**
  * 取字符串数组去重后的结果。
@@ -577,16 +586,6 @@ export function parseRefs(stdout: string, hideRemotes: readonly string[] = [], s
 }
 
 /**
- * 一次枚举同时解析引用集合与分支列表。
- *
- * 与 {@link parseRefs} 同一套记录解析，另按 `%(HEAD)` 标出当前分支、按 `%(refname:short)` 给出
- * 分支名。远程 HEAD 是指向分支的符号引用，不作为可操作的分支。
- *
- * @param stdout - `git for-each-ref --format=<REF_BRANCH_FORMAT>` 的输出。
- * @param hideRemotes - 要隐藏的远程名。
- * @returns 引用集合、分支名列表与当前分支名。
- */
-/**
  * 该远程引用是否属于被隐藏的远程。
  *
  * 两个引用解析入口都要做这一判定：隐藏按完整引用名的前缀匹配。
@@ -599,6 +598,16 @@ function isHiddenRemote(refname: string, hidePrefixes: readonly string[]): boole
 	return hidePrefixes.some((prefix) => refname.startsWith(prefix));
 }
 
+/**
+ * 一次枚举同时解析引用集合与分支列表。
+ *
+ * 与 {@link parseRefs} 同一套记录解析，另按 `%(HEAD)` 标出当前分支、按 `%(refname:short)` 给出
+ * 分支名。远程 HEAD 是指向分支的符号引用，不作为可操作的分支。
+ *
+ * @param stdout - `git for-each-ref --format=<REF_BRANCH_FORMAT>` 的输出。
+ * @param hideRemotes - 要隐藏的远程名。
+ * @returns 引用集合、分支名列表与当前分支名。
+ */
 export function parseRefsAndBranches(stdout: string, hideRemotes: readonly string[] = []): RefsAndBranches {
 	const buckets = emptyRefBuckets(hideRemotes);
 	const branches: string[] = [];

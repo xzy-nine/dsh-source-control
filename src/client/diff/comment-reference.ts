@@ -48,18 +48,6 @@ function sideNote(scope: GitDiffScope, side: CommentRange['side']): string {
 }
 
 /**
- * 构造评论引用正文。
- *
- * 顺序是「版本 → 文件地址 → 行号」，形如 `工作区 Docs/实现/代码结构.md 第 12-14 行`：
- * 版本在前，读到的人先知道行号属于哪一份内容，再看是哪个文件的哪些行。旧侧追加行号
- * 来源说明。
- *
- * @param path - 文件路径，相对仓库根。
- * @param scope - 比较作用域。
- * @param range - 被评论的行。
- * @returns 一行定位文本。
- */
-/**
  * 行号区间的写法：单行给一个数，多行给闭区间。
  *
  * @param startLine - 起始行号。
@@ -81,6 +69,18 @@ function withNote(header: string, body: string): string {
 	const note = body.trim();
 	return note === '' ? header : `${header}\n${note}`;
 }
+/**
+ * 构造评论引用的定位部分。
+ *
+ * 顺序是「版本 → 文件地址 → 行号」，形如 `工作区 Docs/实现/代码结构.md 第 12-14 行`：
+ * 版本在前，读到的人先知道行号属于哪一份内容，再看是哪个文件的哪些行。旧侧追加行号
+ * 来源说明。
+ *
+ * @param path - 文件路径，相对仓库根。
+ * @param scope - 比较作用域。
+ * @param range - 被评论的行。
+ * @returns 一行定位文本。
+ */
 export function commentReference(path: string, scope: GitDiffScope, range: CommentRange): string {
 	const lines = linesOfRange(range.startLine, range.endLine);
 	const where = range.side === 'R' ? '' : ` 旧侧${sideNote(scope, range.side)}`;

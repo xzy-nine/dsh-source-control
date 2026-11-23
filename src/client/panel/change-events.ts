@@ -32,7 +32,6 @@ export const CLEANUP_INTERVAL_MS = 300000;
  * 页签可见时按快档跑，不可见时退回慢档以省资源。
  */
 
-/** 兜底轮询的间隔（毫秒）：页签不可见时的慢档。 */
 /** 兜底轮询间隔的下限与上限（秒）；越界的设置值收拢到区间内。 */
 export const FALLBACK_POLL_SECONDS_MIN = 5;
 export const FALLBACK_POLL_SECONDS_MAX = 600;

@@ -12,7 +12,7 @@ import { GitGraphIcon } from '../../ui/plugin-icon.ts';
 import { CommitDetail } from '../changes.ts';
 import { interfaceLanguage, needsTranslationMemo } from '../language.ts';
 import type { UseCommitStatsResult } from '../use-commit-stats.ts';
-import type { BusyFlags, Commit, CommitCacheMaps, CommitFile, PanelPhase, RepoNode, Settings } from '../../shared/types.ts';
+import type { BusyFlags, Commit, CommitCacheMaps, CommitFile, PanelPhase, RefInfo, RepoNode, Settings } from '../../shared/types.ts';
 import { iconButton, stopThen } from './icon-button.ts';
 /** 进入提交对比用的修饰键名，按平台显示：macOS 用 ⌘、其余用 Ctrl。 */
 const COMPARE_MODIFIER = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent)
@@ -46,8 +46,6 @@ export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields, 
 	/** 上游远程跟踪分支名，决定泳道引用色。 */
 	readonly upstream: string | null;
 	readonly moreCommitsAvailable: boolean;
-	/** 因留存封顶而丢弃的提交总数。 */
-	/** 留存提交之前的泳道状态；裁头后由此续算。 */
 	/** 正在翻译的提交哈希；空闲时为 null。 */
 	readonly translatingHash: string | null;
 	/** 翻译服务是否可用；不可用时提交浮窗不给翻译入口。 */
@@ -68,9 +66,8 @@ export interface GraphSectionProps extends CommitCacheMaps, SectionEmptyFields, 
 	readonly onOpenDiff: (hash: string, path: string, staged: boolean, isNew?: boolean, baseHash?: string, files?: readonly string[]) => Promise<void>;
 	readonly onToggleCommit: (hash: string, additive?: boolean) => void;
 	readonly onLoadMore: () => void;
-	/** 取回更早的一段（窗口头部之前）。 */
-	/** 窗口头部之前是否还有更早的提交。 */
-	readonly onContextMenu: (args: { commit: Commit; refInfo: { type: string | null; name: string | null } | null; event: React.MouseEvent<HTMLElement> }) => void;
+	/** 提交行右键：引用标记另带该远程分支所属的远程名。 */
+	readonly onContextMenu: (args: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => void;
 	readonly onHoverCommit: (hash: string | null) => void;
 	readonly onOpenFilter: () => void;
 	/** 引用筛选摘要：显示当前模式或已选数量。 */

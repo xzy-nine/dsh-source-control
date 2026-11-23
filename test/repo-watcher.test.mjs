@@ -5,15 +5,18 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { importHostModule } from './lib-import.mjs';
+import { nodeBackedFs, nodeBackedSubprocess } from './host-fixture.mjs';
 
 /* 本文件的用例必须串行执行：每个用例起真实 git 子进程与临时仓库，串行便于定位失败 */
 
 const module = await importHostModule('source-control/repo-watcher.js');
-const { structureWatchTargets, isStructureChange, isRepositorySetChange } = module;
+const { structureWatchTargets, isStructureChange, isRepositorySetChange, watchRepositories, closeRepositoryWatchers } = module;
+const runtime = await importHostModule('source-control/host-runtime.js');
 
 test('监视目标覆盖工作树登记、子模块声明与子模块父目录', () => {
 	const repo = join('root', 'repo');
@@ -113,6 +116,40 @@ test('名字缺失时按已知仓库是否仍存在判定', async () => {
 	// 删除目录树时 Windows 的递归句柄只报 change 而不给名字，只有这条信号可判断。
 	assert.equal(await isRepositorySetChange(null, 'change', []), false, '没有已知仓库时无从判断，不触发');
 	assert.equal(await isRepositorySetChange(null, 'change', [join('root', 'not-created')]), true, '已知仓库不存在');
+});
+
+test('关闭句柄失败只被吞掉，收尾照常完成', async () => {
+	/*
+	 * 关闭失败是常态：句柄可能已被对端关掉。收尾必须继续走完，且不得在关闭辅助里自调用
+	 * ——自调用会以栈溢出结束整个进程。
+	 */
+	const root = mkdtempSync(join(tmpdir(), 'gg-watch-close-'));
+	const repo = join(root, 'repo');
+	mkdirSync(repo, { recursive: true });
+	execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+	const base = nodeBackedFs();
+	const failingFs = {
+		...base,
+		watch: async (target, changed, signal) => {
+			const close = await base.watch(target, changed, signal);
+			return async () => {
+				await close();
+				throw new Error('句柄已关闭');
+			};
+		},
+	};
+	runtime.installHostCapabilities((name) => (name === 'fs' ? failingFs : name === 'subprocess' ? nodeBackedSubprocess() : undefined));
+	try {
+		watchRepositories([repo]);
+		// 挂句柄是异步的：留足时间让至少一个句柄在册，否则这条用例不覆盖收尾路径。
+		await new Promise((done) => setTimeout(done, 500));
+		assert.doesNotThrow(() => { closeRepositoryWatchers(); }, '关闭失败不得抛出');
+		assert.doesNotThrow(() => { closeRepositoryWatchers(); }, '重复收尾同样安静');
+	} finally {
+		closeRepositoryWatchers();
+		runtime.installHostCapabilities((name) => (name === 'fs' ? nodeBackedFs() : name === 'subprocess' ? nodeBackedSubprocess() : undefined));
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test('新建目录里初始化的仓库按下探层数发现', async () => {

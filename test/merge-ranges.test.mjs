@@ -19,6 +19,12 @@ parallel('合并区间', (t) => {
 		assert.deepEqual(linesOf(''), []);
 	});
 
+	t.test('切行：正文自身的末尾空行原样保留', () => {
+		// 合并结果按行数组写回文件：多弹一个空行就是在改写文件内容。
+		assert.deepEqual(linesOf('a\n\n\n'), ['a', '', '']);
+		assert.deepEqual(linesOf('\n\n'), ['', '']);
+	});
+
 	t.test('行差异：单行替换', () => {
 		const changes = diffLines(['a', 'b', 'c'], ['a', 'B', 'c']);
 		assert.deepEqual(changes, [{ baseStart: 1, baseLength: 1, otherStart: 1, otherLength: 1 }]);
@@ -100,5 +106,13 @@ parallel('合并区间', (t) => {
 		assert.equal(analysis.ranges.length, 1);
 		assert.equal(analysis.ranges[0].conflicting, true);
 		assert.deepEqual(resultLinesOf(analysis, new Map([[0, 'theirs']])), ['THEIRS']);
+	});
+
+	t.test('没有取舍时结果与原基线逐行一致，末尾空行不丢', () => {
+		// 写回按 lines.join('\n') + '\n' 还原全文，因此这条往返必须与原文相等。
+		const base = 'a\nb\n\n';
+		const analysis = analyzeMerge(base, 'a\nOURS\n\n', 'a\nTHEIRS\n\n');
+		const result = resultLinesOf(analysis, new Map());
+		assert.equal(`${result.join('\n')}\n`, base, '未处理的区间按基线内容写回');
 	});
 });

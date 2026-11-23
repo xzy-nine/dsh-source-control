@@ -79,12 +79,6 @@ export interface UseGraphDataResult extends PanelStateAccess {
 }
 
 /**
- * 加载提交图与工作区。
- *
- * @param options - 见 {@link UseGraphDataOptions}。
- * @returns 面板状态与刷新函数。
- */
-/**
  * 组装一次提交图取数请求。
  *
  * 三处取数（首屏与对账刷新、翻页、轮询后的补取）用的是同一组设置与同一套「已知仓库信息」
@@ -198,6 +192,12 @@ function rememberFromGraph(repo: string, known: KnownRepoInfo | undefined, graph
 	rememberRepoInfo(repo, { remotes: graph.remotes, stashes: graph.stashes });
 }
 
+/**
+ * 加载提交图与工作区。
+ *
+ * @param options - 见 {@link UseGraphDataOptions}。
+ * @returns 面板状态与刷新函数。
+ */
 export function useGraphData({
 	workingTreePath, hasWorkspace, maxCommits, settings, selectedId,
 	filter = DEFAULT_REF_FILTER, branchBase = null, headHint = null, upstreamHint = null, upstreamRefHint = null,

@@ -1,12 +1,10 @@
-import { getWorkspace, setWorkspace } from './storage.ts';
-import { normalizePath } from '../shared/path-key.ts';
-
 /**
  * 存储库树的纯函数：可见节点展开、选中持久化。
  *
- * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。路径归一化见 `shared/path-key.ts`。
+ * 不依赖 React，便于直接单测；渲染与请求留在 panel 目录。
  */
-
+import { getWorkspace, setWorkspace } from './storage.ts';
+import { normalizePath } from '../shared/path-key.ts';
 
 /**
  * 按 id 查找节点。

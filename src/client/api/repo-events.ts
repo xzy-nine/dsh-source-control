@@ -98,12 +98,6 @@ export function parseRepositoryEventFrame(frame: string): { readonly kind: 'writ
 }
 
 /**
- * 解析一条仓库写事件帧。
- *
- * @param frame - 一个完整的帧（已按空行切分）。
- * @returns 写事件；不是可用的写事件时为 null。
- */
-/**
  * 取一条仓库事件帧的仓库路径。
  *
  * @param frame - 一个完整的帧（已按空行切分）。

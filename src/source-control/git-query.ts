@@ -886,15 +886,6 @@ async function defaultRemoteBranch(repo: string): Promise<{ short: string; ref: 
 }
 
 /**
- * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
- *
- * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
- * 只读，不把推断结果写回仓库配置。
- *
- * @param repo - 仓库路径。
- * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
- */
-/**
  * 把候选来源名解析成分叉来源。
  *
  * 名字为空、或解析不到对应引用时返回 null，由调用方继续试下一个候选。
@@ -910,6 +901,15 @@ async function baseOfName(repo: string, branch: string, name: string | null): Pr
 	return resolved === null ? null : { branch, base: resolved.short, baseRef: resolved.ref };
 }
 
+/**
+ * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
+ *
+ * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
+ * 只读，不把推断结果写回仓库配置。
+ *
+ * @param repo - 仓库路径。
+ * @returns 当前分支与分叉来源的引用短名；分离头指针时两者皆为 null。
+ */
 export async function getBranchBase(repo: string): Promise<BranchBase> {
 	const head = await repoHead(repo);
 	const branch = head?.branch ?? null;
