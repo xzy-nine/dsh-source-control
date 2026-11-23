@@ -352,17 +352,35 @@ parallel('泳道布局', (t) => {
 			'水平引出后圆弧落到行底，再越界重叠');
 	});
 
-	t.test('泳道平移走 S 形曲线', () => {
-		const geometry = segmentGeometry({ lane: 2, toLane: 0, fromTop: true, toBottom: true });
+	t.test('单槽位左移保留 S 形曲线形状', () => {
+		// 只移除一个槽位时，平移段仍走两段小圆弧加中间水平段，形状与既有观感一致。
+		const geometry = segmentGeometry({ lane: 2, toLane: 1, fromTop: true, toBottom: true });
 		assert.equal(geometry.kind, 'path');
 		// 两段半径 S_CURVE_RADIUS 的四分之一圆 + 中间水平段，两端越界重叠消除接缝。
 		const bend = ROW_HEIGHT / 2 - S_CURVE_RADIUS;
 		assert.match(
 			geometry.d,
 			new RegExp(`^M ${laneCentre(2)} ${-ROW_OVERLAP} V ${bend} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 1 ${laneCentre(2) - S_CURVE_RADIUS} ${ROW_HEIGHT / 2}`
-				+ ` H ${laneCentre(0) + S_CURVE_RADIUS} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 0 ${laneCentre(0)} ${ROW_HEIGHT / 2 + S_CURVE_RADIUS} V ${ROW_HEIGHT + ROW_OVERLAP}$`),
+				+ ` H ${laneCentre(1) + S_CURVE_RADIUS} A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS} 0 0 0 ${laneCentre(1)} ${ROW_HEIGHT / 2 + S_CURVE_RADIUS} V ${ROW_HEIGHT + ROW_OVERLAP}$`),
 			`实际的 S 曲线：${geometry.d}`,
 		);
+	});
+
+	t.test('多槽位压实后相邻平移段在行中线不共享横向区间', () => {
+		// 同一行移除多个槽位时，相邻泳道可能各左移多条；若水平段都停在行中线，
+		// 两条路径会在该高度重叠。这里用真实布局找出的 3->1 与 4->2 相邻平移验证。
+		const a = segmentGeometry({ lane: 3, toLane: 1, fromTop: true, toBottom: true });
+		const b = segmentGeometry({ lane: 4, toLane: 2, fromTop: true, toBottom: true });
+		assert.equal(a.kind, 'path');
+		assert.equal(b.kind, 'path');
+		// 大半径吃掉横向位移，水平段收成一个点；半径封顶在行半高，圆弧终点落在行底。
+		const half = ROW_HEIGHT / 2;
+		assert.match(a.d, new RegExp(` H ${laneCentre(1) + half} A ${half} ${half} `));
+		assert.match(b.d, new RegExp(` H ${laneCentre(2) + half} A ${half} ${half} `));
+		assert.ok(!a.d.includes(`A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS}`), '多槽位平移不应再用小半径');
+		assert.ok(!b.d.includes(`A ${S_CURVE_RADIUS} ${S_CURVE_RADIUS}`), '多槽位平移不应再用小半径');
+		// 水平段落点等于各自行底落点加半高，按落点顺序排开，彼此不共享区间。
+		assert.ok(laneCentre(1) + half < laneCentre(2) + half, '相邻平移的水平段落点应按落点顺序排开');
 	});
 
 	t.test('曲线一律不含贝塞尔命令', () => {

@@ -523,16 +523,24 @@ function sCurve(x1: number, x2: number, bend: number, radius: number, lowerSweep
 		+ ` H ${towards} A ${radius} ${radius} 0 0 ${lowerSweep} ${x2} ${ROW_HALF + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
 }
 /**
- * 泳道整行平移的 S 形路径：两段半径 S_CURVE_RADIUS 的四分之一圆接住行顶与行底的
- * 竖直切向，中间的水平段吃掉横向位移。
+ * 泳道整行平移的 S 形路径：两段四分之一圆接住行顶与行底的竖直切向，中间的水平段
+ * 吃掉横向位移。
+ *
+ * 左移一条泳道时半径取 S_CURVE_RADIUS，水平段保留既有形状；一次压实移除多个槽位、
+ * 相邻泳道各左移多条时，半径增大到行半高，把水平段收成一个点，使相邻路径在行中线
+ * 不共享横向区间。半径封顶在行半高，保证第二段圆弧落在行底、竖直段不入上一行。
  *
  * @param x1 - 行顶的泳道中心线。
  * @param x2 - 行底的泳道中心线。
  * @returns SVG 路径描述。
  */
 function shiftPath(x1: number, x2: number): string {
+	const leftwards = x2 < x1;
+	const slots = Math.abs(x1 - x2) / LANE_WIDTH;
+	// 只有左移参与压实；右移保持原半径。
+	const radius = leftwards && slots > 1 ? ROW_HALF : S_CURVE_RADIUS;
 	// 向左平移时两段圆弧的 sweep 相反（先 1 后 0），向右时先 0 后 1。
-	return sCurve(x1, x2, ROW_HALF - S_CURVE_RADIUS, S_CURVE_RADIUS, x2 < x1 ? 0 : 1);
+	return sCurve(x1, x2, ROW_HALF - radius, radius, leftwards ? 0 : 1);
 }
 
 /**

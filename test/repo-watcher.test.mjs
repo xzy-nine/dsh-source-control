@@ -128,11 +128,18 @@ test('关闭句柄失败只被吞掉，收尾照常完成', async () => {
 	mkdirSync(repo, { recursive: true });
 	execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
 	const base = nodeBackedFs();
+	/** 已挂载的句柄数与故障关闭次数；挂载是异步的，用信号代替固定延时。 */
+	let registered = 0;
+	let closeCount = 0;
+	let onRegistered = () => {};
 	const failingFs = {
 		...base,
 		watch: async (target, changed, signal) => {
 			const close = await base.watch(target, changed, signal);
+			registered += 1;
+			onRegistered();
 			return async () => {
+				closeCount += 1;
 				await close();
 				throw new Error('句柄已关闭');
 			};
@@ -140,10 +147,20 @@ test('关闭句柄失败只被吞掉，收尾照常完成', async () => {
 	};
 	runtime.installHostCapabilities((name) => (name === 'fs' ? failingFs : name === 'subprocess' ? nodeBackedSubprocess() : undefined));
 	try {
+		/** 等到至少一个句柄挂载完成；超时即判定夹具失效，避免固定延时下的偶发漏测。 */
+		const registeredPromise = new Promise((done, reject) => {
+			const timer = setTimeout(() => reject(new Error('等待句柄挂载超时')), 2000);
+			onRegistered = () => {
+				if (registered < 1) return;
+				clearTimeout(timer);
+				// 监视层在 watch 兑现后还要把关闭函数记入句柄；等下一轮再让测试继续。
+				setImmediate(done);
+			};
+		});
 		watchRepositories([repo]);
-		// 挂句柄是异步的：留足时间让至少一个句柄在册，否则这条用例不覆盖收尾路径。
-		await new Promise((done) => setTimeout(done, 500));
+		await registeredPromise;
 		assert.doesNotThrow(() => { closeRepositoryWatchers(); }, '关闭失败不得抛出');
+		assert.ok(closeCount >= 1, '故障关闭包装至少执行一次');
 		assert.doesNotThrow(() => { closeRepositoryWatchers(); }, '重复收尾同样安静');
 	} finally {
 		closeRepositoryWatchers();
