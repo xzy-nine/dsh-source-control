@@ -288,8 +288,8 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 					repo,
 					{
 						branches: branchesArg,
-						// 多取一条作哨兵：够不够一页由它决定是否还有更多。
-						num: limit + 1,
+						// 本页要显示的条数；多取一条作哨兵的职责在 getCommits 内部。
+						num: limit,
 						includeTags: graphParams.showTags,
 						includeRemotes: showRemoteBranches,
 						includeCommitsMentionedByReflogs: graphParams.includeCommitsMentionedByReflogs,

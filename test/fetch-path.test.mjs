@@ -362,6 +362,40 @@ test('并发两轮各自只记自己的子进程', async () => {
 	assert.equal(reported.reduce((sum, value) => sum + value, 0), spawned, '两轮之和应等于实际 spawn 数');
 });
 
+test('分页哨兵：恰好满一页时仍报还有更多，且下一页接得上', async () => {
+	/*
+	 * 页大小 20、仓库共 25 条提交。首页必须回 20 条并置 more，第二次从 20 起取到余下 5 条。
+	 *
+	 * 这条守着一个真实回归：宿主要求「本页条数 + 1」条作哨兵，而判定「还有更多」时又把这个
+	 * 数字当成页面大小，于是永远差一条——首页回满一页后 more 被误判成 false，用户滚到底就
+	 * 再也加载不出更早的提交。
+	 */
+	const { repo, git } = makeRepo('gg-fetch-paging-');
+	for (let index = 1; index <= 24; index += 1) {
+		writeFileSync(join(repo, 'a.txt'), `line ${String(index)}\n`);
+		git('add', '-A');
+		git('commit', '-q', '-m', `c${String(index)}`);
+	}
+	const call = await makeCaller(repo);
+	const page = (skip) => ({
+		command: 'loadCommits', branches: null, limit: 20, skip, showTags: true, showRemoteBranches: true,
+		includeCommitsMentionedByReflogs: false, onlyFollowFirstParent: false, commitOrdering: 'topo',
+		withRepoInfo: false, remotes: [], stashes: [], hideRemotes: [],
+	});
+
+	const first = await call(page(0));
+	assert.equal(first.error, null);
+	assert.equal(first.commits.length, 20, '首页按页大小返回');
+	assert.equal(first.moreCommitsAvailable, true, '还有更早的提交时必须报 more');
+	assert.equal(first.nextSkip, 20, '偏移按本页实际消费的日志记录数推进');
+
+	const second = await call(page(first.nextSkip));
+	assert.equal(second.error, null);
+	assert.equal(second.commits.length, 5, '第二页取到余下全部');
+	assert.equal(second.moreCommitsAvailable, false, '取尽之后不再报 more');
+	assert.equal(new Set([...first.commits, ...second.commits].map((commit) => commit.hash)).size, 25, '两页合起来不重不漏');
+});
+
 test('仅索引写之后提交图窗口仍然命中', async () => {
 	const { repo } = makeRepo('gg-fetch-index-');
 	const call = await makeCaller(repo);
