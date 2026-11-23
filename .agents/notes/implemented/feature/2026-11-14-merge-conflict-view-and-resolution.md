@@ -70,8 +70,8 @@ Status: implemented
 
 ## Testing
 
-- `test/conflict-entry.test.mjs`：七种 XY 到种类的映射、分组白名单（冲突不进另外两组）、动作可用性矩阵、冲突标记检测、已暂存计数排除未合并条目。
-- `test/api-conflict.test.mjs`：经真实路由与临时仓库构造 `UU`/`AA`/`DU`/`UD`，断言差异有 hunk 且新侧含冲突标记、阶段取值、五种动作的结局、已解决路径与缺失阶段的报错、单条失败不影响同批；另有一条负向用例证明 `git restore` 与 `show :<path>` 对未合并路径都会失败，因此丢弃不能复用。
-- `test/merge-ranges.test.mjs`：行差异（替换、纯插入、纯删除、相隔较远各自成段）、区间对齐（双方改同一处成为冲突、单侧改动不算冲突）、取舍与结果拼装、未处理区间保留基线、双方新增同一文件。
-- `test/forge-adapter.test.mjs`：jsdom 里渲染合并视图——两个采用方向（`《`/`》`）、已选择后标为已处理、三方一致时给无改动说明、选中行后浮出评论框并注明该侧行号；评论定位文本写明「当前更改 / 传入的更改第几行」。
-- `test/status-snapshot.test.mjs`、`test/submit-state.test.mjs`、`test/forge-adapter.test.mjs`：分别为未合并标记、冲突未解决时不可提交、forge 适配层的纯映射与渲染。
+- `test/ui/conflict-entry.test.mjs`：七种 XY 到种类的映射、分组白名单（冲突不进另外两组）、动作可用性矩阵、冲突标记检测、已暂存计数排除未合并条目。
+- `test/api/api-conflict.test.mjs`：经真实路由与临时仓库构造 `UU`/`AA`/`DU`/`UD`，断言差异有 hunk 且新侧含冲突标记、阶段取值、五种动作的结局、已解决路径与缺失阶段的报错、单条失败不影响同批；另有一条负向用例证明 `git restore` 与 `show :<path>` 对未合并路径都会失败，因此丢弃不能复用。
+- `test/diff/merge-ranges.test.mjs`：行差异（替换、纯插入、纯删除、相隔较远各自成段）、区间对齐（双方改同一处成为冲突、单侧改动不算冲突）、取舍与结果拼装、未处理区间保留基线、双方新增同一文件。
+- `test/diff/forge-adapter.test.mjs`：jsdom 里渲染合并视图——两个采用方向（`《`/`》`）、已选择后标为已处理、三方一致时给无改动说明、选中行后浮出评论框并注明该侧行号；评论定位文本写明「当前更改 / 传入的更改第几行」。
+- `test/state/status-snapshot.test.mjs`、`test/tool/submit-state.test.mjs`、`test/diff/forge-adapter.test.mjs`：分别为未合并标记、冲突未解决时不可提交、forge 适配层的纯映射与渲染。

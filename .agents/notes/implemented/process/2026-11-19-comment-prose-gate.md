@@ -46,4 +46,4 @@ Status: implemented
 
 ## Testing
 
-`test/comment-prose.test.mjs` 覆盖注释抽取（字符串、正则、模板字面量、JSX 文本与属性四个方向的伪注释）、八类规则的正反例、宽口径的故意误伤与其标记豁免、空的豁免理由、按次数核销的基线语义。门禁自证：往 `src/shared/lru-map.ts` 注入一处会话范围注释后门禁变红，回退后恢复绿。
+`test/tool/comment-prose.test.mjs` 覆盖注释抽取（字符串、正则、模板字面量、JSX 文本与属性四个方向的伪注释）、八类规则的正反例、宽口径的故意误伤与其标记豁免、空的豁免理由、按次数核销的基线语义。门禁自证：往 `src/shared/lru-map.ts` 注入一处会话范围注释后门禁变红，回退后恢复绿。

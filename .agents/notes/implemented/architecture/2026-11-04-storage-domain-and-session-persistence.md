@@ -56,4 +56,4 @@ Status: implemented
 
 ## Testing
 
-`test/state-store.test.mjs` 覆盖 v1 / v2 / v3 迁移、域为空时的导入与域不可用时的回退；`test/repo-workspace.test.mjs` 覆盖"命中持久化位置"；`test/generation-store.test.mjs` 覆盖快照存储的订阅与释放。
+`test/state/state-store.test.mjs` 覆盖 v1 / v2 / v3 迁移、域为空时的导入与域不可用时的回退；`test/repo/repo-workspace.test.mjs` 覆盖"命中持久化位置"；`test/refresh/generation-store.test.mjs` 覆盖快照存储的订阅与释放。

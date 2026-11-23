@@ -74,9 +74,9 @@ Status: proposed
 
 ### 实施顺序
 
-1. R2（`repo-discovery.ts` + `repo-facts.repoHead`）：`test/repo-discovery.test.mjs` 增「分离头指针与无提交仓库不启动 git」「多分支仓库只枚举当前分支」，与 `git for-each-ref` 独立推导对照；`test/fetch-path.test.mjs` 的 8 仓库用例改断言 0 个 git 进程。
-2. R1（`working-tree.ts` 的 `onRepositoryWrite` 影响面、`host-cache.ts` 与 `repo-discovery.ts` 的监听）：`test/host-cache.test.mjs` 增按影响面作废；`test/fetch-path.test.mjs` 增「索引类写之后 30 秒内的全量刷新只起 1 个进程」。
-3. R3（`working-tree.ts` 的解析、`routes.ts` 的参数、`api/repos.ts` 与 `use-graph-data.ts` 的未知值传递）：`test/status-snapshot.test.mjs` 增 `+? -?`；`test/fetch-path.test.mjs` 增进程数与「未知不覆盖」。
+1. R2（`repo-discovery.ts` + `repo-facts.repoHead`）：`test/repo/repo-discovery.test.mjs` 增「分离头指针与无提交仓库不启动 git」「多分支仓库只枚举当前分支」，与 `git for-each-ref` 独立推导对照；`test/git/fetch-path.test.mjs` 的 8 仓库用例改断言 0 个 git 进程。
+2. R1（`working-tree.ts` 的 `onRepositoryWrite` 影响面、`host-cache.ts` 与 `repo-discovery.ts` 的监听）：`test/state/host-cache.test.mjs` 增按影响面作废；`test/git/fetch-path.test.mjs` 增「索引类写之后 30 秒内的全量刷新只起 1 个进程」。
+3. R3（`working-tree.ts` 的解析、`routes.ts` 的参数、`api/repos.ts` 与 `use-graph-data.ts` 的未知值传递）：`test/state/status-snapshot.test.mjs` 增 `+? -?`；`test/git/fetch-path.test.mjs` 增进程数与「未知不覆盖」。
 4. R4 / R6 视需要；R5 单独立项（设置项与可见行为）。
 5. `scripts/bench-git-info.mjs` 扩场景：写后刷新、无提交与分离头指针仓库的仓库树、领先 30000 的仓库、60 个带上游分支的仓库。
 6. 全量门禁：`pnpm lint` → `pnpm typecheck` → `pnpm test`（含 `check:duplication` 与 `build`），重复基线不动。

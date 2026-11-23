@@ -64,11 +64,11 @@ Status: implemented
 
 ## Testing
 
-- `test/fetch-path.test.mjs`：「耗时汇总的 git 子进程数与实际 spawn 一致」读隔离日志的 `perf` 行比对 spawn 计数（把桶内基线改回完成时取值即变红）；「仅索引写之后提交图窗口仍然命中」断言 `log` 为 0、`status` 为 1（把 `index` 分支短路即变红）。
-- `test/host-cache.test.mjs`：「索引类写只清工作区快照，保留提交图与仓库信息」与「索引类写同样按祖先与公共目录覆盖快照」。
-- `test/change-events.test.mjs`：「抓取退避：无新引用翻倍，封顶后不再涨，有变化复位」与「基础周期已超过上限时按设置走，不压低」（把函数改成恒返回基础周期即变红）。
-- `test/coalesce.test.mjs`：等待、超时返回 `null`、超时后在飞项仍跑完、默认上限 30 秒。
-- `test/file-diff-content.test.mjs`：根提交、父提交里没有该路径、两提交对比三种情形；第一条断言 `rev-parse` 探针替代了那条注定失败的 `show`（把探针短路即变红）。
+- `test/git/fetch-path.test.mjs`：「耗时汇总的 git 子进程数与实际 spawn 一致」读隔离日志的 `perf` 行比对 spawn 计数（把桶内基线改回完成时取值即变红）；「仅索引写之后提交图窗口仍然命中」断言 `log` 为 0、`status` 为 1（把 `index` 分支短路即变红）。
+- `test/state/host-cache.test.mjs`：「索引类写只清工作区快照，保留提交图与仓库信息」与「索引类写同样按祖先与公共目录覆盖快照」。
+- `test/refresh/change-events.test.mjs`：「抓取退避：无新引用翻倍，封顶后不再涨，有变化复位」与「基础周期已超过上限时按设置走，不压低」（把函数改成恒返回基础周期即变红）。
+- `test/refresh/coalesce.test.mjs`：等待、超时返回 `null`、超时后在飞项仍跑完、默认上限 30 秒。
+- `test/api/file-diff-content.test.mjs`：根提交、父提交里没有该路径、两提交对比三种情形；第一条断言 `rev-parse` 探针替代了那条注定失败的 `show`（把探针短路即变红）。
 
 ## Related
 

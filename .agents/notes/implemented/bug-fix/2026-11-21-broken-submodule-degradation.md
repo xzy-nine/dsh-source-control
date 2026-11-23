@@ -50,6 +50,6 @@ fatal: not a git repository: lib/googletest/../../.git/modules/lib/googletest
 
 ## Testing
 
-- `test/submodule-failure.test.mjs`：判据的六种输入（含不命中的三类）；`--` 前后位置与已有口径的保留；用真实 git 建一个损坏模块目录的父仓库，经真实路由验证 `loadWorkingTreeSnapshot` 回 `error: null` 且列出本仓库自己的改动、HEAD 仍读到。
-- `test/refresh-contract.test.mjs`「刷新失败：相位不留在 loading，错误照常上报」：夹具把快照回成「空条目 + error」，断言 `phase` 与 `entriesPhase` 都回到 `ready`、错误写进状态，恢复后能重新取回数据。
+- `test/api/submodule-failure.test.mjs`：判据的六种输入（含不命中的三类）；`--` 前后位置与已有口径的保留；用真实 git 建一个损坏模块目录的父仓库，经真实路由验证 `loadWorkingTreeSnapshot` 回 `error: null` 且列出本仓库自己的改动、HEAD 仍读到。
+- `test/refresh/refresh-contract.test.mjs`「刷新失败：相位不留在 loading，错误照常上报」：夹具把快照回成「空条目 + error」，断言 `phase` 与 `entriesPhase` 都回到 `ready`、错误写进状态，恢复后能重新取回数据。
 - 两条降级用例在移除 `gitOrThrow` 的重跑分支后退红；相位复位用例在移除 `reportRefreshFailure` 调用后退红。

@@ -70,4 +70,4 @@ Status: implemented
 
 ## Testing
 
-`test/diff-view.test.mjs` 覆盖默认值、设置映射与单向改写；`test/primitives.test.mjs` 钉住客户端结构契约（差异页经 hook 取选择、切换走 `diffView.patch`）；`test/generation-store.test.mjs` 与 `test/snapshot.test.mjs` 覆盖快照存储。
+`test/diff/diff-view.test.mjs` 覆盖默认值、设置映射与单向改写；`test/ui/primitives.test.mjs` 钉住客户端结构契约（差异页经 hook 取选择、切换走 `diffView.patch`）；`test/refresh/generation-store.test.mjs` 与 `test/snapshot/snapshot.test.mjs` 覆盖快照存储。
