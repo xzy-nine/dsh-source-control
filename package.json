@@ -1,6 +1,6 @@
 {
   "name": "dsh-source-control",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "dsh中的类vscode源代码管理页面",
   "license": "MIT",
   "author": "xzy-nine",
