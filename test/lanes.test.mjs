@@ -146,9 +146,9 @@ parallel('泳道布局', (t) => {
 		}
 	});
 
-	t.test('泳道位置保持稳定不左移', () => {
-		// 泳道一次分配后原位延续：中间泳道消亡时，其右侧泳道不左移填补，
-		// 因此不产生 S 形平移段。
+	t.test('泳道释放后右侧泳道左移一格', () => {
+		// 中间泳道结束即从泳道表移除，其右侧泳道在一次行内平移中左移一格；
+		// 贯穿段的起点与终点因此不同，几何上是一段 S 形平移。
 		const layout = layoutCommits([
 			commit('m', 'a', 'b', 'd'),
 			commit('a', 'r'),
@@ -159,13 +159,32 @@ parallel('泳道布局', (t) => {
 		const shifted = layout.rows.flatMap((row) => row.segments).filter(
 			(segment) => segment.fromTop && segment.toBottom && segment.lane !== segment.toLane,
 		);
-		assert.equal(shifted.length, 0, '泳道不应随压实平移');
-		// 贯穿段始终留在原泳道。
+		assert.ok(shifted.length > 0, '泳道消亡后应出现左移的平移段');
+		for (const segment of shifted) {
+			assert.ok(segment.toLane < segment.lane, `平移段只向左：${segment.lane} -> ${segment.toLane}`);
+		}
+		// 同一行内的多条平移段互不交叉：落点顺序与起点顺序一致。
 		for (const row of layout.rows) {
-			for (const segment of row.segments) {
-				if (segment.fromTop && segment.toBottom) assert.equal(segment.lane, segment.toLane, '贯穿段不改变泳道');
+			const moving = row.segments.filter((segment) => segment.fromTop && segment.toBottom);
+			const sortedByLane = [...moving].sort((left, right) => left.lane - right.lane);
+			for (let index = 1; index < sortedByLane.length; index++) {
+				assert.ok(sortedByLane[index - 1].toLane < sortedByLane[index].toLane, '同行平移段不得交叉');
 			}
 		}
+	});
+
+	t.test('分支结束后行宽回落到实际并发泳道数', () => {
+		// 提交信息列按行宽排布：分支不结束则行宽只增不减，消息因此逐行右移。
+		const layout = layoutCommits([
+			commit('m', 'a', 'b'),
+			commit('b', 'r'),
+			commit('r'),
+			commit('a'),
+		]);
+		const widths = layout.rows.map((row) => row.width);
+		assert.equal(widths[0], 2, '合并提交要放下两条并行泳道');
+		assert.equal(widths[widths.length - 1], 1, '两条分支都结束后行宽回到一条泳道');
+		assert.ok(widths[widths.length - 1] < widths[0], '行宽随分支结束回落');
 	});
 
 	t.test('分页加载后已加载部分的行不变', () => {
