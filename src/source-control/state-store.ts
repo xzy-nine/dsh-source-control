@@ -12,6 +12,7 @@
  * 都经同一分类器还原成当前文档，随后写进域。文件本身不改不删，便于回滚。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { errorText } from '../shared/error-text.js';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain';
@@ -138,7 +139,9 @@ export function normalizePath(path: string | null | undefined): string {
 }
 
 /**
- * 旧版状态文档路径；只作导入来源，不再写入新数据。
+ * 回退状态文档路径。
+ *
+ * 导入时读；域不可用时作为回退写入，见 {@link writeLegacyFile}。
  *
  * @returns 绝对路径。
  */
@@ -188,7 +191,7 @@ export async function openStateStore(storageDomain: unknown, readSessionPersiste
 			: `旧版状态文档已导入 storage domain（单元 ${DOMAIN_NAME}）`);
 		return true;
 	} catch (error) {
-		domainFailure = error instanceof Error ? error.message : String(error);
+		domainFailure = errorText(error);
 		return false;
 	}
 }
@@ -236,7 +239,7 @@ function importLegacyFile(): StateDocument | null {
 		}
 		return makeDocument(parts);
 	} catch (error) {
-		logWarn('state', `旧版状态文档读取失败，已忽略：${path}：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('state', `旧版状态文档读取失败，已忽略：${path}：${errorText(error)}`);
 		return null;
 	}
 }
@@ -773,7 +776,7 @@ async function persist(): Promise<void> {
 	try {
 		await global.set(doc);
 	} catch (error) {
-		logWarn('state', `状态文档写入 storage domain 失败，本次改动只留在内存里：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('state', `状态文档写入 storage domain 失败，本次改动只留在内存里：${errorText(error)}`);
 	}
 }
 
@@ -795,7 +798,7 @@ function writeLegacyFile(doc: StateDocument): void {
 		writeFileSync(tmp, JSON.stringify({ schemaVersion: LEGACY_SCHEMA_VERSION, ...doc }, null, 2), 'utf8');
 		renameSync(tmp, path);
 	} catch (error) {
-		logWarn('state', `旧版状态文档写盘失败，本次改动只留在内存里：${path}：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('state', `旧版状态文档写盘失败，本次改动只留在内存里：${path}：${errorText(error)}`);
 	}
 }
 

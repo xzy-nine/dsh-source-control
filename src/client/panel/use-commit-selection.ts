@@ -9,17 +9,14 @@ import { compareCommits, loadCommitFiles } from '../api/index.ts';
 import type { ScrollToRowRequest } from '../graph/use-graph-windowing.ts';
 import { headTargetOf, jumpStepOf } from './graph-target.ts';
 import { changeOf } from './changes.ts';
-import { reportError } from './errors.ts';
-import type { Commit, CommitFile, PanelState } from '../shared/types.ts';
+import { reportCaught } from './errors.ts';
+import type { Commit, CommitFile } from '../shared/types.ts';
+import type { PanelStateAccess } from './panel-state-access.ts';
 
 /** 提交选择与详情的依赖面。 */
-export interface CommitSelectionDeps {
+export interface CommitSelectionDeps extends PanelStateAccess {
 	/** 当前选中的工作树路径。 */
 	readonly workingTreePath: string | null;
-	/** 面板状态：提交列表、选中项与详情。 */
-	readonly state: PanelState;
-	/** 面板状态写入器。 */
-	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 打开差异页。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
 	/** 是否在加载仓库后自动滚动到 HEAD。 */
@@ -105,6 +102,21 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 	 */
 	const selectCommit = React.useCallback(async (hash: string, baseHash?: string) => {
 		setState((previous) => ({ ...previous, selectedHash: hash, detail: null }));
+		/**
+		 * 把取回的文件列表写进详情。
+		 *
+		 * 只在这一行仍是当前选中项时写：取数期间用户可能已切到别的提交，迟到的结果不该覆盖过去。
+		 *
+		 * @param target - 取数针对的提交哈希。
+		 * @param files - 该提交的改动文件。
+		 * @param truncated - 是否因上限截断。
+		 * @returns 无。
+		 */
+		const settleFiles = (target: string, files: CommitFile[], truncated: boolean): void => {
+			setState((previous) => (previous.selectedHash === target && previous.detail !== null
+				? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
+				: previous));
+		};
 		if (workingTreePath === null) return;
 		try {
 			const commit = state.commits.find((item) => item.hash === hash);
@@ -115,25 +127,19 @@ export function useCommitSelection(deps: CommitSelectionDeps): CommitSelection {
 			}));
 			if (baseHash !== undefined) {
 				const { files, truncated } = await compareCommits(workingTreePath, baseHash, hash);
-				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
-					: previous));
+				settleFiles(hash, files, truncated);
 				return;
 			}
 			if (hash === '*') {
 				const files: CommitFile[] = state.entries.map((entry) => ({ path: entry.path, type: changeOf(entry).type, additions: null, deletions: null }));
 				// 工作区条目已在宿主侧按上限截断：详情列表同样只是前一部分。
-				setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-					? { ...previous, detail: { ...previous.detail, files, loading: false, truncated: state.entriesTruncated } }
-					: previous));
+				settleFiles(hash, files, state.entriesTruncated);
 				return;
 			}
 			const { files, truncated } = await loadCommitFiles(workingTreePath, hash);
-			setState((previous) => (previous.selectedHash === hash && previous.detail !== null
-				? { ...previous, detail: { ...previous.detail, files, loading: false, truncated } }
-				: previous));
+			settleFiles(hash, files, truncated);
 		} catch (error) {
-			reportError(setState, error instanceof Error ? error.message : String(error));
+			reportCaught(setState, error);
 		}
 	}, [workingTreePath, state.commits, state.entries, state.entriesTruncated, setState]);
 

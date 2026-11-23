@@ -60,6 +60,7 @@ function annotatedOf(tag: CommitTag): unknown {
 	return (tag as { readonly annotated?: unknown }).annotated;
 }
 
+
 /**
  * 两个标签列表是否相等。
  *
@@ -181,6 +182,25 @@ export function withUncommittedCount(commits: Commit[], count: number, head: str
 export function uncommittedParentOf(commits: readonly Commit[], head: string | null | undefined): string | null {
 	if (typeof head !== 'string' || head === '') return null;
 	return commits.some((commit) => commit.hash === head) ? head : null;
+}
+
+/**
+ * 按一轮工作区快照修正未提交伪提交行。
+ *
+ * 条目数与父提交取自 {@link withUncommittedCount} 与 {@link uncommittedParentOf}，两者同源
+ * 于同一份快照。
+ *
+ * @param graph - 本轮取回的提交图窗口。
+ * @param snapshot - 本轮已读到的工作区快照。
+ * @returns 修正后的提交列表；无需改动时返回原引用。
+ */
+export function commitsWithUncommitted(
+	graph: { readonly commits: readonly Commit[] },
+	snapshot: { readonly entries: readonly WorkingTreeEntry[]; readonly head: string | null },
+): Commit[] {
+	return withUncommittedCount(
+		[...graph.commits], snapshot.entries.length, uncommittedParentOf(graph.commits, snapshot.head),
+	);
 }
 
 /**

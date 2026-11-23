@@ -1,11 +1,12 @@
 #!/bin/sh
 #
-# pre-commit：对本次提交涉及的 TypeScript 文件跑 oxlint。
+# pre-commit：对本次提交涉及的 TypeScript 文件跑 oxlint 与注释散文门禁。
 #
 # 只查暂存的 .ts/.tsx（含新增、修改、重命名），存量文件不重复检查。
-# 另外：本次提交涉及 Markdown 时跑文档门禁（换行、链接、预算），它们的规则见 Docs/AGENTS.md。
 # oxlint 只能检查磁盘上的文件，没有从标准输入读源码的入口：先确认暂存内容与工作区副本一致，
 # 不一致即拒绝提交，避免检查到的不是即将提交的那一版。
+# 注释散文门禁同样只查暂存文件，规则见 Docs/AGENTS.md 与散文标准技能。
+# 另外：本次提交涉及 Markdown 时跑文档门禁（换行、链接、预算），它们的规则见 Docs/AGENTS.md。
 # 规则集见仓库根的 .oxlintrc.json；type-aware 规则需要安装依赖。
 
 set -e
@@ -44,6 +45,11 @@ fi
 if [ "$staged_count" -gt 0 ]; then
 	echo "pre-commit: oxlint 检查 $staged_count 个文件"
 	staged_ts_paths | xargs -0 node node_modules/oxlint/dist/cli.js --type-aware
+fi
+
+# 注释散文门禁只查本次暂存的 TypeScript 文件：规则页见 Docs/AGENTS.md 与散文标准技能。
+if [ "$staged_count" -gt 0 ]; then
+	node node_modules/tsx/dist/cli.mjs scripts/verify-comment-prose.ts --staged
 fi
 
 # 文档门禁只在本次提交涉及 Markdown 时跑：规则页见 Docs/AGENTS.md。

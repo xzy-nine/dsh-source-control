@@ -99,7 +99,7 @@ export interface LaneRow {
 /**
  * 泳道状态：某个边界处的泳道占用。
  *
- * null 表示空位；位置有意义（泳道下标即横向位置），因此不能压缩掉。
+ * null 表示空位。下标即横向位置，重启布局时按原样接续才能续上未结束的泳道。
  */
 export type LaneSeed = ReadonlyArray<{ readonly hash: string | null; readonly colour: string } | null>;
 
@@ -146,8 +146,9 @@ interface Lane {
 /**
  * 计算提交序列的泳道布局。
  *
- * 泳道位置一次分配后保持稳定：本行提交所在泳道原位让给第一父提交，其余泳道原样延续，
- * 合并的其余父提交追加到最右侧新泳道。行间不重排、不左移压实。
+ * 泳道每行压实：本行提交所在泳道原位让给第一父提交，其余等待本提交的泳道汇入后释放，
+ * 本行结束时已无归属的泳道从表中移除，其右侧泳道在一次行内平移中左移一格。
+ * 未结束的泳道不换位，行内只出一次 S 形平移。
  *
  * 领先/落后以虚拟行插入：云端领先插在远端尖端之前，本地领先插在 HEAD 之前，
  * 原有行依次下移。
@@ -196,7 +197,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 	const baseRows: LaneRow[] = [];
 
 	for (const commit of commits) {
-		const input = lanes.map((lane) => (lane === null ? null : { ...lane }));
+		const input = lanes.map(cloneLane);
 		const parentIds = commit.parents ?? [];
 		const commitColour = refColour(commit.hash);
 
@@ -205,7 +206,7 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 		const output: Array<Lane | null> = [];
 		let nodeLane = -1;
 		for (const [index, lane] of input.entries()) {
-			if (lane === null || lane.hash !== commit.hash) { output.push(lane === null ? null : { ...lane }); continue; }
+			if (lane === null || lane.hash !== commit.hash) { output.push(cloneLane(lane)); continue; }
 			if (nodeLane === -1) {
 				nodeLane = index;
 				output.push({ hash: parentIds[0] ?? null, colour: commitColour ?? lane.colour });
@@ -244,37 +245,52 @@ export function layoutCommits(commits: readonly LayoutCommit[], refs: LaneRefs =
 			forkLanes.push({ lane, colour });
 		}
 
+		// 压实：本行释放出的空位就地移除，其右侧泳道在行底左移。行宽因此随分支结束回落，
+		// 提交信息列不会停在历史最宽处。
+		const compacted: Lane[] = [];
+		const bottomLane = new Map<number, number>();
+		for (const [index, lane] of output.entries()) {
+			// hash 为 null 的占位泳道没有等待中的提交：无父提交的节点留下它之后即失效。
+			if (lane === null || lane.hash === null) continue;
+			bottomLane.set(index, compacted.length);
+			compacted.push(lane);
+		}
+		/** 行顶下标转换为压实后的行底下标。 */
+		const bottomOf = (lane: number): number => bottomLane.get(lane) ?? lane;
+
 		// 节点颜色：本提交的引用色优先，否则取所在泳道的颜色。
 		const nodeColour = commitColour ?? (inbound ? input[nodeLane]?.colour : output[nodeLane]?.colour) ?? poolColour();
-		// 线段：泳道下标即横向位置，不因泳道消亡而左移。
+		// 线段：行顶下标即本行输入位置，行底下标取压实后的落点；两者不同即为平移段。
 		const segments: LaneSegment[] = [];
 		for (const [index, lane] of input.entries()) {
 			if (lane === null || index === nodeLane) continue;
-			// 其余等待本提交的泳道汇入节点后释放。
+			// 其余等待本提交的泳道汇入节点后释放，终点是节点本身，不参与行底位移。
 			if (lane.hash === commit.hash) {
 				segments.push({ lane: index, toLane: nodeLane, fromTop: true, toBottom: false, colour: lane.colour });
 			} else if (lane.hash !== null) {
-				segments.push({ lane: index, toLane: index, fromTop: true, toBottom: true, colour: lane.colour });
+				segments.push({ lane: index, toLane: bottomOf(index), fromTop: true, toBottom: true, colour: lane.colour });
 			}
 		}
-		// 节点泳道：入线自行顶到节点，出线自节点到行底；两者并存时合成贯穿线。
+		// 节点泳道：入线自行顶到节点，出线自节点到压实后的行底；两者并存且不位移时合成贯穿线。
+		const outboundLane = bottomOf(nodeLane);
 		const outboundColour = output[nodeLane]?.colour ?? nodeColour;
 		const hasOutbound = parentIds.length > 0;
-		if (inbound && hasOutbound) {
+		if (inbound && hasOutbound && outboundLane === nodeLane) {
 			segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: true, colour: nodeColour });
 		} else {
 			if (inbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: true, toBottom: false, colour: nodeColour });
-			if (hasOutbound) segments.push({ lane: nodeLane, toLane: nodeLane, fromTop: false, toBottom: true, colour: outboundColour });
+			if (hasOutbound) segments.push({ lane: nodeLane, toLane: outboundLane, fromTop: false, toBottom: true, colour: outboundColour });
 		}
 		for (const fork of forkLanes) {
+			// 重复父提交会落回节点自己所在的泳道，出线已由节点那一条覆盖。
 			if (fork.lane === nodeLane) continue;
-			segments.push({ lane: nodeLane, toLane: fork.lane, fromTop: false, toBottom: true, colour: fork.colour });
+			segments.push({ lane: nodeLane, toLane: bottomOf(fork.lane), fromTop: false, toBottom: true, colour: fork.colour });
 		}
 
-		const width = Math.max(input.length, output.length, nodeLane + 1, 1);
+		const width = Math.max(input.length, compacted.length, nodeLane + 1, 1);
 		laneCount = Math.max(laneCount, width);
 		baseRows.push({ lane: nodeLane, colour: nodeColour, segments, width, hash: commit.hash });
-		lanes = output;
+		lanes = compacted;
 	}
 
 	// 领先/落后：以虚拟行插入，原有行下移。
@@ -374,6 +390,43 @@ export interface NodeGeometry {
 	readonly radius: number;
 }
 
+/** 一行的高度中线。 */
+const ROW_HALF = ROW_HEIGHT / 2;
+/**
+ * 一段半径 LANE_WIDTH 的四分之一圆。
+ *
+ * @param sweep - SVG 的 sweep 标记：1 顺时针，0 逆时针。
+ * @param x - 弧终点横坐标；省略时弧终点由下一段命令给出。
+ * @param y - 弧终点纵坐标。
+ * @returns 弧命令片段。
+ */
+function quarterArc(sweep: number, x?: number, y?: number): string {
+	const end = x === undefined ? '' : ` ${x} ${y ?? 0}`;
+	return `A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep}${end}`;
+}
+/**
+ * 复制一条泳道；空泳道保持为空。
+ *
+ * 布局按行推进，写入下一行的泳道是新对象，上一行的记录因此保持不变。
+ *
+ * @param lane - 来源泳道。
+ * @returns 新泳道。
+ */
+function cloneLane(lane: Lane | null): Lane | null {
+	return lane === null ? null : { ...lane };
+}
+/**
+ * 圆弧上某角度的点。
+ *
+ * @param centre - 圆弧圆心。
+ * @param radius - 圆弧半径。
+ * @param degrees - 角度（度，屏幕坐标）。
+ * @returns 该角度上的点。
+ */
+function pointOnArc(centre: { x: number; y: number }, radius: number, degrees: number): { x: number; y: number } {
+	const radians = (degrees * Math.PI) / 180;
+	return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
+}
 /**
  * 圆弧上到节点外沿的交点。
  *
@@ -393,14 +446,10 @@ function arcEdgePoint(
 	endAngle: number, direction: 1 | -1,
 ): { x: number; y: number } {
 	const radius = LANE_WIDTH;
-	if (nodeRadius <= 0) {
-		const radians = (endAngle * Math.PI) / 180;
-		return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
-	}
+	if (nodeRadius <= 0) return pointOnArc(centre, radius, endAngle);
 	// 弦长 nodeRadius 对应圆心角 θ：nodeRadius = 2R sin(θ/2)。
 	const step = (2 * Math.asin(Math.min(1, nodeRadius / (2 * radius))) * 180) / Math.PI;
-	const radians = ((endAngle + direction * step) * Math.PI) / 180;
-	return { x: centre.x + radius * Math.cos(radians), y: centre.y + radius * Math.sin(radians) };
+	return pointOnArc(centre, radius, endAngle + direction * step);
 }
 
 /**
@@ -416,12 +465,12 @@ function arcEdgePoint(
  * @returns SVG 路径描述。
  */
 function mergeInPath(x1: number, x2: number, radius: number): string {
-	const half = ROW_HEIGHT / 2;
+	const half = ROW_HALF;
 	const leftwards = x2 < x1;
 	const sweep = leftwards ? 1 : 0;
 	const arcX = leftwards ? x1 - LANE_WIDTH : x1 + LANE_WIDTH;
 	// 起点越界 ROW_OVERLAP：与上一行画到行底的线叠上，消除行边界接缝。
-	const lead = `M ${x1} ${-ROW_OVERLAP} V 0 A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep}`;
+	const lead = `M ${x1} ${-ROW_OVERLAP} V 0 ${quarterArc(sweep)}`;
 	if (arcX === x2) {
 		// 节点圆心即圆弧终点：自 90° 端点沿弧回退到节点外沿。
 		const exit = arcEdgePoint({ x: arcX, y: 0 }, { x: x2, y: half }, radius, 90, leftwards ? -1 : 1);
@@ -444,38 +493,54 @@ function mergeInPath(x1: number, x2: number, radius: number): string {
  * @returns SVG 路径描述。
  */
 function forkOutPath(x1: number, x2: number, radius: number): string {
-	const half = ROW_HEIGHT / 2;
+	// 终点越界 ROW_OVERLAP：与下一行自行顶起画的线叠上，消除行边界接缝。
+	const tail = `V ${ROW_HEIGHT + ROW_OVERLAP}`;
 	const sign = x2 > x1 ? 1 : -1;
 	const sweep = sign > 0 ? 1 : 0;
 	const arcStart = x2 - LANE_WIDTH * sign;
-	// 终点越界 ROW_OVERLAP：与下一行自行顶起画的线叠上，消除行边界接缝。
-	const tail = `V ${ROW_HEIGHT + ROW_OVERLAP}`;
-	if (arcStart === x1) {
+	const start = arcStart === x1
 		// 节点圆心即圆弧起点：自 270° 端点沿弧前进到节点外沿。
-		const exit = arcEdgePoint({ x: arcStart, y: ROW_HEIGHT }, { x: x1, y: half }, radius, 270, sign > 0 ? 1 : -1);
-		return `M ${exit.x} ${exit.y} A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep} ${x2} ${ROW_HEIGHT} ${tail}`;
-	}
-	return `M ${x1 + radius * sign} ${half} H ${arcStart} A ${LANE_WIDTH} ${LANE_WIDTH} 0 0 ${sweep} ${x2} ${ROW_HEIGHT} ${tail}`;
+		? arcEdgePoint({ x: arcStart, y: ROW_HEIGHT }, { x: x1, y: ROW_HALF }, radius, 270, sign > 0 ? 1 : -1)
+		: { x: x1 + radius * sign, y: ROW_HALF };
+	const lead = arcStart === x1 ? `M ${start.x} ${start.y}` : `M ${start.x} ${start.y} H ${arcStart}`;
+	return `${lead} ${quarterArc(sweep, x2, ROW_HEIGHT)} ${tail}`;
 }
 
 /**
- * 泳道整行平移的 S 形路径：两段半径 S_CURVE_RADIUS 的四分之一圆接住行顶与行底的
- * 竖直切向，中间的水平段吃掉横向位移。
+ * 一段 S 形平移：两段四分之一圆夹一段水平线。
+ *
+ * @param x1 - 行顶的泳道中心线。
+ * @param x2 - 行底的泳道中心线。
+ * @param bend - 第一段圆弧的纵向起点。
+ * @param radius - 圆弧半径。
+ * @param lowerSweep - 第二段圆弧的 sweep 标记。
+ * @returns SVG 路径描述。
+ */
+function sCurve(x1: number, x2: number, bend: number, radius: number, lowerSweep: number): string {
+	const upperSweep = lowerSweep === 1 ? 0 : 1;
+	const towards = lowerSweep === 1 ? x2 - radius : x2 + radius;
+	return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 ${upperSweep} ${x1 + (lowerSweep === 1 ? radius : -radius)} ${ROW_HALF}`
+		+ ` H ${towards} A ${radius} ${radius} 0 0 ${lowerSweep} ${x2} ${ROW_HALF + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
+}
+/**
+ * 泳道整行平移的 S 形路径：两段四分之一圆接住行顶与行底的竖直切向，中间的水平段
+ * 吃掉横向位移。
+ *
+ * 左移一条泳道时半径取 S_CURVE_RADIUS，水平段保留既有形状；一次压实移除多个槽位、
+ * 相邻泳道各左移多条时，半径增大到行半高，把水平段收成一个点，使相邻路径在行中线
+ * 不共享横向区间。半径封顶在行半高，保证第二段圆弧落在行底、竖直段不入上一行。
  *
  * @param x1 - 行顶的泳道中心线。
  * @param x2 - 行底的泳道中心线。
  * @returns SVG 路径描述。
  */
 function shiftPath(x1: number, x2: number): string {
-	const half = ROW_HEIGHT / 2;
-	const radius = S_CURVE_RADIUS;
-	const bend = half - radius;
-	if (x2 < x1) {
-		return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 1 ${x1 - radius} ${half}`
-			+ ` H ${x2 + radius} A ${radius} ${radius} 0 0 0 ${x2} ${half + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
-	}
-	return `M ${x1} ${-ROW_OVERLAP} V ${bend} A ${radius} ${radius} 0 0 0 ${x1 + radius} ${half}`
-		+ ` H ${x2 - radius} A ${radius} ${radius} 0 0 1 ${x2} ${half + radius} V ${ROW_HEIGHT + ROW_OVERLAP}`;
+	const leftwards = x2 < x1;
+	const slots = Math.abs(x1 - x2) / LANE_WIDTH;
+	// 只有左移参与压实；右移保持原半径。
+	const radius = leftwards && slots > 1 ? ROW_HALF : S_CURVE_RADIUS;
+	// 向左平移时两段圆弧的 sweep 相反（先 1 后 0），向右时先 0 后 1。
+	return sCurve(x1, x2, ROW_HALF - radius, radius, leftwards ? 0 : 1);
 }
 
 /**
@@ -495,7 +560,7 @@ function shiftPath(x1: number, x2: number): string {
 export function segmentGeometry(segment: LaneSegment, node: NodeGeometry | null = null): SegmentGeometry | null {
 	const x1 = laneCentre(segment.lane);
 	const x2 = laneCentre(segment.toLane);
-	const half = ROW_HEIGHT / 2;
+	const half = ROW_HALF;
 	const y1 = segment.fromTop ? 0 : half;
 	const y2 = segment.toBottom ? ROW_HEIGHT : half;
 	if (y1 === y2) return null;

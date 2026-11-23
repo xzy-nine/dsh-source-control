@@ -10,7 +10,7 @@ import { graphKey, readGraph, readRepoInfo, writeGraph, writeRepoInfo } from '..
 import { repoHead } from '../repo-facts.js';
 import { whenLocalSettled } from '../git-exec.js';
 import { logDebug } from '../logger.js';
-import type { StashEntry } from '../git-types.js';
+import type { CommitNode, CommitOrdering, RepoInfo, StashEntry } from '../git-types.js';
 import type { ApiContext } from './context.js';
 
 /**
@@ -41,6 +41,52 @@ function graphParamsLog(params: Parameters<typeof graphKey>[1]): string {
 	return `（HEAD ${head}，${flags.join('，')}）`;
 }
 
+/** `loadCommits` 响应的提交窗口部分：缓存命中与重新取数共用同一组字段。 */
+interface CommitsPayload {
+	readonly commits: readonly CommitNode[];
+	readonly head: string | null;
+	/** 当前分支名：与缓存键里的 HEAD 哈希是两个值，未取仓库信息时由客户端用它填补 `head`。 */
+	readonly branch: string | null;
+	readonly tags: readonly string[];
+	readonly moreCommitsAvailable: boolean;
+	readonly nextSkip: number;
+	/** 本页最后一条的哈希；没有更多时不设游标。 */
+	readonly nextCursorHash: string | null;
+	/** 别的工作树占用的分支：客户端据此禁用检出、删除与重命名。 */
+	readonly foreignBranches: readonly string[];
+	/** 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。 */
+	readonly repoInfo: RepoInfo | null;
+}
+
+/**
+ * 组装 `loadCommits` 的完整响应。
+ *
+ * 成功路径的 `error` 恒为 null：既有契约要求该字段存在。命中窗口缓存与重新取数走同一条
+ * 组装路径，客户端的字段契约因此只有一处。
+ *
+ * @param refreshId - 请求的刷新编号。
+ * @param onlyFollowFirstParent - 本次取数是否只沿第一父提交回溯。
+ * @param payload - 提交窗口的数据。
+ * @returns 可交给 `respond` 的响应对象。
+ */
+function commitsResponse(refreshId: number, onlyFollowFirstParent: boolean, payload: CommitsPayload) {
+	return {
+		command: 'loadCommits',
+		refreshId,
+		error: null,
+		onlyFollowFirstParent,
+		commits: payload.commits,
+		head: payload.head,
+		branch: payload.branch,
+		tags: payload.tags,
+		moreCommitsAvailable: payload.moreCommitsAvailable,
+		nextSkip: payload.nextSkip,
+		nextCursor: payload.moreCommitsAvailable ? payload.nextCursorHash : null,
+		foreignBranches: payload.foreignBranches,
+		repoInfo: payload.repoInfo,
+	};
+}
+
 /**
  * 处理提交图与仓库信息查询的一条命令。
  *
@@ -53,10 +99,7 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 		case 'loadRepoInfo': {
 			// 读远程与贮藏列表：不碰工作区，抓取期间照常读。
 			await whenLocalSettled(repo);
-			/*
-			 * 非仓库路径直接回空信息，不起子进程。原先靠 getRepoInfo 失败后再启一次
-			 * `git rev-parse` 反判，等于先失败一遍再确认。
-			 */
+			// 非仓库路径直接回空信息，不起子进程。
 			if (!(await isRepoPath(repo))) {
 				logDebug('repo', `目标路径不是 git 仓库，按空仓库信息返回：${repo}`);
 				respond({
@@ -96,21 +139,17 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 			 */
 			if (!(await isRepoPath(repo))) {
 				logDebug('repo', `目标路径不是 git 仓库，按空提交图返回：${repo}`);
-				respond({
-					command: 'loadCommits',
-					refreshId: num('refreshId'),
-					error: null,
-					onlyFollowFirstParent: bool('onlyFollowFirstParent'),
+				respond(commitsResponse(num('refreshId'), bool('onlyFollowFirstParent'), {
 					commits: [],
 					head: null,
 					branch: null,
 					tags: [],
 					moreCommitsAvailable: false,
 					nextSkip: 0,
-					nextCursor: null,
+					nextCursorHash: null,
 					foreignBranches: [],
 					repoInfo: null,
-				});
+				}));
 				break;
 			}
 			{
@@ -183,21 +222,17 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 					 * 再发一次请求。缓存里没有时留给客户端按需补取。
 					 */
 					const cachedInfo = readRepoInfo(repo, { showRemoteBranches, showStashes, hideRemotes }) ?? null;
-					respond({
-						command: 'loadCommits',
-						refreshId: num('refreshId'),
-						error: null,
-						onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+					respond(commitsResponse(num('refreshId'), graphParams.onlyFollowFirstParent, {
 						commits: cachedGraph.commits,
 						head: cachedGraph.head,
 						branch: cachedGraph.branch,
 						tags: cachedGraph.tags,
 						moreCommitsAvailable: cachedGraph.moreCommitsAvailable,
 						nextSkip: cachedGraph.nextSkip,
-						nextCursor: cachedGraph.moreCommitsAvailable && lastCached !== undefined ? lastCached.hash : null,
+						nextCursorHash: lastCached?.hash ?? null,
 						foreignBranches: cachedGraph.foreignBranches,
 						repoInfo: cachedInfo,
-					});
+					}));
 					break;
 				}
 				/*
@@ -220,7 +255,7 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 				 * 仓库信息批：仓库信息（含引用与分支列表，一次 `for-each-ref` 同时得到两者）、贮藏与
 				 * 别的工作树占用分支，三者互不依赖，同批并行。
 				 *
-				 * 提交图的引用标记不再来自这里：它取自同一次 `git log` 的装饰。
+				 * 提交图的引用标记取自同一次 `git log` 的装饰，不在这里装配。
 				 */
 				const batchSource = withRepoInfo
 					? Promise.all([
@@ -251,17 +286,20 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 				logDebug('cache', `提交图窗口未命中缓存，重新取数：${repo}${graphParamsLog(graphParams)}`);
 				const data = await getCommits(
 					repo,
-					branchesArg,
-					limit,
-					graphParams.showTags,
-					showRemoteBranches,
-					graphParams.includeCommitsMentionedByReflogs,
-					graphParams.onlyFollowFirstParent,
-					graphParams.ordering as never,
-					remoteNames,
-					hideRemotes,
-					stashes,
-					skip,
+					{
+						branches: branchesArg,
+						// 本页要显示的条数；多取一条作哨兵的职责在 getCommits 内部。
+						num: limit,
+						includeTags: graphParams.showTags,
+						includeRemotes: showRemoteBranches,
+						includeCommitsMentionedByReflogs: graphParams.includeCommitsMentionedByReflogs,
+						onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+						ordering: graphParams.ordering as CommitOrdering,
+						remotes: remoteNames,
+						hideRemotes,
+						stashes,
+						skip,
+					},
 					head?.hash ?? null,
 				);
 				const batch = batchSource === null ? null : await batchSource;
@@ -277,33 +315,20 @@ export async function handleGraphCommand(ctx: ApiContext): Promise<boolean> {
 				const all = data.commits;
 				// 游标取本页最后一条：git 会从该提交重新输出它，由客户端按 hash 去重。
 				const last = all.at(-1);
-				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
-				if (data.error === null) {
-					writeGraph(repo, graphParams, {
-						commits: all, head: data.head, branch: head?.branch ?? null, tags: data.tags,
-						moreCommitsAvailable: data.moreCommitsAvailable, nextSkip: data.nextSkip,
-						foreignBranches: [...foreign],
-					});
-				}
-				respond({
-					command: 'loadCommits',
-					refreshId: num('refreshId'),
-					// 成功路径的 error 恒为 null：既有契约要求该字段存在。
-					error: null,
-					onlyFollowFirstParent: graphParams.onlyFollowFirstParent,
+				const window: Omit<CommitsPayload, 'nextCursorHash' | 'repoInfo'> = {
 					commits: all,
 					head: data.head,
-					// 当前分支名：与缓存键里的 HEAD 哈希是两个值，未取仓库信息时由客户端用它填补 `head`。
 					branch: head?.branch ?? null,
 					tags: data.tags,
 					moreCommitsAvailable: data.moreCommitsAvailable,
 					nextSkip: data.nextSkip,
-					nextCursor: data.moreCommitsAvailable && last !== undefined ? last.hash : null,
-					// 别的工作树占用的分支：客户端据此禁用检出、删除与重命名。
 					foreignBranches: [...foreign],
-					// 带 `withRepoInfo` 时随响应取回的仓库信息；其余请求为 null。
-					repoInfo: batch?.info ?? null,
-				});
+				};
+				// 只缓存成功的读取：失败文本可能来自瞬时故障，缓存会让它停留整个 TTL。
+				if (data.error === null) writeGraph(repo, graphParams, window);
+				respond(commitsResponse(num('refreshId'), graphParams.onlyFollowFirstParent, {
+					...window, nextCursorHash: last?.hash ?? null, repoInfo: batch?.info ?? null,
+				}));
 			}
 			break;
 		case 'loadRefs':

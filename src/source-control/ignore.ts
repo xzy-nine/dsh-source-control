@@ -8,26 +8,9 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { gitOrThrow, runGit } from './working-tree.js';
 import { appendIgnoreRule, hasIgnoreRule, ignoreEntriesOf, ignoreRuleOf, isIgnorableTarget, normalizeIgnoreTarget } from './ignore-rules.js';
+import type { IgnoreWriteResult, LocalExcludeState } from '../shared/ignore-types.js';
 
-/** 写入 `.gitignore` 的结果。 */
-export interface IgnoreWriteResult {
-	/** 规则写入的文件，相对仓库根，使用 `/` 分隔。 */
-	readonly file: string;
-	/** 该文件是否为本次新建。 */
-	readonly created: boolean;
-	/** 写入前该文件是否已在版本控制中：未跟踪时没有可比较的差异。 */
-	readonly tracked: boolean;
-	/** 本次写入的规则；规则已存在时为 null。 */
-	readonly rule: string | null;
-}
-
-/** 本地排除文件的状态。 */
-export interface LocalExcludeState {
-	/** 排除文件的绝对路径。 */
-	readonly path: string;
-	/** 有效条目：已去掉空行与注释。 */
-	readonly entries: readonly string[];
-}
+export type { IgnoreWriteResult, LocalExcludeState } from '../shared/ignore-types.js';
 
 /**
  * 目标路径是否为目录。
@@ -111,6 +94,26 @@ async function nearestGitignore(repo: string, target: string): Promise<{ dir: st
 }
 
 /**
+ * 校验目标路径可写入，并判定它是目录还是文件。
+ *
+ * 两个写入入口都要先过这一步：越界路径一律拒绝，规则写法随后按目录/文件区分。
+ *
+ * @param repo - 仓库根。
+ * @param filePath - 目标路径，相对仓库根。
+ * @param purpose - 拒绝时的用途名，写进错误文本。
+ * @returns 规范化后的目标与它是否为目录。
+ */
+async function resolveIgnorableTarget(
+	repo: string,
+	filePath: string,
+	purpose: string,
+): Promise<{ readonly target: string; readonly folder: boolean }> {
+	const target = normalizeIgnoreTarget(filePath);
+	if (!isIgnorableTarget(target)) throw new Error(`该路径不在当前仓库内，无法写入${purpose}。`);
+	return { target, folder: await isDirectory(repo, target) };
+}
+
+/**
  * 把路径写进最近的 `.gitignore`。
  *
  * @param repo - 仓库根。
@@ -118,9 +121,7 @@ async function nearestGitignore(repo: string, target: string): Promise<{ dir: st
  * @returns 写入结果；路径不合法时抛出错误。
  */
 export async function addToGitignore(repo: string, filePath: string): Promise<IgnoreWriteResult> {
-	const target = normalizeIgnoreTarget(filePath);
-	if (!isIgnorableTarget(target)) throw new Error('该路径不在当前仓库内，无法写入忽略规则。');
-	const folder = await isDirectory(repo, target);
+	const { target, folder } = await resolveIgnorableTarget(repo, filePath, '忽略规则');
 	const { dir, file, exists } = await nearestGitignore(repo, target);
 	const rule = ignoreRuleOf(dir === '' ? target : nodePath.posix.relative(dir, target), folder);
 	const content = await readIfExists(file);
@@ -166,9 +167,7 @@ export async function localExcludeState(repo: string): Promise<LocalExcludeState
  * @returns 写入后的状态；路径不合法时抛出错误。
  */
 export async function addToLocalExclude(repo: string, filePath: string): Promise<LocalExcludeState> {
-	const target = normalizeIgnoreTarget(filePath);
-	if (!isIgnorableTarget(target)) throw new Error('该路径不在当前仓库内，无法写入本地排除。');
-	const folder = await isDirectory(repo, target);
+	const { target, folder } = await resolveIgnorableTarget(repo, filePath, '本地排除');
 	const rule = ignoreRuleOf(target, folder);
 	const file = await localExcludePath(repo);
 	const content = await readIfExists(file);

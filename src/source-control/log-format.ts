@@ -5,6 +5,7 @@
  * `MM-DD HH:MM:SS.mmm  PID  TID  LEVEL TAG: message`
  * 每条记录以时间戳开头；含换行的消息按行拆成多条记录，续行沿用同一时间戳与级别。
  */
+import { pad2, pad3 } from '../shared/pad-number.js';
 
 /** logcat 级别字符。 */
 export type LogLevel = 'V' | 'D' | 'I' | 'W' | 'E';
@@ -25,11 +26,6 @@ export interface LogRecord {
 	readonly message: string;
 }
 
-/** 补零到两位。 */
-const pad2 = (value: number): string => String(value).padStart(2, '0');
-
-/** 补零到三位。 */
-const pad3 = (value: number): string => String(value).padStart(3, '0');
 
 /**
  * logcat 时间戳：`MM-DD HH:MM:SS.mmm`。
@@ -44,6 +40,22 @@ export function formatLogTimestamp(time: Date): string {
 
 /** 进程号与线程号的列宽。 */
 const THREAD_COLUMN = 5;
+
+/** 一次子进程失败写进日志的 stderr 字符上限。 */
+export const MAX_FAILURE_LOG_CHARS = 2000;
+
+/**
+ * 失败明细接在日志正文之后的片段。
+ *
+ * stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
+ *
+ * @param stderr - 子进程的标准错误。
+ * @returns 以换行开头的明细；stderr 为空时为空串。
+ */
+export function failureLogTail(stderr: string): string {
+	const detail = stderr.trim().slice(0, MAX_FAILURE_LOG_CHARS);
+	return detail === '' ? '' : `\n${detail}`;
+}
 
 /**
  * 拼一条 logcat 记录（不含换行符）。

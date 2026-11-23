@@ -2,6 +2,7 @@
  * 工作区读写：读取变更列表、暂存、取消暂存、提交。
  */
 import { gitInPathBatches, gitOrThrow } from './git-exec.js';
+import { errorText } from '../shared/error-text.js';
 import { parseStatus, type WorkingTreeEntry } from './status-parse.js';
 
 /** 仓库尚无提交时 `git restore --staged` 的报错；git 会给出带引号的 HEAD。 */
@@ -49,7 +50,7 @@ export async function unstagePaths(repo: string, paths: readonly string[]): Prom
 	} catch (error) {
 		// 走查错误信息：仅当仓库没有 HEAD 时才退回 rm --cached，其余失败原样抛出。
 		// git 的实际措辞带引号（could not resolve 'HEAD'），正则因此不能写死无引号形式。
-		const message = error instanceof Error ? error.message : String(error);
+		const message = errorText(error);
 		if (!NO_HEAD_PATTERN.test(message)) throw error;
 		return gitInPathBatches(repo, (batch) => ['rm', '--cached', '-r', '--quiet', '--', ...batch], target);
 	}

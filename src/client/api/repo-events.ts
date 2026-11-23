@@ -10,6 +10,7 @@
  * 本模块不依赖 React 与其它客户端模块，可直接单测。
  */
 import { readStreamText } from './stream.ts';
+import { errorText } from '../../shared/error-text.ts';
 import { logClient } from './log.ts';
 
 /** 事件流地址。 */
@@ -97,14 +98,18 @@ export function parseRepositoryEventFrame(frame: string): { readonly kind: 'writ
 }
 
 /**
- * 解析一条仓库写事件帧。
+ * 取一条仓库事件帧的仓库路径。
  *
  * @param frame - 一个完整的帧（已按空行切分）。
- * @returns 写事件；不是可用的写事件时为 null。
+ * @param kind - 要识别的事件种类。
+ * @returns 匹配的帧；种类不符时为 null。
  */
-export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+function repoFrameOf(frame: string, kind: 'write' | 'tree'): { repo: string } | null {
 	const parsed = parseRepositoryEventFrame(frame);
-	return parsed !== null && parsed.kind === 'write' ? { repo: parsed.repo } : null;
+	return parsed !== null && parsed.kind === kind ? { repo: parsed.repo } : null;
+}
+export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent | null {
+	return repoFrameOf(frame, 'write');
 }
 
 /**
@@ -116,8 +121,7 @@ export function parseRepositoryWriteFrame(frame: string): RepositoryWriteEvent |
  * @returns 结构事件；不是可用的结构事件时为 null。
  */
 export function parseRepositoryTreeFrame(frame: string): RepositoryTreeEvent | null {
-	const parsed = parseRepositoryEventFrame(frame);
-	return parsed !== null && parsed.kind === 'tree' ? { repo: parsed.repo } : null;
+	return repoFrameOf(frame, 'tree');
 }
 
 /**
@@ -199,7 +203,7 @@ export function subscribeRepositoryWrites(options: RepositoryWriteStreamOptions)
 			}, () => disposed.current);
 		} catch (error) {
 			// 取消订阅导致的断开不是异常。
-			if (!disposed.current) logClient('W', 'events', `事件流连接失败：${error instanceof Error ? error.message : String(error)}`);
+			if (!disposed.current) logClient('W', 'events', `事件流连接失败：${errorText(error)}`);
 		} finally {
 			options.onState?.('closed');
 		}

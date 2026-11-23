@@ -4,11 +4,10 @@
  * 子进程一律用数组参数直接 spawn、不经 shell，与 `working-tree.ts` 的 git 执行方式一致。
  * 需要凭据的操作在没有 `gh` 或未登录时返回可读错误，由前端提示。
  */
+import { describeMaskedArgs } from './git-exec.js';
 import { runCollect } from './host-runtime.js';
+import { failureLogTail } from './log-format.js';
 import { logDebug, logWarn } from './logger.js';
-
-/** 一次失败写进日志的 stderr 字符上限。 */
-const MAX_GH_LOG_CHARS = 2000;
 
 /** 一次 `gh` 调用的结果。 */
 export interface GhResult {
@@ -53,7 +52,7 @@ export interface GhOwner {
  * @param cwd - 工作目录，必须是仓库或其子目录。
  * @returns 退出码与输出。
  */
-async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
+export async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
 	logDebug('gh', `调用 GitHub CLI：gh ${describeGhArgs(args)}`);
 	const result = await runCollect({
 		command: 'gh',
@@ -63,15 +62,16 @@ async function runGh(args: readonly string[], cwd: string): Promise<GhResult> {
 		env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GIT_TERMINAL_PROMPT: '0' },
 	});
 	if (result.code !== 0) {
-		// stderr 为空时不拼换行：否则会多出一条只有前缀的空记录。
-		const detail = result.stderr.trim().slice(0, MAX_GH_LOG_CHARS);
-		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}${detail === '' ? '' : `\n${detail}`}`);
+		logWarn('gh', `GitHub CLI 调用失败（退出码 ${String(result.code)}）：gh ${describeGhArgs(args)}${failureLogTail(result.stderr)}`);
 	}
 	return result;
 }
 
 /** 值属于自由文本的 `gh` 参数：日志里屏蔽其取值。 */
 const GH_MASKED_ARGS: ReadonlySet<string> = new Set(['--body', '-b', '--body-file', '-F', '--input', '--notes']);
+
+/** `gh` 里取值可读的参数：它们是本地路径，排查时需要知道读了哪个文件。 */
+const GH_READABLE_VALUE_ARGS: ReadonlySet<string> = new Set(['--body-file', '-F', '--input']);
 
 /**
  * `gh` 参数的可读描述，屏蔽正文类取值。
@@ -80,18 +80,7 @@ const GH_MASKED_ARGS: ReadonlySet<string> = new Set(['--body', '-b', '--body-fil
  * @returns 描述文本。
  */
 export function describeGhArgs(args: readonly string[]): string {
-	const parts: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const arg = args[index];
-		const masked = GH_MASKED_ARGS.has(arg);
-		parts.push(masked ? `${arg}=<已屏蔽>` : arg);
-		// --body-file 的取值是本地路径，保留可读（排查时需要知道读了哪个文件）。
-		if (masked && index + 1 < args.length) {
-			parts.push(arg === '--body-file' || arg === '-F' || arg === '--input' ? args[index + 1] : '<已屏蔽>');
-			index += 1;
-		}
-	}
-	return parts.join(' ');
+	return describeMaskedArgs(args, GH_MASKED_ARGS, GH_READABLE_VALUE_ARGS);
 }
 
 /**
@@ -177,6 +166,19 @@ function ghError(result: GhResult, action: 'generic' | 'create-repo' = 'generic'
 	return failure.message;
 }
 
+/**
+ * 运行一次 gh，失败时按动作语义抛出可读错误。
+ *
+ * @param args - 参数数组，按原样传给 gh。
+ * @param repo - 本地仓库路径。
+ * @param action - 本次动作的语义。
+ * @returns 成功时的调用结果。
+ */
+async function ghOrThrow(args: readonly string[], repo: string, action: 'generic' | 'create-repo' = 'generic'): Promise<GhResult> {
+	const result = await runGh(args, repo);
+	if (result.code !== 0) throw new Error(ghError(result, action));
+	return result;
+}
 /** 账号信息的缓存；每次 gh 调用约 1 秒，同一进程内不重复请求。 */
 let accountCache: { at: number; value: GhAccount } | null = null;
 
@@ -309,8 +311,7 @@ export async function ghCreateRepo(repo: string, options: GhCreateRepoOptions): 
 	];
 	if (options.description !== '') args.push('--description', options.description);
 	if (options.protocol === 'ssh') args.push('--protocol', 'ssh');
-	const result = await runGh(args, repo);
-	if (result.code !== 0) throw new Error(ghError(result, 'create-repo'));
+	const result = await ghOrThrow(args, repo, 'create-repo');
 	// `gh repo create` 输出的是仓库地址；取不到时按属主、仓库名与协议拼出。
 	const url = result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
 	const acceptable = options.protocol === 'ssh' ? url.startsWith('git@') || url.startsWith('ssh://') : url.startsWith('http');
@@ -350,8 +351,7 @@ export async function ghCreatePullRequest(repo: string, options: GhCreatePullReq
 		'--body', options.body,
 	];
 	if (options.draft) args.push('--draft');
-	const result = await runGh(args, repo);
-	if (result.code !== 0) throw new Error(ghError(result));
+	const result = await ghOrThrow(args, repo);
 	return result.stdout.trim().split('\n').filter((line) => line.trim() !== '').pop() ?? '';
 }
 

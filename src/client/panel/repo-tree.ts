@@ -1,12 +1,10 @@
-import { getWorkspace, setWorkspace } from './storage.ts';
-import { normalizePath } from '../shared/path-key.ts';
-
 /**
  * 存储库树的纯函数：可见节点展开、选中持久化。
  *
- * 不依赖 React，便于直接单测；渲染与请求留在 panel.js。路径归一化见 `shared/path-key.ts`。
+ * 不依赖 React，便于直接单测；渲染与请求留在 panel 目录。
  */
-
+import { getWorkspace, setWorkspace } from './storage.ts';
+import { normalizePath } from '../shared/path-key.ts';
 
 /**
  * 按 id 查找节点。
@@ -47,6 +45,29 @@ export function flattenVisible(nodes, expandedIds) {
 }
 
 /**
+ * 在树里按判据找第一个命中的节点。
+ *
+ * 命中返回该节点；给了 `trail` 时沿途记下祖先链（由近及远，不含命中节点自身）。
+ * 查找不跨入命中节点的子树。
+ *
+ * @param nodes - 仓库节点列表。
+ * @param matches - 命中判据。
+ * @param trail - 祖先记录数组，按由近及远压入；不收集时传 null。
+ * @returns 命中的节点；没有命中时为 null。
+ */
+function walkFor(nodes, matches, trail) {
+	for (const node of nodes ?? []) {
+		if (matches(node)) return node;
+		const found = walkFor(node.children ?? [], matches, trail);
+		if (found !== null) {
+			if (trail !== null) trail.push(node.id);
+			return found;
+		}
+	}
+	return null;
+}
+
+/**
  * 取节点自身与其祖先的 id。
  *
  * @param {object[]} nodes - 仓库节点列表。
@@ -54,22 +75,10 @@ export function flattenVisible(nodes, expandedIds) {
  * @returns {string[]} 从根到目标的 id 序列；未命中时为空。
  */
 export function ancestryOf(nodes, id) {
-	const path = [];
-	const walk = (list) => {
-		for (const node of list ?? []) {
-			if (node.id === id) {
-				path.push(node.id);
-				return true;
-			}
-			if (walk(node.children ?? [])) {
-				path.push(node.id);
-				return true;
-			}
-		}
-		return false;
-	};
-	walk(nodes);
-	return path.reverse();
+	const trail = [];
+	if (walkFor(nodes, (node) => node.id === id, trail) === null) return [];
+	// trail 由近及远；对外按从根到目标排列，目标自身排最后。
+	return [...trail].reverse().concat(id);
 }
 
 /**
@@ -104,15 +113,7 @@ export function attachChildren(nodes, childrenByPath) {
 export function findNodeByPath(nodes, path) {
 	const target = normalizePath(path);
 	if (target === '') return null;
-	const walk = (list) => {
-		for (const node of list ?? []) {
-			if (normalizePath(node.path) === target) return node;
-			const found = walk(node.children ?? []);
-			if (found !== null) return found;
-		}
-		return null;
-	};
-	return walk(nodes);
+	return walkFor(nodes, (node) => normalizePath(node.path) === target, null);
 }
 /**
  * 选出初始选中节点：持久化命中优先，其次是工作区根自身，最后取第一个仓库。

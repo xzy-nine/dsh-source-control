@@ -11,6 +11,7 @@ import type { GitResult } from './working-tree.js';
 import { upstreamShortName } from './git-parse.js';
 import { runGit } from './working-tree.js';
 import { isShallowClone } from './worktree-branches.js';
+import { errorText } from '../shared/error-text.js';
 
 /**
  * 把 `<远程>/<分支>` 短名写成完整的远程跟踪引用。
@@ -46,13 +47,66 @@ async function gitErrorInfo(args: readonly string[], cwd: string, options: { rea
 	try {
 		result = await runGit(args, cwd, options);
 	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
+		return errorText(error);
 	}
 	if (result.code === 0) return null;
 	const stderr = stripTrailingNewlines(result.stderr);
 	if (stderr !== '') return stderr;
 	const stdout = stripTrailingNewlines(result.stdout);
 	return stdout !== '' ? stdout : `git ${args[0] ?? ''} 执行失败`;
+}
+
+/**
+ * 贮藏应用时是否恢复暂存状态的参数。
+ *
+ * @param reinstateIndex - 是否恢复暂存状态。
+ * @returns 要追加的参数。
+ */
+function indexFlags(reinstateIndex: boolean): string[] {
+	return reinstateIndex ? ['--index'] : [];
+}
+
+/**
+ * 合并提交要沿用的父提交序号参数。
+ *
+ * @param parentIndex - 父提交序号；非合并提交传不大于 0 的值。
+ * @returns 要追加的参数。
+ */
+function parentFlags(parentIndex: number): string[] {
+	return parentIndex > 0 ? ['-m', parentIndex.toString()] : [];
+}
+
+/**
+ * 合并与拉取的压缩方式参数：压缩合并优先于合并提交。
+ *
+ * 两者互斥：`--squash` 让 git 跳过合并提交，`--no-ff` 随之失效。
+ *
+ * @param createNewCommit - 是否使用 `--no-ff`。
+ * @param squash - 是否使用 `--squash`。
+ * @returns 要追加的参数。
+ */
+function squashFlags(createNewCommit: boolean, squash: boolean): string[] {
+	if (squash) return ['--squash'];
+	return createNewCommit ? ['--no-ff'] : [];
+}
+
+/**
+ * 依次向各远程推送，遇到首个错误即停。
+ *
+ * 调用方只给出推单个远程的实现，停止条件在此处。
+ *
+ * @param remotes - 目标远程名列表。
+ * @param pushOne - 推送到单个远程的实现。
+ * @returns 各远程的结果错误，按尝试顺序；无错误时为空数组。
+ */
+async function pushEveryRemote(remotes: readonly string[], pushOne: (remote: string) => Promise<ErrorInfo>): Promise<ErrorInfo[]> {
+	const results: ErrorInfo[] = [];
+	for (const remote of remotes) {
+		const result = await pushOne(remote);
+		results.push(result);
+		if (result !== null) break;
+	}
+	return results;
 }
 
 /**
@@ -87,7 +141,7 @@ async function commitSquashIfStagedChangesExist(repo: string, obj: string, actio
 	try {
 		code = (await runGit(['diff', '--cached', '--quiet'], repo)).code;
 	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
+		return errorText(error);
 	}
 	if (code !== 1) return null;
 	return gitErrorInfo(['commit', '-m', `Merge ${actionOn.toLowerCase()} '${obj}'`], repo);
@@ -408,13 +462,7 @@ export async function pushBranchToMultipleRemotes(repo: string, branchName: stri
 		return ['未指定要把分支 ' + branchName + ' 推送到哪个远程仓库。'];
 	}
 
-	const results: ErrorInfo[] = [];
-	for (const remote of remotes) {
-		const result = await pushBranch(repo, branchName, remote, setUpstream, mode, skipHooks);
-		results.push(result);
-		if (result !== null) break;
-	}
-	return results;
+	return pushEveryRemote(remotes, (remote) => pushBranch(repo, branchName, remote, setUpstream, mode, skipHooks));
 }
 
 /**
@@ -443,13 +491,7 @@ export async function pushTag(repo: string, tagName: string, remotes: readonly s
 		}
 	}
 
-	const results: ErrorInfo[] = [];
-	for (const remote of remotes) {
-		const result = await gitErrorInfo(['push', remote, tagName], repo);
-		results.push(result);
-		if (result !== null) break;
-	}
-	return results;
+	return pushEveryRemote(remotes, (remote) => gitErrorInfo(['push', remote, tagName], repo));
 }
 
 /**
@@ -583,9 +625,7 @@ export function fetchIntoLocalBranch(repo: string, remote: string, remoteBranch:
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export async function pullBranch(repo: string, branchName: string, remote: string, createNewCommit: boolean, squash: boolean): Promise<ErrorInfo> {
-	const args = ['pull', remote, branchName];
-	if (squash) args.push('--squash');
-	else if (createNewCommit) args.push('--no-ff');
+	const args = ['pull', remote, branchName, ...squashFlags(createNewCommit, squash)];
 
 	const pullError = await gitErrorInfo(args, repo);
 	if (pullError !== null) return pullError;
@@ -618,9 +658,7 @@ export function renameBranch(repo: string, oldName: string, newName: string): Pr
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export async function merge(repo: string, obj: string, actionOn: string, createNewCommit: boolean, squash: boolean, noCommit: boolean, cancelKey = ''): Promise<ErrorInfo> {
-	const args = ['merge', obj];
-	if (squash) args.push('--squash');
-	else if (createNewCommit) args.push('--no-ff');
+	const args = ['merge', obj, ...squashFlags(createNewCommit, squash)];
 	if (noCommit) args.push('--no-commit');
 
 	const mergeError = await gitErrorInfo(args, repo, { cancelKey });
@@ -695,10 +733,9 @@ export function checkoutCommit(repo: string, commitHash: string): Promise<ErrorI
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function cherrypickCommit(repo: string, commitHash: string, parentIndex: number, recordOrigin: boolean, noCommit: boolean): Promise<ErrorInfo> {
-	const args = ['cherry-pick'];
+	const args = ['cherry-pick', ...parentFlags(parentIndex)];
 	if (noCommit) args.push('--no-commit');
 	if (recordOrigin) args.push('-x');
-	if (parentIndex > 0) args.push('-m', parentIndex.toString());
 	args.push(commitHash);
 	return gitErrorInfo(args, repo);
 }
@@ -735,9 +772,7 @@ export function resetToCommit(repo: string, commit: string, resetMode: ResetMode
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function revertCommit(repo: string, commitHash: string, parentIndex: number): Promise<ErrorInfo> {
-	const args = ['revert', '--no-edit'];
-	if (parentIndex > 0) args.push('-m', parentIndex.toString());
-	args.push(commitHash);
+	const args = ['revert', '--no-edit', ...parentFlags(parentIndex), commitHash];
 	return gitErrorInfo(args, repo);
 }
 
@@ -811,10 +846,7 @@ export function resetFileToRevision(repo: string, commitHash: string, filePath: 
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function applyStash(repo: string, selector: string, reinstateIndex: boolean): Promise<ErrorInfo> {
-	const args = ['stash', 'apply'];
-	if (reinstateIndex) args.push('--index');
-	args.push(selector);
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(['stash', 'apply', ...indexFlags(reinstateIndex), selector], repo);
 }
 
 /**
@@ -849,10 +881,7 @@ export function dropStash(repo: string, selector: string): Promise<ErrorInfo> {
  * @returns 成功为 null；失败为 git 的 stderr 文本。
  */
 export function popStash(repo: string, selector: string, reinstateIndex: boolean): Promise<ErrorInfo> {
-	const args = ['stash', 'pop'];
-	if (reinstateIndex) args.push('--index');
-	args.push(selector);
-	return gitErrorInfo(args, repo);
+	return gitErrorInfo(['stash', 'pop', ...indexFlags(reinstateIndex), selector], repo);
 }
 
 /**

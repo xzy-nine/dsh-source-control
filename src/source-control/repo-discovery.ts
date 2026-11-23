@@ -1,22 +1,15 @@
 /**
  * 仓库发现：从工作区根按层递归寻找最多三层的 git 仓库，并枚举各仓库的工作树与子模块。
  *
- * 递归只用于仓库发现。子模块按 `.gitmodules` 判定、工作树按 git 公共目录下的登记项读取，
- * 两者都不参与递归、不受层数限制，工作树可位于工作区根之外。
- *
- * 实现按职责分散在下列模块，本文件只做发现流程与再导出：
- * - `repo-node.ts`：节点类型、路径归一与目录探测
- * - `repo-enrich.ts`：仓库节点构造与工作树、子模块补齐
- * - `repo-discovery-cache.ts`：60 秒 TTL 发现缓存与作废
- * - `repo-sync.ts`：批量领先/落后取数
  */
 import { dirname, resolve } from 'node:path';
+import { errorText } from '../shared/error-text.js';
 import { listRepoLocationWorkspaces, readRepoLocations, writeRepoLocations } from './state-store.js';
 import { logDebug } from './logger.js';
 import { watchRepositories, watchWorkspace } from './repo-watcher.js';
 import { foreignWorktreeBranches, readWorktrees, resolveGitCommonDir } from './worktree-branches.js';
 import {
-	DEFAULT_MAX_DEPTH, DEFAULT_MAX_DIRECTORIES, dedupeCandidates, gitEntryOf, hasGitEntry, nodeId, subdirectories,
+	claimId, dedupeCandidates, discoveryLimitsOf, gitEntryOf, hasGitEntry, nodeId, subdirectories,
 } from './repo-node.js';
 import type { DiscoveryOptions, DiscoveryResult, RepoNode } from './repo-node.js';
 import { linkedWorktreePresence, repoNodeOf } from './repo-enrich.js';
@@ -138,11 +131,8 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 	if (options.knownRepos !== undefined && options.knownRepos.length > 0) {
 		return discoverKnownRepositories(root, options.knownRepos, options.shallow === true);
 	}
-	const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
-	const maxDirectories = options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES;
-	const nodes: RepoNode[] = [];
-	const submoduleIds = new Set<string>();
-	const visited = new Set<string>();
+	const { maxDepth, maxDirectories } = discoveryLimitsOf(options);
+	const { nodes, submoduleIds, visited } = newDiscoveryTally();
 	let visitedCount = 0;
 	let truncated = false;
 	let level: Array<{ dir: string; depth: number }> = [{ dir: resolve(root), depth: 0 }];
@@ -155,10 +145,7 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 				break;
 			}
 			visitedCount++;
-			const id = nodeId(current.dir);
-			if (visited.has(id) || submoduleIds.has(id)) continue;
-			visited.add(id);
-			pending.push(current);
+			if (claimId(visited, submoduleIds, nodeId(current.dir))) pending.push(current);
 		}
 		const entries = await Promise.all(pending.map((current) => gitEntryOf(current.dir)));
 		const repoIndexes: number[] = [];
@@ -183,6 +170,18 @@ async function scanRepositories(root: string, options: DiscoveryOptions): Promis
 }
 
 /**
+ * 一次仓库发现的三份累加状态。
+ *
+ * 两条发现路径（逐层扫描与按已知路径核对）都要维护同一组：已产出的节点、子模块路径集合
+ * 与已访问目录集合；后两者共同保证同一目录只被处理一次。
+ *
+ * @returns 节点列表与两个去重集合。
+ */
+function newDiscoveryTally(): { nodes: RepoNode[]; submoduleIds: Set<string>; visited: Set<string> } {
+	return { nodes: [], submoduleIds: new Set<string>(), visited: new Set<string>() };
+}
+
+/**
  * 按已知路径取仓库节点，不扫描目录。
  *
  * 每个路径核一次 `.git` 是否存在：仍是仓库就构造节点（含工作树与子模块），否则跳过。
@@ -198,9 +197,7 @@ async function discoverKnownRepositories(
 	known: readonly string[],
 	shallow: boolean,
 ): Promise<DiscoveryResult> {
-	const nodes: RepoNode[] = [];
-	const submoduleIds = new Set<string>();
-	const visited = new Set<string>();
+	const { nodes, submoduleIds, visited } = newDiscoveryTally();
 	// 顺序去重：保留首次出现的路径，已在 visited 或子模块集合中的路径跳过。
 	const candidates = dedupeCandidates(known, visited, submoduleIds);
 	// `.git` 探测并发；仍是仓库的路径按原顺序并发构造节点。
@@ -209,9 +206,7 @@ async function discoverKnownRepositories(
 	const built = await Promise.all(repoDirs.map((dir) => repoNodeOf(dir, 0, submoduleIds, shallow)));
 	for (const node of built) nodes.push(node);
 	if (nodes.length === 0) {
-		return discoverRepositories(root, {
-			maxDepth: DEFAULT_MAX_DEPTH, maxDirectories: DEFAULT_MAX_DIRECTORIES, shallow,
-		});
+		return discoverRepositories(root, { ...discoveryLimitsOf({}), shallow });
 	}
 	await finishDiscovery(root, nodes, visited, submoduleIds);
 	return { nodes, truncated: false };
@@ -272,7 +267,7 @@ export async function branchesOfOtherWorktrees(repo: string): Promise<Set<string
 		return foreignWorktreeBranches(await readWorktrees(commonDir), repo, nodeId);
 	} catch (error) {
 		// 枚举失败时不排除任何分支：宁可让用户点到会被 git 拒绝的项，也不要漏掉可用分支。
-		logDebug('repo', `枚举别的工作树占用分支失败，本次不排除任何分支：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `枚举别的工作树占用分支失败，本次不排除任何分支：${errorText(error)}`);
 		return new Set();
 	}
 }
@@ -294,7 +289,7 @@ export async function primeCachedWorkspaces(): Promise<void> {
 			watchRepositories(result.nodes.filter((node) => node.kind === 'repo').map((node) => node.path));
 			watchWorkspace(root);
 		} catch (error) {
-			logDebug('repo', `预扫工作区失败，不影响后续请求：${root}：${error instanceof Error ? error.message : String(error)}`);
+			logDebug('repo', `预扫工作区失败，不影响后续请求：${root}：${errorText(error)}`);
 		}
 	}
 }

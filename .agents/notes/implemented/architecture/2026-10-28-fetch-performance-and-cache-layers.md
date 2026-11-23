@@ -17,7 +17,7 @@ Status: implemented
 | 无远程、无贮藏仓库的刷新子进程数 | 4 → 2 | **2** |
 | 一次刷新对 `.git` 的文件读取 | 17 次 → ≤8 次 | **8** |
 | 同一仓库 60 秒内的钩子探测子进程数 | 1 → 0 | 命中时 **0** |
-| 仓库树领先/落后取数的并发 git 上限 | 5；仓库数不超过 5 时墙钟不高于现状 | 6 个仓库时峰值为 **5**（`test/fetch-path.test.mjs`） |
+| 仓库树领先/落后取数的并发 git 上限 | 5；仓库数不超过 5 时墙钟不高于现状 | 6 个仓库时峰值为 **5**（`test/git/fetch-path.test.mjs`） |
 | 缓存命中路径（提交图窗口 30 秒内） | ≤2ms 且 0 个 git 子进程 | **1.2ms / 0** |
 
 ## Decision
@@ -182,10 +182,10 @@ Status: implemented
 
 | 文件 | 内容 |
 |---|---|
-| `test/fetch-path.test.mjs` | 真实路由 + 子进程计数：常规刷新恰 2 个进程；空信息仓库二次刷新不再起 `config --list`；并发两次快照只起 1 个 `status`；`hooksState` 两次只起 1 个 `config --get`；并发两次写命令仍起 2 个进程；响应 `branch` 与 `git symbolic-ref --short HEAD` 一致 |
-| `test/repo-facts.test.mjs` | 临时仓库（含 `git pack-refs --all` 的打包态）：`repoHeadHash` 与 `git rev-parse HEAD` 一致；二次调用只读一次 `packed-refs`；提交后失效；祖先与后代前缀的失效范围；有效期归零等于关闭 |
-| `test/git-parse.test.mjs` | `parseDecorations`：`HEAD ->`、`tag:`、多引用、含逗号的名字、空装饰；装饰组装与 `for-each-ref` 组装逐条一致 |
-| `test/host-cache.test.mjs` | `hooksPath` 命中与 `invalidateRepo` 失效 |
+| `test/git/fetch-path.test.mjs` | 真实路由 + 子进程计数：常规刷新恰 2 个进程；空信息仓库二次刷新不再起 `config --list`；并发两次快照只起 1 个 `status`；`hooksState` 两次只起 1 个 `config --get`；并发两次写命令仍起 2 个进程；响应 `branch` 与 `git symbolic-ref --short HEAD` 一致 |
+| `test/repo/repo-facts.test.mjs` | 临时仓库（含 `git pack-refs --all` 的打包态）：`repoHeadHash` 与 `git rev-parse HEAD` 一致；二次调用只读一次 `packed-refs`；提交后失效；祖先与后代前缀的失效范围；有效期归零等于关闭 |
+| `test/git/git-parse.test.mjs` | `parseDecorations`：`HEAD ->`、`tag:`、多引用、含逗号的名字、空装饰；装饰组装与 `for-each-ref` 组装逐条一致 |
+| `test/state/host-cache.test.mjs` | `hooksPath` 命中与 `invalidateRepo` 失效 |
 
 既有 `refresh-verify`、`snapshot`、`api-commands`、`repo-discovery`、`worktree-branches` 必须仍绿。不断言界面文案。
 

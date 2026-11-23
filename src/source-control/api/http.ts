@@ -4,6 +4,23 @@
 import type http from 'node:http';
 import { logWarn } from '../logger.js';
 
+/**
+ * 开始一条 SSE 流：写出事件流响应头并立即返回。
+ *
+ * 客户端按 `text/event-stream` 逐帧解析，因此不能走 {@link sendJson}（它会 `end` 掉响应）；
+ * `no-store` 与 `keep-alive` 保证代理不缓存、连接不被中途关闭。
+ *
+ * @param res - 响应。
+ * @returns 无。
+ */
+function openEventStream(res: http.ServerResponse): void {
+	res.writeHead(200, {
+		'content-type': 'text/event-stream; charset=utf-8',
+		'cache-control': 'no-store',
+		'connection': 'keep-alive',
+	});
+}
+
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
 	res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
 	res.end(JSON.stringify(body));
@@ -48,4 +65,4 @@ function coalesceKeyOf(command: string, repo: string, msg: Record<string, unknow
 	return `${command}\u0000${repo.toLowerCase()}\u0000${JSON.stringify(params)}`;
 }
 
-export { sendJson, sendBadRequest, readBody, coalesceKeyOf };
+export { sendJson, sendBadRequest, openEventStream, readBody, coalesceKeyOf };

@@ -4,8 +4,9 @@
  * 分段暂存的粒度是「这一块补丁进不进索引」；冲突则取三方文本后由页面算区间。
  * 两者都按宿主给出的下标或整份内容工作，页面不重复解析 git 输出。
  */
-import { callApi, callApiRaw, commandError } from './http.ts';
+import { callApi, callApiRaw, commandError, hunksOf } from './http.ts';
 import type { MergeChoice } from '../../shared/merge-ranges.ts';
+import type { MergeContents } from '../../shared/merge-contents.ts';
 
 /** 一个补丁块的范围。 */
 export interface FileHunk {
@@ -41,8 +42,8 @@ export async function applyHunk(repo: string, filePath: string, indexes: readonl
  */
 export async function loadFileHunks(repo: string, filePath: string, staged: boolean): Promise<FileHunk[]> {
 	const payload = await callApi(repo, { command: 'fileHunks', filePath, staged });
-	const raw = Array.isArray(payload.hunks) ? payload.hunks : [];
-	return (raw as unknown[]).flatMap((item) => {
+	const raw = hunksOf(payload);
+	return raw.flatMap((item) => {
 		if (item === null || typeof item !== 'object') return [];
 		const record = item as Record<string, unknown>;
 		if (typeof record.index !== 'number') return [];
@@ -57,14 +58,8 @@ export async function loadFileHunks(repo: string, filePath: string, staged: bool
 	});
 }
 
-/** 一份三方内容。 */
-export interface MergeContentsPayload {
-	/** 基线；双方新增时没有基线段，为 null。 */
-	readonly base: string | null;
-	/** 我方。 */
-	readonly ours: string | null;
-	/** 对方。 */
-	readonly theirs: string | null;
+/** 一份三方内容，附工作区当前内容。 */
+export interface MergeContentsPayload extends MergeContents {
 	/** 工作区当前内容，用于提示「已手工改过」。 */
 	readonly worktree: string | null;
 }

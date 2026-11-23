@@ -2,17 +2,18 @@
  * 本地分支类操作：检出、创建、重命名、合并到、变基、复制引用名、删除。
  */
 import {
-	checkoutBranch, createBranch, deleteBranch, deleteRemoteBranch, mergeIntoBranch, rebase, renameBranch, throwIfError,
+	checkoutBranch, createBranch, deleteBranch, mergeIntoBranch, rebase, renameBranch, throwIfError,
 } from '../../api/index.ts';
 import type { MergeMode } from '../../shared/types.ts';
-import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
+import { showConfirmation } from '../../ui/dialog.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
 import { checkoutFailureText } from '../git-messages.ts';
-import { fillText, type MenuActionMeta } from '../menu-actions.ts';
+import { fillText } from '../menu-actions.ts';
 import { localNameForRemoteBranch, remoteNameOfBranch } from '../github.ts';
 import {
-	copyRefNameItem, isUnmergedRefusal, localBranchItem, remoteRefOf, shortBranchName, type MenuContext,
+	copyRefNameItem, deleteRemoteBranchClick, isUnmergedRefusal, localBranchItem, refNameOf, remoteRefOf, runHistory, textThenRun, titledItem, withRefName, type MenuBuilders, type MenuContext,
 } from './shared.ts';
+import type { MenuActionMeta } from '../menu-actions.ts';
 
 /** 合并方式，按菜单里的排列顺序。 */
 const MERGE_MODES: readonly MergeMode[] = ['default', 'no-ff', 'squash'];
@@ -31,16 +32,60 @@ const MERGE_MODE_ACTIONS: Readonly<Record<MergeMode, string>> = {
 	squash: '压缩合并过去',
 };
 
-export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null>> = {
+/**
+ * 提交行右键的二级菜单：列出该提交尖端的本地与远程分支。
+ *
+ * 两份构建体（检出、删除）的差异只在文案与每项的动作，因此列项规则收在一处：远程分支名自带
+ * 远程名前缀；没有可列的分支时不显示整项。
+ *
+ * @param meta - 菜单动作声明。
+ * @param local - 要列出的本地分支名；为空且没有远程分支时不显示。
+ * @param remote - 要列出的远程分支名。
+ * @param itemOf - 每个分支的菜单项。
+ * @param root - 菜单项上是否带危险色。
+ * @returns 菜单项；两侧都没有分支时为 null。
+ */
+function tipBranchMenu(
+	meta: MenuActionMeta,
+	local: readonly string[],
+	remote: readonly string[],
+	itemOf: (name: string, isRemote: boolean) => ContextMenuItem,
+	root: { readonly danger?: boolean } = {},
+): ContextMenuItem | null {
+	if (local.length === 0 && remote.length === 0) return null;
+	return {
+		title: meta.commitTitle, ...root,
+		children: [
+			...local.map((name) => itemOf(name, false)),
+			...remote.map((name) => itemOf(name, true)),
+		],
+	};
+}
+/**
+ * 一条检出本地分支的菜单项；当前分支上置灰，因为它已经检出。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 本地分支名。
+ * @param title - 菜单项文案。
+ * @returns 菜单项。
+ */
+function localCheckoutItem(ctx: MenuContext, name: string, title: string): ContextMenuItem {
+	return localBranchItem(ctx, name, { title, disabled: name === ctx.deps.head, onClick: checkoutClick(ctx, name) });
+}
+/**
+ * 检出某个本地分支的点击处理函数。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 要检出的本地分支名。
+ * @returns 点击处理函数。
+ */
+function checkoutClick(ctx: MenuContext, name: string): () => void {
+	return () => { void ctx.deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); };
+}
+export const BUILDERS: MenuBuilders = {
 	checkoutBranch: (ctx, meta) => {
 		const { deps } = ctx;
-		if (ctx.ref !== null) {
-			const name = ctx.ref.name;
-			return localBranchItem(ctx, name, {
-				title: meta.title, disabled: name === deps.head,
-				onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
-			});
-		}
+		if (ctx.ref !== null) return localCheckoutItem(ctx, ctx.ref.name, meta.title);
 		/*
 		 * 提交行右键：本地尖端分支与远程尖端分支都列。远程分支按它自己的远程引用检出，新建的本地
 		 * 分支名由 {@link localNameForRemoteBranch} 决定（`origin` 用短名，其余远程用全名）；本地
@@ -48,46 +93,25 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 		 */
 		const localNames = new Set(ctx.tipBranches);
 		const remoteTips = ctx.tipRemoteBranches.filter((name) => !localNames.has(localNameForRemoteBranch(name)));
-		if (localNames.size === 0 && remoteTips.length === 0) return null;
-		return {
-			title: meta.commitTitle,
-			children: [
-				...ctx.tipBranches.map((name) => localBranchItem(ctx, name, {
-					title: name === deps.head ? fillText(meta.commitCurrentTitle, { name }) : name,
-					disabled: name === deps.head,
-					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, name, null), checkoutFailureText); }); },
-				})),
-				...remoteTips.map((name) => ({
-					title: fillText(meta.commitRemoteTitle, { name }),
-					onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localNameForRemoteBranch(name), name), checkoutFailureText); }); },
-				})),
-			],
-		};
+		return tipBranchMenu(meta, ctx.tipBranches, remoteTips, (name, isRemote) => (isRemote
+			? {
+				title: fillText(meta.commitRemoteTitle, { name }),
+				onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutBranch(ctx.repo, localNameForRemoteBranch(name), name), checkoutFailureText); }); },
+			}
+			: localCheckoutItem(ctx, name, name === deps.head ? fillText(meta.commitCurrentTitle, { name }) : name)));
 	},
-	createBranchFromRef: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
-		return {
-			title: meta.title,
-			onClick: () => {
-				void (async () => {
-					const newName = await showText({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' });
-					if (newName !== null && newName !== '') void ctx.deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, newName, `refs/heads/${name}`, true)); });
-				})();
-			},
-		};
-	},
+	createBranchFromRef: withRefName((ctx, meta, name) => titledItem(meta.title,
+		textThenRun({ title: '创建分支', label: '新分支名', value: name, placeholder: 'feature/xxx' },
+			(newName) => { runHistory(ctx, () => createBranch(ctx.repo, newName, `refs/heads/${name}`, true))(); }))),
 	renameBranch: (ctx, meta) => {
-		if (ctx.ref === null) return null;
-		const name = ctx.ref.name;
+		const name = refNameOf(ctx);
+		if (name === null) return null;
 		return localBranchItem(ctx, name, {
 			title: meta.title, disabled: name === ctx.deps.head,
-			onClick: () => {
-				void (async () => {
-					const newName = await showText({ title: '重命名分支', label: '新分支名', value: name });
-					if (newName !== null && newName !== '' && newName !== name) void ctx.deps.run('history', async () => { throwIfError(await renameBranch(ctx.repo, name, newName)); });
-				})();
-			},
+			onClick: textThenRun({ title: '重命名分支', label: '新分支名', value: name }, (newName) => {
+				if (newName === name) return;
+				runHistory(ctx, () => renameBranch(ctx.repo, name, newName))();
+			}),
 		});
 	},
 	mergeIntoBranch: (ctx, meta) => {
@@ -147,7 +171,7 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			onClick: () => {
 				void (async () => {
 					const ok = await showConfirmation({ title: '变基', message: `把当前分支变基到 ${label}？`, confirmLabel: '变基', danger: true });
-					if (ok) void ctx.deps.run('history', async () => { throwIfError(await rebase(ctx.repo, obj)); });
+					if (ok) runHistory(ctx, () => rebase(ctx.repo, obj))();
 				})();
 			},
 		};
@@ -196,15 +220,8 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 			})();
 		};
 		const removeRemote = (name: string) => (): void => {
-			void (async () => {
-				const remote = remoteNameOfBranch(name);
-				if (remote === '') return;
-				const ok = await showCheckbox({
-					title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
-					checkboxLabel: '我已知晓并继续', danger: true,
-				});
-				if (ok) void deps.run('history', async () => { throwIfError(await deleteRemoteBranch(ctx.repo, shortBranchName(name), remote)); });
-			})();
+			const remote = remoteNameOfBranch(name);
+			if (remote !== '') deleteRemoteBranchClick(ctx, name, remote)();
 		};
 		if (ctx.ref !== null) {
 			const name = ctx.ref.name;
@@ -217,14 +234,8 @@ export const BUILDERS: Readonly<Record<string, (ctx: MenuContext, meta: MenuActi
 		 * 远程分支名自带远程名前缀，不再另加后缀。
 		 */
 		const localTips = ctx.tipBranches.filter((name) => name !== deps.head);
-		const remoteTips = ctx.tipRemoteBranches;
-		if (localTips.length === 0 && remoteTips.length === 0) return null;
-		return {
-			title: meta.commitTitle, danger: meta.danger,
-			children: [
-				...localTips.map((name) => localBranchItem(ctx, name, { title: name, onClick: remove(name) })),
-				...remoteTips.map((name) => ({ title: name, onClick: removeRemote(name) })),
-			],
-		};
+		return tipBranchMenu(meta, localTips, ctx.tipRemoteBranches, (name, isRemote) => (isRemote
+			? { title: name, onClick: removeRemote(name) }
+			: localBranchItem(ctx, name, { title: name, onClick: remove(name) })), { danger: meta.danger });
 	},
 };

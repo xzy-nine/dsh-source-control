@@ -1,8 +1,9 @@
 /**
  * GitHub 集成与 SSH 状态：账号、属主、新建仓库、创建 Pull Request。
  */
-import { callApi } from './http.ts';
+import { callApi, stringsOf } from './http.ts';
 import { textOf } from '../shared/text.ts';
+import type { SshStatus } from '../../shared/ssh-status.ts';
 
 /** GitHub 账号信息。 */
 export interface GhAccountInfo {
@@ -37,7 +38,6 @@ export interface GhRepoInfoResult {
 export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
 	const payload = await callApi(cwd, { command: 'ghAccount' });
 	const account = (payload.account ?? {}) as Record<string, unknown>;
-	const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
 	const unavailable = Array.isArray(account.unavailable)
 		? account.unavailable.map((item) => {
 			const entry = item as Record<string, unknown>;
@@ -47,8 +47,8 @@ export async function ghAccount(cwd: string): Promise<GhAccountInfo> {
 	return {
 		loggedIn: account.loggedIn === true,
 		user: typeof account.user === 'string' ? account.user : null,
-		owners: strings(account.owners),
-		scopes: strings(account.scopes),
+		owners: stringsOf(account.owners),
+		scopes: stringsOf(account.scopes),
 		unavailable,
 	};
 }
@@ -83,29 +83,12 @@ export async function ghRepoInfo(cwd: string): Promise<GhRepoInfoResult> {
 	const info = (payload.info ?? {}) as Record<string, unknown>;
 	return {
 		defaultBranch: typeof info.defaultBranch === 'string' ? info.defaultBranch : null,
-		branches: Array.isArray(info.branches) ? info.branches.filter((item): item is string => typeof item === 'string') : [],
+		branches: stringsOf(info.branches),
 	};
 }
 
-/**
- * 本地 SSH 状态。
- */
-export interface SshStatusInfo {
-	/** ssh 客户端是否可用。 */
-	readonly installed: boolean;
-	/** ssh 版本行；不可用时为 null。 */
-	readonly version: string | null;
-	/** `~/.ssh` 下的私钥文件名。 */
-	readonly keys: readonly string[];
-	/** 探测的目标主机。 */
-	readonly host: string;
-	/** 目标主机是否接受本机公钥。 */
-	readonly authenticated: boolean;
-	/** 是否可直接用于 SSH 远程操作。 */
-	readonly ready: boolean;
-	/** 未就绪时的说明：探测输出原文；就绪时为 null。 */
-	readonly message: string | null;
-}
+/** 本地 SSH 状态。 */
+export type SshStatusInfo = SshStatus;
 
 /**
  * 检测本地 SSH 状态：ssh 客户端、私钥与对目标主机的认证。
@@ -121,7 +104,7 @@ export interface SshStatusInfo {
 export async function sshStatus(cwd: string, host = 'github.com', refresh = false, sshUrl = ''): Promise<SshStatusInfo> {
 	const payload = await callApi(cwd, { command: 'sshStatus', host, refresh, sshUrl });
 	const status = (payload.status ?? {}) as Record<string, unknown>;
-	const keys = Array.isArray(status.keys) ? status.keys.filter((item): item is string => typeof item === 'string') : [];
+	const keys = stringsOf(status.keys);
 	return {
 		installed: status.installed === true,
 		version: typeof status.version === 'string' ? status.version : null,

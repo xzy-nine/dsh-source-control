@@ -9,6 +9,7 @@
  * `FS_SANDBOX_DENIED` 拒绝，因此仍用 `node:fs`。
  */
 import { logDebug } from './logger.js';
+import { errorText } from '../shared/error-text.js';
 
 /** 子进程收集输出的默认内存上限（字节）；超出时按 seam 约定保留尾部并标记截断。 */
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -231,9 +232,21 @@ export function terminateAllChildren(): void {
 }
 
 /**
+ * 子进程无法启动或中途失败时的结果。
+ *
+ * 两种情况对外都是「没有输出 + 退出码 -1 + 失败文本」，调用方按同一条路径处理。
+ *
+ * @param error - 捕获到的失败值。
+ * @returns 失败结果。
+ */
+function failedResult(error: unknown): CollectResult {
+	return { code: -1, stdout: '', stderr: errorText(error) };
+}
+
+/**
  * 运行一次子进程并收集输出。
  *
- * 走受管范围：终止按整棵树生效，输出按 seam 的上限收集并在截断时报告。子进程无法启动、
+ * 走受管范围：终止按整棵树生效，输出按收集上限收集并在截断时报告。子进程无法启动、
  * 超时、输出被截断与提供方失败都收敛成退出码 -1，调用方的失败处理与 git 自身失败走同一条路径。
  *
  * @param spec - 见 {@link CollectSpec}。
@@ -268,8 +281,7 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 		});
 	} catch (error) {
 		if (timer !== undefined) clearTimeout(timer);
-		const message = error instanceof Error ? error.message : String(error);
-		return { code: -1, stdout: '', stderr: message };
+		return failedResult(error);
 	}
 	liveHandles.add(handle);
 	let registered: Set<{ terminate(): void }> | undefined;
@@ -297,8 +309,7 @@ export async function runCollect(spec: CollectSpec): Promise<CollectResult> {
 		}
 		return { code: outcome.exitCode ?? -1, stdout: stdout.text, stderr: stderr.text };
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { code: -1, stdout: '', stderr: message };
+		return failedResult(error);
 	} finally {
 		if (timer !== undefined) clearTimeout(timer);
 		liveHandles.delete(handle);

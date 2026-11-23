@@ -2,13 +2,16 @@
  * 右键菜单的构建上下文与共用构件：分支项置灰、远程分支弹名、复制引用名、确认后执行、标签二级菜单。
  */
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
+import { deleteRemoteBranch, throwIfError } from '../../api/index.ts';
 import type { ContextMenuItem } from '../../ui/context-menu.ts';
-import { showConfirmation, showText } from '../../ui/dialog.ts';
-import type { ConfirmationOptions } from '../../ui/dialog.ts';
+import { showCheckbox, showConfirmation, showText } from '../../ui/dialog.ts';
+import type { CheckboxOptions, ConfirmationOptions, TextOptions } from '../../ui/dialog.ts';
 import { refIdOf } from '../../shared/ref-id.ts';
 import { localNameForRemoteBranch } from '../github.ts';
+import { remotePushFailureText } from '../git-messages.ts';
 import type { MenuActionMeta } from '../menu-actions.ts';
 import type { BusyScope, Commit, Remote } from '../../shared/types.ts';
+import type { RepoCommands } from '../use-repo-commands.ts';
 
 /** 引用菜单识别出的目标。 */
 export interface RefMenuTarget {
@@ -21,7 +24,10 @@ export interface RefMenuTarget {
 }
 
 /** 右键菜单的依赖面。 */
-export interface GraphMenuDeps {
+export interface GraphMenuDeps extends Pick<
+	RepoCommands,
+	'handleCreateArchive' | 'handleCreatePullRequest' | 'canCreatePullRequest'
+> {
 	/** 当前工作树路径。 */
 	readonly workingTreePath: string | null;
 	/**
@@ -33,18 +39,12 @@ export interface GraphMenuDeps {
 	readonly run: (scope: BusyScope, operation: () => Promise<void>, intent?: string) => Promise<void>;
 	/** 远端列表。 */
 	readonly remotes: readonly Remote[];
-	/** 创建归档。 */
-	readonly handleCreateArchive: (ref: string, refLabel: string) => Promise<void>;
 	/** 当前分支名。 */
 	readonly head: string | null;
 	/** 失败提示：说明失败原因，或当前条件下操作无法进行的原因。 */
 	readonly notify: (message: string) => Promise<void>;
 	/** 结果告知：动作已完成的结论与需要用户继续处理的状态。 */
 	readonly announce: (message: string, tone?: 'success' | 'info') => Promise<void>;
-	/** 创建 Pull Request：由面板负责选目标分支、填标题正文并调用 gh。 */
-	readonly handleCreatePullRequest: () => Promise<void>;
-	/** 当前分支是否有可创建 PR 的远程：无 GitHub 远程时该项不显示。 */
-	readonly canCreatePullRequest: boolean;
 	/** 被别的工作树检出的本地分支：照常显示，但检出、删除与重命名不可用。 */
 	readonly foreignBranches?: readonly string[];
 	/** 写入提交信息框；合并到选中分支后填入 git 生成的初始信息。 */
@@ -76,6 +76,12 @@ export interface MenuContext {
 	 */
 	readonly foreignBranches: ReadonlySet<string>;
 }
+
+/** 一个菜单构建器的签名：同一份上下文，返回菜单项或 `null`。 */
+export type MenuBuilder = (ctx: MenuContext, meta: MenuActionMeta) => ContextMenuItem | null;
+
+/** 一组按操作 id 索引的构建器。 */
+export type MenuBuilders = Readonly<Record<string, MenuBuilder>>;
 
 /** 一项引用操作：元数据来自 `menu-actions.json`，处理函数在 `BUILDERS` 里按 id 绑定。 */
 export interface MenuAction extends MenuActionMeta {
@@ -192,9 +198,22 @@ export function branchFromRemoteItem(
  * @returns 菜单项；没有引用目标时为 null。
  */
 export function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): ContextMenuItem | null {
-	const ref = ctx.ref;
-	if (ref === null) return null;
-	return { title: meta.title, onClick: () => { void writeClipboard(ref.name); } };
+	const name = refNameOf(ctx);
+	if (name === null) return null;
+	return { title: meta.title, onClick: () => { void writeClipboard(name); } };
+}
+
+/**
+ * 把一次询问包成点击处理函数；答案交给执行体。
+ *
+ * @param ask - 询问；解析值为用户给出的答案。
+ * @param act - 拿到答案后的执行体。
+ * @returns 点击处理函数。
+ */
+function afterAnswer<A>(ask: () => Promise<A>, act: (answer: A) => void): () => void {
+	return () => {
+		void (async () => { act(await ask()); })();
+	};
 }
 
 /**
@@ -205,12 +224,121 @@ export function copyRefNameItem(ctx: MenuContext, meta: MenuActionMeta): Context
  * @returns 点击处理函数。
  */
 export function confirmThenRun(confirm: ConfirmationOptions, act: () => void): () => void {
-	return () => {
-		void (async () => {
-			const ok = await showConfirmation(confirm);
-			if (ok) act();
-		})();
+	return afterAnswer(() => showConfirmation(confirm), (ok) => { if (ok) act(); });
+}
+
+/**
+ * 先弹勾选确认框，勾选并确认后执行一步仓库操作。
+ *
+ * 用于不可撤销的删除与丢弃；未勾选时确认按钮禁用。
+ *
+ * @param options - 勾选确认框选项。
+ * @param act - 确认后的执行体。
+ * @returns 点击处理函数。
+ */
+export function checkboxThenRun(options: CheckboxOptions, act: () => void): () => void {
+	return afterAnswer(() => showCheckbox(options), (ok) => { if (ok) act(); });
+}
+
+/**
+ * 渲染一个勾选确认后执行的危险菜单项。
+ *
+ * 危险样式取自注册表元数据，确认框文案由调用方给出。
+ *
+ * @param meta - 操作元数据。
+ * @param ask - 勾选确认框的标题、正文与勾选文案。
+ * @param act - 确认后的执行体。
+ * @returns 菜单项。
+ */
+export function dangerConfirmItem(
+	meta: MenuActionMeta,
+	ask: { title: string; message: string; checkboxLabel: string },
+	act: () => void,
+): ContextMenuItem {
+	return {
+		title: meta.title, danger: meta.danger,
+		onClick: checkboxThenRun({ ...ask, danger: true }, act),
 	};
+}
+
+/**
+ * 把一步仓库操作包成点击处理函数。
+ *
+ * 菜单里的操作都属于 history 影响面：点击即 unsafely 发起并让面板记忙碌，失败由
+ * {@link throwIfError} 统一转成提示。这一层在所有菜单模块里都一样。
+ *
+ * @param ctx - 构建上下文。
+ * @param act - 要执行的仓库操作。
+ * @param failureText - 失败文本的改写；省略时原样上报 git 的说明。
+ * @returns 点击处理函数。
+ */
+export function runHistory(ctx: MenuContext, act: () => Promise<string>, failureText?: (message: string) => string): () => void {
+	return () => { void ctx.deps.run('history', async () => { throwIfError(await act(), failureText); }); };
+}
+
+/**
+ * 删除远程分支的点击处理：勾选确认后按远程与短名删除。
+ *
+ * @param ctx - 构建上下文。
+ * @param name - 远程分支短名，形态为 `远程名/分支名`。
+ * @param remote - 远程名。
+ * @returns 点击处理函数。
+ */
+export function deleteRemoteBranchClick(ctx: MenuContext, name: string, remote: string): () => void {
+	return checkboxThenRun({
+		title: '删除远程分支', message: `确定删除远程分支 ${name}？`,
+		checkboxLabel: '我已知晓并继续', danger: true,
+	}, runHistory(ctx, () => deleteRemoteBranch(ctx.repo, shortBranchName(name), remote), remotePushFailureText));
+}
+
+/**
+ * 先弹输入框，取到非空文本后执行一步仓库操作。
+ *
+ * @param options - 输入框选项。
+ * @param act - 拿到文本后的执行体。
+ * @returns 点击处理函数。
+ */
+export function textThenRun(options: TextOptions, act: (value: string) => void): () => void {
+	return afterAnswer(() => showText(options), (value) => {
+		if (value !== null && value !== '') act(value);
+	});
+}
+
+/**
+ * 一项只带标题与点击动作的菜单项。
+ *
+ * 引用菜单的标题来自菜单声明，动作由发起函数（输入框、确认框之类的二次交互）给出。
+ *
+ * @param title - 菜单项文案。
+ * @param onClick - 点击处理函数。
+ * @returns 菜单项。
+ */
+export function titledItem(title: string, onClick: () => void): ContextMenuItem {
+	return { title, onClick };
+}
+/**
+ * 把一个需要引用名的构建器包成菜单构建器。
+ *
+ * 引用菜单的目标来自被点击的引用标记；提交行右键时没有引用。
+ *
+ * @param build - 拿到引用名后的构建体。
+ * @returns 菜单构建器；没有引用目标时返回 null。
+ */
+export function withRefName(build: (ctx: MenuContext, meta: MenuActionMeta, name: string) => ContextMenuItem): MenuBuilder {
+	return (ctx, meta) => {
+		const name = refNameOf(ctx);
+		return name === null ? null : build(ctx, meta, name);
+	};
+}
+
+/**
+ * 取当前引用操作的引用名。
+ *
+ * @param ctx - 构建上下文。
+ * @returns 引用名；提交行右键时为 null。
+ */
+export function refNameOf(ctx: MenuContext): string | null {
+	return ctx.ref === null ? null : ctx.ref.name;
 }
 
 /**

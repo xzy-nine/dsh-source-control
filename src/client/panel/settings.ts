@@ -33,8 +33,18 @@ const PANEL_ID_OF: Readonly<Record<SettingsTab, string>> = {
 	feedback: 'ggg-set-panel-feedback',
 };
 
+/**
+ * 打开外部目标的两个可选入口；由宿主能力面提供，未装载时两者都为 undefined。
+ */
+export interface ExternalOpenHandlers {
+	/** 按绝对路径打开一个文件（复用更改区的文件打开接线）。 */
+	readonly onOpenFile?: ((path: string) => void) | undefined;
+	/** 在系统文件管理器中定位一个路径；返回的 promise 用于排定打开顺序。 */
+	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
+}
+
 /** 设置面板属性。 */
-export interface SettingsPanelProps {
+export interface SettingsPanelProps extends ExternalOpenHandlers {
 	readonly open: boolean;
 	readonly onClose: () => void;
 	readonly settings: Settings;
@@ -62,11 +72,10 @@ export interface SettingsPanelProps {
 	readonly scrollTo?: string | null;
 	/** 定位请求序号：同一锚点再次请求时递增，用来重新触发滚动。 */
 	readonly scrollSerial?: number;
-	/** 按绝对路径打开一个文件（复用更改区的文件打开接线）。 */
-	readonly onOpenFile?: ((path: string) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
-	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
 }
+
+/** 「AI 提交信息」分区的锚点 id：生成入口据此把设置面板滚动到该分区。 */
+export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit';
 
 /**
  * 源代码管理设置面板。
@@ -77,9 +86,6 @@ export interface SettingsPanelProps {
  * @param props - 见 {@link SettingsPanelProps}。
  * @returns 面板元素，未展开时返回 null。
  */
-/** 「AI 提交信息」分区的锚点 id：生成入口据此把设置面板滚动到该分区。 */
-export const AI_SECTION_ANCHOR = 'ggg-set-ai-commit';
-
 export function SettingsPanel({
 	open, onClose, settings, onChange, remotes, onDeleteRemote, onAddRemote, onEditRemote, onExportConfig, onCheckSsh,
 	userDetails, onEditUserDetails, onDeleteUserDetails, cwd = null, pluginVersion = '', initialTab = 'repo',

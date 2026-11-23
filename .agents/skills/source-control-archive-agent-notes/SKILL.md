@@ -61,13 +61,15 @@ description: 用于新增、审计、精简、归档、恢复或评审 dsh-sourc
 - 删除经由工具调用流式上报 workflow 进度——972 词：其 ACP/UI 前提已过时；
 - 删除丢弃 ACP 终端元数据——362 词：后续「仅自动化 ACP」的决策已解决该问题。
 
-<a id="archive-one-implemented-triplet"></a>
+<a id="archive-one-implemented-note"></a>
 
 ## 归档一份已实施记录
 
+每份 Agent Note 是单个 `.md` 文件：归档移动这一个文件，不涉及对侧译本或伴随记录。
+
 1. 把 `foo.md` 从 `implemented/<kind>/` 移到 `archived/<kind>/`；归档路径中有意不含 `implemented`。
-2. 不改正文。仅在两个语言文件的 `Status: implemented` 紧下方插入 `Archived: YYYY-MM-DD`，使用归档日期且两侧取同一值。
-3. 为这两处只动元数据的编辑机械地重新记录伴随记录 hash。不要翻译、重排、更新事实或修复记录内的链接。既有标题标点、空行布局与语言切换栏措辞原样保留，不是归档的前提。
+2. 不改正文。仅在 `Status: implemented` 紧下方插入 `Archived: YYYY-MM-DD`，使用归档日期。
+3. 不要翻译、重排、更新事实或修复记录内的链接。既有标题标点与空行布局原样保留，不是归档的前提。
 4. 搜索来自活跃散文的入站链接。把它们改指向当前权威；仅当有意引用历史快照时才改为归档路径；否则删除。绝不从归档记录向外校验或修复链接。
 5. 运行 `pnpm run verify-archived-agent-notes --write`。其仅追加模式先证明每份既有封印仍然匹配，然后只加入新记录的 hash。随后运行常规校验。
 

@@ -3,6 +3,10 @@
  *
  * 字段名即前端契约：`src/client/shared/types.ts` 与 `src/client/api/` 按这些名字读取响应。
  */
+import type { CommitSignatureFields, StashEntry } from '../shared/stash.js';
+
+export type { CommitSignatureFields, StashEntry };
+
 
 /** 错误信息；null 表示无错误。 */
 export type ErrorInfo = string | null;
@@ -155,23 +159,6 @@ export interface CommitComparisonData {
 	readonly truncated: boolean;
 	readonly error: ErrorInfo;
 }
-
-/** 贮藏条目。 */
-export interface StashEntry {
-	/** 贮藏提交哈希。 */
-	readonly hash: string;
-	/** 基提交哈希。 */
-	readonly baseHash: string;
-	/** 未跟踪文件所在的提交；无则为 null。 */
-	readonly untrackedFilesHash: string | null;
-	/** 选择器（如 `refs/stash@{0}`）。 */
-	readonly selector: string;
-	readonly author: string;
-	readonly email: string;
-	readonly date: number;
-	readonly message: string;
-}
-
 
 /** 分支的远程配置。 */
 export interface RepoConfigBranch {

@@ -54,8 +54,8 @@ Status: implemented
 
 ## Testing
 
-- `test/generation-store.test.mjs`：仓库归属（子模块收不到 A 的文本）、不中断、只交付一次、进行中不交付、告警与统计归属、路径写法归一、订阅与退订、清空。把 `normalizePath` 换成常量即变红。
+- `test/refresh/generation-store.test.mjs`：仓库归属（子模块收不到 A 的文本）、不中断、只交付一次、进行中不交付、告警与统计归属、路径写法归一、订阅与退订、清空。把 `normalizePath` 换成常量即变红。
 - 同文件「生成结果上屏判据」七条：`canLandGeneration` 的每个否定条件各一条，去掉 `onScreen` 即变红。
-- `test/panel-remount.test.mjs`「AI 生成按发起仓库归属」：断言发起时绑定仓库、状态按当前仓库取、源码中不再有 `aiAbortRef`。
+- `test/state/panel-remount.test.mjs`「AI 生成按发起仓库归属」：断言发起时绑定仓库、状态按当前仓库取、源码中不再有 `aiAbortRef`。
 - 同文件「提交框上屏条件取自会话判定与侧栏页可见性」：只断言传递链；判据本身按行为测。
-- `test/session-visibility.test.mjs`：`isSessionDisplayed` 的五种输入（计数大于 0、为 0、缺失、旧宿主 `current`、快照为空）。把判定写成 `count === true` 即变红 —— 这正是曾让生成结果永不上屏的写法。
+- `test/refresh/session-visibility.test.mjs`：`isSessionDisplayed` 的五种输入（计数大于 0、为 0、缺失、旧宿主 `current`、快照为空）。把判定写成 `count === true` 即变红 —— 这正是曾让生成结果永不上屏的写法。

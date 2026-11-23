@@ -6,14 +6,8 @@
  * 不必整文件进出索引。纯函数：输入输出都是文本，不调用 git。
  */
 
-/** 一个补丁块：`@@` 头与其后的行。 */
-export interface PatchHunk {
-	/** 块在整个补丁里的下标，从 0 开始。 */
-	readonly index: number;
-	/** `@@ -a,b +c,d @@` 头，含行尾换行。 */
-	readonly header: string;
-	/** 块体，每行以空格、`+` 或 `-` 开头；末行保证带换行。 */
-	readonly body: string;
+/** 一块差异的两侧行号区间。 */
+export interface HunkRange {
 	/** 旧侧起始行号。 */
 	readonly oldStart: number;
 	/** 旧侧行数。 */
@@ -22,6 +16,16 @@ export interface PatchHunk {
 	readonly newStart: number;
 	/** 新侧行数。 */
 	readonly newLines: number;
+}
+
+/** 一个补丁块：`@@` 头与其后的行。 */
+export interface PatchHunk extends HunkRange {
+	/** 块在整个补丁里的下标，从 0 开始。 */
+	readonly index: number;
+	/** `@@ -a,b +c,d @@` 头，含行尾换行。 */
+	readonly header: string;
+	/** 块体，每行以空格、`+` 或 `-` 开头；末行保证带换行。 */
+	readonly body: string;
 }
 
 /** 一份切开的补丁：文件头与各块。 */
@@ -104,11 +108,19 @@ export function patchOf(patch: ParsedPatch, indexes: readonly number[]): string 
  * @param hunks - 补丁块。
  * @returns 各块的旧侧行数、新侧行数与块头，按出现顺序。
  */
-export function hunkRanges(hunks: readonly PatchHunk[]): Array<{ readonly oldStart: number; readonly oldLines: number; readonly newStart: number; readonly newLines: number }> {
-	return hunks.map((hunk) => ({
-		oldStart: hunk.oldStart,
-		oldLines: hunk.oldLines,
-		newStart: hunk.newStart,
-		newLines: hunk.newLines,
-	}));
+export function hunkRanges(hunks: readonly PatchHunk[]): HunkRange[] {
+	return hunks.map(rangeOf);
+}
+
+/**
+ * 取一个补丁块的范围内字段。
+ *
+ * 两块视图（客户端分段暂存与宿主的块列表）都只需要这四个字段，投影只写这一处。
+ *
+ * @param hunk - 补丁块。
+ * @returns 两侧行号区间。
+ */
+export function rangeOf(hunk: HunkRange): HunkRange {
+	const { oldStart, oldLines, newStart, newLines } = hunk;
+	return { oldStart, oldLines, newStart, newLines };
 }

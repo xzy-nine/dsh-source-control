@@ -11,8 +11,9 @@
  * 直接写评论，评论按「哪一份内容第几行」插进对话输入框。
  */
 import React from 'react';
+import { walkRanges } from '../../shared/merge-ranges.js';
 import type { MergeAnalysis, MergeChoice, MergeRange } from '../../shared/merge-ranges.js';
-import { gutterPressed, markRange, ROW_SELECTOR, type LineRange } from './line-range.ts';
+import { gutterPressed, markRange, ROW_SELECTOR, rowAt, rowIndexAt, type LineRange } from './line-range.ts';
 import css from '../css/merge-view.module.css';
 
 /** 一个区间的覆盖方向。 */
@@ -66,20 +67,22 @@ type ViewRow =
  */
 export function rowsOfAnalysis(analysis: MergeAnalysis): ViewRow[] {
 	const rows: ViewRow[] = [];
-	let at = 0;
-	for (const range of analysis.ranges) {
-		if (range.baseStart > at) {
-			rows.push({ kind: 'common', lines: analysis.baseLines.slice(at, range.baseStart) });
-		}
-		rows.push({ kind: 'range', range });
-		at = range.baseStart + range.baseLength;
-	}
-	if (at < analysis.baseLines.length) {
-		rows.push({ kind: 'common', lines: analysis.baseLines.slice(at) });
-	}
+	walkRanges(analysis, (lines) => { rows.push({ kind: 'common', lines }); }, (range) => { rows.push({ kind: 'range', range }); });
 	return rows;
 }
 
+/**
+ * 区间两侧的一栏。
+ *
+ * @param side - 所属侧。
+ * @param lines - 该侧内容。
+ * @param from - 该侧首行的行号。
+ * @returns 该栏元素。
+ */
+function sideCell(side: 'ours' | 'theirs', lines: readonly string[], from: number): React.ReactElement {
+	return React.createElement('div', { className: css.sideCell },
+		React.createElement(Column, { lines, from, side }));
+}
 /**
  * 一栏内容：该区间在这一侧的行。
  *
@@ -182,12 +185,11 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		if (element === null) return undefined;
 		/** 从行号列按下才开始选行；正文区交给浏览器做文本选区与复制。 */
 		const down = (event: PointerEvent): void => {
-			if (event.button !== 0 || !(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			if (!gutterPressed(event.target, row)) return;
-			const list = selectable();
-			const index = list.indexOf(row);
+			if (event.button !== 0) return;
+			const row = rowAt(event, element);
+			if (row === null) return;
+			if (!gutterPressed(event.target as Element, row)) return;
+			const index = selectable().indexOf(row);
 			if (index < 0) return;
 			event.preventDefault();
 			anchor.current = index;
@@ -197,11 +199,8 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 		};
 		const over = (event: PointerEvent): void => {
 			if (anchor.current === null || event.buttons !== 1) return;
-			if (!(event.target instanceof Element)) return;
-			const row = event.target.closest(ROW_SELECTOR);
-			if (row === null || !element.contains(row)) return;
-			const index = selectable().indexOf(row);
-			if (index < 0) return;
+			const index = rowIndexAt(event, element, selectable());
+			if (index === null) return;
 			head.current = index;
 			paint(Math.min(anchor.current, index), Math.max(anchor.current, index));
 		};
@@ -289,8 +288,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 						'data-conflicting': range.conflicting ? '1' : '0',
 						'data-handled': choice === undefined ? '0' : '1',
 					},
-					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, { lines: oursLines, from: start, side: 'ours' })),
+					sideCell('ours', oursLines, start),
 					React.createElement(
 						'div',
 						{ className: css.actions },
@@ -308,8 +306,7 @@ export function MergeView({ analysis, choices, wrap, onChoose, busy, onComment }
 							onClick: () => { onChoose(range.index, action.choice); },
 						}, action.mark)),
 					),
-					React.createElement('div', { className: css.sideCell },
-						React.createElement(Column, { lines: theirsLines, from: start, side: 'theirs' })),
+					sideCell('theirs', theirsLines, start),
 				);
 			}),
 		),

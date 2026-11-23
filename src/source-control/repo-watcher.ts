@@ -1,26 +1,15 @@
 /**
  * 仓库结构监视：观察 git 目录里的工作树登记、子模块目录、工作区的子模块声明，以及工作区里
  * 仓库目录的出现与消失。
- *
- * 工作树与子模块的增删不一定经过本插件的执行层：宿主自己的工作树工具、外部命令与编辑器
- * 都会改动它们，因此结构变化只能从文件系统观察。监视只通知「某处结构可能已变」，不携带
- * 数据，由接收方重新枚举。
- *
- * 两套监视层次不同：
- * - 仓库级：按 git 公共目录去重，观察工作树登记与子模块；主工作树、链接工作树与子模块共用
- *   同一公共目录，因此同一仓库只挂一套句柄。目标见 {@link structureWatchTargets}。
- * - 工作区级：递归观察工作区根，只判定「仓库集合是否可能已变」。新建的仓库或工作树此前没有
- *   任何句柄，只能由这一层发现。见 {@link watchWorkspace}。
- *
- * 事件到达后按当前形态补挂缺失的目录、摘掉已消失的目录，已有句柄保持不动：整体重建会让
- * 重建窗口内的事件丢失。
  */
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import { shouldPruneDirectory } from './repo-node.js';
+import { basename, dirname, join, resolve } from 'node:path';
+import { errorText } from '../shared/error-text.js';
+import { nodeId, shouldPruneDirectory } from './repo-node.js';
 import { listDirAt, probePathAt, readTextAt, watchDirAt, type DirChangeListener } from './host-runtime.js';
 import { parseSubmodulePaths, submodulePathsWithin } from './submodule-parse.js';
 import { gitDirAt, resolveGitCommonDir } from './worktree-branches.js';
 import { logDebug, logInfo, logWarn } from './logger.js';
+import { createListenerSet, subscribeIn } from '../shared/listener-set.js';
 
 /** 一次结构变化的合并窗口（毫秒）：创建工作树会连续产生多次目录事件。 */
 const COALESCE_MS = 250;
@@ -48,19 +37,8 @@ export interface WatchTarget {
 	readonly names: readonly string[];
 }
 
-/**
- * 把路径规范化为与仓库节点标识一致的比较键。
- *
- * @param path - 任意路径。
- * @returns 使用 `/` 分隔的绝对路径；Windows 上统一小写。
- */
-function pathKey(path: string): string {
-	const normalized = resolve(path).split(sep).join('/');
-	return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
 /** 结构变化订阅者。 */
-const listeners = new Set<(repo: string) => void>();
+const listeners = createListenerSet<(repo: string) => void>();
 
 /** 一个已挂的目录监视：关闭函数。 */
 type WatchCloser = () => Promise<void>;
@@ -104,11 +82,6 @@ interface WorkspaceWatch {
 	root: string;
 	/** 根目录的句柄；挂载完成前为 null。 */
 	handle: WatchCloser | null;
-	/**
-	 * 直接子目录的句柄：键为规范化后的目录路径。
-	 *
-	 * 后端不支持递归监视时用它补上第二层，否则在已有子目录里新建的仓库收不到任何事件。
-	 */
 	children: Map<string, WatchCloser>;
 	/** 合并定时器。 */
 	timer: ReturnType<typeof setTimeout> | null;
@@ -124,8 +97,7 @@ const workspaceSignals = new Map<string, AbortController>();
  * @returns 取消订阅。
  */
 export function onRepositoryTreeChange(listener: (repo: string) => void): () => void {
-	listeners.add(listener);
-	return () => { listeners.delete(listener); };
+	return subscribeIn(listeners, listener);
 }
 
 /**
@@ -145,20 +117,6 @@ async function declaredSubmodules(repo: string): Promise<string[] | null> {
 
 /**
  * 取一个仓库需要监视的目标。
- *
- * 三类目标：
- * - git 公共目录：`worktrees` 与 `modules` 两个名字的出现与消失（新建或移除工作树、初始化
- *   子模块都会改动它们）；
- * - 仓库根：`.gitmodules` 的出现与消失（新增或删除子模块声明）；
- * - 每个声明的子模块：其父目录（子模块目录的出现与消失）。
- *
- * 仓库根只按 `.gitmodules` 过滤，**不含 `.git`**：`.git` 目录内部每次写操作都会以 `.git`
- * 名字冒泡到父目录（实测一轮 `status` / `add` / `commit` 产生数十次），而结构变化本身已由
- * 公共目录上的 `worktrees` / `modules` 名字事件覆盖。监视 `.git` 会形成
- * 「事件 → 重扫 → git → 事件」的死循环。`.gitmodules` 在普通 git 操作中不产生事件。
- *
- * 不监视 `worktrees` 与 `modules` 目录自身：Windows 上这两个目录的句柄在目录被删除后持续
- * 报错，且每次工作树操作会触发数万次事件。
  *
  * @param repo - 仓库根或工作树根路径。
  * @param commonDir - 该仓库的 git 公共目录。
@@ -229,6 +187,61 @@ async function childNames(path: string): Promise<string> {
 }
 
 /**
+ * 取一个工作区的监视状态。
+ *
+ * 工作区可能在异步调用期间被关闭，因此每个用到它的入口都要重新取一次。
+ *
+ * @param key - 规范化后的工作区根。
+ * @returns 监视状态；该工作区已不在监视时为 null。
+ */
+function workspaceOf(key: string): WorkspaceWatch | null {
+	return workspaces.get(key) ?? null;
+}
+
+/**
+ * 关闭一个句柄，忽略关闭时的失败。
+ *
+ * 句柄可能已被对端关闭，关闭失败不代表监视出问题；多处收尾都按这一口径处理。
+ *
+ * @param close - 关闭函数。
+ * @returns 无。
+ */
+function closeQuietly(close: WatchCloser): void {
+	void close().catch(() => { /* 句柄已关闭 */ });
+}
+
+/**
+ * 目录项里的子目录名，保持入参顺序。
+ *
+ * @param entries - 目录项列表。
+ * @returns 子目录名。
+ */
+function subdirectoryNames(entries: readonly { readonly name: string; readonly type: string }[]): string[] {
+	return entries.filter((entry) => entry.type === 'directory').map((entry) => entry.name);
+}
+
+/**
+ * 构造一个目录变化监听器。
+ *
+ * 句柄报错时交给出错回调，其余变化交给变更回调。
+ *
+ * @param dir - 被监视的目录，交给出错回调用于定位。
+ * @param onChange - 目录内容变化的回调。
+ * @param onError - 句柄报错的回调。
+ * @returns 监听器。
+ */
+function dirChangeListener(
+	dir: string,
+	onChange: (filename: string | null | undefined, kind: string | null | undefined) => void,
+	onError: (error: Error, dir: string) => void,
+): DirChangeListener {
+	return (error, filename, kind) => {
+		if (error !== undefined) { onError(error, dir); return; }
+		onChange(filename, kind);
+	};
+}
+
+/**
  * 关闭一个公共目录的全部监视句柄。
  *
  * @param key - 规范化后的公共目录。
@@ -241,9 +254,7 @@ function closeHandles(key: string): void {
 	commonDirOf.delete(key);
 	lastState.delete(key);
 	if (existing === undefined) return;
-	for (const close of existing.values()) {
-		void close().catch(() => { /* 句柄已关闭 */ });
-	}
+	for (const close of existing.values()) closeQuietly(close);
 }
 
 /**
@@ -288,7 +299,7 @@ function watchTarget(key: string, target: WatchTarget): WatchCloser | null {
 		return close;
 	}).catch((error: unknown) => {
 		// 目录尚不存在：由上级目录的事件触发补挂。
-		logDebug('watcher', `暂时无法监视，等待上级目录事件后再挂：${target.directory}：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('watcher', `暂时无法监视，等待上级目录事件后再挂：${target.directory}：${errorText(error)}`);
 		return null;
 	});
 	void pending;
@@ -351,7 +362,7 @@ function sync(key: string): void {
 			}
 			for (const [directory, close] of [...current]) {
 				if (wanted.has(directory)) continue;
-				void close().catch(() => { /* 句柄已关闭 */ });
+				closeQuietly(close);
 				current.delete(directory);
 			}
 			for (const target of targets) {
@@ -381,12 +392,12 @@ function arm(repo: string): void {
 		const commonDir = await resolveGitCommonDir(repo);
 		if (commonDir === null) return;
 		// 比较键按规范化的公共目录生成，真实路径另存映射：区分大小写的文件系统上，键值路径可能不存在。
-		const key = pathKey(commonDir);
+		const key = nodeId(commonDir);
 		/*
 		 * 只有磁盘上确实存在 git 目录的路径才登记为已知仓库：目录已删除的路径留在集合里，
 		 * 会让此后每一条名字缺失的事件都判定为仓库集合变化。
 		 */
-		knownRepos.add(pathKey(repo));
+		knownRepos.add(nodeId(repo));
 		if (handles.has(key)) return;
 		handles.set(key, new Map());
 		repoOfCommon.set(key, repo);
@@ -396,37 +407,42 @@ function arm(repo: string): void {
 }
 
 /**
+ * 登记一个按 key 合并的定时器
+ * @param table - key 到定时器的映射。
+ * @param key - 合并键。
+ * @param delayMs - 合并窗口毫秒数。
+ * @param run - 到点后的动作。
+ * @returns 无。
+ */
+function scheduleTimer(table: Map<string, ReturnType<typeof setTimeout>>, key: string, delayMs: number, run: () => void): void {
+	const existing = table.get(key);
+	if (existing !== undefined) clearTimeout(existing);
+	const timer = setTimeout(() => {
+		table.delete(key);
+		run();
+	}, delayMs);
+	if (typeof timer.unref === 'function') timer.unref();
+	table.set(key, timer);
+}
+
+/**
  * 合并一次结构变化并通知订阅者。
  *
  * @param key - 规范化后的公共目录。
  * @returns 无。
  */
 function schedule(key: string): void {
-	const existing = pending.get(key);
-	if (existing !== undefined) clearTimeout(existing);
-	const timer = setTimeout(() => {
-		pending.delete(key);
+	scheduleTimer(pending, key, COALESCE_MS, () => {
 		const repo = repoOfCommon.get(key);
 		if (repo === undefined) return;
 		// 先补挂再通知：接收方重新枚举期间产生的事件也要能落到句柄上。
 		sync(key);
-		for (const listener of [...listeners]) {
-			try {
-				listener(repo);
-			} catch {
-				/* 单个订阅者异常不影响其它订阅者 */
-			}
-		}
-	}, COALESCE_MS);
-	// 监视不应阻止宿主退出。
-	if (typeof timer.unref === 'function') timer.unref();
-	pending.set(key, timer);
+		notify(repo);
+	});
 }
 
 /**
  * 监视一组仓库的结构变化。
- *
- * 同一公共目录只挂一套句柄；超出上限时淘汰最早登记的仓库。
  *
  * @param repos - 仓库、工作树或子模块路径。
  * @returns 无。
@@ -448,16 +464,6 @@ export function watchRepositories(repos: readonly string[]): void {
 /**
  * 判定一次工作区事件是否可能表示仓库集合变化。
  *
- * 三条判据，与句柄在这台机器上实际报出的形态对应：
- * - 名字里有 `.git` 段：取其所属的仓库根，根未知才算变化。已知仓库内部的 `.git` 写操作由
- *   仓库级监视负责；普通 git 操作会在 `.git` 下产生数十次事件，在这里一并触发会形成
- *   「事件 → 重新发现 → 读 `.git` → 事件」的死循环。
- * - 名字是有过的普通路径且事件为 `rename`：该路径自身或下探 {@link PROBE_DEPTH} 层内出现
- *   或消失了仓库（新建仓库先建目录再写 `.git`，事件只给目录名），或者是已知仓库及其祖先
- *   （仓库目录被整体删除）。
- * - 名字缺失：核对已知仓库是否仍存在。Windows 的递归句柄删除目录树时只报 `change` 而不给
- *   名字，仓库被整个删除只有这条信号；普通 git 操作同样会报一条，此处几个 `stat` 即可结束。
- *
  * @param target - 事件给出的绝对路径；名字缺失时为 null。
  * @param kind - 事件类型。
  * @param repos - 已知仓库路径；省略时用监视登记的集合。
@@ -469,14 +475,8 @@ export async function isRepositorySetChange(
 	repos: Iterable<string> = knownRepos,
 	scope: string | null = null,
 ): Promise<boolean> {
-	const known = new Set([...repos].map((repo) => pathKey(repo)));
+	const known = new Set([...repos].map((repo) => nodeId(repo)));
 	if (target === null) {
-		/*
-		 * 名字缺失：事件只说明「该目录下可能已变」，出现与消失都要查。
-		 *
-		 * 出现只能靠核对集合发现：后端不给名字时，一条「目录变了」既可能是新建仓库，也可能是
-		 * 普通文件改动。核对用快照比较，未变即不通知，因此噪声事件不会变成重扫。
-		 */
 		if (scope !== null) return await repositorySetChangedUnder(scope);
 		/*
 		 * 已知仓库不再有 git 目录时把它移出已知集合：仓库已消失，留在集合里会让此后每一条
@@ -495,10 +495,10 @@ export async function isRepositorySetChange(
 	const gitIndex = parts.indexOf('.git');
 	if (gitIndex !== -1) {
 		const owner = parts.slice(0, gitIndex).join('/');
-		return owner === '' || !known.has(pathKey(owner));
+		return owner === '' || !known.has(nodeId(owner));
 	}
 	if (kind !== 'rename') return false;
-	const id = pathKey(target);
+	const id = nodeId(target);
 	for (const repo of known) {
 		if (repo === id || repo.startsWith(`${id}/`)) return true;
 	}
@@ -508,16 +508,11 @@ export async function isRepositorySetChange(
 /**
  * 核对一个被监视目录下的仓库集合是否与上次不同。
  *
- * 后端不给名字时，一条「目录变了」既可能是新建仓库、也可能是普通文件改动；枚举该目录自身
- * 与直接子项里的仓库再比较，未变即不通知——新建空目录因此不产生通知。
- *
- * 快照只覆盖到直接子项这一层，深度 2 的仓库由它所属的子目录句柄负责。
- *
  * @param scope - 被监视的目录（工作区根或其直接子目录）。
  * @returns 仓库集合已变时为 true。
  */
 async function repositorySetChangedUnder(scope: string): Promise<boolean> {
-	const key = pathKey(scope);
+	const key = nodeId(scope);
 	const names: string[] = [];
 	if (await gitDirAt(scope) !== null) names.push('.');
 	try {
@@ -543,7 +538,7 @@ async function repositorySetChangedUnder(scope: string): Promise<boolean> {
 			if (child.type !== 'directory') continue;
 			if (shouldPruneDirectory(child.name)) continue;
 			const path = join(dir, child.name);
-			if (await gitDirAt(path) !== null) names.push(pathKey(path));
+			if (await gitDirAt(path) !== null) names.push(nodeId(path));
 			else if (depth > 1) await collect(path, depth - 1);
 		}
 	};
@@ -570,9 +565,8 @@ async function holdsRepository(dir: string, depth: number): Promise<boolean> {
 	} catch {
 		return false;
 	}
-	for (const entry of entries) {
-		if (entry.type !== 'directory') continue;
-		if (await holdsRepository(join(dir, entry.name), depth - 1)) return true;
+	for (const name of subdirectoryNames(entries)) {
+		if (await holdsRepository(join(dir, name), depth - 1)) return true;
 	}
 	return false;
 }
@@ -602,14 +596,7 @@ function scheduleWorkspace(watch: WorkspaceWatch): void {
  * @returns 无。
  */
 function scheduleChildSync(key: string): void {
-	const existing = childSyncTimers.get(key);
-	if (existing !== undefined) clearTimeout(existing);
-	const timer = setTimeout(() => {
-		childSyncTimers.delete(key);
-		void syncWorkspaceChildren(key);
-	}, WORKSPACE_COALESCE_MS);
-	if (typeof timer.unref === 'function') timer.unref();
-	childSyncTimers.set(key, timer);
+	scheduleTimer(childSyncTimers, key, WORKSPACE_COALESCE_MS, () => { void syncWorkspaceChildren(key); });
 }
 
 /**
@@ -619,7 +606,7 @@ function scheduleChildSync(key: string): void {
  * @returns 无。
  */
 function notify(repo: string): void {
-	for (const listener of [...listeners]) {
+	for (const listener of listeners.snapshot()) {
 		try {
 			listener(repo);
 		} catch {
@@ -643,7 +630,7 @@ function notify(repo: string): void {
  */
 export function watchWorkspace(root: string): void {
 	if (root === '') return;
-	const key = pathKey(root);
+	const key = nodeId(root);
 	if (workspaces.has(key)) return;
 	// 先占位：挂载是异步的，同步段里重复调用不能挂两套句柄。
 	workspaces.set(key, { root, handle: null, children: new Map(), timer: null });
@@ -651,7 +638,7 @@ export function watchWorkspace(root: string): void {
 	workspaceSignals.set(key, controller);
 	void workspaceWatch(key, root, controller.signal).then(async (close) => {
 		const current = workspaces.get(key);
-		if (current === undefined) { await close().catch(() => { /* 句柄已关闭 */ }); return; }
+		if (current === undefined) { await close().catch(() => undefined); return; }
 		current.handle = close;
 		// 先记基线：此后「目录变了」的事件才能据此判断仓库集合是否真的变了。
 		await repositorySetChangedUnder(root);
@@ -660,7 +647,7 @@ export function watchWorkspace(root: string): void {
 	}).catch((error: unknown) => {
 		// 工作区不可监视：目录不存在或没有权限。
 		closeWorkspace(key);
-		logWarn('watcher', `工作区无法监视，仓库集合变化将不会被自动发现：${root}：${error instanceof Error ? error.message : String(error)}`);
+		logWarn('watcher', `工作区无法监视，仓库集合变化将不会被自动发现：${root}：${errorText(error)}`);
 	}).finally(() => {
 		while (workspaces.size > MAX_WATCHED_WORKSPACES) {
 			const oldest = workspaces.keys().next();
@@ -680,8 +667,8 @@ export function watchWorkspace(root: string): void {
  * @returns 无。
  */
 async function syncWorkspaceChildren(key: string): Promise<void> {
-	const watchState = workspaces.get(key);
-	if (watchState === undefined) return;
+	const watchState = workspaceOf(key);
+	if (watchState === null) return;
 	const signal = workspaceSignals.get(key)?.signal;
 	if (signal === undefined) return;
 	let entries;
@@ -691,15 +678,14 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 		return;
 	}
 	const wanted = new Map<string, string>();
-	for (const entry of entries) {
-		if (entry.type !== 'directory') continue;
-		if (shouldPruneDirectory(entry.name)) continue;
-		const dir = join(watchState.root, entry.name);
-		wanted.set(pathKey(dir), dir);
+	for (const name of subdirectoryNames(entries)) {
+		if (shouldPruneDirectory(name)) continue;
+		const dir = join(watchState.root, name);
+		wanted.set(nodeId(dir), dir);
 	}
 	for (const [childKey, close] of [...watchState.children]) {
 		if (wanted.has(childKey)) continue;
-		void close().catch(() => { /* 句柄已关闭 */ });
+		closeQuietly(close);
 		watchState.children.delete(childKey);
 	}
 	for (const [childKey, dir] of wanted) {
@@ -711,15 +697,15 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
 			return Promise.resolve();
 		});
 		void workspaceChildWatch(key, dir, signal).then((close) => {
-			const current = workspaces.get(key);
-			if (current === undefined || !current.children.has(childKey)) { void close().catch(() => { /* 句柄已关闭 */ }); return; }
+			const current = workspaces.get(key) ?? null;
+			if (current === null || !current.children.has(childKey)) { closeQuietly(close); return; }
 			placeholder.close = close;
 			current.children.set(childKey, close);
 			// 子目录同样先记基线，否则它内部的第一次变化会被当成「没有基线」。
 			void repositorySetChangedUnder(dir);
 		}).catch((error: unknown) => {
 			watchState.children.delete(childKey);
-			logDebug('watcher', `子目录无法监视，其内部新建的仓库不会被自动发现：${dir}：${error instanceof Error ? error.message : String(error)}`);
+			logDebug('watcher', `子目录无法监视，其内部新建的仓库不会被自动发现：${dir}：${errorText(error)}`);
 		});
 	}
 }
@@ -737,8 +723,8 @@ async function syncWorkspaceChildren(key: string): Promise<void> {
  * @returns 无。
  */
 function noteDirectoryChange(key: string, scope: string, filename: string | null | undefined, kind: string | null | undefined): void {
-	const watchState = workspaces.get(key);
-	if (watchState === undefined) return;
+	const watchState = workspaceOf(key);
+	if (watchState === null) return;
 	const target = typeof filename === 'string' && filename !== '' ? join(scope, filename) : null;
 	void isRepositorySetChange(target, kind ?? 'change', knownRepos, scope).then((changed) => {
 		if (changed) scheduleWorkspace(watchState);
@@ -758,14 +744,11 @@ function noteDirectoryChange(key: string, scope: string, filename: string | null
  * @returns 关闭函数。
  */
 function workspaceChildWatch(key: string, dir: string, signal: AbortSignal): Promise<WatchCloser> {
-	const onChange: DirChangeListener = (error, filename, kind) => {
-		if (error !== undefined) {
-			logDebug('watcher', `子目录监视句柄报错：${dir}：${error.message}`);
-			return;
-		}
-		noteDirectoryChange(key, dir, filename, kind);
-	};
-	return watchDirAt(dir, onChange, signal);
+	return watchDirAt(dir, dirChangeListener(
+		dir,
+		(filename, kind) => { noteDirectoryChange(key, dir, filename, kind); },
+		(error) => { logDebug('watcher', `子目录监视句柄报错：${dir}：${error.message}`); },
+	), signal);
 }
 
 /**
@@ -777,17 +760,18 @@ function workspaceChildWatch(key: string, dir: string, signal: AbortSignal): Pro
  * @returns 关闭函数。
  */
 function workspaceWatch(key: string, root: string, signal: AbortSignal): Promise<WatchCloser> {
-	const onChange: DirChangeListener = (error, filename, kind) => {
-		if (error !== undefined) {
+	return watchDirAt(root, dirChangeListener(
+		root,
+		(filename, kind) => {
+			// 子目录的出现与消失不改变仓库集合，但必须据此补挂或摘掉句柄。
+			scheduleChildSync(key);
+			noteDirectoryChange(key, root, filename, kind);
+		},
+		(error) => {
 			logWarn('watcher', `工作区监视句柄报错，已停止监视：${root}：${error.message}`);
 			closeWorkspace(key);
-			return;
-		}
-		// 子目录的出现与消失不改变仓库集合，但必须据此补挂或摘掉句柄。
-		scheduleChildSync(key);
-		noteDirectoryChange(key, root, filename, kind);
-	};
-	return watchDirAt(root, onChange, signal);
+		},
+	), signal);
 }
 
 /**
@@ -805,10 +789,10 @@ function closeWorkspace(key: string): void {
 	if (watchState.timer !== null) clearTimeout(watchState.timer);
 	void watchState.handle?.().catch(() => { /* 句柄已关闭 */ });
 	for (const close of watchState.children.values()) {
-		void close().catch(() => { /* 句柄已关闭 */ });
+		closeQuietly(close);
 	}
 	watchState.children.clear();
-	lastWorkspaceRepos.delete(pathKey(watchState.root));
+	lastWorkspaceRepos.delete(nodeId(watchState.root));
 	const childTimer = childSyncTimers.get(key);
 	if (childTimer !== undefined) clearTimeout(childTimer);
 	childSyncTimers.delete(key);

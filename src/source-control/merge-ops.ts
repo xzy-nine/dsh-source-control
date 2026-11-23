@@ -6,20 +6,13 @@
  * 结果由选择表算出来再写回工作区，写回后 `add` 落索引。
  */
 import fs from 'node:fs/promises';
+import { errorText } from '../shared/error-text.js';
 import nodePath from 'node:path';
-import { gitOrThrow } from './git-exec.js';
-import { worktreeText } from './conflict-ops.js';
+import { contentAt, worktreeText } from './conflict-ops.js';
 import { analyzeMerge, resultLinesOf, type MergeChoice } from '../shared/merge-ranges.js';
+import type { MergeContents } from '../shared/merge-contents.js';
 
-/** 三方内容。 */
-export interface MergeContents {
-	/** 基线（共同祖先）；双方新增的冲突没有基线段，为 null。 */
-	readonly base: string | null;
-	/** 我方。 */
-	readonly ours: string | null;
-	/** 对方。 */
-	readonly theirs: string | null;
-}
+export type { MergeContents } from '../shared/merge-contents.js';
 
 /**
  * 取一个路径某个阶段的全文。
@@ -30,11 +23,7 @@ export interface MergeContents {
  * @returns 全文；该阶段不存在时为 null。
  */
 async function stageText(repo: string, stage: 1 | 2 | 3, path: string): Promise<string | null> {
-	try {
-		return await gitOrThrow(['show', `:${String(stage)}:${path}`], repo);
-	} catch {
-		return null;
-	}
+	return contentAt(repo, path, `:${String(stage)}:`);
 }
 
 /**
@@ -87,7 +76,7 @@ export async function applyMergeChoices(
 		await fs.writeFile(nodePath.join(repo, ...path.split('/')), text, 'utf8');
 		return { unresolved, error: null };
 	} catch (error) {
-		return { unresolved, error: error instanceof Error ? error.message : String(error) };
+		return { unresolved, error: errorText(error) };
 	}
 }
 

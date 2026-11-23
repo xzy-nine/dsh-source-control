@@ -5,30 +5,25 @@
  */
 import { checkoutBranch, fetchRepo, initSubmodule, logClient, removeWorktree, restoreFullHistory, throwIfError } from '../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
-import { showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
-import { showCheckbox } from '../ui/dialog.ts';
+import type { ContextMenuItem } from '../ui/context-menu.ts';
 import { addBusy, isRepoBusy, removeBusy } from './busy.ts';
 import { checkoutFailureText } from './git-messages.ts';
-import { reportError } from './errors.ts';
-import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
+import { reportCaught } from './errors.ts';
+import { openTargetMenu } from './changes.ts';
+import { checkboxThenRun } from './menu/shared.ts';
 import { dropGraphWindows } from './graph-window-cache.ts';
+import type { HookSelection } from './hook-selection.ts';
 import type { Commit, RepoNode, PanelRun, Settings } from '../shared/types.ts';
 import type { PanelState } from '../shared/types.ts';
 
 /** 仓库行菜单的依赖面。 */
-export interface RepoMenuDeps {
+export interface RepoMenuDeps extends HookSelection {
 	/** 当前选中的工作树路径。 */
 	readonly workingTreePath: string | null;
 	/** 面板状态：忙记录与提交列表。 */
 	readonly state: PanelState;
 	/** 当前设置。 */
 	readonly settings: Settings;
-	/** 推送钩子是否激活。 */
-	readonly pushHookActive: boolean;
-	/** 本次是否运行钩子。 */
-	readonly runHooks: boolean;
-	/** 操作结束复位钩子勾选。 */
-	readonly setRunHooks: (next: boolean) => void;
 	/** 面板状态写入器。 */
 	readonly setState: React.Dispatch<React.SetStateAction<PanelState>>;
 	/** 选中一个仓库并重置面板状态。 */
@@ -61,8 +56,6 @@ export interface RepoMenuDeps {
  */
 export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.MouseEvent<HTMLElement>): void {
 	const { state, settings, run, refresh, rescan, refreshTree, setState, setSelectedId, selectNodeAndReset, pushCurrentBranch } = deps;
-	const target = event.currentTarget;
-	target.classList.add(MENU_TARGET_CLASS);
 	const branchName = node.branch ?? '';
 	const isLinkedWorktree = node.kind === 'worktree';
 	const isUninitializedSubmodule = node.kind === 'submodule' && !node.available;
@@ -116,7 +109,7 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 					try {
 						await initSubmodule(node.path, node.path);
 					} catch (error) {
-						reportError(setState, error instanceof Error ? error.message : String(error));
+						reportCaught(setState, error);
 						return;
 					} finally {
 						setState((previous) => ({ ...previous, busy: removeBusy(previous.busy, node.path, 'network') }));
@@ -129,38 +122,32 @@ export function openRepoMenu(deps: RepoMenuDeps, node: RepoNode, event: React.Mo
 	if (isLinkedWorktree) {
 		items.push({ type: 'divider' }, {
 			title: '移除工作树…', danger: true, disabled: isRepoBusy(state.busy, deps.workingTreePath, 'history'),
-			onClick: () => {
-				void (async () => {
-					const ok = await showCheckbox({
-						title: '移除工作树',
-						message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
-						checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
-					});
-					if (!ok) return;
+			onClick: checkboxThenRun({
+				title: '移除工作树',
+				message: `移除工作树 ${node.path}？\n工作树内有未提交改动时需要强制移除。`,
+				checkboxLabel: '强制移除（丢弃工作树内的未提交改动）', danger: true,
+			}, () => {
 					/*
 					 * 直接以该工作树路径为目标执行移除，不经面板的 `run`：被移除的可能正是当前
 					 * 选中的工作树，之后对它的 git 调用会因工作目录不存在而 `spawn git ENOENT`。
 					 */
 					logClient('I', 'action', `用户操作：移除工作树 ${node.name}（${node.path}，强制）`);
-					try {
-						await removeWorktree(node.path, node.path, true);
-					} catch (error) {
-						reportError(setState, error instanceof Error ? error.message : String(error));
-						return;
-					}
-					dropGraphWindows(node.path);
-					// 该节点已不存在，清掉选中以免刷新后指向失效节点。
-					setSelectedId((previous) => (previous === node.id ? null : previous));
-					rescan();
-				})();
-			},
+					void (async () => {
+						try {
+							await removeWorktree(node.path, node.path, true);
+						} catch (error) {
+							reportCaught(setState, error);
+							return;
+						}
+						dropGraphWindows(node.path);
+						// 该节点已不存在，清掉选中以免刷新后指向失效节点。
+						setSelectedId((previous) => (previous === node.id ? null : previous));
+						rescan();
+					})();
+			}),
 		});
 	}
-	showContextMenu({
-		x: event.clientX, y: event.clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items,
-	});
+	openTargetMenu(event, () => items);
 }
 
 /**
@@ -182,14 +169,8 @@ export function openRepoBranchMenu(deps: RepoMenuDeps, node: RepoNode, event: Re
 		for (const name of commit.heads ?? []) branches.add(name);
 	}
 	if (branches.size === 0) return;
-	const target = event.currentTarget;
-	target.classList.add(MENU_TARGET_CLASS);
-	showContextMenu({
-		x: event.clientX, y: event.clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items: [...branches].sort().map((name) => ({
-			title: name,
-			onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path, undefined, { intent: `检出分支 ${name}` }); },
-		})),
-	});
+	openTargetMenu(event, () => [...branches].sort().map((name) => ({
+		title: name,
+		onClick: () => { selectNodeAndReset(node); void run('history', async () => { throwIfError(await checkoutBranch(node.path, name), checkoutFailureText); }, node.path, undefined, { intent: `检出分支 ${name}` }); },
+	})));
 }

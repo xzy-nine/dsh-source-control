@@ -4,7 +4,8 @@
  * 浏览器没有文件系统，日志经 `logEvent` 命令交给宿主。上报是尽力而为：
  * 队列有上限，发送失败把条目放回队首，且不上报自身失败（见 http.ts）。
  */
-import { API_PATH, setApiFailureReporter } from './http.ts';
+import { API_PATH, postJson, setApiFailureReporter } from './http.ts';
+import { createCoalesceTimer } from '../../shared/coalesce-timer.ts';
 
 /** 客户端日志级别。 */
 export type ClientLogLevel = 'D' | 'I' | 'W' | 'E';
@@ -27,7 +28,7 @@ const FLUSH_DELAY_MS = 1500;
 let queue: ClientLogEntry[] = [];
 
 /** 合并发送定时器。 */
-let timer: ReturnType<typeof setTimeout> | undefined;
+const flushTimer = createCoalesceTimer(FLUSH_DELAY_MS, () => { void flushClientLog(); });
 
 /** 是否有一次发送在途。 */
 let sending = false;
@@ -43,8 +44,7 @@ export function logClient(level: ClientLogLevel, tag: string, message: string): 
 	if (message === '') return;
 	queue.push({ level, tag, message, time: Date.now() });
 	if (queue.length > QUEUE_LIMIT) queue = queue.slice(-QUEUE_LIMIT);
-	if (timer !== undefined) return;
-	timer = setTimeout(() => { timer = undefined; void flushClientLog(); }, FLUSH_DELAY_MS);
+	flushTimer.schedule();
 }
 
 /**
@@ -58,11 +58,7 @@ export async function flushClientLog(): Promise<void> {
 	queue = [];
 	sending = true;
 	try {
-		await fetch(API_PATH, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ repo: '', command: 'logEvent', entries }),
-		});
+		await postJson(API_PATH, { repo: '', command: 'logEvent', entries });
 	} catch {
 		// 放回队首：下一次发送一起带上，仍受总量上限约束。
 		queue = [...entries, ...queue].slice(0, QUEUE_LIMIT);

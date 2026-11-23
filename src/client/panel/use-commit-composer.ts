@@ -2,9 +2,10 @@
  * 提交框的状态与动作：提交信息草稿、钩子勾选、AI 生成、翻译与提交。
  *
  * 草稿按仓库根存会话级存储（sessionStorage），键为 `ggg-commit-msg:<仓库根绝对路径>`：
- * 草稿只活在本次会话，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
+ * 草稿存会话级存储，不落宿主；键取仓库根，因此同一工作区下的不同仓库各存各的。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import {
 	clearPersistedDraft, commitStaged, generateCommitMessage, loadCommitMessage, loadHooksState, logClient,
 	takePersistedDraft, translateAvailable, translateText,
@@ -22,6 +23,30 @@ import { canLandGeneration } from './generation-landing.ts';
 import type { AiStats, Commit, PanelRun, Settings, WorkingTreeEntry } from '../shared/types.ts';
 
 /**
+ * 依赖工作树的异步读取：卸载或换工作树后，迟到结果与失败都丢弃。
+ *
+ * `onReset` 在未选工作树与读取失败时执行。
+ *
+ * @param workingTreePath - 当前工作树；未选中时为 null。
+ * @param read - 读取函数，入参为工作树路径。
+ * @param onData - 成功回调。
+ * @param onReset - 未选中工作树或读取失败时的回调。
+ * @returns React 的清理函数。
+ */
+function readForWorktree<T>(
+	workingTreePath: string | null,
+	read: (path: string) => Promise<T>,
+	onData: (data: T) => void,
+	onReset: () => void,
+): (() => void) | undefined {
+	if (workingTreePath === null) { onReset(); return undefined; }
+	let cancelled = false;
+	void read(workingTreePath)
+		.then((data) => { if (!cancelled) onData(data); })
+		.catch(() => { if (!cancelled) onReset(); });
+	return () => { cancelled = true; };
+}
+/**
  * 翻译服务是否可用：换仓库时重查一次（同一进程内结果稳定，不必频繁请求）。
  *
  * 提交框与图形区都按它决定是否显示翻译入口，因此独立成一个 hook，供两处共用。
@@ -31,12 +56,12 @@ import type { AiStats, Commit, PanelRun, Settings, WorkingTreeEntry } from '../s
  */
 export function useTranslateReady(workingTreePath: string | null): boolean {
 	const [translateReady, setTranslateReady] = React.useState(false);
-	React.useEffect(() => {
-		if (workingTreePath === null) { setTranslateReady(false); return undefined; }
-		let cancelled = false;
-		void translateAvailable(workingTreePath).then((available) => { if (!cancelled) setTranslateReady(available); });
-		return () => { cancelled = true; };
-	}, [workingTreePath]);
+	React.useEffect(() => readForWorktree(
+		workingTreePath,
+		translateAvailable,
+		setTranslateReady,
+		() => { setTranslateReady(false); },
+	), [workingTreePath]);
 	return translateReady;
 }
 
@@ -77,7 +102,7 @@ export interface CommitComposer {
 	readonly setMessage: React.Dispatch<React.SetStateAction<string>>;
 	/** 是否修补上一次提交。 */
 	readonly amend: boolean;
-	/** 本次提交与推送是否运行 git 钩子。 */
+	/** 提交与推送是否运行 git 钩子。 */
 	readonly runHooks: boolean;
 	/** 钩子勾选写入器。 */
 	readonly setRunHooks: React.Dispatch<React.SetStateAction<boolean>>;
@@ -122,10 +147,10 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	const [message, setMessage] = React.useState('');
 	const [amend, setAmend] = React.useState(false);
 	/**
-	 * 本次提交与推送是否运行 git 钩子。
+	 * 提交与推送是否运行 git 钩子。
 	 *
-	 * 提交钩子或推送钩子存在时默认勾选，取消勾选即本次用 `--no-verify` 跳过。这是**临时**选择：
-	 * 每次切换仓库与每次提交、推送完成后都回到默认勾选，不持久化。
+	 * 提交钩子或推送钩子存在时默认勾选，取消勾选即以 `--no-verify` 跳过。切换仓库、提交与推送
+	 * 完成后回到默认勾选；不持久化。
 	 */
 	const [runHooks, setRunHooks] = React.useState(true);
 	/** 当前仓库的钩子状态；未探测到或未激活时两个字段皆为 false。 */
@@ -199,18 +224,18 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 		const path = workingTreePath;
 		if (path === null) { setDraftReadDone(false); setDraftPath(null); return undefined; }
 		const cancelled = { current: false };
-		// 本轮读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
+		// 读取是否完成：cleanup 只在完成后写回，否则会把上一个仓库的 message 写进当前仓库的键。
 		let readDone = false;
 		setDraftReadDone(false);
 		const key = draftKeyOf(path);
 		void (async () => {
-			// 早期版本把草稿落在宿主：取回一次，转入会话存储后删除宿主旧键。
+			// 宿主侧可能留有更早写入的草稿：取回一次，转入会话存储后删除宿主那一份。
 			const persisted = await takePersistedDraft(path, path);
 			if (cancelled.current) return;
 			const saved = loadSessionValue<string | null>(key, null);
 			if (saved === null && persisted !== null) {
 				saveSessionValue(key, persisted);
-				// 草稿已落到会话存储，再清宿主旧键；删除失败不影响已取回的草稿。
+				// 草稿写入会话存储后再清宿主那一份；删除失败不影响已取回的草稿。
 				void clearPersistedDraft(path, path).catch(() => { /* 删除失败时草稿仍在会话存储 */ });
 			}
 			setMessage(saved ?? persisted ?? '');
@@ -233,16 +258,16 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	/*
 	 * git 钩子状态：换仓库时探测一次，决定提交框是否显示 githook 勾选项。
 	 *
-	 * 换仓库即回到「运行钩子」：勾选是临时选择，不跨仓库、不跨会话保留。
+	 * 换仓库即回到「运行钩子」：勾选不跨仓库、不跨会话保留。
 	 */
 	React.useEffect(() => {
 		setRunHooks(true);
-		if (workingTreePath === null) { setHooksState({ commit: false, push: false, directory: null }); return undefined; }
-		let cancelled = false;
-		loadHooksState(workingTreePath)
-			.then((state) => { if (!cancelled) setHooksState(state); })
-			.catch(() => { if (!cancelled) setHooksState({ commit: false, push: false, directory: null }); });
-		return () => { cancelled = true; };
+		return readForWorktree(
+			workingTreePath,
+			loadHooksState,
+			setHooksState,
+			() => { setHooksState({ commit: false, push: false, directory: null }); },
+		);
 	}, [workingTreePath]);
 
 	/**
@@ -281,7 +306,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	 */
 	const submit = (): void => {
 		if (commitButtonDisabledOf({ busy: commitBusy, canSubmit, messageEmpty: message.trim() === '', merging })) return;
-		// 钩子激活且取消勾选时本次跳过；提交完成后回到默认勾选。
+		// 提交钩子激活且取消勾选时带 `--no-verify`；提交完成后回到默认勾选。
 		const skipHooks = hooksState.commit && !runHooks;
 		void run('commit', async () => {
 			await commitStaged(workingTreePath as string, message, amend, skipHooks);
@@ -336,7 +361,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 				setMessage(await translateCommitMessage(source, (body) => translateText(workingTreePath, body, locale)));
 				setTranslatedFrom(source);
 			} catch (error) {
-				await notify(error instanceof Error ? error.message : String(error));
+				await notify(errorText(error));
 			} finally {
 				setTranslateBusy(false);
 			}
@@ -347,7 +372,7 @@ export function useCommitComposer(deps: CommitComposerDeps): CommitComposer {
 	 * 是否显示提交信息框的翻译入口。
 	 *
 	 * 判据与提交浮窗共用 {@link showTranslateEntry}：翻译服务已装载（否则点了也失败）、
-	 * 当前无生成或翻译任务、内容非空且以非当前语言为主。已翻译过的内容不再重复提示。
+	 * 当前无生成或翻译任务、内容非空且以非当前语言为主。已翻译过的内容不重复提示。
 	 */
 	const showTranslate = showTranslateEntry({
 		ready: translateReady, busy: aiBusy || translateBusy, text: message,

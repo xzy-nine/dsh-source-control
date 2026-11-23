@@ -25,7 +25,7 @@ Status: implemented
 
 `installHostCapabilities` 在 `ctx.fs` 或 `ctx.subprocess` 缺失时**抛错**使插件装载失败（"没有原生回退"），不退回 `node:fs` 与 `child_process`。`child-process.ts` 整份删除。
 
-测试进程没有宿主，因此 `test/host-fixture.mjs` 以 Node 原语填满同一份能力面，由 `test/setup.mjs` 安装；`test/host-runtime.test.mjs` 以 10 个串行用例钉住 seam 契约，并覆盖"缺服务即抛错"。
+测试进程没有宿主，因此 `test/host-fixture.mjs` 以 Node 原语填满同一份能力面，由 `test/setup.mjs` 安装；`test/git/host-runtime.test.mjs` 以 10 个串行用例钉住 seam 契约，并覆盖"缺服务即抛错"。
 
 ### 目录监视的分层补偿
 
@@ -57,4 +57,4 @@ Status: implemented
 
 ## Testing
 
-`test/host-runtime.test.mjs` 覆盖 seam 契约与缺服务抛错；`test/workspace-watch-depth.test.mjs` 覆盖子目录句柄挂载、新建子目录补挂与关闭时收尾；`test/repo-watcher-live.test.mjs` 覆盖 `.gitmodules` 声明与工作区仓库增删的报告。
+`test/git/host-runtime.test.mjs` 覆盖 seam 契约与缺服务抛错；`test/refresh/workspace-watch-depth.test.mjs` 覆盖子目录句柄挂载、新建子目录补挂与关闭时收尾；`test/refresh/repo-watcher-live.test.mjs` 覆盖 `.gitmodules` 声明与工作区仓库增删的报告。

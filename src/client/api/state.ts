@@ -1,11 +1,12 @@
 /**
- * 宿主侧状态读写，以及浏览器旧数据的一次性迁移。
+ * 宿主侧状态读写，以及浏览器遗留数据的一次性迁移。
  *
  * 持久化统一落在宿主（见 source-control/state-store.ts）；本模块是客户端入口，并在首次
- * 连接时把浏览器 localStorage / sessionStorage 里的旧数据搬到宿主类型化分区，搬完清掉浏览器
- * 旧键即幂等。提交信息草稿是会话级数据，不经本模块迁移。
+ * 连接时把浏览器 localStorage / sessionStorage 里的遗留数据搬到宿主类型化分区，搬完清掉浏览器
+ * 那一份即幂等。提交信息草稿是会话级数据，不经本模块迁移。
  */
 import { callApi } from './http.ts';
+import { storageKeys } from '../shared/storage-keys.ts';
 
 /** 面板布局快照。 */
 export interface PanelLayoutSnapshot {
@@ -32,7 +33,7 @@ export interface StateSnapshot {
 }
 
 /** 空快照。 */
-const EMPTY_SNAPSHOT: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
+export const EMPTY_SNAPSHOT: StateSnapshot = { settings: null, layout: null, refFilters: {}, workspaces: {} };
 
 /**
  * 读取宿主状态快照。
@@ -101,11 +102,11 @@ export async function writeWorkspace(cwd: string, workspaceCwd: string, partial:
 }
 
 /**
- * 取回一次此前落在宿主的提交信息草稿。
+ * 取回宿主持久化里的提交信息草稿。
  *
- * 草稿改为会话级后不再写入宿主，但旧版本可能已把草稿持久化在宿主；调用方在首次挂载时用本函数
- * 取回一次。本函数只读宿主，不删除；调用方在草稿落到会话存储后调用 {@link clearPersistedDraft}
- * 删除旧键，删除失败不影响已取回的文本。
+ * 草稿是会话级数据，宿主那份只是更早写入的遗留值；调用方在首次挂载时用本函数取回一次。
+ * 本函数只读宿主，不删除；调用方在草稿落到会话存储后调用 {@link clearPersistedDraft}
+ * 删除宿主侧的键，删除失败不影响已取回的文本。
  *
  * @param cwd - 会话工作区路径。
  * @param repoPath - 仓库路径。
@@ -155,24 +156,24 @@ export async function writeRepoLocations(cwd: string, repos: ReadonlyArray<{ pat
 }
 
 /**
- * 旧版浏览器键前缀，需搬到宿主。
+ * 浏览器遗留键的前缀，这些键需要搬到宿主。
  *
  * 这两个常量与下面的迁移循环是本仓库**唯一**允许直接访问 `localStorage` / `sessionStorage`
- * 的位置：旧版把数据存在浏览器里，迁移必须先把它们读出来。迁移完成后浏览器不再是数据源，
+ * 的位置：遗留数据存在浏览器里，迁移必须先把它们读出来。浏览器不是新数据的来源，
  * 新数据一律走宿主持久化（见 `source-control/state-store.ts`）。
  */
 const LEGACY_PREFIX = 'dsh-source-control-';
 const LEGACY_MIGRATED_KEY = 'dsh-source-control-migrated';
 
 /**
- * 把浏览器里的旧持久化数据搬到宿主。
+ * 把浏览器里的遗留持久化数据搬到宿主。
  *
- * 旧版本把设置、布局与引用筛选存在 localStorage / sessionStorage；迁移后统一由宿主落盘。
- * 客户端只负责收集旧键原样发给宿主，分类与合并由宿主 `mergeLegacyEntries` 统一完成——浏览器不
+ * 设置、布局与引用筛选的遗留数据收在 localStorage / sessionStorage 里，由本模块搬进宿主分区。
+ * 客户端只负责收集这些键原样发给宿主，分类与合并由宿主 `mergeLegacyEntries` 统一完成——浏览器不
  * 持久化，也不承担格式转换。提交信息草稿是会话级数据，由 `panel/storage.ts` 的
- * migrateLegacyDrafts 转入会话存储，不进宿主。搬完清掉浏览器旧键即幂等。
+ * migrateLegacyDrafts 转入会话存储，不进宿主。清掉浏览器那一份后迁移即幂等。
  *
- * 浏览器存储只在这一个函数里被读取，且只为搬迁旧键；迁移完成后不再有其它访问点。
+ * 浏览器存储只在这一个函数里被读取，且只为搬迁遗留键。
  *
  * @param cwd - 会话工作区路径。
  * @returns 无。
@@ -183,9 +184,7 @@ export async function migrateLegacyState(cwd: string): Promise<void> {
 		const entries: Record<string, unknown> = {};
 		const keys: string[] = [];
 		for (const store of [localStorage, sessionStorage]) {
-			for (let at = 0; at < store.length; at += 1) {
-				const key = store.key(at);
-				if (key === null) continue;
+			for (const key of storageKeys(store)) {
 				if (!key.startsWith(LEGACY_PREFIX)) continue;
 				if (key === LEGACY_MIGRATED_KEY) continue;
 				if (key in entries) continue;
@@ -197,7 +196,7 @@ export async function migrateLegacyState(cwd: string): Promise<void> {
 		}
 		if (keys.length === 0) return;
 		await callApi(cwd, { command: 'mergeLegacyEntries', entries });
-		// 搬完清掉浏览器里的旧键：此后宿主是唯一数据源。
+		// 搬完清掉浏览器里那一份：此后宿主是唯一数据源。
 		for (const key of keys) {
 			try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch { /* 忽略 */ }
 		}

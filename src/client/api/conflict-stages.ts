@@ -5,6 +5,7 @@
  * 变更区把结果按路径存进一个 Map。
  */
 import { callApi } from './http.ts';
+import { recordListOf } from '../../shared/record-list.ts';
 import type { ConflictStages } from '../shared/types.ts';
 
 /**
@@ -16,11 +17,8 @@ import type { ConflictStages } from '../shared/types.ts';
  */
 export async function loadConflictStagesOf(repo: string, paths: readonly string[]): Promise<ReadonlyMap<string, ConflictStages>> {
 	const payload = await callApi(repo, { command: 'conflictStages', paths });
-	const raw = Array.isArray(payload.stages) ? payload.stages : [];
 	const out = new Map<string, ConflictStages>();
-	for (const item of raw as unknown[]) {
-		if (item === null || typeof item !== 'object') continue;
-		const record = item as Record<string, unknown>;
+	for (const record of recordListOf(payload.stages)) {
 		if (typeof record.path !== 'string') continue;
 		out.set(record.path, {
 			base: record.base === true,

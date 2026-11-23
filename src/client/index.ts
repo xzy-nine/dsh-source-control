@@ -9,12 +9,13 @@
  * 带行号的差异视图，地址为 dsh-resource://git-diff/session/<id>/<hash>/<path>。
  */
 import React from 'react';
+import { errorText } from '../shared/error-text.ts';
 import {
 	IconChevronDownOutlineRegular, IconChevronsUpDownOutlineRegular, IconChevronUpOutlineRegular, IconInspectOutlineRegular,
 	IconNowrapFillRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { GitGraphPanel } from './panel/index.ts';
-import { ForgeDiffView, type DiffFileState } from './diff/forge-adapter.tsx';
+import { ForgeDiffView, toForgeHunks, type DiffFileState } from './diff/forge-adapter.tsx';
 import { SectionReach } from '@deepseek-ai/dsh-experimental-client-ui-forge/src/client/section-reach.ts';
 import { diffStats } from './diff/diff-stats.ts';
 import { useDiffView } from './diff/use-diff-view.ts';
@@ -27,10 +28,11 @@ import { useSharedContextMenu } from './ui/context-menu.ts';
 import type { ContextMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client';
 import {
 	API_PATH, applyHunk as applyHunkCommand, applyMergeChoices, fileDiffContent, installClientLog,
-	loadFileHunks, loadMergeContents, logClient, resolveConflict,
+	loadFileHunks, loadMergeContents, logClient, resolveConflict, stringsOf,
 	type FileDiffContent, type FileHunk, type MergeContentsPayload,
 } from './api/index.ts';
 import { MergeView } from './diff/merge-view.ts';
+import { DiffRenderGuard } from './diff/render-guard.ts';
 import { formatMergeComment } from './diff/comment-reference.ts';
 import { setShownSide, subscribeShownSide, titleScopeOf } from './diff/shown-side.ts';
 import type { LineRange } from './diff/line-range.ts';
@@ -66,7 +68,7 @@ const DIFF_TAB_KIND = 'devGitGraphDiff';
  * @returns 无。
  */
 async function reportFailure(error: unknown): Promise<void> {
-	await showMessage({ title: '操作失败', message: error instanceof Error ? error.message : String(error) });
+	await showMessage({ title: '操作失败', message: errorText(error) });
 }
 
 /** 布局身份在渲染期保持稳定，供 Panel 内部的 memo 复用。 */
@@ -111,7 +113,7 @@ function GitGraphTab(props) {
 	React.useEffect(() => {
 		logClient('D', 'panel', `上屏条件：会话显示=${String(sessionDisplayed === true)}、侧栏页可见=${String(tabVisible)}、合计=${String(onScreen)}`);
 	}, [sessionDisplayed, tabVisible, onScreen]);
-	// 目录选择器由 ui-workspace 提供；未装载时克隆的第二步会说明原因。
+	// 目录选择器由 ui-workspace 提供；未装载时克隆流程在选目录处说明原因。
 	const pickDirectory = React.useMemo(() => {
 		const service = props.uiWorkspace;
 		return service === undefined || typeof service.pickDirectory !== 'function'
@@ -126,7 +128,7 @@ function GitGraphTab(props) {
 		);
 	}, [props.terminals, props.sidebarRightService]);
 	// 在系统文件管理器中定位一个路径：走宿主 Remote 的 openWorkspacePath(reveal)。
-	// 返回的 promise 供需要排定顺序的调用方等待（先定位、再开浏览器）；失败一律吞掉。
+	// 返回的 promise 在定位结束后兑现，供需要按完成顺序执行的调用方使用；失败一律吞掉。
 	const revealPath = React.useCallback((path: string): Promise<void> => {
 		if (typeof props.revealPath !== 'function') return Promise.resolve();
 		try {
@@ -164,7 +166,7 @@ function GitGraphTab(props) {
 				? { kind: 'worktree', staged }
 				: { kind: 'commit', hash };
 		const address = gitDiffAddress(sessionId, scope);
-		const files = Array.isArray(diff.files) ? diff.files.filter((item): item is string => typeof item === 'string') : [];
+		const files = stringsOf(diff.files);
 		try {
 			tabActions.openResource(address, { params: { path, files, repoRoot } });
 		} catch (error) {
@@ -211,7 +213,7 @@ function GitGraphHeaderAction(props) {
  *
  * 视图用 DSH forge 变更视图的 DiffFile（见 ./forge-adapter.tsx）：它与 DSH 面板
  * 共用同一份实现，因此行号、hunk 头、并排/单栏、代码高亮、未变更行折叠都随 DSH
- * 一起演进，不再由本插件维护副本。
+ * 一起演进，本插件不维护副本。
  *
  * @param props.sessionId - 席位给出的会话 id。
  * @param props.useSessions - session 作用域席位的标准快照 hook。
@@ -220,7 +222,7 @@ function GitGraphHeaderAction(props) {
  */
 function GitDiffTab(props) {
 	const { sessionId, useSessions, useTabInfo, clientContext, inputActions } = props;
-	// 评论的终点是当前会话的输入框：插一条定位引用，用户可先编辑再发送。
+	// 评论的终点是当前会话的输入框：插入一条定位引用，用户编辑后发送。
 	const addToInput = React.useCallback((text: string): boolean => {
 		if (inputActions === undefined || typeof inputActions.insertQuote !== 'function') return false;
 		return inputActions.insertQuote(text);
@@ -247,7 +249,7 @@ function GitDiffTab(props) {
 	const [followedSide, setFollowedSide] = React.useState<boolean | null>(null);
 	const staged = followedSide ?? stagedScope;
 	const files = React.useMemo<readonly string[]>(
-		() => (Array.isArray(navParams?.files) ? navParams.files.filter((item): item is string => typeof item === 'string') : []),
+		() => stringsOf(navParams?.files),
 		[navParams],
 	);
 	const currentPath = typeof navParams?.path === 'string' && navParams.path !== ''
@@ -275,7 +277,7 @@ function GitDiffTab(props) {
 	React.useEffect(() => {
 		setFileState({ expanded: true, revealed: false, open: new Set() });
 		setFollowedSide(null);
-		// 换文件后重新与地址对齐，标题不再沿用上一个文件的显示侧。
+		// 换文件后重新与地址对齐，标题回到地址对应的一侧。
 		setShownSide(address, null);
 	}, [currentPath, commitHash, stagedScope, baseHash, address]);
 	// 视图选择是面板设置的一部分：默认自动换行与左右并排，改动写回设置并随宿主持久化。
@@ -313,13 +315,13 @@ function GitDiffTab(props) {
 			.catch((error: unknown) => {
 				setDiffData(null);
 				setLoading(false);
-				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${side ? '暂存区' : '工作区'}）：${error instanceof Error ? error.message : String(error)}`);
+				logClient('E', 'diff', `打开差异页失败，文件 ${currentPath}（${side ? '暂存区' : '工作区'}）：${errorText(error)}`);
 			});
 	}, [parsed, commitHash, currentPath, gitCwd, baseHash]);
 	/**
 	 * 取另一个作用域的内容。
 	 *
-	 * 用于把改动搬走之后接着看另一半：工作区与暂存区互为对侧，提交与对比作用域没有对侧。
+	 * 用于切到另一侧的同一文件：工作区与暂存区互为对侧，提交与对比作用域没有对侧。
 	 *
 	 * @param toStaged - 对侧是否取暂存区。
 	 * @returns 对侧的差异内容；不适用或取数失败时为 null。
@@ -342,9 +344,9 @@ function GitDiffTab(props) {
 	/** 逐段动作进行中：禁用全部段落按钮，避免两次点击撞在一起。 */
 	const [resolving, setResolving] = React.useState(false);
 	/**
-	 * 本次取数是否由本页的暂存动作引起。
+	 * 该次取数是否由本页的暂存动作引起。
 	 *
-	 * 用于区分「本次取数把内容搬空」与「打开时本就无改动」：只有前者切到另一侧。
+	 * 用于区分「取数把内容搬空」与「打开时本就无改动」：只有前者切到另一侧。
 	 */
 	const emptiedSide = React.useRef(false);
 	/** 分段暂存进行中。 */
@@ -457,9 +459,9 @@ function GitDiffTab(props) {
 	/**
 	 * 一侧被搬空后就地切到另一侧并继续看同一个文件。
 	 *
-	 * 工作区与暂存区是同一份文件的两个视图：一侧取空意味着这次改动整体搬到了另一侧，
-	 * 用户紧接着要看的就是搬过去的那一半。打开新地址会把当前页留在「没有改动」上，因此
-	 * 这里在同一页里换内容——页地址仍是原地那一侧，差别只在于显示哪一侧。
+	 * 工作区与暂存区是同一份文件的两个视图：一侧取空意味着改动整体已在另一侧。
+	 * 打开新地址会把当前页留在「没有改动」上，因此这里在同一页里换内容——页地址仍是原地那一侧，
+	 * 差别只在于显示哪一侧。
 	 *
 	 * 切过去之后地址与实际显示的一侧可以不一致；页身份按进入时的作用域算。
 	 *
@@ -494,7 +496,7 @@ function GitDiffTab(props) {
 	const emptyNow = !loading && diffData !== null && !diffData.binary && diffData.hunks.length === 0;
 	React.useEffect(() => {
 		if (!emptyNow || scope === null || scope.kind !== 'worktree') return;
-		// 只在本次取数确实把内容搬空后才切：首次打开一个本就无改动的文件时停在原作用域。
+		// 只在取数确实把内容搬空后才切：打开一个本就无改动的文件时停在原作用域。
 		if (!emptiedSide.current) return;
 		emptiedSide.current = false;
 		switchScopeSide();
@@ -568,15 +570,16 @@ function GitDiffTab(props) {
 	/**
 	 * 全部展开或全部折叠未变更区段。
 	 *
-	 * 展开时把每个区段的下标都放进去：区段数由补丁块决定，越界下标不会画出任何行，
-	 * 因此不必先请点当前文件有几个折叠区。
+	 * 区段数由 forge 实际收到的块数决定，而非宿主给出的块数：`toForgeHunks` 会把超过行数
+	 * 上限的块切成若干小块，切分后的块数多于 `diffData.hunks.length`。按宿主块数算会让
+	 * 末尾那些区段拿不到下标、展不开。越界下标不会画出任何行，因此宁可多算。
 	 *
 	 * @returns 无。
 	 */
 	const toggleGaps = React.useCallback((): void => {
 		setFileState((previous) => {
 			if (previous.open.size > 0) return { ...previous, open: new Set() };
-			const count = diffData === null ? 0 : diffData.hunks.length + 1;
+			const count = diffData === null ? 0 : toForgeHunks(diffData).length + 1;
 			return { ...previous, open: new Set(Array.from({ length: count }, (_, at) => at)) };
 		});
 	}, [diffData]);
@@ -642,6 +645,7 @@ function GitDiffTab(props) {
 	 * 绘制正文：读取中、读取失败、二进制各给一行说明，文本比较交给 forge 的 DiffFile。
 	 *
 	 * 这几条状态文案与 DSH 差异视图一致，因此与 forge 面板里同样的失败看起来没有差别。
+	 * 返回值由 {@link DiffRenderGuard} 收容：这里抛出的渲染错误只影响正文这一段。
 	 *
 	 * @returns 正文元素。
 	 */
@@ -711,7 +715,7 @@ function GitDiffTab(props) {
 		'div',
 		{ className: css.diffTab },
 		React.createElement('div', { className: css.header },
-			// 左侧是文件下拉：列出本次比较涉及的同类文件，选中即在同一页里切换。
+			// 左侧是文件下拉：列出该次比较涉及的同类文件，选中即在同一页里切换。
 			files.length > 1
 				? React.createElement(Menu, {
 					className: css.fileMenu,
@@ -803,7 +807,16 @@ function GitDiffTab(props) {
 		React.createElement(
 			'div',
 			{ className: css.diffTabBody, ref: scrollRoot },
-			renderDiffBody(),
+			/*
+			 * 正文外面套一层渲染守卫：单个文件渲染失败只让正文画成说明，页头、文件切换与
+			 * 本页其它控件照常可用。换文件或换作用域时换 key 重新挂载，上一份的失败不跟到
+			 * 下一个文件。
+			 */
+			React.createElement(
+				DiffRenderGuard,
+				{ key: `${commitHash}\0${String(staged)}\0${baseHash}\0${currentPath}` },
+				renderDiffBody(),
+			),
 		),
 	);
 }
@@ -869,8 +882,8 @@ function startWorkspacePreload(ctx) {
 	/**
 	 * 按列表顺序列出会话信息。
 	 *
-	 * 先列 `ids`，再列 `byId` 里不在 `ids` 的保留会话（子代理回退行等）：后者同样可能被
-	 * 主视图持有，排在列表成员之后。
+	 * 按 `ids` 的顺序取会话，其后补上 `byId` 里不在 `ids` 的保留会话（子代理回退行等）：
+	 * 后者同样可能被主视图持有，排在列表成员之后。
 	 */
 	const sessionsOf = (snapshot) => {
 		const byId = snapshot?.byId ?? {};
@@ -959,7 +972,7 @@ export function apply(ctx) {
 	const slots = ctx.slots ?? ctx.get?.('slots');
 	if (slots === undefined) return;
 
-	// 覆盖层：弹窗与轻量提示渲染进根级席位，不再各自 createRoot 挂 document.body。
+	// 覆盖层：弹窗与轻量提示渲染进根级席位，不直接挂到 document.body。
 	ctx.effect(() => installOverlay(slots));
 
 	/*
@@ -1024,7 +1037,7 @@ export function apply(ctx) {
 			if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝在文件管理器中打开路径 ${path}`);
 			return result.ok === true;
 		} catch (error) {
-			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+			logClient('W', 'open-in-app', `在文件管理器中打开路径失败 ${path}：${errorText(error)}`);
 			return false;
 		}
 	};

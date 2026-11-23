@@ -1,6 +1,7 @@
 /**
  * 宿主 API 传输层：统一构造 POST 请求、解析响应并把错误文本转成异常。
  */
+import { errorText } from '../../shared/error-text.ts';
 
 /** API 路由，与宿主注册的路径一致。 */
 export const API_PATH = '/dsh-source-control/gg/api';
@@ -20,6 +21,45 @@ let reportApiFailure: ApiFailureReporter | undefined;
  */
 export function setApiFailureReporter(reporter: ApiFailureReporter | undefined): void {
 	reportApiFailure = reporter;
+}
+
+/**
+ * 把未知值读成字符串数组。
+ *
+ * 宿主载荷里的数组元素类型不可信：非数组给空数组，元素逐个按字符串筛掉其余类型。
+ *
+ * @param value - 待读的载荷字段。
+ * @returns 只含字符串的数组。
+ */
+export function stringsOf(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
+ * 取命令返回的逐块差异数组。
+ *
+ * @param payload - 宿主响应。
+ * @returns 逐块差异；字段缺失或类型不符时为空数组。
+ */
+export function hunksOf(payload: Record<string, unknown>): unknown[] {
+	return Array.isArray(payload.hunks) ? payload.hunks : [];
+}
+
+/**
+ * 向一个宿主路由发一次 JSON POST。
+ *
+ * @param path - 路由。
+ * @param body - 请求体。
+ * @param signal - 取消信号。
+ * @returns 原始响应。
+ */
+export function postJson(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+	return fetch(path, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+		signal,
+	});
 }
 
 /**
@@ -57,15 +97,10 @@ export async function callApiRaw(cwd: string, message: Record<string, unknown>, 
 	const report = command === 'logEvent' ? undefined : reportApiFailure;
 	let response: Response;
 	try {
-		response = await fetch(API_PATH, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ repo: cwd, ...message }),
-			signal,
-		});
+		response = await postJson(API_PATH, { repo: cwd, ...message }, signal);
 	} catch (error) {
 		// 取消不是失败：面板中止在途请求是常规操作。
-		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${error instanceof Error ? error.message : String(error)}`);
+		if (signal?.aborted !== true) report?.('E', 'api', `请求宿主命令 ${command} 失败（网络层）：${errorText(error)}`);
 		throw error;
 	}
 	const text = await response.text();
@@ -119,7 +154,7 @@ export function commandError(payload: Record<string, unknown>): string | null {
  * @returns 其中的字符串项；字段缺失或类型不符时为空数组。
  */
 export function errorList(payload: Record<string, unknown>): string[] {
-	return Array.isArray(payload.errors) ? payload.errors.filter((item): item is string => typeof item === 'string') : [];
+	return stringsOf(payload.errors);
 }
 
 /**

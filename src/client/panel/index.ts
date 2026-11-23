@@ -6,6 +6,7 @@
  * 同目录按职责拆分。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import {
 	cancelOperation, discardPaths, fetchRepo, initRepository, initSubmodule, loadBranchBase, loadRefs,
 	abortMerge, pushStash, stagePaths, unstagePaths,
@@ -42,7 +43,7 @@ import { findNodeByPath } from './repo-tree.ts';
 import { workspaceEmptyOf } from './workspace-empty.ts';
 import { addBusy, busyFlagsOf, removeBusy, setBusyLabel } from './busy.ts';
 import { primaryActionOf } from './submit-state.ts';
-import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel } from './settings.ts';
+import { AI_SECTION_ANCHOR, formatDate, loadSettings, SettingsPanel, type ExternalOpenHandlers } from './settings.ts';
 import { usePanelLayout, useRefreshClock } from './use-panel-layout.ts';
 import { useCommitComposer, useTranslateReady } from './use-commit-composer.ts';
 import { upstreamPartsOf, useRemoteSync } from './use-remote-sync.ts';
@@ -61,15 +62,14 @@ const INITIAL_MAX_COMMITS = 200;
 
 
 /** 面板属性。 */
-export interface GitGraphPanelProps {
+export interface GitGraphPanelProps extends Pick<ExternalOpenHandlers, 'onRevealPath'> {
 	/** 会话工作区路径；没有工作区时为 undefined。 */
 	readonly cwd?: string | undefined;
 	/** 会话 id，用于持久化存储库选中与展开状态。 */
 	readonly sessionId: string;
 	/** 打开文件差异（打开右侧栏 Diff 页）。 */
 	readonly onOpenDiff?: ((target: unknown) => void) | undefined;
-	/** 在系统文件管理器中定位一个路径；未装载时为 undefined。返回的 promise 用于排定打开顺序。 */
-	readonly onRevealPath?: ((path: string) => void | Promise<unknown>) | undefined;
+
 	/** 打开宿主目录选择器；未装载时为 undefined。 */
 	readonly pickDirectory?: (() => Promise<string | null>) | undefined;
 	/** 在侧边栏终端里执行命令；未装载时为 undefined。 */
@@ -228,8 +228,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/*
 	 * 载入当前仓库的筛选状态。
 	 *
-	 * 必须等宿主持久化预取完成：预取前读到的只会是回退值，而 useState 的初值不会随预取重算
-	 * （此前漏了这一处回填，表现为重启后筛选回到默认自动）。
+	 * 等宿主持久化预取完成后再读；useState 的初值不随预取重算。
 	 */
 	React.useEffect(() => {
 		if (!storageReady || workingTreePath === null) return;
@@ -411,7 +410,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 执行一次操作并刷新。
 	 *
 	 * 忙碌按「目标仓库 + 影响面」记录：只禁用该仓库同类用途的控件，其它仓库与其它影响面不受
-	 * 影响。`read` 影响面的操作自身已经刷新，不再追加一次；目标是别的仓库时也不刷新当前仓库，
+	 * 影响。`read` 影响面的操作自身已经刷新；目标是别的仓库时不刷新当前仓库，
 	 * 选中项变化后由提交图数据自行加载。
 	 *
 	 * 写操作成功后先按 git 语义就地推算新的工作区条目（乐观更新），界面立刻反映结果；随后
@@ -472,7 +471,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			setRefsRevision((previous) => previous + 1);
 			await refresh('reconcile');
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errorText(error);
 			logClient('E', 'action', `操作失败：${intent}：${message}`);
 			reportError(setState, message);
 		} finally {
@@ -496,7 +495,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 		if (target === null) return;
 		logClient('W', 'action', `用户停止操作：${cancelKey}`);
 		void cancelOperation(target, cancelKey).catch((error: unknown) => {
-			logClient('E', 'action', `停止操作失败：${error instanceof Error ? error.message : String(error)}`);
+			logClient('E', 'action', `停止操作失败：${errorText(error)}`);
 		});
 	}, [state.busy, workingTreePath]);
 
@@ -540,7 +539,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	 * 执行空态里的主按钮动作。
 	 *
 	 * 初始化仓库落在会话工作区根：那正是仓库树发现失败的那一层。初始化成功后按最新结构重取仓库树
-	 * 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立，两个分区不再显示空态。
+	 * 并选中新仓库，仓库树的「工作区根即仓库」判据随之成立。
 	 *
 	 * 初始化子模块沿用仓库行菜单的同一条命令：宿主按路径向上找声明它的父仓库，因此子模块尚未
 	 * 检出也能执行；该命令可能访问远端。
@@ -570,7 +569,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 				await perform();
 				showToast(empty.actionKind === 'init-workspace' ? '已初始化仓库' : '已初始化子模块', { tone: 'success' });
 			} catch (error) {
-				void showError(error instanceof Error ? error.message : String(error));
+				void showError(errorText(error));
 			} finally {
 				setEmptyActionBusy(false);
 			}
@@ -859,7 +858,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 	/** 统一右键入口：有 ref 走 ref 菜单，否则走提交菜单。 */
 	const handleContextMenu = React.useCallback(({ commit, refInfo, event }: { commit: Commit; refInfo: RefInfo | null; event: React.MouseEvent<HTMLElement> }) => {
 		if (refInfo !== null && refInfo.type !== null && refInfo.name !== null) {
-			openRefMenuFor({ commit, refInfo: { type: refInfo.type, name: refInfo.name }, event });
+			openRefMenuFor({ commit, refInfo: { type: refInfo.type, name: refInfo.name, remote: refInfo.remote ?? null }, event });
 		} else {
 			openCommitMenuFor({ commit, event });
 		}

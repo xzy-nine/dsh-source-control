@@ -13,12 +13,13 @@ import {
 } from '../api/index.ts';
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives';
 import { openExternal, showContextMenu, type ContextMenuItem } from '../ui/context-menu.ts';
-import { showCheckbox, showSelect, showText } from '../ui/dialog.ts';
+import { showSelect, showText } from '../ui/dialog.ts';
 import { githubCommitUrl, githubRemoteNames, remoteNameOfBranch } from './github.ts';
 import { checkoutFailureText } from './git-messages.ts';
 import { COMMIT_MENU, MENU_ACTIONS } from './menu-actions.ts';
 import type { Commit } from '../shared/types.ts';
 import { MENU_TARGET_CLASS } from '../css/state-classes.ts';
+import { checkboxThenRun, textThenRun } from './menu/shared.ts';
 import type { GraphMenuDeps, MenuAction, MenuContext, RefMenuTarget } from './menu/shared.ts';
 export type { GraphMenuDeps, RefMenuTarget } from './menu/shared.ts';
 import { BUILDERS } from './menu/registry.ts';
@@ -118,15 +119,9 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	 *
 	 * @returns 标签操作的菜单项；无适用项时为空数组。
 	 */
-	const tagActions = (): ContextMenuItem[] => {
-		if (isUncommitted) return [];
-		const built: ContextMenuItem[] = [];
-		for (const action of ACTIONS) {
-			if (action.commitTarget !== 'tag') continue;
-			push(built, action.build(ctx));
-		}
-		return built;
-	};
+	const tagActions = (): ContextMenuItem[] => (
+		isUncommitted ? [] : collectActions(ctx, (action) => action.commitTarget === 'tag')
+	);
 	const tagItems = tagActions();
 
 	const items: ContextMenuItem[] = [];
@@ -135,20 +130,19 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 	items.push({ type: 'divider', visible: githubUrl !== null });
 	push(items, byId('checkoutBranch'));
 	push(items, { title: COMMIT_MENU.checkoutDetached, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await checkoutCommit(ctx.repo, commit.hash), checkoutFailureText); }); } });
-	items.push({ type: 'divider' });
-	push(items, { title: COMMIT_MENU.createBranch, disabled: isUncommitted, onClick: () => {
-		void (async () => {
-			const name = await showText({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' });
-			if (name !== null && name !== '') void deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); });
-		})();
-	} });
+	items.push(DIVIDER);
+	push(items, {
+		title: COMMIT_MENU.createBranch, disabled: isUncommitted,
+		onClick: textThenRun({ title: '创建分支', label: '新分支名', placeholder: 'feature/xxx' },
+			(name) => { void deps.run('history', async () => { throwIfError(await createBranch(ctx.repo, name, commit.hash, true)); }); }),
+	});
 	push(items, byId('deleteBranch'));
 	// PR 是分支级操作，作用于当前分支而非选中的提交；条件不满足时该项自身返回 null。
 	push(items, byId('createPullRequest'));
 	// 标签相关操作自成一组：用分割线与上方的分支操作、下方的提交操作隔开。
 	// 未提交伪提交上既不能创建标签、也没有标签可操作，整组不显示。
 	if (!isUncommitted) {
-		items.push({ type: 'divider' });
+		items.push(DIVIDER);
 		push(items, { title: COMMIT_MENU.createTag, onClick: () => {
 			void (async () => {
 				const name = await showText({ title: '创建标签', label: '标签名', placeholder: 'v1.0.0' });
@@ -168,32 +162,106 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
 		} });
 		for (const item of tagItems) items.push(item);
 	}
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	push(items, { title: COMMIT_MENU.cherrypick, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await cherrypickCommit(ctx.repo, commit.hash)); }); } });
 	push(items, { title: COMMIT_MENU.revert, disabled: isUncommitted, onClick: () => { void deps.run('history', async () => { throwIfError(await revertCommit(ctx.repo, commit.hash)); }); } });
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	// 重置只对当前分支可达的提交有意义：重置到其他分支的提交会改写当前分支。
 	push(items, ctx.onCurrentBranch ? { title: COMMIT_MENU.resetHere, danger: true, disabled: isUncommitted, children: [
 		{ title: COMMIT_MENU.resetSoft, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'soft')); }); } },
 		{ title: COMMIT_MENU.resetMixed, onClick: () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'mixed')); }); } },
-		{ title: COMMIT_MENU.resetHard, danger: true, onClick: () => {
-			void (async () => {
-				const ok = await showCheckbox({
-					title: '重置当前分支',
-					message: `当前分支将重置到 ${commit.hash.slice(0, 7)}（硬重置）。未提交的改动会丢失。`,
-					checkboxLabel: '我已知晓并继续', danger: true,
-				});
-				if (ok) void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'hard')); });
-			})();
-		} },
+		{ title: COMMIT_MENU.resetHard, danger: true, onClick: checkboxThenRun({
+			title: '重置当前分支',
+			message: `当前分支将重置到 ${commit.hash.slice(0, 7)}（硬重置）。未提交的改动会丢失。`,
+			checkboxLabel: '我已知晓并继续', danger: true,
+		}, () => { void deps.run('history', async () => { throwIfError(await resetToCommit(ctx.repo, commit.hash, 'hard')); }); }) },
 	] } : null);
 	push(items, byId('rebaseOnto'));
 	push(items, byId('mergeIntoBranch'));
-	items.push({ type: 'divider' });
+	items.push(DIVIDER);
 	push(items, { title: COMMIT_MENU.copyHash, onClick: () => { void writeClipboard(commit.hash); } });
 	push(items, { title: COMMIT_MENU.copyMessage, onClick: () => { void writeClipboard(commit.message ?? ''); } });
 	return items;
 }
+
+/**
+ * 按判据从操作注册表里收集菜单项。
+ *
+ * 提交菜单的标签分组与引用菜单各按自己的判据过滤同注册表，构建与去空只写这一处。
+ *
+ * @param ctx - 构建上下文。
+ * @param keep - 该操作在当前目标下是否适用。
+ * @returns 非空的菜单项，按注册表顺序。
+ */
+function collectActions(ctx: MenuContext, keep: (action: MenuAction) => boolean): ContextMenuItem[] {
+	const built: ContextMenuItem[] = [];
+	for (const action of ACTIONS) {
+		if (!keep(action)) continue;
+		const item = action.build(ctx);
+		if (item !== null) built.push(item);
+	}
+	return built;
+}
+
+/**
+ * 在指针位置弹出一次菜单，关闭时撤下目标行的高亮类。
+ *
+ * 提交菜单与引用菜单共用这一处：先弹已算好的条目，`pendingItems` 到达后整份替换。
+ *
+ * @param at - 视口坐标。
+ * @param target - 被右键的行元素。
+ * @param items - 立即弹出的条目。
+ * @param pendingItems - 补齐后替换用的条目；给 null 表示不替换。
+ * @returns 无。
+ */
+function showMenuAt(
+	at: { readonly clientX: number; readonly clientY: number },
+	target: Element,
+	items: () => ContextMenuItem[],
+	pendingItems: Promise<ContextMenuItem[] | null>,
+): void {
+	showContextMenu({
+		x: at.clientX, y: at.clientY,
+		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
+		items: items(),
+		pendingItems,
+	});
+}
+
+/**
+ * 在事件目标处弹出菜单，并在包含关系到达后整份替换。
+ *
+ * git 查询要跑几个子进程，等它会让右键明显迟滞；先弹已算好的部分，补齐结果替换菜单项，
+ * 刷新时保留已打开的位置与焦点。
+ *
+ * @param event - 触发事件；位置与目标只在派发期间有效，因此同步取出。
+ * @param initial - 已算好的菜单项。
+ * @param withContaining - 包含关系到达后的菜单项；返回 null 时保留当前菜单。
+ * @param commit - 被右键的提交。
+ * @param deps - 菜单依赖面。
+ * @returns 无。
+ */
+function showMenuWithContaining(
+	event: React.MouseEvent<HTMLElement>,
+	initial: readonly ContextMenuItem[],
+	withContaining: (containing: Containing) => ContextMenuItem[],
+	commit: Commit,
+	deps: GraphMenuDeps,
+): void {
+	const target = event.currentTarget;
+	const { clientX, clientY } = event;
+	target.classList.add(MENU_TARGET_CLASS);
+	showMenuAt({ clientX, clientY }, target, () => [...initial],
+		containingOf(deps, commit).then((containing) => withContaining(containing)));
+}
+/** 两个菜单入口共用的入参：被点击的提交、触发事件与当前可达提交集合。 */
+interface MenuOpenTarget {
+	readonly commit: Commit;
+	readonly event: React.MouseEvent<HTMLElement>;
+	readonly currentHashes: ReadonlySet<string>;
+}
+/** 菜单分隔线；同一份字面量在多处分组之间使用。 */
+const DIVIDER: ContextMenuItem = { type: 'divider' };
 
 /**
  * 提交行右键菜单。
@@ -204,25 +272,16 @@ function buildCommitItems(ctx: MenuContext): ContextMenuItem[] {
  */
 export function openCommitMenu(
 	deps: GraphMenuDeps,
-	{ commit, event, currentHashes }: { commit: Commit; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
+	{ commit, event, currentHashes }: MenuOpenTarget,
 ): void {
-	// 同步取事件字段：currentTarget 与坐标只在派发期间有效。
-	const target = event.currentTarget;
-	const { clientX, clientY } = event;
 	const ctx = makeContext(deps, commit, null, currentHashes);
-	target.classList.add(MENU_TARGET_CLASS);
-	/*
-	 * 先弹已算好的部分，包含关系随后补齐：git 查询要跑几个子进程，等它会让右键明显迟滞。
-	 * 补齐结果整份替换菜单项，刷新时保留已打开的位置与焦点。
-	 */
-	showContextMenu({
-		x: clientX, y: clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items: buildCommitItems(ctx),
-		pendingItems: containingOf(deps, commit).then(
-			(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
-		),
-	});
+	showMenuWithContaining(
+		event,
+		buildCommitItems(ctx),
+		(containing) => buildCommitItems(makeContext(deps, commit, null, currentHashes, containing)),
+		commit,
+		deps,
+	);
 }
 
 /**
@@ -237,31 +296,17 @@ export function openCommitMenu(
  */
 export function openRefMenu(
 	deps: GraphMenuDeps,
-	{ commit, refInfo, event, currentHashes }: { commit: Commit; refInfo: RefMenuTarget; event: React.MouseEvent<HTMLElement>; currentHashes: ReadonlySet<string> },
+	{ commit, refInfo, event, currentHashes }: MenuOpenTarget & { readonly refInfo: RefMenuTarget },
 ): void {
-	const target = event.currentTarget;
-	const { clientX, clientY } = event;
 	const itemsOf = (containing?: Containing): ContextMenuItem[] => {
 		const ctx = makeContext(deps, commit, refInfo, currentHashes, containing);
-		const built: ContextMenuItem[] = [];
-		for (const action of ACTIONS) {
-			if (!action.refTypes.includes(refInfo.type)) continue;
-			const item = action.build(ctx);
-			if (item !== null) built.push(item);
-		}
-		return built;
+		return collectActions(ctx, (action) => action.refTypes.includes(refInfo.type));
 	};
 	const items = itemsOf();
 	if (items.length === 0) return;
-	target.classList.add(MENU_TARGET_CLASS);
 	// 与提交菜单同一策略：先弹已算好的部分，包含关系到达后整份替换。
-	showContextMenu({
-		x: clientX, y: clientY,
-		onClose: () => { target.classList.remove(MENU_TARGET_CLASS); },
-		items,
-		pendingItems: containingOf(deps, commit).then((containing) => {
-			const next = itemsOf(containing);
-			return next.length === 0 ? null : next;
-		}),
-	});
+	showMenuWithContaining(event, items, (containing) => {
+		const next = itemsOf(containing);
+		return next.length === 0 ? [] : next;
+	}, commit, deps);
 }

@@ -10,6 +10,18 @@ const CASE_INSENSITIVE = typeof navigator !== 'undefined'
 	&& (/Windows/i.test(navigator.userAgent));
 
 /**
+ * 只统一分隔符并去掉尾斜杠，不改大小写。
+ *
+ * 需要保留原始大小写时用它（如展示与地址拼接）；需要稳定键时用 {@link normalizePath}。
+ *
+ * @param path - 任意路径。
+ * @returns `/` 分隔、去掉尾斜杠的路径。
+ */
+export function slashPath(path: string | null | undefined): string {
+	return (path ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
  * 把路径规范化为稳定的键。
  *
  * @param path - 任意路径。

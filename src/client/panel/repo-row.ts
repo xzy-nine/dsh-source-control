@@ -13,17 +13,25 @@ import css from '../css/repo-row.module.css';
 import shared from '../css/shared.module.css';
 import { cx } from '../css/cx.ts';
 
+/**
+ * 存储库树里一行的交互回调。
+ *
+ * 分区把这一组原样交给每一行，行本身只决定画法与命中区域。
+ */
+export interface RepoRowCallbacks {
+	readonly onSelect: (node: RepoNode) => void;
+	readonly onToggle: (node: RepoNode) => void;
+	readonly onMoreActions?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
+	readonly onBranchClick?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
+}
+
 /** 存储库树一行的属性。 */
-export interface RepoRowProps {
+export interface RepoRowProps extends RepoRowCallbacks {
 	readonly node: RepoNode;
 	readonly depth: number;
 	readonly active: boolean;
 	readonly expanded: boolean;
 	readonly sync?: RepoSync | undefined;
-	readonly onSelect: (node: RepoNode) => void;
-	readonly onToggle: (node: RepoNode) => void;
-	readonly onMoreActions?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
-	readonly onBranchClick?: ((node: RepoNode, event: React.MouseEvent<HTMLElement>) => void) | undefined;
 	/**
 	 * 已加载仓库的 HEAD 提交哈希：该仓库的分离头指针显示它，其余行不显示。
 	 *

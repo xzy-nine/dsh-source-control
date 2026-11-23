@@ -5,17 +5,17 @@
  */
 import React from 'react';
 import {
-	IconChevronDownOutlineRegular,
 	IconPaperPlaneOutlineRegular, IconPlusOutlineRegular, IconSettingsOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { RepoRow } from '../repo-row.ts';
+import { RepoRow, type RepoRowCallbacks } from '../repo-row.ts';
 import type { BusyFlags, RepoNode, RepoSync } from '../../shared/types.ts';
+import { SectionHead } from './section-head.ts';
+import { iconButton } from './icon-button.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
-import { cx } from '../../css/cx.ts';
 
 /** 存储库分区。 */
-export interface RepoSectionProps {
+export interface RepoSectionProps extends RepoRowCallbacks {
 	readonly open: boolean;
 	readonly height: number;
 	readonly busy: BusyFlags;
@@ -42,10 +42,6 @@ export interface RepoSectionProps {
 	readonly onClone: () => void;
 	/** 克隆进行中：只禁用克隆入口，不影响其它控件。 */
 	readonly cloneBusy: boolean;
-	readonly onSelect: (node: RepoNode) => void;
-	readonly onToggle: (node: RepoNode) => void;
-	readonly onMoreActions: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
-	readonly onBranchClick: (node: RepoNode, event: React.MouseEvent<HTMLElement>) => void;
 	readonly onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
@@ -62,31 +58,20 @@ function RepoSectionView({
 	return React.createElement(
 		'div',
 		{ className: css.sec },
-		React.createElement('div', {
-			className: cx(css.secHead, !open && css.collapsed),
-			onClick: onToggleSection,
-		},
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
-			'存储库',
-			treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
-			React.createElement('span', { className: css.headActions },
+		React.createElement(SectionHead, {
+			title: '存储库',
+			open,
+			onToggle: onToggleSection,
+			before: treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
+			actions: React.createElement(React.Fragment, null,
 				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '克隆远程仓库', disabled: busy.network || cloneBusy,
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onClone(); },
-				}, React.createElement(IconPlusOutlineRegular, { size: 14 })),
+				iconButton({ title: '克隆远程仓库', disabled: busy.network || cloneBusy, onClick: onClone, children: React.createElement(IconPlusOutlineRegular, { size: 14 }) }),
 				// 反馈是本地入口，不随仓库操作禁用。
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '反馈',
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenFeedback(); },
-				}, React.createElement(IconPaperPlaneOutlineRegular, { size: 14 })),
+				iconButton({ title: '反馈', onClick: onOpenFeedback, children: React.createElement(IconPaperPlaneOutlineRegular, { size: 14 }) }),
 				// 设置是本地入口，不随仓库操作禁用。
-				React.createElement('button', {
-					type: 'button', className: css.iconBtn, title: '设置',
-					onClick: (event: React.MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); onOpenSettings(); },
-				}, React.createElement(IconSettingsOutlineRegular, { size: 14 })),
+				iconButton({ title: '设置', onClick: onOpenSettings, children: React.createElement(IconSettingsOutlineRegular, { size: 14 }) }),
 			),
-		),
+		}),
 		open && React.createElement(
 			'div',
 			{ className: css.repos, style: { maxHeight: height, overflowY: 'auto' } },

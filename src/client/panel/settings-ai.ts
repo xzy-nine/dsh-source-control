@@ -4,6 +4,7 @@
 import React from 'react';
 import { fetchAiModels, type AiModelCatalog } from '../api/index.ts';
 import { DropdownRow } from './settings-rows.ts';
+import { useMountedRead } from './use-mounted-read.ts';
 import css from '../css/settings.module.css';
 
 /**
@@ -24,11 +25,7 @@ export function AiModelConfigSection({ provider, model, rules, onChange, onRules
 	onRulesChange: (rules: string) => void;
 }): React.ReactElement {
 	const [catalog, setCatalog] = React.useState<AiModelCatalog | null>(null);
-	React.useEffect(() => {
-		let cancelled = false;
-		fetchAiModels().then((data) => { if (!cancelled) setCatalog(data); }).catch(() => { if (!cancelled) setCatalog(null); });
-		return () => { cancelled = true; };
-	}, []);
+	React.useEffect(() => useMountedRead(fetchAiModels, setCatalog, () => { setCatalog(null); }), []);
 	const providers = catalog?.providers ?? [];
 	const modelsByProvider = catalog?.modelsByProvider ?? {};
 	const fallback = catalog?.fallback ?? null;

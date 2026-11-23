@@ -51,7 +51,7 @@ Status: implemented
 
 ## Testing
 
-- `test/submodule-isolation.test.mjs`：`isRepoRoot` 对父仓库、未检出的子模块与其父目录的三档判定；`loadRepoSync` 与 `loadReposSync` 对未检出子模块回空、检出后读自己的分支；`repoHead`/`repoLayout` 回 `null`；经真实路由的 `loadWorkingTreeSnapshot` 与 `loadCommits` 回空而不回投父仓库数据；`.gitmodules` 声明移除后子模块节点消失。
-- `test/repo-preload.test.mjs`「子模块从「未检出」变成「已检出」时重新取领先/落后」：可用性翻转触发重取，仓库本身沿用旧值。
-- `test/workspace-empty.test.mjs`：空态判据的七种输入。
-- `test/repo-facts.test.mjs`「失效按祖先与后代前缀生效」：后代条目改用自身是仓库根的目录，判据变化后仍然成立。
+- `test/git/submodule-isolation.test.mjs`：`isRepoRoot` 对父仓库、未检出的子模块与其父目录的三档判定；`loadRepoSync` 与 `loadReposSync` 对未检出子模块回空、检出后读自己的分支；`repoHead`/`repoLayout` 回 `null`；经真实路由的 `loadWorkingTreeSnapshot` 与 `loadCommits` 回空而不回投父仓库数据；`.gitmodules` 声明移除后子模块节点消失。
+- `test/repo/repo-preload.test.mjs`「子模块从「未检出」变成「已检出」时重新取领先/落后」：可用性翻转触发重取，仓库本身沿用旧值。
+- `test/ui/workspace-empty.test.mjs`：空态判据的七种输入。
+- `test/repo/repo-facts.test.mjs`「失效按祖先与后代前缀生效」：后代条目改用自身是仓库根的目录，判据变化后仍然成立。

@@ -11,6 +11,21 @@ import type { RefItem } from '../shared/types.ts';
 import css from '../css/ref-filter-dialog.module.css';
 import { cx } from '../css/cx.ts';
 
+/**
+ * 一条快捷选项：勾选框 + 名称 + 说明。
+ *
+ * @param checked - 是否勾选。
+ * @param onToggle - 勾选变更回调，入参为勾选控件给出的新状态。
+ * @param label - 选项名称。
+ * @param hint - 选项说明。
+ * @returns 选项元素。
+ */
+function quickFilterItem(checked: boolean, onToggle: (next: boolean) => void, label: string, hint: string): React.ReactElement {
+	return React.createElement('label', { className: css.filterQuickItem },
+		React.createElement(Checkbox, { checked, onChange: onToggle, label: '' }),
+		React.createElement('span', { className: css.filterQuickLabel }, label),
+		React.createElement('span', { className: css.filterQuickHint }, hint));
+}
 /** 引用筛选弹窗的属性。 */
 export interface RefFilterDialogProps {
 	readonly refs: readonly RefItem[];
@@ -56,16 +71,8 @@ export function RefFilterDialog({ refs, selected, search, onSearch, onToggle, on
 			React.createElement(
 				'div',
 				{ className: css.filterQuick },
-				React.createElement('label', { className: css.filterQuickItem },
-					React.createElement(Checkbox, { checked: allChecked, onChange: () => { onSelectAll(!allChecked); }, label: '' }),
-					React.createElement('span', { className: css.filterQuickLabel }, '全部'),
-					React.createElement('span', { className: css.filterQuickHint }, '显示所有分支与标签'),
-				),
-				React.createElement('label', { className: css.filterQuickItem },
-					React.createElement(Checkbox, { checked: autoChecked, onChange: onToggleAuto, label: '' }),
-					React.createElement('span', { className: css.filterQuickLabel }, '自动'),
-					React.createElement('span', { className: css.filterQuickHint }, '当前分支、上游与分叉来源分支'),
-				),
+				quickFilterItem(allChecked, () => { onSelectAll(!allChecked); }, '全部', '显示所有分支与标签'),
+				quickFilterItem(autoChecked, onToggleAuto, '自动', '当前分支、上游与分叉来源分支'),
 			),
 			// 引用列表
 			React.createElement(

@@ -1,10 +1,11 @@
 /**
  * 原生打开：把当前文件交给宿主的桌面应用打开，或在其文件管理器中定位。
  *
- * 能力来自宿主 Remote 的会话命名空间：先探测可用性，再列出该文件的注册应用。
- * 宿主不具备桌面能力时整个控件不渲染，与 DSH 的评审视图一致。
+ * 能力来自宿主 Remote 的会话命名空间：探测可用性，可用时列出该文件的注册应用。
+ * 宿主不具备桌面能力时整个控件不渲染。
  */
 import React from 'react';
+import { errorText } from '../../shared/error-text.ts';
 import {
 	IconChevronDownOutlineRegular, IconFolderOpenOutlineRegular, IconRightUpOutlineRegular, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -112,7 +113,7 @@ export function NativeOpenControl({ ctx, path }: { ctx: unknown; path: string })
 				if (result.ok !== true) logClient('W', 'open-in-app', `宿主拒绝原生打开 ${path}`);
 			})
 			.catch((error: unknown) => {
-				logClient('W', 'open-in-app', `原生打开失败 ${path}：${error instanceof Error ? error.message : String(error)}`);
+				logClient('W', 'open-in-app', `原生打开失败 ${path}：${errorText(error)}`);
 			})
 			.finally(() => { setPending(false); });
 	}, [remote, path, pending]);

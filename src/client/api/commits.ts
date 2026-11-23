@@ -1,8 +1,9 @@
 /**
  * 提交改动、完整提交信息、包含分支与文件差异内容查询。
  */
-import { callApi } from './http.ts';
+import { callApi, stringsOf } from './http.ts';
 import type { ConflictKind } from '../../shared/conflict-kind.ts';
+import type { HunkRange } from '../../shared/patch-hunks.ts';
 
 /** 提交改动文件。 */
 export interface CommitFileEntry {
@@ -47,6 +48,17 @@ function truncatedOf(details: unknown): boolean {
 }
 
 /**
+ * 取一次 commitDetails 的载荷。
+ *
+ * @param cwd - 会话工作区路径。
+ * @param hash - 提交哈希，`*` 表示工作区未提交变更。
+ * @param signal - 取消信号。
+ * @returns 载荷。
+ */
+async function commitDetailsPayload(cwd: string, hash: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+	return await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+}
+/**
  * 读取某个提交的改动文件。
  *
  * @param cwd - 会话工作区路径。
@@ -55,7 +67,7 @@ function truncatedOf(details: unknown): boolean {
  * @returns 改动文件列表与截断标记。
  */
 export async function loadCommitFiles(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitFilesPayload> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+	const payload = await commitDetailsPayload(cwd, hash, signal);
 	return { files: fileEntriesOf(payload.commitDetails), truncated: truncatedOf(payload.commitDetails) };
 }
 
@@ -83,7 +95,7 @@ export interface CommitStatsAndMessage {
  * @returns 改动文件与完整提交信息。
  */
 export async function loadCommitStatsAndMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<CommitStatsAndMessage> {
-	const payload = await callApi(cwd, { command: 'commitDetails', commitHash: hash, stash: null }, signal);
+	const payload = await commitDetailsPayload(cwd, hash, signal);
 	const body = (payload.commitDetails as { body?: unknown } | null | undefined)?.body;
 	return {
 		files: fileEntriesOf(payload.commitDetails),
@@ -148,10 +160,7 @@ export async function loadCommitMessage(cwd: string, hash: string, signal?: Abor
  */
 export async function branchesContaining(cwd: string, hash: string): Promise<{ local: string[]; remote: string[]; foreign: string[] }> {
 	const payload = await callApi(cwd, { command: 'branchesContaining', commitHash: hash });
-	const read = (value: unknown): string[] => Array.isArray(value)
-		? value.filter((item): item is string => typeof item === 'string')
-		: [];
-	return { local: read(payload.local), remote: read(payload.remote), foreign: read(payload.foreign) };
+	return { local: stringsOf(payload.local), remote: stringsOf(payload.remote), foreign: stringsOf(payload.foreign) };
 }
 
 /** 差异内容。 */
@@ -168,13 +177,7 @@ export interface FileDiffContent {
 	/** 冲突阶段是否存在；非冲突条目为 null。 */
 	readonly conflictStages: { readonly base: boolean; readonly ours: boolean; readonly theirs: boolean } | null;
 	/** 由 git 算出的逐块差异（形状同 DSH 的 WorkspaceDiffHunk）。 */
-	readonly hunks: Array<{
-		readonly oldStart: number;
-		readonly oldLines: number;
-		readonly newStart: number;
-		readonly newLines: number;
-		readonly lines: string[];
-	}>;
+	readonly hunks: Array<HunkRange & { readonly lines: string[] }>;
 }
 
 /**

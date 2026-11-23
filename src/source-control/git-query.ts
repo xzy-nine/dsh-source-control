@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { STATUS_LIMIT, forEachStatusRecord, gitOrThrow, parseStatusSnapshot, pickByDepth, runGit } from './working-tree.js';
 import type { WorkingTreeEntry, WorkingTreeSnapshot } from './working-tree.js';
 import { conflictKindOfPair } from '../shared/conflict-kind.js';
+import { errorText } from '../shared/error-text.js';
 import { readHeadRef } from './worktree-branches.js';
 import { repoHead, repoLayout } from './repo-facts.js';
 import type { HeadRef } from './worktree-branches.js';
@@ -22,6 +23,36 @@ import type {
 	BranchBase, CommitComparisonData, CommitData, CommitDetails, CommitDetailsData, CommitOrdering, CommitStash, ErrorInfo,
 	FileChange, RefSummary, RepoConfig, RepoConfigBranch, RepoConfigData, RepoInfo, SettingsRemote, StashEntry,
 } from './git-types.js';
+
+/**
+ * 包装一次成功的提交详情读取。
+ *
+ * @param details - 提交详情。
+ * @returns 带 `error: null` 的读取结果。
+ */
+function detailsOk(details: CommitDetails): CommitDetailsData {
+	return { commitDetails: details, error: null };
+}
+
+/**
+ * 包装一次失败的提交详情读取。
+ *
+ * @param error - 捕获到的失败值。
+ * @returns `commitDetails` 为 null、带错误文本的读取结果。
+ */
+function detailsError(error: unknown): CommitDetailsData {
+	return { commitDetails: null, error: errorText(error) };
+}
+
+/**
+ * 把按行输出的命令结果切成去空白后的非空行。
+ *
+ * @param stdout - git 的标准输出。
+ * @returns 非空行。
+ */
+function trimmedLinesOf(stdout: string): string[] {
+	return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+}
 
 /**
  * 一次提交详情（或提交对比）里列出的改动文件上限。
@@ -122,42 +153,50 @@ function remoteNamesFromConfig(configs: Record<string, string>): string[] | null
 	return names.size === 0 ? null : [...names].sort();
 }
 
+/** 一次提交图取数与日志取数共用的取数参数。 */
+interface LogQuery {
+	/** 要显示的提交起点；null 表示全部（`--branches` 等）。 */
+	readonly branches: readonly string[] | null;
+	/** 本页要显示的提交数上限。 */
+	readonly num: number;
+	/** 是否包含仅被标签引用的提交。 */
+	readonly includeTags: boolean;
+	/** 是否包含远程分支，并按 {@link remotes} 与 {@link hideRemotes} 过滤。 */
+	readonly includeRemotes: boolean;
+	/** 是否包含仅被 reflog 提及的提交。 */
+	readonly includeCommitsMentionedByReflogs: boolean;
+	/** 是否只沿第一父提交回溯。 */
+	readonly onlyFollowFirstParent: boolean;
+	/** 提交排序方式。 */
+	readonly ordering: CommitOrdering;
+	/** 已知远程名，用于远程分支过滤；可直接给出，也可给一个 promise。 */
+	readonly remotes: readonly string[] | Promise<readonly string[]>;
+	/** 要隐藏的远程名。 */
+	readonly hideRemotes: readonly string[];
+	/** 仓库中的贮藏；其基提交一并作为取数起点。 */
+	readonly stashes: readonly StashEntry[];
+	/** 从起点跳过的提交数；双向分页都按绝对偏移取用。 */
+	readonly skip: number;
+}
+
 /**
  * 读取提交图。
  *
- * 提交取 `maxCommits + 1` 条以判定是否还有更多；未提交变更以哈希为 `*` 的伪提交排在最前；
- * 贮藏插入到其基提交之前。
+ * 日志按 `num + 1` 条取回：多出的一条是「是否还有更多」的哨兵，由 {@link assembleCommits}
+ * 丢弃并置 `moreCommitsAvailable`。未提交变更以哈希为 `*` 的伪提交排在最前；贮藏插入到
+ * 其基提交之前。
  *
  * @param repo - 仓库路径。
- * @param branches - 要显示的提交起点；null 表示全部（`--branches` 等）。
- * @param maxCommits - 返回的提交数上限。
- * @param showTags - 是否标注标签。
- * @param showRemoteBranches - 是否包含并标注远程分支。
- * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
- * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
- * @param commitOrdering - 提交排序方式。
- * @param remotes - 已知远程名，用于标注远程分支所属远程；可直接给出，也可给一个待定的取值。
- * @param hideRemotes - 要隐藏的远程名。
- * @param stashes - 仓库中的贮藏。
- * @param skip - 从起点跳过的提交数；双向分页都按绝对偏移取用。
+ * @param query - 取数参数。
  * @param head - 当前 HEAD 指向的提交哈希；`HEAD` 文件由调用方读取，本函数不重复读。
  * @returns 提交图；读取失败时为空图且 `error` 为错误文本。
  */
 export async function getCommits(
 	repo: string,
-	branches: readonly string[] | null,
-	maxCommits: number,
-	showTags: boolean,
-	showRemoteBranches: boolean,
-	includeCommitsMentionedByReflogs: boolean,
-	onlyFollowFirstParent: boolean,
-	commitOrdering: CommitOrdering,
-	remotes: readonly string[] | Promise<readonly string[]>,
-	hideRemotes: readonly string[],
-	stashes: readonly StashEntry[],
-	skip = 0,
+	query: LogQuery,
 	head: string | null = null,
 ): Promise<CommitData> {
+	const { stashes, skip, num, remotes, hideRemotes, includeTags, includeRemotes } = query;
 	try {
 		/*
 		 * 引用标记来自 `git log` 的装饰（`--decorate=full` 的 `%D`），不再单独枚举引用：
@@ -165,10 +204,11 @@ export async function getCommits(
 		 *
 		 * 远程名可能与仓库信息同批取，标注要用它，因此这里才等它落地；日志与它并行。
 		 */
-		const logSource = getLog(repo, branches, maxCommits + 1, showTags, showRemoteBranches, includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, remotes, hideRemotes, stashes, skip);
+		// 多取一条作哨兵：够不够一页由它决定是否还有更多。
+		const logSource = getLog(repo, { ...query, num: num + 1 });
 		const [records, remoteNames] = await Promise.all([logSource, remotes]);
-		const refs: RefData = { ...refsFromDecorations(records, hideRemotes, showRemoteBranches), head };
-		return { ...assembleCommits(records, refs, stashes, remoteNames, showTags, maxCommits, skip), error: null };
+		const refs: RefData = { ...refsFromDecorations(records, hideRemotes, includeRemotes), head };
+		return { ...assembleCommits(records, refs, stashes, remoteNames, includeTags, num, skip), error: null };
 	} catch (error) {
 		return { commits: [], head: null, tags: [], moreCommitsAvailable: false, nextSkip: skip, error: errorText(error) };
 	}
@@ -242,9 +282,9 @@ export async function getCommitDetails(repo: string, commitHash: string, _hasPar
 			getDiffNameStatus(repo, fromCommit, commitHash),
 			getDiffNumStat(repo, fromCommit, commitHash),
 		]);
-		return { commitDetails: { ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) }, error: null };
+		return detailsOk({ ...base, ...capFileChanges(generateFileChanges(nameStatus, numStat, null)) });
 	} catch (error) {
-		return { commitDetails: null, error: errorText(error) };
+		return detailsError(error);
 	}
 }
 
@@ -277,9 +317,9 @@ export async function getStashDetails(repo: string, commitHash: string, stash: C
 				if (change.type === 'A') fileChanges.push({ ...change, type: 'U' });
 			}
 		}
-		return { commitDetails: { ...base, ...capFileChanges(fileChanges) }, error: null };
+		return detailsOk({ ...base, ...capFileChanges(fileChanges) });
 	} catch (error) {
-		return { commitDetails: null, error: errorText(error) };
+		return detailsError(error);
 	}
 }
 
@@ -298,15 +338,12 @@ export async function getUncommittedDetails(repo: string): Promise<CommitDetails
 			getDiffNumStat(repo, 'HEAD', ''),
 			getStatus(repo),
 		]);
-		return {
-			commitDetails: {
-				hash: UNCOMMITTED, parents: [],
-				author: '', authorEmail: '', authorDate: 0,
-				committer: '', committerEmail: '', committerDate: 0, signature: null,
-				body: '', ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status),
-			},
-			error: null,
-		};
+		return detailsOk({
+			hash: UNCOMMITTED, parents: [],
+			author: '', authorEmail: '', authorDate: 0,
+			committer: '', committerEmail: '', committerDate: 0, signature: null,
+			body: '', ...withStatusTruncation(capFileChanges(generateFileChanges(nameStatus, numStat, status)), status),
+		});
 	} catch (error) {
 		return { commitDetails: null, error: errorText(error) };
 	}
@@ -521,16 +558,6 @@ export async function repoRoot(pathOfPotentialRepo: string): Promise<string | nu
 }
 
 /**
- * 把捕获到的错误转成错误文本。
- *
- * @param error - 捕获到的值。
- * @returns 错误文本。
- */
-function errorText(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-/**
  * 读取仓库配置的键值对。
  *
  * @param repo - 仓库路径。
@@ -605,43 +632,21 @@ export async function getRefsAndBranches(repo: string, showRemoteBranches: boole
  * @returns 远程名列表。
  */
 export async function getRemoteNames(repo: string): Promise<string[]> {
-	const stdout = await gitOrThrow(['remote'], repo);
-	return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	return trimmedLinesOf(await gitOrThrow(['remote'], repo));
 }
 
 /**
  * 读取原始提交记录。
  *
  * @param repo - 仓库路径。
- * @param branches - 提交起点；null 表示全部。
- * @param num - 取回的提交数。
- * @param includeTags - 是否包含仅被标签引用的提交。
- * @param includeRemotes - 是否包含远程分支。
- * @param includeCommitsMentionedByReflogs - 是否包含仅被 reflog 提及的提交。
- * @param onlyFollowFirstParent - 是否只沿第一父提交回溯。
- * @param order - 提交排序方式。
- * @param remotes - 已知远程名；可直接给出，也可给一个待定的取值（仅在需要隐藏远程时使用）。
- * @param hideRemotes - 要隐藏的远程名。
- * @param stashes - 仓库中的贮藏。
+ * @param query - 取数参数。
  * @returns 提交记录。
  */
-async function getLog(
-	repo: string,
-	branches: readonly string[] | null,
-	num: number,
-	includeTags: boolean,
-	includeRemotes: boolean,
-	includeCommitsMentionedByReflogs: boolean,
-	onlyFollowFirstParent: boolean,
-	order: CommitOrdering,
-	remotes: readonly string[] | Promise<readonly string[]>,
-	hideRemotes: readonly string[],
-	stashes: readonly StashEntry[],
-	skip = 0,
-): Promise<LogRecord[]> {
-	// `--decorate=full` 让 `%D` 给出完整引用名；提交图的引用标记据此装配，不再单独枚举引用。
-	const args = ['-c', 'log.showSignature=false', 'log', '-z', '--decorate=full', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${order}-order`];
-	if (onlyFollowFirstParent) args.push('--first-parent');
+async function getLog(repo: string, query: LogQuery): Promise<LogRecord[]> {
+	const { branches, num, includeTags, includeRemotes, hideRemotes, remotes, stashes, skip, ordering } = query;
+	// `--decorate=full` 让 `%D` 给出完整引用名；提交图的引用标记据此装配。
+	const args = ['-c', 'log.showSignature=false', 'log', '-z', '--decorate=full', `--max-count=${num}`, `--format=${LOG_FORMAT}`, `--${ordering}-order`];
+	if (query.onlyFollowFirstParent) args.push('--first-parent');
 	// 偏移分页：跳过前 skip 条再输出本页；正反向都用它，因此上下滚动都能取。
 	if (skip > 0) args.push(`--skip=${skip}`);
 
@@ -650,7 +655,7 @@ async function getLog(
 	} else {
 		args.push('--branches');
 		if (includeTags) args.push('--tags');
-		if (includeCommitsMentionedByReflogs) args.push('--reflog');
+		if (query.includeCommitsMentionedByReflogs) args.push('--reflog');
 		if (includeRemotes) {
 			if (hideRemotes.length === 0) {
 				// 不隐藏任何远程时不需要远程名，日志因此不必等仓库信息。
@@ -795,7 +800,7 @@ function escapeRegExp(value: string): string {
 async function reflogSubjects(repo: string, ref: string, pattern: string): Promise<string[]> {
 	const result = await runGit(['reflog', ref, '--format=%gs', `--grep-reflog=${pattern}`], repo);
 	if (result.code !== 0) return [];
-	return result.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	return trimmedLinesOf(result.stdout);
 }
 
 /**
@@ -883,6 +888,22 @@ async function defaultRemoteBranch(repo: string): Promise<{ short: string; ref: 
 }
 
 /**
+ * 把候选来源名解析成分叉来源。
+ *
+ * 名字为空、或解析不到对应引用时返回 null，由调用方继续试下一个候选。
+ *
+ * @param repo - 仓库路径。
+ * @param branch - 当前分支名。
+ * @param name - 候选来源的引用名；空串表示该候选不存在。
+ * @returns 分叉来源；候选不可用时为 null。
+ */
+async function baseOfName(repo: string, branch: string, name: string | null): Promise<BranchBase | null> {
+	if (name === null || name === '') return null;
+	const resolved = await resolveRefName(repo, name);
+	return resolved === null ? null : { branch, base: resolved.short, baseRef: resolved.ref };
+}
+
+/**
  * 读取当前分支的分叉来源分支（VS Code 图形视图的 base 引用）。
  *
  * 取值顺序：`branch.<name>.vscode-merge-base` 配置、分支 reflog 的创建来源、默认远程的默认分支。
@@ -898,16 +919,12 @@ export async function getBranchBase(repo: string): Promise<BranchBase> {
 
 	const configured = await runGit(['config', '--get', `branch.${branch}.vscode-merge-base`], repo);
 	const configuredName = configured.code === 0 ? configured.stdout.trim() : '';
-	if (configuredName !== '') {
-		const resolved = await resolveRefName(repo, configuredName);
-		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
-	}
+	const fromConfigured = await baseOfName(repo, branch, configuredName);
+	if (fromConfigured !== null) return fromConfigured;
 
-	const fromReflog = await reflogCreatedFrom(repo, branch);
-	if (fromReflog !== null) {
-		const resolved = await resolveRefName(repo, fromReflog);
-		if (resolved !== null) return { branch, base: resolved.short, baseRef: resolved.ref };
-	}
+	const fromReflog = await baseOfName(repo, branch, await reflogCreatedFrom(repo, branch));
+
+	if (fromReflog !== null) return fromReflog;
 
 	const fallback = await defaultRemoteBranch(repo);
 	return { branch, base: fallback?.short ?? null, baseRef: fallback?.ref ?? null };

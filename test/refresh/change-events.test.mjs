@@ -1,0 +1,164 @@
+/**
+ * 文件改动事件判据的测试：已落地的写入/编辑、仓库内判定、刷新冷却与定时参数收拢。
+ */
+import assert from 'node:assert/strict';
+import { parallel } from '../harness.mjs';
+import {
+	AUTO_FETCH_BACKOFF_MAX_SECONDS, AUTO_FETCH_PERIOD_SECONDS_MAX,
+	AUTO_REFRESH_COOLDOWN_MS, CLEANUP_INTERVAL_MS, FALLBACK_POLL_ACTIVE_MS, FALLBACK_POLL_INTERVAL_MS,
+	FALLBACK_POLL_SECONDS_MAX, FALLBACK_POLL_SECONDS_MIN, FALLBACK_STABLE_OBSERVATIONS,
+	autoFetchPeriodMs, clampSeconds, fallbackPollMs, hasRepositoryChange, isAutoRefreshDue, isCacheExpired,
+	nextAutoFetchPeriodMs, repositoryRelativePath, settledFileChanges, shouldFallbackRefresh, stableObservationsRequired,
+} from '../../src/client/panel/change-events.ts';
+
+/** 一次工具调用事件。 */
+const call = (callId, name, args) => ({ type: 'tool/call', data: { callId, name, arguments: JSON.stringify(args) } });
+
+/** 一次工具结果事件。 */
+const result = (callId, isError = false) => ({
+	type: 'tool/result',
+	data: { message: { source: { callId }, isError } },
+});
+
+
+/** 本文件的用例之间无共享进程级状态，因此并发执行；并发前提见 test/harness.mjs。 */
+parallel('文件改动事件判据', (t) => {
+	t.test('拿到结果且非错误的写入才算落地', () => {
+		const events = [call('a', 'write', { file_path: 'src/a.ts' }), result('a')];
+		assert.deepEqual(settledFileChanges(events), [{ callId: 'a', kind: 'write', path: 'src/a.ts' }]);
+	});
+
+	t.test('未结算的调用不算落地', () => {
+		assert.deepEqual(settledFileChanges([call('a', 'edit', { file_path: 'src/a.ts' })]), []);
+	});
+
+	t.test('结果报错的调用不算落地', () => {
+		const events = [call('a', 'edit', { file_path: 'src/a.ts' }), result('a', true)];
+		assert.deepEqual(settledFileChanges(events), []);
+	});
+
+	t.test('与文件无关的工具不参与判定', () => {
+		const events = [call('a', 'bash', { command: 'ls' }), result('a')];
+		assert.deepEqual(settledFileChanges(events), []);
+	});
+
+	t.test('run_code 内嵌套的写入按派发事件判定', () => {
+		const events = [
+			{ type: 'tool/ptc-dispatch-start', data: { subCallId: 'root:ptc:1', name: 'write', arguments: { file_path: 'src/b.ts' } } },
+			{ type: 'tool/ptc-dispatch', data: { subCallId: 'root:ptc:1', isError: false } },
+		];
+		assert.deepEqual(settledFileChanges(events), [{ callId: 'root:ptc:1', kind: 'write', path: 'src/b.ts' }]);
+	});
+
+	t.test('嵌套写入失败同样不算落地', () => {
+		const events = [
+			{ type: 'tool/ptc-dispatch-start', data: { subCallId: 'root:ptc:1', name: 'edit', arguments: { file_path: 'src/b.ts' } } },
+			{ type: 'tool/ptc-dispatch', data: { subCallId: 'root:ptc:1', isError: true } },
+		];
+		assert.deepEqual(settledFileChanges(events), []);
+	});
+
+	t.test('相对路径按会话工作区解析，落在仓库内时给出仓库相对路径', () => {
+		assert.equal(repositoryRelativePath('C:\\repo', 'C:\\repo\\sub', 'src/a.ts'), 'sub/src/a.ts');
+	});
+
+	t.test('仓库之外的路径不算仓库内改动', () => {
+		assert.equal(repositoryRelativePath('C:\\repo', 'C:\\tmp', 'a.ts'), null);
+	});
+
+	t.test('绝对路径按仓库根判断，越界的上级目录被拒绝', () => {
+		assert.equal(repositoryRelativePath('C:\\repo', null, 'C:\\other\\a.ts'), null);
+		assert.equal(repositoryRelativePath('C:\\repo', null, 'C:\\repo/src/a.ts'), 'src/a.ts');
+	});
+
+	t.test('仓库根下的相对路径直接给出，仓库外路径不触发', () => {
+		assert.equal(repositoryRelativePath('C:\\repo', 'C:\\repo', 'a.ts'), 'a.ts');
+		assert.equal(hasRepositoryChange([{ callId: 'a', kind: 'write', path: 'C:\\tmp\\a.ts' }], 'C:\\repo', 'C:\\repo'), false);
+		assert.equal(hasRepositoryChange([{ callId: 'a', kind: 'write', path: 'a.ts' }], 'C:\\repo', 'C:\\repo'), true);
+	});
+
+	t.test('冷却时间未满时不刷新，满后放行', () => {
+		assert.equal(isAutoRefreshDue(0, AUTO_REFRESH_COOLDOWN_MS), true);
+		assert.equal(isAutoRefreshDue(1, AUTO_REFRESH_COOLDOWN_MS), false);
+		assert.equal(isAutoRefreshDue(0, 0), false);
+	});
+
+	t.test('抓取间隔收拢到区间内，非有限数用默认值', () => {
+		assert.equal(autoFetchPeriodMs(180), 180000);
+		assert.equal(autoFetchPeriodMs(1), 10000);
+		assert.equal(autoFetchPeriodMs(999999), 3600000);
+		assert.equal(autoFetchPeriodMs(Number.NaN), 180000);
+	});
+
+	t.test('抓取退避：无新引用翻倍，封顶后不再涨，有变化复位', () => {
+		const base = autoFetchPeriodMs(180);
+		assert.equal(nextAutoFetchPeriodMs(base, base, false), base * 2, '无变化时翻倍');
+		assert.equal(nextAutoFetchPeriodMs(base * 2, base, false), base * 4, '继续翻倍');
+		assert.equal(nextAutoFetchPeriodMs(base * 8, base, false), AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '封顶到 30 分钟');
+		assert.equal(nextAutoFetchPeriodMs(base * 64, base, false), AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '超过上限不再增长');
+		assert.equal(nextAutoFetchPeriodMs(base * 8, base, true), base, '拉到新引用即复位');
+	});
+
+	t.test('抓取退避：基础周期已超过上限时按设置走，不压低', () => {
+		const longBase = autoFetchPeriodMs(AUTO_FETCH_PERIOD_SECONDS_MAX);
+		assert.ok(longBase > AUTO_FETCH_BACKOFF_MAX_SECONDS * 1000, '前提：上限设置大于退避封顶');
+		assert.equal(nextAutoFetchPeriodMs(longBase, longBase, false), longBase, '不因退避把用户设置压小');
+	});
+
+	t.test('缓存未到清理周期时保留，到达后过期', () => {
+		assert.equal(isCacheExpired(0, CLEANUP_INTERVAL_MS - 1), false);
+		assert.equal(isCacheExpired(0, CLEANUP_INTERVAL_MS), true);
+	});
+
+	t.test('秒数收敛：越界收拢、非有限数取默认值', () => {
+		assert.equal(clampSeconds(30, 5, 600, 10), 30);
+		assert.equal(clampSeconds(1, 5, 600, 10), 5);
+		assert.equal(clampSeconds(9999, 5, 600, 10), 600);
+		assert.equal(clampSeconds(Number.NaN, 5, 600, 10), 10);
+		assert.equal(clampSeconds(12.6, 5, 600, 10), 13);
+	});
+
+	t.test('兜底轮询间隔按档位收敛，且都高于下限', () => {
+		for (const active of [true, false]) {
+			const ms = fallbackPollMs(1, active);
+			assert.equal(ms, FALLBACK_POLL_SECONDS_MIN * 1000, '低于下限时收拢到下限');
+			assert.ok(ms >= AUTO_REFRESH_COOLDOWN_MS, '轮询间隔不应低于事件刷新的冷却时间');
+		}
+		assert.equal(fallbackPollMs(30, true), 30_000);
+		assert.equal(fallbackPollMs(9999, false), FALLBACK_POLL_SECONDS_MAX * 1000);
+		// 非有限数按该档位的默认值收拢。
+		assert.equal(fallbackPollMs(Number.NaN, true), FALLBACK_POLL_ACTIVE_MS);
+		assert.equal(fallbackPollMs(Number.NaN, false), FALLBACK_POLL_INTERVAL_MS);
+	});
+
+	t.test('兜底轮询间隔明显低于事件响应节拍', () => {
+		assert.ok(FALLBACK_POLL_INTERVAL_MS >= AUTO_REFRESH_COOLDOWN_MS * 10);
+	});
+
+	t.test('兜底轮询快档一次观测即可重载，慢档要求稳定观测', () => {
+		assert.equal(stableObservationsRequired(true), 1);
+		assert.equal(stableObservationsRequired(false), FALLBACK_STABLE_OBSERVATIONS);
+	});
+
+	t.test('兜底轮询快档间隔为正且短于慢档', () => {
+		assert.ok(FALLBACK_POLL_ACTIVE_MS > 0);
+		assert.ok(FALLBACK_POLL_ACTIVE_MS < FALLBACK_POLL_INTERVAL_MS);
+	});
+
+	t.test('兜底轮询首次读取不重载', () => {
+		assert.equal(shouldFallbackRefresh('a', '', 'b', 1), false);
+	});
+
+	t.test('兜底轮询在签名仍在变化时不重载', () => {
+		assert.equal(shouldFallbackRefresh('b', 'a', 'c', 1), false);
+	});
+
+	t.test('兜底轮询连续两次读到同一签名才重载', () => {
+		assert.equal(shouldFallbackRefresh('a', 'a', 'b', 1), false);
+		assert.equal(shouldFallbackRefresh('a', 'a', 'b', 2), true);
+	});
+
+	t.test('兜底轮询在签名与已加载一致时不重载', () => {
+		assert.equal(shouldFallbackRefresh('a', 'a', 'a', 5), false);
+	});
+});

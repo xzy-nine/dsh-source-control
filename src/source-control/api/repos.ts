@@ -6,6 +6,7 @@ import { watchRepositories, watchWorkspace } from '../repo-watcher.js';
 import { whenLocalSettled } from '../git-exec.js';
 import { initRepository } from '../git-actions.js';
 import { logInfo } from '../logger.js';
+import { walkRepoNodes } from '../../shared/repo-node-walk.js';
 import type { RepoNode } from '../repo-discovery.js';
 import type { ApiContext } from './context.js';
 
@@ -20,13 +21,7 @@ import type { ApiContext } from './context.js';
  */
 function flattenRepoPaths(nodes: readonly RepoNode[]): string[] {
 	const paths: string[] = [];
-	const walk = (list: readonly RepoNode[]): void => {
-		for (const node of list) {
-			if (node.available) paths.push(node.path);
-			walk(node.children);
-		}
-	};
-	walk(nodes);
+	walkRepoNodes(nodes, (node) => { if (node.available) paths.push(node.path); });
 	return paths;
 }
 
@@ -84,12 +79,7 @@ export async function handleRepoCommand(ctx: ApiContext): Promise<boolean> {
 			await respondResult('loadRepoSync', async () => {
 				// 读引用，不碰工作区：抓取期间照常读。
 				await whenLocalSettled(repo);
-				const sync = await loadRepoSync(repo);
-				return {
-			repo, branch: sync.branch, upstream: sync.upstream,
-			upstreamRef: sync.upstreamRef, upstreamRemote: sync.upstreamRemote,
-			ahead: sync.ahead, behind: sync.behind,
-		};
+				return { repo, ...(await loadRepoSync(repo)) };
 			});
 			break;
 		case 'loadReposSync':

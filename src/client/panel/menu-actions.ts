@@ -70,15 +70,4 @@ export const MENU_ACTIONS: readonly MenuActionMeta[] = source.actions.map((actio
 /** 提交行菜单里与注册表无关的固定文案。 */
 export const COMMIT_MENU: CommitMenuTexts = source.commitMenuTexts;
 
-/**
- * 代入菜单名称模板里的占位符。
- *
- * @param template - 含 `{name}` 占位符的名称模板。
- * @param values - 占位符取值。
- * @returns 代入后的文本。
- */
-export function fillText(template: string, values: Record<string, string>): string {
-	let text = template;
-	for (const [name, value] of Object.entries(values)) text = text.split(`{${name}}`).join(value);
-	return text;
-}
+export { fillTemplate as fillText } from '../../shared/fill-template.ts';

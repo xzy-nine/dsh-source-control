@@ -17,10 +17,36 @@ import type { PanelState, RepoSync } from '../shared/types.ts';
  * @returns 同步条目。
  */
 export function syncOfSnapshot(snapshot: WorkingTreeSnapshot): RepoSync {
-	return {
-		branch: snapshot.branch, upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef,
-		ahead: snapshot.ahead, behind: snapshot.behind,
-	};
+	const { upstream, upstreamRef, ahead, behind } = syncFieldsOf(snapshot);
+	return { branch: snapshot.branch, upstream, upstreamRef, ahead, behind };
+}
+
+/**
+ * 快照里的上游与领先/落后。
+ *
+ * 仓库树的同步条目与面板状态的两处合并都读这一组，读数因此只有一处。
+ *
+ * @param snapshot - 工作区快照。
+ * @returns 上游、完整引用与领先/落后。
+ */
+function syncFieldsOf(snapshot: WorkingTreeSnapshot): Pick<RepoSync, 'upstream' | 'upstreamRef' | 'ahead' | 'behind'> {
+	const { upstream, upstreamRef, ahead, behind } = snapshot;
+	return { upstream, upstreamRef, ahead, behind };
+}
+
+/**
+ * 快照里属于「分支同步」的那组字段。
+ *
+ * 一轮快照落进面板状态时，两处合并都要写回同一组：HEAD 哈希、上游与领先/落后。
+ *
+ * @param snapshot - 工作区快照。
+ * @returns 可并入 PanelState 的分支字段。
+ */
+export function branchFieldsOf(snapshot: WorkingTreeSnapshot): Pick<
+	PanelState,
+	'headHash' | 'upstream' | 'upstreamRef' | 'ahead' | 'behind'
+> {
+	return { headHash: snapshot.head, ...syncFieldsOf(snapshot) };
 }
 
 /**
@@ -42,8 +68,7 @@ export function mergeSnapshot(previous: PanelState, snapshot: WorkingTreeSnapsho
 	return {
 		// 手里已有本轮快照：变更列表那一路就是就绪的，与提交图是否还在取数无关。
 		...previous, error: null, entriesPhase: 'ready', merging: snapshot.merging, entriesTruncated: snapshot.truncated,
-		headHash: snapshot.head,
-		upstream: snapshot.upstream, upstreamRef: snapshot.upstreamRef, ahead: snapshot.ahead, behind: snapshot.behind,
+		...branchFieldsOf(snapshot),
 		entries: entriesSame ? previous.entries : mergeEntries(previous.entries, snapshot.entries),
 		commits,
 	};

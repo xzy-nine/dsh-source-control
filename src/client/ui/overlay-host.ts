@@ -6,6 +6,7 @@
  * {@link installOverlay} 注册并常驻挂载。
  */
 import React from 'react';
+import { createListenerSet, subscribeIn } from '../../shared/listener-set.ts';
 
 /** 覆盖层中的一个条目：队列编号与要渲染的元素。 */
 interface OverlayEntry {
@@ -20,7 +21,7 @@ interface OverlayState {
 }
 
 /** 内容变化通知的订阅者；宿主挂载期间登记。 */
-const listeners = new Set<() => void>();
+const listeners = createListenerSet<() => void>();
 
 /** 当前内容；无订阅者时也照常更新，宿主首帧据此读到已入队的内容。 */
 let state: OverlayState = { dialogs: [], toast: null };
@@ -36,7 +37,7 @@ let nextId = 1;
  */
 function publish(next: OverlayState): void {
 	state = next;
-	for (const listener of [...listeners]) listener();
+	for (const listener of listeners.snapshot()) listener();
 }
 
 /**
@@ -46,8 +47,7 @@ function publish(next: OverlayState): void {
  * @returns 取消订阅的函数。
  */
 function subscribe(listener: () => void): () => void {
-	listeners.add(listener);
-	return () => { listeners.delete(listener); };
+	return subscribeIn(listeners, listener);
 }
 
 /**
@@ -60,14 +60,29 @@ function getSnapshot(): OverlayState {
 }
 
 /**
+ * 登记一项要渲染的覆盖层：分配一个队列编号，把元素放进指定槽位。
+ *
+ * 弹窗与提示的差别只在放进哪个槽位，编号分配与发布一致。
+ *
+ * @param render - 用队列编号构造元素；编号供摘除时使用。
+ * @param place - 拿到编号与元素后给出新状态。
+ * @returns 无。
+ */
+function pushOverlay(
+	render: (id: number) => React.ReactElement,
+	place: (state: OverlayState, id: number, element: React.ReactElement) => OverlayState,
+): void {
+	const id = nextId++;
+	publish(place(state, id, render(id)));
+}
+/**
  * 把一个弹窗排到队尾；先入队的先渲染。
  *
  * @param render - 用队列编号构造弹窗元素；编号供 {@link removeDialog} 摘除。
  * @returns 无。
  */
 export function pushDialog(render: (id: number) => React.ReactElement): void {
-	const id = nextId++;
-	publish({ ...state, dialogs: [...state.dialogs, { id, element: render(id) }] });
+	pushOverlay(render, (current, id, element) => ({ ...current, dialogs: [...current.dialogs, { id, element }] }));
 }
 
 /**
@@ -89,8 +104,7 @@ export function removeDialog(id: number): void {
  * @returns 无。
  */
 export function pushToast(render: (id: number) => React.ReactElement): void {
-	const id = nextId++;
-	publish({ ...state, toast: { id, element: render(id) } });
+	pushOverlay(render, (current, id, element) => ({ ...current, toast: { id, element } }));
 }
 
 /**

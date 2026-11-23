@@ -1,4 +1,0 @@
-{
-  "note": "记录旧宿主兼容面退出前的基线；自建浮层删除且 engines.dsh 下限不低于 0.2.2-alpha.2 后即视为已退出。",
-  "legacyMenu": false
-}

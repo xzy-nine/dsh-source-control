@@ -2,7 +2,22 @@
  * 仓库发现、仓库同步状态与提交图查询。
  */
 import type { Commit, RefItem, Remote, RepoNode, RepoSync, WorkingTreeEntry } from '../shared/types.ts';
-import { callApi } from './http.ts';
+import type { StashEntry } from '../../shared/stash.ts';
+import { recordListOf } from '../../shared/record-list.ts';
+import { callApi, commandError } from './http.ts';
+
+/**
+ * 给一条请求体附上刷新编号。
+ *
+ * 编号只用于宿主按轮归组记耗时，不影响取数结果，因此未给出时原样返回请求体、不带该字段。
+ *
+ * @param message - 请求体。
+ * @param refreshId - 刷新编号；省略时不带该字段。
+ * @returns 带编号的请求体。
+ */
+function withRefreshId(message: Record<string, unknown>, refreshId: number | undefined): Record<string, unknown> {
+	return refreshId === undefined ? message : { ...message, refreshId };
+}
 
 /** 仓库发现结果。 */
 export interface DiscoveryResult {
@@ -81,11 +96,8 @@ export interface RepoSyncEntry extends RepoSync {
  */
 export async function loadReposSync(cwd: string, repos: readonly string[], signal?: AbortSignal): Promise<RepoSyncEntry[]> {
 	const payload = await callApi(cwd, { command: 'loadReposSync', repos }, signal);
-	const results = Array.isArray(payload.results) ? payload.results : [];
 	const entries: RepoSyncEntry[] = [];
-	for (const item of results) {
-		if (item === null || typeof item !== 'object') continue;
-		const record = item as Record<string, unknown>;
+	for (const record of recordListOf(payload.results)) {
 		// path 缺失的记录无法与入参对齐，丢弃。
 		if (typeof record.path !== 'string') continue;
 		entries.push({ path: record.path, ...readSyncFields(record) });
@@ -149,10 +161,14 @@ export interface WorkingTreeSnapshot {
  * @returns 变更条目与分支、上游、领先/落后数与合并状态。
  */
 export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal, noCache = false, refreshId?: number): Promise<WorkingTreeSnapshot> {
-	const payload = await callApi(cwd, {
-		command: 'loadWorkingTreeSnapshot', noCache,
-		...(refreshId === undefined ? {} : { refreshId }),
-	}, signal);
+	const payload = await callApi(cwd, withRefreshId({ command: 'loadWorkingTreeSnapshot', noCache }, refreshId), signal);
+	/*
+	 * 快照命令把「仓库可用但工作区读不出来」放在 error 里回投（空条目 + 错误文本），
+	 * 而不是非 2xx：这类结果按失败抛出，否则界面会把空条目当成「没有改动」，刷新的相位也
+	 * 收不回来。非仓库路径回的是空快照且 error 为 null，不受影响。
+	 */
+	const error = commandError(payload);
+	if (error !== null) throw new Error(error);
 	return {
 		entries: (Array.isArray(payload.entries) ? payload.entries : []) as WorkingTreeEntry[],
 		head: typeof payload.head === 'string' ? payload.head : null,
@@ -166,21 +182,8 @@ export async function loadWorkingTreeSnapshot(cwd: string, signal?: AbortSignal,
 	};
 }
 
-/** 贮藏条目：字段与宿主 `git-types.ts` 的 `StashEntry` 一致。 */
-export interface GraphStash {
-	/** 贮藏提交哈希。 */
-	readonly hash: string;
-	/** 基提交哈希。 */
-	readonly baseHash: string;
-	/** 未跟踪文件所在的提交；无则为 null。 */
-	readonly untrackedFilesHash: string | null;
-	/** 选择器（如 `refs/stash@{0}`）。 */
-	readonly selector: string;
-	readonly author: string;
-	readonly email: string;
-	readonly date: number;
-	readonly message: string;
-}
+/** 贮藏条目。 */
+export type GraphStash = StashEntry;
 
 /** 提交图读取结果。 */
 export interface GraphData {
@@ -272,7 +275,7 @@ export async function loadGraph(cwd: string, {
 	withRepoInfo = false, remotes: givenRemotes, stashes: givenStashes, branch, branches = null, refreshId, signal,
 }: LoadGraphOptions = {}): Promise<GraphData> {
 	// 只取要显示的那一段：完整提交集驻留宿主，客户端不持有大数据。
-	const commitsPayload = await callApi(cwd, {
+	const commitsPayload = await callApi(cwd, withRefreshId({
 		// 偏移分页：skip 是已加载条数，正反向都用它。
 		command: 'loadCommits', branches, skip, limit: maxCommits, showTags, showRemoteBranches,
 		includeCommitsMentionedByReflogs, onlyFollowFirstParent, commitOrdering, showStashes,
@@ -281,8 +284,7 @@ export async function loadGraph(cwd: string, {
 		...(givenRemotes === undefined ? {} : { remotes: givenRemotes }),
 		...(givenStashes === undefined ? {} : { stashes: givenStashes }),
 		hideRemotes: [],
-		...(refreshId === undefined ? {} : { refreshId }),
-	}, signal);
+	}, refreshId), signal);
 	const batch = commitsPayload.repoInfo;
 	const fetched = batch !== null && typeof batch === 'object' ? batch as Record<string, unknown> : null;
 	/*
@@ -330,11 +332,8 @@ const REF_KIND: Record<'branch' | 'remote' | 'tag', string> = { branch: '分支'
  */
 export async function loadRefs(cwd: string, showRemoteBranches = true, signal?: AbortSignal): Promise<RefItem[]> {
 	const payload = await callApi(cwd, { command: 'loadRefs', showRemoteBranches }, signal);
-	const list = Array.isArray(payload.refs) ? payload.refs : [];
 	const refs: RefItem[] = [];
-	for (const item of list) {
-		if (item === null || typeof item !== 'object') continue;
-		const record = item as Record<string, unknown>;
+	for (const record of recordListOf(payload.refs)) {
 		if (typeof record.id !== 'string' || typeof record.name !== 'string' || typeof record.hash !== 'string') continue;
 		const type = record.type === 'branch' || record.type === 'remote' || record.type === 'tag' ? record.type : null;
 		if (type === null) continue;

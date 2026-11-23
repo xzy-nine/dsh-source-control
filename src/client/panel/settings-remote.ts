@@ -2,12 +2,13 @@
  * 远程仓库配置区与 SSH 状态说明。
  */
 import React from 'react';
-import { Input, SegmentedControl, Button, IconEditOutlineRegular, IconTrashOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
+import { SegmentedControl, Button, IconEditOutlineRegular, IconTrashOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives';
 import { showConfirmation, showMessage } from '../ui/dialog.ts';
 import { remoteHostOf, remoteProtocolSlot, toHttpsRemoteUrl, toSshRemoteUrl } from '../git/remote-url.ts';
 import type { RemoteProtocolSlot } from '../git/remote-url.ts';
 import type { SshStatusInfo } from '../api/index.ts';
 import type { Remote } from '../shared/types.ts';
+import { FieldBlock, formActions, formShell } from './settings-rows.ts';
 import { REMOTE_PROTOCOLS } from './settings-model.ts';
 import css from '../css/settings.module.css';
 
@@ -119,15 +120,17 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		return next ?? push;
 	};
 
+	/** 清空表单三格。 */
+	const resetForm = (): void => { setName(''); setUrl(''); setPushUrl(''); };
 	const submitAdd = (): void => {
 		if (!name || !url) return;
 		onAddRemote?.(name, url, pushUrl || null);
-		setAdding(false); setName(''); setUrl(''); setPushUrl('');
+		setAdding(false); resetForm();
 	};
 	const submitEdit = (): void => {
 		if (!editing || !name) return;
 		onEditRemote?.(editing.name, name, editing.url ?? null, url || null, editing.pushUrl ?? null, pushUrl || null);
-		setEditing(null); setName(''); setUrl(''); setPushUrl('');
+		setEditing(null); resetForm();
 	};
 	const beginEdit = (remote: Remote): void => {
 		setEditing(remote);
@@ -147,21 +150,14 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		if (pushUrl.trim() !== '') setPushUrl(convertPushUrl(pushUrl, url, target));
 		setUrl(next);
 	};
-	const form = React.createElement(
-		'div',
-		{ className: css.setForm },
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, '名称'),
-			React.createElement(Input, { value: name, placeholder: 'origin', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setName(e.target.value); } }),
-		),
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, 'URL'),
-			React.createElement(Input, {
-				value: url,
-				placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
-				onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setUrl(e.target.value); },
-			}),
-		),
+	const form = formShell(
+		React.createElement(FieldBlock, { label: '名称', placeholder: 'origin', value: name, onChange: setName }),
+		React.createElement(FieldBlock, {
+			label: 'URL',
+			placeholder: 'https://github.com/owner/repo.git 或 git@github.com:owner/repo.git',
+			value: url,
+			onChange: setUrl,
+		}),
 		React.createElement('div', { className: css.setRow },
 			React.createElement('span', { className: css.setRowText }, '协议'),
 			React.createElement(SegmentedControl, {
@@ -171,14 +167,16 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 				options: REMOTE_PROTOCOLS,
 			}),
 		),
-		React.createElement('label', { className: css.setRowBlock },
-			React.createElement('span', { className: css.setRowText }, '推送 URL（可选）'),
-			React.createElement(Input, { value: pushUrl, placeholder: '与抓取 URL 相同时留空', onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setPushUrl(e.target.value); } }),
-		),
-		React.createElement('div', { className: css.setFormActions },
-			React.createElement(Button, { variant: 'primary', size: 'sm', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
-			React.createElement(Button, { variant: 'toolbar', size: 'sm', onClick: () => { setAdding(false); setEditing(null); setName(''); setUrl(''); setPushUrl(''); } }, '取消'),
-		),
+		React.createElement(FieldBlock, {
+			label: '推送 URL（可选）',
+			placeholder: '与抓取 URL 相同时留空',
+			value: pushUrl,
+			onChange: setPushUrl,
+		}),
+		formActions([
+			React.createElement(Button, { variant: 'primary', size: 'sm', key: 'ok', onClick: editing !== null ? submitEdit : submitAdd }, editing !== null ? '保存' : '添加'),
+			React.createElement(Button, { variant: 'toolbar', size: 'sm', key: 'cancel', onClick: () => { setAdding(false); setEditing(null); resetForm(); } }, '取消'),
+		]),
 	);
 	const probeTarget = remotes
 		.map((remote) => ({ host: remoteHostOf(remote.url ?? ''), sshUrl: toSshRemoteUrl(remote.url ?? '') }))
@@ -214,12 +212,12 @@ export function RemoteConfigSection({ remotes, onDeleteRemote, onAddRemote, onEd
 		!adding && editing === null
 			? React.createElement(Button, { variant: 'outline', size: 'sm', onClick: () => { setAdding(true); } }, '添加远程')
 			: form,
-		React.createElement('div', { className: css.setFormActions },
+		formActions([
 			React.createElement(Button, {
-				variant: 'toolbar', size: 'sm', disabled: sshBusy,
+				variant: 'toolbar', size: 'sm', key: 'ssh', disabled: sshBusy,
 				onClick: () => { void checkSsh(probeTarget.host, probeTarget.sshUrl ?? '', true); },
 			}, '检测 SSH 状态'),
-		),
+		]),
 		sshNote !== null && React.createElement('div', { className: css.setNote }, sshNote),
 	);
 }

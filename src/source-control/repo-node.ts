@@ -4,35 +4,12 @@
  * 节点构造（工作树与子模块枚举）在 `repo-enrich.ts`，发现流程在 `repo-discovery.ts`。
  */
 import { join, resolve, sep } from 'node:path';
+import { errorText } from '../shared/error-text.js';
 import { listDirAt, probePathAt } from './host-runtime.js';
 import { logDebug } from './logger.js';
+import type { RepoNode } from '../shared/repo-node.js';
 
-/** 节点种类：主工作树仓库、链接工作树、子模块。 */
-export type RepoNodeKind = 'repo' | 'worktree' | 'submodule';
-
-/** 一个仓库、工作树或子模块节点。 */
-export interface RepoNode {
-	/** 规范化绝对路径派生的稳定标识。 */
-	readonly id: string;
-	/** 节点绝对路径。 */
-	readonly path: string;
-	/** 末段目录名。 */
-	readonly name: string;
-	/** 节点种类。 */
-	readonly kind: RepoNodeKind;
-	/** 展示缩进层级。 */
-	readonly depth: number;
-	/** 当前分支；分离头指针为 null。 */
-	readonly branch: string | null;
-	/** 分离头指针时的提交短哈希；已检出的子模块同样提供。 */
-	readonly head: string | null;
-	/** 路径在磁盘上是否存在。 */
-	readonly available: boolean;
-	/** 该节点所属仓库是否为浅克隆：历史被截断，浅克隆之外的分支与标签不可见。 */
-	readonly shallowClone: boolean;
-	/** 工作树与子模块。 */
-	readonly children: RepoNode[];
-}
+export type { RepoNode, RepoNodeKind } from '../shared/repo-node.js';
 
 /** 一次发现的结果。 */
 export interface DiscoveryResult {
@@ -42,6 +19,18 @@ export interface DiscoveryResult {
 	readonly truncated: boolean;
 }
 
+/**
+ * 取发现选项里的两个上限，缺省时用默认值。
+ *
+ * @param options - 发现选项。
+ * @returns 最大递归层数与最多访问目录数。
+ */
+export function discoveryLimitsOf(options: DiscoveryOptions): { maxDepth: number; maxDirectories: number } {
+	return {
+		maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
+		maxDirectories: options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES,
+	};
+}
 /** 发现选项。 */
 export interface DiscoveryOptions {
 	/** 仓库发现的最大递归层数；工作区根为第 0 层。 */
@@ -107,12 +96,24 @@ export function dedupeCandidates(
 	const candidates: string[] = [];
 	for (const candidate of paths) {
 		const dir = resolve(candidate);
-		const id = nodeId(dir);
-		if (visited.has(id) || submoduleIds.has(id)) continue;
-		visited.add(id);
+		if (!claimId(visited, submoduleIds, nodeId(dir))) continue;
 		candidates.push(dir);
 	}
 	return candidates;
+}
+
+/**
+ * 占用一个目录标识；已访问或已是子模块的标识不重复占用。
+ *
+ * @param visited - 已访问目录标识，就地更新。
+ * @param submoduleIds - 子模块路径标识。
+ * @param id - 待占用的标识。
+ * @returns 首次占用时为 true；已被占用时为 false。
+ */
+export function claimId(visited: Set<string>, submoduleIds: ReadonlySet<string>, id: string): boolean {
+	if (visited.has(id) || submoduleIds.has(id)) return false;
+	visited.add(id);
+	return true;
 }
 
 /**
@@ -173,7 +174,7 @@ export async function subdirectories(dir: string): Promise<string[]> {
 			.map((entry) => join(dir, entry.name));
 	} catch (error) {
 		// 权限不足或目录已消失：不影响其它层级的发现，但要知道是哪一层没读到。
-		logDebug('repo', `无法读取目录 ${dir}，跳过其子目录：${error instanceof Error ? error.message : String(error)}`);
+		logDebug('repo', `无法读取目录 ${dir}，跳过其子目录：${errorText(error)}`);
 		return [];
 	}
 }

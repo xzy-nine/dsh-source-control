@@ -6,7 +6,7 @@
 import React from 'react';
 import {
 	Button, Checkbox, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular,
-	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, StateDot, writeClipboard,
+	IconCloseOutlineRegular, IconSparkleRegular, FileTypeIcon, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { PublishIcon, TranslateIcon } from '../../ui/ref-icons.ts';
 import { ChangeGroup } from '../changes.ts';
@@ -17,15 +17,10 @@ import { ConflictGroup } from '../conflict-group.ts';
 import { indexGroupOf } from '../conflicts.ts';
 import { absolutePathOf } from '../change-tree.ts';
 import type { ChangeMenuDeps } from '../change-menu.ts';
-import { WorkspaceEmpty } from './empty-state.ts';
-import type { WorkspaceEmpty as WorkspaceEmptyInfo } from '../workspace-empty.ts';
-import { refreshButton } from './refresh-button.ts';
-import css from '../../css/sections.module.css';
-import shared from '../../css/shared.module.css';
-import { cx } from '../../css/cx.ts';
+import { WorkspaceEmpty, refreshButton, SectionHead, css, shared, cx, type SectionEmptyFields } from './section-kit.ts';
 
 
-export interface ChangesSectionProps extends ChangeActions {
+export interface ChangesSectionProps extends ChangeActions, SectionEmptyFields {
 	readonly entries: readonly WorkingTreeEntry[];
 	/** 工作区条目是否已在上限处截断：为 true 时计数只是下限。 */
 	readonly entriesTruncated: boolean;
@@ -101,11 +96,6 @@ export interface ChangesSectionProps extends ChangeActions {
 	 *
 	 * 非空时提交框与变更列表都不渲染：此时提交、暂存与丢弃都无处落地。
 	 */
-	readonly empty: WorkspaceEmptyInfo | null;
-	/** 空态动作进行中：只禁用该按钮。 */
-	readonly emptyBusy: boolean;
-	/** 执行空态动作。 */
-	readonly onEmptyAction: () => void;
 }
 
 /** 提交框的属性：更改分区属性中与提交信息、AI 与主按钮有关的部分。 */
@@ -273,26 +263,17 @@ const CommitBox = React.memo(CommitBoxView);
  * @returns 分区元素。
  */
 export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
-	const {
-		entries, entriesTruncated, busy, phase, workingTreePath, refreshing, lastRefresh, onRefresh,
-		collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-		stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
-		empty, emptyBusy, onEmptyAction,
-	} = props;
+	const { entries, busy, phase, refreshing, lastRefresh, onRefresh, empty, emptyBusy, onEmptyAction } = props;
 	return React.createElement(
 		'div',
 		{ className: cx(css.sec, css.workspace) },
-		React.createElement(
-			'div',
-			{ className: css.secHead },
-			React.createElement(IconChevronDownOutlineRegular, { size: 14, className: css.chevron }),
-			'更改',
-			React.createElement(StateDot, { state: refreshing ? 'ongoing' : 'idle', size: 8, className: css.headDot }),
-			lastRefresh !== '' && React.createElement('span', { className: css.headRefreshNote }, lastRefresh),
-			React.createElement('span', { className: css.headActions },
-				refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
-			),
-		),
+		React.createElement(SectionHead, {
+			title: '更改',
+			open: true,
+			refreshing,
+			lastRefresh,
+			actions: refreshButton(busy.read, refreshing, lastRefresh, onRefresh),
+		}),
 		React.createElement(
 			'div',
 			{ className: css.workspaceBody },
@@ -326,12 +307,7 @@ export function ChangesSection(props: ChangesSectionProps): React.ReactElement {
 					 */
 					phase === 'loading' && entries.length === 0
 						&& React.createElement('div', { className: shared.hint, style: { padding: '12px 10px' } }, '正在读取工作区…'),
-					React.createElement(ChangeLists, {
-						entries, entriesTruncated, busy: props.busy, workingTreePath, collapsedByGroup, groupExpanded, toggleChange, toggleGroup, run,
-						stagePaths, unstagePaths, discardPaths, openDiff, onAddToGitignore, onAddToLocalExclude,
-						resolveConflict: props.resolveConflict, conflictStages: props.conflictStages, onOpenConflict: props.onOpenConflict,
-						onResolveConflict: props.onResolveConflict,
-					}),
+					React.createElement(ChangeLists, props),
 				),
 			),
 		),

@@ -54,7 +54,7 @@ Status: implemented
 
 ## Testing
 
-- `test/fetch-path.test.mjs`「远程操作进行中，提交图与工作区快照照常返回」：裸仓库的 `pre-receive` 钩子睡 6 秒让推送真的挂住，再断言读取在 4 秒内返回。把 `loadCommits` 的门控换回 `whenGitIdle` 即变红（实测等 5,370 ms）。钩子必须带 shebang，否则 git 起不来钩子、推送秒回，用例会假绿。
-- `test/panel-busy.test.mjs`「联网操作不挡住后台读取」「本地写操作挡住后台读取」：`isReadBlocked` 的四条边界。
-- `test/graph-state.test.mjs`「快照落地即把变更列表那一路置为就绪，提交图仍是加载中」：去掉 `mergeSnapshot` 里的 `entriesPhase` 即变红。
-- `test/panel-remount.test.mjs`「变更列表与提交图各有自己的就绪阶段」：源码结构断言，两个分区各读哪个字段。
+- `test/git/fetch-path.test.mjs`「远程操作进行中，提交图与工作区快照照常返回」：裸仓库的 `pre-receive` 钩子睡 6 秒让推送真的挂住，再断言读取在 4 秒内返回。把 `loadCommits` 的门控换回 `whenGitIdle` 即变红（实测等 5,370 ms）。钩子必须带 shebang，否则 git 起不来钩子、推送秒回，用例会假绿。
+- `test/state/panel-busy.test.mjs`「联网操作不挡住后台读取」「本地写操作挡住后台读取」：`isReadBlocked` 的四条边界。
+- `test/diff/graph-state.test.mjs`「快照落地即把变更列表那一路置为就绪，提交图仍是加载中」：去掉 `mergeSnapshot` 里的 `entriesPhase` 即变红。
+- `test/state/panel-remount.test.mjs`「变更列表与提交图各有自己的就绪阶段」：源码结构断言，两个分区各读哪个字段。

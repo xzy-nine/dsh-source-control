@@ -13,6 +13,7 @@ import {
 	planSelection, saveExpanded, saveSelection,
 } from './repo-tree.ts';
 import { mapsEqual } from '../shared/cache.ts';
+import { toggleIn } from '../shared/set-ops.ts';
 import type { RepoNode, RepoSync } from '../shared/types.ts';
 
 /** 仓库发现 hook 的入参。 */
@@ -138,6 +139,24 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 		revisionRef.current = -1;
 
 		/**
+		 * 展开目标节点的祖先链；目标为 null 时不动。
+		 *
+		 * 选中行必须连同祖先一起展开才可见，两条选路（重新发现与认领待选）都要做这一件事。
+		 *
+		 * @param nodes - 仓库节点列表。
+		 * @param id - 目标节点 id；null 表示没有选中项。
+		 * @returns 无。
+		 */
+		const expandAncestors = (nodes: readonly RepoNode[], id: string | null): void => {
+			if (id === null) return;
+			setExpandedIds((previous) => {
+				const next = new Set(previous);
+				for (const ancestor of ancestryOf(nodes, id)) next.add(ancestor);
+				return next;
+			});
+		};
+
+		/**
 		 * 应用一份快照。
 		 *
 		 * 发现代次变化时重算选中与展开（持久化选中的工作树在浅层树里找不到，只能先回退）；
@@ -175,22 +194,14 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 				pendingSelectionRef.current = plan.pendingId;
 				const selected = findNode(snapshot.nodes, plan.selectedId);
 				setSelectedId(selected === null ? null : selected.id);
-				setExpandedIds((previous) => {
-					const next = new Set(previous);
-					if (selected !== null) for (const id of ancestryOf(snapshot.nodes, selected.id)) next.add(id);
-					return next;
-				});
+				expandAncestors(snapshot.nodes, selected === null ? null : selected.id);
 				return;
 			}
 			const restored = claimPendingSelection(snapshot.nodes, pendingSelectionRef.current);
 			if (restored === null) return;
 			pendingSelectionRef.current = null;
 			setSelectedId(restored.id);
-			setExpandedIds((previous) => {
-				const next = new Set(previous);
-				for (const id of ancestryOf(snapshot.nodes, restored.id)) next.add(id);
-				return next;
-			});
+			expandAncestors(snapshot.nodes, restored.id);
 		};
 
 		/*
@@ -249,9 +260,7 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 	/** 展开或收起一个仓库节点。 */
 	const toggleNode = React.useCallback((node: RepoNode) => {
 		setExpandedIds((previous) => {
-			const next = new Set(previous);
-			if (next.has(node.id)) next.delete(node.id);
-			else next.add(node.id);
+			const next = toggleIn(previous, node.id);
 			saveExpanded(cwd ?? null, next);
 			return next;
 		});
