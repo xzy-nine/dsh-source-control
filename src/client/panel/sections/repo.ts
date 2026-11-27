@@ -11,6 +11,7 @@ import { RepoRow, type RepoRowCallbacks } from '../repo-row.ts';
 import type { BusyFlags, RepoNode, RepoSync } from '../../shared/types.ts';
 import { SectionHead } from './section-head.ts';
 import { iconButton } from './icon-button.ts';
+import { refreshIconButton } from './refresh-button.ts';
 import css from '../../css/sections.module.css';
 import shared from '../../css/shared.module.css';
 
@@ -34,6 +35,10 @@ export interface RepoSectionProps extends RepoRowCallbacks {
 	/** 已加载仓库的路径：与选中行一致时该行才用 `headHash`。 */
 	readonly loadedPath: string | null;
 	readonly headHash: string | null;
+	/** 仓库树是否正在后台重取；标题栏据此给出进行中指示。 */
+	readonly refreshing: boolean;
+	/** 按磁盘现状重扫整棵仓库树。 */
+	readonly onRescanTree: () => void;
 	readonly onToggleSection: () => void;
 	readonly onOpenSettings: () => void;
 	/** 打开设置并直接落在反馈页签。 */
@@ -53,8 +58,26 @@ export interface RepoSectionProps extends RepoRowCallbacks {
  */
 function RepoSectionView({
 	open, height, busy, treeStatus, treeNote, visibleRows, selectedId, expandedIds, syncById, selectedSync, loadedPath, headHash,
-	onToggleSection, onOpenSettings, onOpenFeedback, onClone, cloneBusy, onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
+	onToggleSection, onOpenSettings, onOpenFeedback, onClone, cloneBusy, refreshing, onRescanTree,
+	onSelect, onToggle, onMoreActions, onBranchClick, onResizeStart,
 }: RepoSectionProps): React.ReactElement {
+	/**
+	 * 标题栏动作区。
+	 *
+	 * 刷新按磁盘现状重扫整棵树：仓库树只在结构事件与面板挂载时重取，事件漏掉或结构变化无法
+	 * 只靠事件补齐时（`.gitmodules` 被改、仓库被移动或改过名）需要用户主动要一次。
+	 *
+	 * 克隆在设置左侧：两个入口都作用于整个存储库区，克隆期间只禁用克隆自身。反馈与设置是
+	 * 本地入口，不随仓库操作禁用。
+	 */
+	const headActions = React.createElement(
+		React.Fragment,
+		null,
+		refreshIconButton('重新扫描仓库树', refreshing, false, onRescanTree),
+		iconButton({ title: '克隆远程仓库', disabled: busy.network || cloneBusy, onClick: onClone, children: React.createElement(IconPlusOutlineRegular, { size: 14 }) }),
+		iconButton({ title: '反馈', onClick: onOpenFeedback, children: React.createElement(IconPaperPlaneOutlineRegular, { size: 14 }) }),
+		iconButton({ title: '设置', onClick: onOpenSettings, children: React.createElement(IconSettingsOutlineRegular, { size: 14 }) }),
+	);
 	return React.createElement(
 		'div',
 		{ className: css.sec },
@@ -62,15 +85,9 @@ function RepoSectionView({
 			title: '存储库',
 			open,
 			onToggle: onToggleSection,
+			refreshing,
 			before: treeNote !== null && React.createElement('span', { className: css.secNote, title: treeNote }, '⚠'),
-			actions: React.createElement(React.Fragment, null,
-				// 克隆在设置左侧：两个入口都作用于整个存储库区；克隆期间只禁用克隆自身。
-				iconButton({ title: '克隆远程仓库', disabled: busy.network || cloneBusy, onClick: onClone, children: React.createElement(IconPlusOutlineRegular, { size: 14 }) }),
-				// 反馈是本地入口，不随仓库操作禁用。
-				iconButton({ title: '反馈', onClick: onOpenFeedback, children: React.createElement(IconPaperPlaneOutlineRegular, { size: 14 }) }),
-				// 设置是本地入口，不随仓库操作禁用。
-				iconButton({ title: '设置', onClick: onOpenSettings, children: React.createElement(IconSettingsOutlineRegular, { size: 14 }) }),
-			),
+			actions: headActions,
 		}),
 		open && React.createElement(
 			'div',

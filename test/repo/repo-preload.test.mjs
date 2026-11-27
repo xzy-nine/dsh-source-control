@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 
 /* 本文件的用例必须串行执行：用例逐个替换 globalThis.fetch */
 import {
-	activeWorkspaceOf, chunkPaths, dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace,
-	retryDelayMs, setRetryDelay,
+	activeWorkspaceOf, chunkPaths, dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, rescanWorkspace,
+	subscribeWorkspace, retryDelayMs, setRetryDelay,
 } from '../../src/client/panel/repo-preload.ts';
 
 /** 一个仓库节点。 */
@@ -374,6 +374,100 @@ test('子模块从「未检出」变成「已检出」时重新取领先/落后'
 		dropWorkspace(root);
 	}
 	assert.deepEqual(synced, [sub], '只有可用性变化的子模块重取，仓库本身沿用旧值');
+});
+
+test('rescanWorkspace：绕开持久化位置做完整扫描，且不清空已发布的树', async () => {
+	/*
+	 * 用户主动刷新要按磁盘现状重取：仓库被移动、改过名或 `.gitmodules` 被改之后，持久化的仓库
+	 * 位置可能已经过期，走快路径拿回的仍是旧结构。完整扫描的标志必须真的下发到宿主，
+	 * 否则再点一次也没有效果。
+	 */
+	const root = '/work/preload-rescan';
+	const repo = `${root}/r`;
+	const sub = `${repo}/lib/dep`;
+	/** 目录里当前声明的子模块；用例中途改写，模拟 `.gitmodules` 被编辑。 */
+	const state = { declared: false };
+	const stubbed = stubFetch({
+		discoverRepositories: (body) => ({
+			command: 'discoverRepositories',
+			nodes: [repoNode(repo)],
+			truncated: false,
+			usedCache: body.fullScan !== true,
+		}),
+		enrichRepositories: () => ({
+			command: 'enrichRepositories',
+			nodes: [repoNode(repo, state.declared ? [{
+				id: sub.toLowerCase(), path: sub, name: 'dep', kind: 'submodule', depth: 1,
+				branch: 'main', head: null, available: true, children: [],
+			}] : [])],
+		}),
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })),
+		}),
+	});
+	const childCount = () => getWorkspaceSnapshot(root)?.nodes[0]?.children.length ?? 0;
+	const published = [];
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		assert.ok(await waitFor(() => getWorkspaceSnapshot(root)?.status === 'ready'), '首次预加载应完成');
+		assert.equal(childCount(), 0, '初始没有子模块节点');
+		const unsubscribe = subscribeWorkspace(root, () => {
+			const snapshot = getWorkspaceSnapshot(root);
+			if (snapshot !== null) published.push(snapshot);
+		});
+		try {
+			published.length = 0;
+			const before = stubbed.calls.length;
+			state.declared = true;
+			rescanWorkspace(root);
+			assert.ok(getWorkspaceSnapshot(root)?.refreshing === true, '重取开始即报告进行中');
+			assert.ok(await waitFor(() => childCount() === 1), '主动刷新后按新的 .gitmodules 补出子模块');
+			assert.ok(
+				published.every((snapshot) => snapshot.nodes.length > 0),
+				'重取期间不发布空树',
+			);
+
+			const first = stubbed.calls.slice(before).find((call) => call.command === 'discoverRepositories');
+			assert.equal(first.fullScan, true, '主动刷新绕开持久化的仓库位置');
+			assert.equal(getWorkspaceSnapshot(root)?.refreshing, false, '取数结束后清掉进行中标志');
+		} finally {
+			unsubscribe();
+		}
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
+});
+
+test('rescanWorkspace：在途期间的请求登记为完整扫描，取数结束后补做一次', async () => {
+	const root = '/work/preload-rescan-inflight';
+	const repo = `${root}/r`;
+	const fullScans = [];
+	const stubbed = stubFetch({
+		discoverRepositories: (body) => {
+			fullScans.push(body.fullScan === true);
+			return { command: 'discoverRepositories', nodes: [repoNode(repo)], truncated: false, usedCache: false };
+		},
+		enrichRepositories: () => ({ command: 'enrichRepositories', nodes: [repoNode(repo)] }),
+		loadReposSync: (body) => ({
+			command: 'loadReposSync',
+			results: body.repos.map((path) => ({ path, branch: 'main', upstream: null, ahead: 0, behind: 0 })),
+		}),
+	});
+	const originalDelay = setRetryDelay(async () => {});
+	try {
+		preloadWorkspace(root);
+		// 在途时请求主动刷新：首轮不该被改写成完整扫描，但必须补一次完整扫描。
+		rescanWorkspace(root);
+		assert.ok(await waitFor(() => fullScans.some((full) => full === true)), '在途期间的主动刷新被补做');
+	} finally {
+		stubbed.restore();
+		setRetryDelay(originalDelay);
+		dropWorkspace(root);
+	}
 });
 
 test('重试退避：按轮次递增且封顶', () => {

@@ -13,7 +13,7 @@ import {
 } from './repo-node.js';
 import type { DiscoveryOptions, DiscoveryResult, RepoNode } from './repo-node.js';
 import { linkedWorktreePresence, repoNodeOf } from './repo-enrich.js';
-import { discoveryCacheKey, readDiscoveryCache, writeDiscoveryCache } from './repo-discovery-cache.js';
+import { clearDiscoveryCache, discoveryCacheKey, readDiscoveryCache, writeDiscoveryCache } from './repo-discovery-cache.js';
 
 export type { RepoNodeKind, RepoNode, DiscoveryResult, DiscoveryOptions } from './repo-node.js';
 export { DEFAULT_MAX_DEPTH, DEFAULT_MAX_DIRECTORIES, nodeId, dedupeCandidates, shouldPruneDirectory, parseHead, gitEntryOf, hasGitEntry, subdirectories } from './repo-node.js';
@@ -83,6 +83,11 @@ export async function discoverWorkspace(
 ): Promise<WorkspaceDiscoveryResult> {
 	const shallow = options.shallow === true;
 	const explicit = options.knownRepos ?? [];
+	/*
+	 * 完整扫描是调用方明确要求按磁盘现状重取：先作废缓存，否则 60 秒内返回的仍是上一轮结果，
+	 * 用户主动刷新会看起来毫无作用。
+	 */
+	if (options.fullScan === true) clearDiscoveryCache();
 	const known = options.fullScan === true
 		? []
 		: (explicit.length > 0 ? explicit : readRepoLocations(root).map((repo) => repo.path));

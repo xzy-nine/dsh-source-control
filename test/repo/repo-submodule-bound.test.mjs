@@ -134,4 +134,9 @@ test('子模块路径的边界判定：相对路径按仓库根核对，绝对�
 		['libs/dep', 'other'],
 		'过滤后只留仓库内的路径，保持入参顺序',
 	);
+	assert.deepEqual(
+		submodulePathsWithin(repoRoot, ['libs/dep', 'libs/dep', 'other', 'libs/dep']),
+		['libs/dep', 'other'],
+		'同一路径的多次声明只留首次出现',
+	);
 });

@@ -58,12 +58,23 @@ export function isSubmodulePathWithin(root: string, relativePath: string): boole
 }
 
 /**
- * 取落在仓库根之内的子模块路径。
+ * 取落在仓库根之内的子模块路径，按首次出现去重。
+ *
+ * 同一路径在 `.gitmodules` 里可以有多个 section：改过名的子模块常留下指向同一目录的旧段。
+ * 每个声明都会产出一个节点，下游按路径枚举时同一目录因此出现多次。去重放在这里，发现层、
+ * 补齐层、结构监视与初始化四处共用同一份结果。
  *
  * @param root - 仓库根的绝对路径。
  * @param paths - `.gitmodules` 里声明的相对路径。
- * @returns 落在仓库根之内的相对路径，保持入参顺序。
+ * @returns 落在仓库根之内的相对路径，保持首次出现顺序。
  */
 export function submodulePathsWithin(root: string, paths: readonly string[]): string[] {
-	return paths.filter((path) => isSubmodulePathWithin(root, path));
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const path of paths) {
+		if (!isSubmodulePathWithin(root, path) || seen.has(path)) continue;
+		seen.add(path);
+		out.push(path);
+	}
+	return out;
 }

@@ -169,7 +169,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 
 	const {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSelectedId, rescan, refreshTree,
+		selectNode, toggleNode, setSelectedId, rescan, refreshTree, rescanTree, treeRefreshing,
 	} = useRepos({ cwd });
 
 	/*
@@ -1024,6 +1024,7 @@ export function GitGraphPanel({ cwd, sessionId, onOpenDiff, onRevealPath, pickDi
 			onOpenSettings: openSettingsPanel,
 			onOpenFeedback: openFeedbackPanel,
 			onClone: repoCommands.handleClone, cloneBusy: repoCommands.cloneBusy,
+			refreshing: treeRefreshing, onRescanTree: rescanTree,
 			onSelect: selectNodeAndReset,
 			onToggle: toggleNode,
 			onMoreActions: (node, event) => { openRepoMenu({ workingTreePath, state, settings, pushHookActive: composer.hooksState.push, runHooks: composer.runHooks, setRunHooks: composer.setRunHooks, setState, selectNodeAndReset, setSelectedId, run, refresh, rescan, refreshTree, pushCurrentBranch: remoteSync.pushCurrentBranch }, node, event); },

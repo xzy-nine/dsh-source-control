@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { parallel } from '../harness.mjs';
 import {
-	attachChildren, claimPendingSelection, findNode, flattenVisible, ancestryOf, planSelection, selectInitial,
+	attachChildren, claimPendingSelection, dedupeNodes, findNode, flattenVisible, ancestryOf, planSelection, selectInitial,
 } from '../../src/client/panel/repo-tree.ts';
 
 /** 造一个仓库节点。 */
@@ -106,6 +106,27 @@ parallel('存储库树', (t) => {
 		const expanded = new Set(ancestryOf(attached, claimed.id));
 		const rows = flattenVisible(attached, expanded);
 		assert.deepEqual(rows.map((row) => row.node.id), ['/a', '/a-wt']);
+	});
+
+	t.test('同一层的同一 id 只留一行，且不改动已唯一的节点引用', () => {
+		const kept = repo('/a');
+		const deduped = dedupeNodes([kept, repo('/a'), repo('/b')]);
+		assert.deepEqual(deduped.map((node) => node.id), ['/a', '/b'], '重复 id 只保留首次出现的节点');
+		assert.equal(deduped[0], kept, '唯一的节点保持原引用，仓库行不整体重渲染');
+	});
+
+	t.test('去重递归进入子节点：同一路径的重复子模块只留一行', () => {
+		const sub = { id: '/a/sub', path: '/a/sub', name: 'sub', kind: 'submodule', depth: 1, branch: 'main', head: null, available: true, children: [] };
+		const deduped = dedupeNodes([repo('/a', [sub, sub, worktree('/a-wt')])]);
+		assert.deepEqual(deduped[0].children.map((node) => node.id), ['/a/sub', '/a-wt']);
+	});
+
+	t.test('合流后的树按 id 去重：补齐记录与节点自带的 children 重复时只画一行', () => {
+		const sub = { id: '/a/sub', path: '/a/sub', name: 'sub', kind: 'submodule', depth: 1, branch: 'main', head: null, available: true, children: [] };
+		const recorded = new Map([['/a', [sub, sub]]]);
+		const attached = attachChildren([repo('/a'), repo('/a')], recorded);
+		assert.equal(attached.length, 1, '顶层仓库不重复');
+		assert.deepEqual(attached[0].children.map((node) => node.id), ['/a/sub'], '子模块不重复');
 	});
 
 	t.test('展开的工作树在浅层纠正后仍可见', () => {

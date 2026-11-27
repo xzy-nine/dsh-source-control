@@ -82,6 +82,36 @@ export function ancestryOf(nodes, id) {
 }
 
 /**
+ * 按 id 去重同一层的节点，并递归处理子节点。
+ *
+ * 路径是节点身份：同一路径在同一层出现两次只会画成两行，点击其中一行与另一行无法区分。
+ * 宿主按路径枚举，重复来自 `.gitmodules` 里同路径的多条声明与两轮补齐结果的叠加，因此在
+ * 合流处按 id 收敛，而不是在渲染时跳过。
+ *
+ * 内容未变的节点保持原引用：仓库行按节点对象记忆化，整体重建会让所有行重渲染。
+ *
+ * @param {object[]} nodes - 待去重的节点。
+ * @returns {object[]} 保留首次出现的节点。
+ */
+export function dedupeNodes(nodes) {
+	if (!Array.isArray(nodes)) return [];
+	const seen = new Set();
+	const out = [];
+	for (const node of nodes) {
+		if (node === null || typeof node !== 'object') continue;
+		const id = node.id;
+		if (typeof id === 'string' && id !== '') {
+			if (seen.has(id)) continue;
+			seen.add(id);
+		}
+		const previous = node.children ?? [];
+		const children = dedupeNodes(previous);
+		out.push(children.length === previous.length ? node : { ...node, children });
+	}
+	return out;
+}
+
+/**
  * 把已补齐的工作树与子模块挂回浅层节点。
  *
  * 浅层发现只产出顶层仓库节点；补齐结果按仓库路径另行保存，两者在此合流。按路径而不是按
@@ -90,17 +120,19 @@ export function ancestryOf(nodes, id) {
  * - 重新扫描时清掉保存的补齐结果即可让 children 变空，已删除的工作树不会残留。
  *
  * 没有保存记录的仓库按浅层节点原样返回（children 为空）；已带 children 的节点原样采用。
+ * 合流后整体按 id 去重，见 {@link dedupeNodes}。
  *
  * @param {object[]} nodes - 本次发现得到的节点。
  * @param {Map<string, object[]>} childrenByPath - 仓库路径 -> 已补齐的 children。
  * @returns {object[]} 挂好 children 的节点。
  */
 export function attachChildren(nodes, childrenByPath) {
-	return (nodes ?? []).map((node) => {
+	const merged = (nodes ?? []).map((node) => {
 		if ((node.children ?? []).length > 0) return node;
 		const children = childrenByPath?.get(node.path);
 		return children === undefined ? node : { ...node, children };
 	});
+	return dedupeNodes(merged);
 }
 
 /**

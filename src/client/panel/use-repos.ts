@@ -6,7 +6,8 @@
  */
 import React from 'react';
 import {
-	dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, subscribeWorkspace, type WorkspaceSnapshot,
+	dropWorkspace, getWorkspaceSnapshot, preloadWorkspace, refreshWorkspace, rescanWorkspace, subscribeWorkspace,
+	type WorkspaceSnapshot,
 } from './repo-preload.ts';
 import {
 	ancestryOf, claimPendingSelection, findNode, flattenVisible, loadExpanded, loadSelection,
@@ -52,6 +53,10 @@ export interface UseReposResult {
 	readonly rescan: () => void;
 	/** 按最新结构重取仓库树，不清空已显示的树；结构事件命中时调用。 */
 	readonly refreshTree: () => void;
+	/** 用户主动刷新仓库树：完整扫描并按新结构重新枚举，不清空已显示的树。 */
+	readonly rescanTree: () => void;
+	/** 仓库树是否正在取数；标题栏据此给出进行中指示。 */
+	readonly treeRefreshing: boolean;
 }
 
 /**
@@ -109,6 +114,7 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 		() => treeStatusOf(initial, hasWorkspace),
 	);
 	const [treeNote, setTreeNote] = React.useState<string | null>(() => noteOf(initial));
+	const [treeRefreshing, setTreeRefreshing] = React.useState<boolean>(() => initial?.refreshing === true);
 	const [selectedId, setSelectedId] = React.useState<string | null>(null);
 	const [expandedIds, setExpandedIds] = React.useState<Set<string>>(() => loadExpanded(cwd ?? null));
 	const [syncById, setSyncById] = React.useState<Map<string, RepoSync>>(
@@ -131,6 +137,7 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 			setRepoNodes([]);
 			setTreeStatus('empty');
 			setTreeNote(null);
+			setTreeRefreshing(false);
 			revisionRef.current = -1;
 			pendingSelectionRef.current = null;
 			return undefined;
@@ -169,6 +176,7 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 			setRepoNodes(snapshot.nodes);
 			setTreeStatus(treeStatusOf(snapshot, true));
 			setTreeNote(noteOf(snapshot));
+			setTreeRefreshing(snapshot.refreshing);
 			/*
 			 * 按节点合并，不整表替换：快照可能只带部分仓库的同步值（按仓库重取时只发布一条），
 			 * 整表替换会把其余行抹掉。节点已不在树里的条目随节点一起丢弃，避免残留。
@@ -246,6 +254,18 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 		refreshWorkspace(cwd);
 	}, [cwd]);
 
+	/**
+	 * 用户主动刷新仓库树。
+	 *
+	 * 与 {@link refreshTree} 不同之处在于绕开持久化的仓库位置做完整扫描，因此仓库被移动、改过名
+	 * 或 `.gitmodules` 改过之后，点一次即可按磁盘现状重建。不清空已显示的树：取数期间界面继续
+	 * 显示上一轮结果，新结果到达后替换。
+	 */
+	const rescanTree = React.useCallback(() => {
+		if (cwd === undefined) return;
+		rescanWorkspace(cwd);
+	}, [cwd]);
+
 	/** 选中一个仓库节点并持久化。 */
 	const selectNode = React.useCallback((node: RepoNode) => {
 		// 用户手动选中即作废待认领的持久化选中，避免补齐后把选中改回去。
@@ -282,6 +302,6 @@ export function useRepos({ cwd }: UseReposOptions): UseReposResult {
 
 	return {
 		repoNodes, treeStatus, treeNote, selectedId, expandedIds, visibleRows, syncById, selectedNode,
-		selectNode, toggleNode, setSelectedId, setSyncById, rescan, refreshTree,
+		selectNode, toggleNode, setSelectedId, setSyncById, rescan, refreshTree, rescanTree, treeRefreshing,
 	};
 }

@@ -33,6 +33,8 @@ export interface WorkspaceSnapshot {
 	readonly discoveryRevision: number;
 	/** 节点 id -> 领先/落后。 */
 	readonly syncById: ReadonlyMap<string, RepoSync>;
+	/** 是否有一轮取数在途；界面据此显示刷新指示。 */
+	readonly refreshing: boolean;
 }
 
 /** 预加载选项。 */
@@ -99,6 +101,13 @@ interface WorkspaceEntry {
 	 * 不反映，节点留在指向已不存在目录的状态。
 	 */
 	pendingRefresh: boolean;
+	/**
+	 * 下一次取数是否绕开持久化的仓库位置。
+	 *
+	 * 用户主动刷新时置位：持久化位置可能已过期（仓库被移动、删除或改过名），只有完整扫描能
+	 * 纠正它。事件驱动的重取不置位，避免每次结构变化都扫一遍目录。
+	 */
+	nextFullScan: boolean;
 }
 
 /** 工作区归一化键 -> 预加载状态。 */
@@ -208,7 +217,7 @@ function createEntry(root: string): WorkspaceEntry {
 		root,
 		snapshot: {
 			root, nodes: [], truncated: false, usedCache: false,
-			status: 'loading', error: null, discoveryRevision: 0, syncById: new Map(),
+			status: 'loading', error: null, discoveryRevision: 0, syncById: new Map(), refreshing: false,
 		},
 		baseNodes: [],
 		childrenByPath: new Map(),
@@ -222,6 +231,7 @@ function createEntry(root: string): WorkspaceEntry {
 		syncedIds: new Set(),
 		availabilityById: new Map(),
 		pendingRefresh: false,
+		nextFullScan: false,
 	};
 }
 
@@ -544,12 +554,18 @@ function start(entry: WorkspaceEntry): void {
 	const generation = entry.generation;
 	const cancelled = (): boolean => controller.signal.aborted || entry.generation !== generation;
 	// 已有节点时保持 ready：重取期间界面继续显示上一轮结果，不闪回占位。
-	publish(entry, { status: entry.snapshot.nodes.length > 0 ? 'ready' : 'loading', error: null });
+	publish(entry, { status: entry.snapshot.nodes.length > 0 ? 'ready' : 'loading', error: null, refreshing: true });
 	const run = (async (): Promise<void> => {
 		try {
-			const result = await discoverRepositories(entry.root, { shallow: true }, controller.signal);
+			const forced = entry.nextFullScan;
+			entry.nextFullScan = false;
+			const result = forced
+				? await discoverRepositories(entry.root, { shallow: true, fullScan: true }, controller.signal)
+				: await discoverRepositories(entry.root, { shallow: true }, controller.signal);
 			if (cancelled()) return;
 			applyDiscovery(entry, result);
+			// 节流计时记录最近一次完整扫描的时刻，完整扫描本身也要计入。
+			if (forced) entry.lastFullScanAt = Date.now();
 			/*
 			 * 持久化位置可能已过期：绕开它重扫一次，按新位置纠正。
 			 *
@@ -582,6 +598,7 @@ function start(entry: WorkspaceEntry): void {
 		if (entry.running !== run) return;
 		entry.running = null;
 		entry.controller = null;
+		publish(entry, { refreshing: false });
 		/*
 		 * 取数期间登记的结构变更：它发生在那次发现之后，那批结果必然不含它，因此立即再取一次，
 		 * 不按冷却等待。挂起标志清掉后只重取一次，不会因同一批事件反复重取。
@@ -601,6 +618,21 @@ function start(entry: WorkspaceEntry): void {
  */
 function existingEntryOf(root: string): WorkspaceEntry | null {
 	return entries.get(rootKey(root)) ?? null;
+}
+
+/**
+ * 取一个工作区的预加载状态；尚未登记时建一份并登记。
+ *
+ * @param root - 工作区根路径。
+ * @returns 预加载状态。
+ */
+function entryOrNew(root: string): WorkspaceEntry {
+	const key = rootKey(root);
+	const existing = entries.get(key);
+	if (existing !== undefined) return existing;
+	const created = createEntry(root);
+	entries.set(key, created);
+	return created;
 }
 
 /**
@@ -653,7 +685,7 @@ export function dropWorkspace(root: string): void {
 	entry.syncedIds = new Set();
 	publish(entry, {
 		nodes: [], truncated: false, usedCache: false, status: 'loading', error: null,
-		discoveryRevision: entry.snapshot.discoveryRevision + 1, syncById: new Map(),
+		discoveryRevision: entry.snapshot.discoveryRevision + 1, syncById: new Map(), refreshing: false,
 	});
 }
 
@@ -687,7 +719,7 @@ export function refreshWorkspace(root: string): void {
 	if (root === '') return;
 	const entry = existingEntryOf(root);
 	if (entry === null) {
-		preloadWorkspace(root);
+		rescanWorkspace(root);
 		return;
 	}
 	if (entry.running !== null) {
@@ -695,6 +727,33 @@ export function refreshWorkspace(root: string): void {
 		entry.pendingRefresh = true;
 		return;
 	}
+	enrichAgain(entry);
+}
+
+/**
+ * 用户主动刷新一个工作区的仓库树：完整扫描并按新结构重新枚举工作树与子模块。
+ *
+ * 与 {@link refreshWorkspace} 一样不清空已发布的树，但绕开持久化的仓库位置：那份位置只在完整
+ * 扫描后写回，过期时（仓库被移动、删除或改过名）快路径按旧位置取树，而位置纠正受完整扫描间隔
+ * 节流。本函数直接做那次完整扫描，因此不受间隔约束。
+ *
+ * 不受重取冷却约束：用户点一次就该真扫一次。
+ *
+ * @param root - 工作区根路径。
+ * @returns 无。
+ */
+export function rescanWorkspace(root: string): void {
+	if (root === '') return;
+	const entry = entryOrNew(root);
+	if (entry.running !== null) {
+		// 在途取数结束后按完整扫描再取一次，见 `start` 的收尾。
+		entry.pendingRefresh = true;
+		entry.nextFullScan = true;
+		return;
+	}
+	entry.nextFullScan = true;
+	// 主动刷新可能改变节点集合：已取过的领先/落后随节点一起作废，新增节点才有值可取。
+	entry.syncedIds = new Set();
 	enrichAgain(entry);
 }
 
